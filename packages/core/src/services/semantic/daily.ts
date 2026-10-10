@@ -94,7 +94,6 @@ export class DailyReview {
     if (diary.ok && diary.text.includes(DONE_MARK)) { this.mark(date, "already_done"); return; }
     const agent = await primaryAgent(this.options.router, DAILY_FROM);
     if (!agent) return;
-    if (this.woken(date)) return;
     this.mark(date, "sent");
     const context: Record<string, unknown> = { date, review_time: await this.reviewTime(), diary: `memory/${date}.md`,
       ...(this.now() - scheduledFor > LATE_MS ? { made_up: true } : {}) };

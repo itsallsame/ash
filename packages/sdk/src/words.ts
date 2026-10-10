@@ -656,29 +656,26 @@ add("service:widgets", "widget.problem", "event", obj({ card: widgetCardId, owne
 const pulseClock: JsonSchema = { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" };
 const pulseDays: JsonSchema = { anyOf: [choice("daily", "weekdays", "weekends"), { type: "array", items: { type: "integer", minimum: 0, maximum: 6 }, minItems: 1, maxItems: 7 }] };
 const pulseSlot = obj({ time: { anyOf: [pulseClock, obj({ at: positiveSafe }, ["at"])] }, days: pulseDays }, ["time"]);
-export const PULSE_EVENTS = ["geofence_enter", "geofence_exit", "approval_waiting", "app_event", "calendar_soon", "source_stalled"] as const;
-const pulseEvent = obj({ event: choice(...PULSE_EVENTS), min_gap_min: { type: "integer", minimum: 1, maximum: 1440 } }, ["event"]);
-const pulseWhy = choice("schedule", "event");
 const pulseNoteKind = choice("pulse", "gap");
 const pulseEntry = obj({ id: positiveSafe, ts: nonnegativeSafe, kind: nonempty }, ["id", "ts", "kind"], true);
 add("service:pulse", "pulse.get", "request", empty,
-  obj({ active: bool, reason: str, enabled: bool, schedule: array(obj({}, [], true)), events: array(pulseEvent),
+  obj({ active: bool, reason: str, enabled: bool, schedule: array(obj({}, [], true)),
     budget: obj({ per_day: positiveSafe, today_count: nonnegativeSafe, left: nonnegativeSafe }, ["per_day", "today_count", "left"]),
-    next_wakes: array(nonnegativeSafe), history: array(pulseEntry), gaps: array(pulseEntry) }, ["active", "enabled", "schedule", "events", "budget", "history"], true),
-  { label: "在看主动更新的安排", effect: "read", description: "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, the events you watch, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted." });
-add("service:pulse", "pulse.set", "request", obj({ schedule: { type: "array", items: pulseSlot, maxItems: 48 }, events: { type: "array", items: pulseEvent, maxItems: 12 },
+    next_wakes: array(nonnegativeSafe), history: array(pulseEntry), gaps: array(pulseEntry) }, ["active", "enabled", "schedule", "budget", "history"], true),
+  { label: "在看主动更新的安排", effect: "read", description: "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted." });
+add("service:pulse", "pulse.set", "request", obj({ schedule: { type: "array", items: pulseSlot, maxItems: 48 },
     reason: { type: "string", minLength: 1, maxLength: 500 } }, ["reason"]),
   obj({ changed: strings, next_wakes: array(nonnegativeSafe) }, ["changed"], true),
-  { label: "在改主动更新的安排", effect: "write", description: "Change your own pulse and say why (reason is required and is kept in the history). Any of: schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers), events (the events to watch, replaces the list: geofence_enter, geofence_exit, approval_waiting, app_event, calendar_soon, source_stalled, each with min_gap_min between two wakes of that kind, default 60). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself." });
+  { label: "在改主动更新的安排", effect: "write", description: "Change your own pulse and say why (reason is required and is kept in the history). Schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself." });
 add("service:pulse", "pulse.history", "request", obj({ limit: { type: "integer", minimum: 1, maximum: 100 }, before: positiveSafe }),
   obj({ entries: array(pulseEntry), next_before: positiveSafe }, ["entries"]),
   { label: "在看主动更新的记录", effect: "read", description: "Page through your pulse history, newest first: wakes (why, when), what you did (pulse.note), the owner's feedback on your cards, changes to the schedule with their reasons, skipped wakes and why. limit (default 20), before: an entry id from next_before to read older ones." });
 add("service:pulse", "pulse.note", "request", obj({ did: nonempty, why: str, kind: pulseNoteKind, data_used: array(nonempty) }, ["did"]),
   obj({ recorded: bool, id: positiveSafe }, ["recorded", "id"]),
   { label: "在记下这次做了什么", effect: "write", description: "Record what you did on this wake and why (did, why, data_used: what you looked at). kind: pulse (default) for an ordinary wake, gap for something you wanted to know or do but could not get; gaps are collected so the missing source can be added. Nothing here ever reaches the owner." });
-add("service:pulse", "pulse.fire", "request", obj({ why: pulseWhy }),
+add("service:pulse", "pulse.fire", "request", empty,
   obj({ fired: bool, reason: str }, ["fired"]),
-  { label: "在试一次主动更新", effect: "write", description: "Wake yourself now as a pulse (why defaults to schedule) to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on." });
+  { label: "在试一次主动更新", effect: "write", description: "Wake yourself now as a pulse to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on." });
 add("service:pulse", "pulse.switch", "request", obj({ enabled: bool }, ["enabled"]), obj({ enabled: bool }, ["enabled"]),
   { callers: OWNER, label: "在开关主动更新", effect: "write", description: "Owner only: switch the whole pulse on or off. Off keeps PULSE.md, history and feedback." });
 add("service:pulse", "pulse.due", "request", obj({ kind: choice("wake", "daily", "reload"), at: nonnegativeSafe }, ["kind", "at"]), accepted,

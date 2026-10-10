@@ -52,9 +52,9 @@ whenToUse: 被 reason 为 daily 的唤醒叫醒时（每晚 21:30，或错过后
 
 ## 四、安排明天的 pulse
 
-看这几天的作息和卡片反馈，决定明天什么时候开口、盯哪些事件：
+看这几天的作息和卡片反馈，决定明天什么时候开口：
 
-- `pulse.set`：`schedule`（时刻和星期）、`events`（盯哪些事件、同类最短间隔）；每次必须写 `reason`。主人最近作息变了、某个时段总是被划掉，就调。默认是每天 08:00–22:00 的每个整点。
+- `pulse.set`：`schedule`（时刻和星期）；每次必须写 `reason`。主人最近作息变了、某个时段总是被划掉，就调。默认是每天 08:00–22:00 的每个整点。
 - `PULSE.md`（pulse 被叫醒时先读的引导）在你的家目录里，**你自己直接改**，不用审批、不走 `pulse.set`。主人说过的偏好、你发现的规律，写进去。
 - `review_time` 这类时间是设置：想改复盘或重新载入会话的时间，用 `service:admin/settings.set`（键是 `semantic.review_time`、`semantic.reload_time`；你提出，主人批）。
 

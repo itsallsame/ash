@@ -12,14 +12,12 @@
  * The clock's timers: `pulse.due {kind: "wake"}` is a scheduled pulse. The same word also carries the semantic layer's
  * two other timers (`daily`, `reload`), which this member only passes on to `onDue`.
  *
- * Event wakes (a place entered or left, a calendar event soon, a data source stalled) are worked out here from the same
- * `sense.*` events the organ `app:sense-rules` hears, with the watch list and minimum gaps the agent set; the organ's own
- * wakes (reasons such as geofence_enter) are separate. An approval waiting and an app's event are not events a member can
- * hear today, so those two watches have no source yet.
+ * Wakes for things that happen (a place entered, a ride, a calendar event) are the organ `app:sense-rules`'s to judge
+ * (HUB-MODULES §7); the pulse listens to no sensor. Event wakes come back here when there are event sources for it.
  */
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import type { Member, WordContract } from "../../../../sdk/src/word";
-import { PULSE_EVENTS, wordsOf } from "../../../../sdk/src/words";
+import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger } from "../../kernel/ledger";
 import { ask, CLOCK_TIME, dataOf, localDayStart, primaryAgent, reconcileTimers, seedBodyFile, wakeAgent, type Sender } from "./shared";
 
@@ -31,25 +29,17 @@ const HORIZON_MS = 48 * HOUR;
 const REFRESH_MS = 6 * HOUR;
 /** A timer that fires much later than it was set for (the phone slept, ash was down) is not a reason to wake now. */
 const STALE_MS = 2 * HOUR;
-const FRESH_EVENT_MS = 30 * 60_000;
 const MAX_HISTORY = 2000;
 const DEFAULT_BUDGET = 16;
-const DEFAULT_GAP_MIN = 60;
 
-export type PulseEventName = (typeof PULSE_EVENTS)[number];
 export type PulseDays = "daily" | "weekdays" | "weekends" | number[];
 export interface PulseSlot { time: string | { at: number }; days?: PulseDays }
-export interface PulseEventWatch { event: PulseEventName; min_gap_min: number }
-export type PulseWhy = "schedule" | "event";
+export type PulseWhy = "schedule";
 export type PulseEntry = { id: number; ts: number; kind: string } & Record<string, unknown>;
 export type DueKind = "wake" | "daily" | "reload";
 
-/** The starter: one wake an hour in the daytime (08:00 to 22:00, 15 wakes), and a few events worth hearing about. The agent changes both. */
+/** The starter: one wake an hour in the daytime (08:00 to 22:00, 15 wakes). The agent changes it. */
 export const DEFAULT_SCHEDULE: PulseSlot[] = Array.from({ length: 15 }, (_, i) => ({ time: `${String(8 + i).padStart(2, "0")}:00`, days: "daily" as const }));
-const DEFAULT_EVENTS: PulseEventWatch[] = [
-  { event: "geofence_enter", min_gap_min: DEFAULT_GAP_MIN }, { event: "geofence_exit", min_gap_min: DEFAULT_GAP_MIN },
-  { event: "calendar_soon", min_gap_min: DEFAULT_GAP_MIN }];
-
 interface PulseState {
   version: 1;
   enabled: boolean;
@@ -57,12 +47,8 @@ interface PulseState {
   active: boolean;
   activated_at: number | null;
   schedule: PulseSlot[];
-  events: PulseEventWatch[];
   seq: number;
   history: PulseEntry[];
-  /** When each kind of event last woke the agent, and in which local hour any event last did. */
-  event_wakes: Record<string, number>;
-  event_hour: string | null;
 }
 
 export interface PulseOptions {
@@ -82,7 +68,6 @@ export interface PulseOptions {
 
 const plain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const clip = (value: string, max: number) => { const text = value.replace(/\s+/g, " ").trim(); return [...text].length > max ? `${[...text].slice(0, max).join("")}…` : text; };
-const hourKey = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}`; };
 const bad = (message: string): never => { throw new WordError("bad_request", message); };
 
 const SQL = "CREATE TABLE IF NOT EXISTS pulse_state (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)";
@@ -91,8 +76,8 @@ export class PulseService implements Member {
   readonly id = PULSE_ID;
   readonly kind = "service" as const;
   readonly name = "Pulse";
-  /** The events this member hears: the widget state (the precondition and the owner's feedback) and the senses (event wakes). */
-  readonly listens = ["widget.placed", "widget.action", "sense.geofence", "sense.calendar", "sense.source"];
+  /** The events this member hears: the widget state (the precondition and the owner's feedback). */
+  readonly listens = ["widget.placed", "widget.action"];
   private readonly db;
   private readonly now: () => number;
   private state: PulseState;
@@ -101,7 +86,6 @@ export class PulseService implements Member {
   private queue: Promise<unknown> = Promise.resolve();
   private interval: ReturnType<typeof setInterval> | null = null;
   private lastReconcile = 0;
-  private wakes = 0;
   private guidanceSeeded = false;
   private closed = false;
   private get budget(): number { return this.options.budget ?? DEFAULT_BUDGET; }
@@ -119,7 +103,7 @@ export class PulseService implements Member {
 
   private load(): PulseState {
     const fresh = (): PulseState => ({ version: 1, enabled: true, active: false, activated_at: null, schedule: structuredClone(DEFAULT_SCHEDULE),
-      events: structuredClone(DEFAULT_EVENTS), seq: 0, history: [], event_wakes: {}, event_hour: null });
+      seq: 0, history: [] });
     const row = this.db.prepare("SELECT json FROM pulse_state WHERE id=1").get() as { json: string } | undefined;
     if (!row) return fresh();
     try {
@@ -128,9 +112,8 @@ export class PulseService implements Member {
       const history = Array.isArray(raw.history) ? raw.history.filter((item) => plain(item) && Number.isSafeInteger(item.id) && typeof item.ts === "number" && typeof item.kind === "string") : [];
       return { ...base, ...(typeof raw.enabled === "boolean" ? { enabled: raw.enabled } : {}), ...(typeof raw.active === "boolean" ? { active: raw.active } : {}),
         activated_at: typeof raw.activated_at === "number" ? raw.activated_at : null,
-        schedule: Array.isArray(raw.schedule) ? raw.schedule : base.schedule, events: Array.isArray(raw.events) ? raw.events : base.events,
-        seq: Math.max(Number(raw.seq) || 0, ...history.map((item) => item.id)), history, event_wakes: plain(raw.event_wakes) ? raw.event_wakes as Record<string, number> : {},
-        event_hour: typeof raw.event_hour === "string" ? raw.event_hour : null };
+        schedule: Array.isArray(raw.schedule) ? raw.schedule : base.schedule,
+        seq: Math.max(Number(raw.seq) || 0, ...history.map((item) => item.id)), history };
     } catch { return fresh(); }
   }
   private save(): void {
@@ -248,8 +231,8 @@ export class PulseService implements Member {
    * Check the switch, the precondition, the pause and the budget, then wake the primary agent with the reason and the counts only:
    * no data. A manual wake (pulse.fire) is not held back by the budget.
    */
-  private async wake(why: PulseWhy, input: { scheduledFor: number; event?: string; manual?: boolean }): Promise<{ fired: boolean; reason?: string }> {
-    const skip = (reason: string) => { this.record("skip", { why, reason, scheduled_for: input.scheduledFor, ...(input.event ? { event: input.event } : {}) }); return { fired: false, reason }; };
+  private async wake(why: PulseWhy, input: { scheduledFor: number; manual?: boolean }): Promise<{ fired: boolean; reason?: string }> {
+    const skip = (reason: string) => { this.record("skip", { why, reason, scheduled_for: input.scheduledFor }); return { fired: false, reason }; };
     if (!this.state.active) return { fired: false, reason: "no widget" };
     if (!this.state.enabled) return { fired: false, reason: "switched off" };
     if (await this.paused()) return skip("paused");
@@ -261,10 +244,8 @@ export class PulseService implements Member {
     if (!input.manual && used >= this.budget) return skip("budget");
     const counted = !input.manual;
     const todayCount = used + (counted ? 1 : 0);
-    const context: Record<string, unknown> = { why, scheduled_for: input.scheduledFor, today_count: todayCount, budget_left: Math.max(0, this.budget - todayCount),
-      ...(input.event ? { event: input.event } : {}) };
-    this.record("wake", { why, scheduled_for: input.scheduledFor, counted, ...(input.manual ? { manual: true } : {}), ...(input.event ? { event: input.event } : {}) });
-    this.wakes++;
+    const context: Record<string, unknown> = { why, scheduled_for: input.scheduledFor, today_count: todayCount, budget_left: Math.max(0, this.budget - todayCount) };
+    this.record("wake", { why, scheduled_for: input.scheduledFor, counted, ...(input.manual ? { manual: true } : {}) });
     const sent = await wakeAgent(this.options.router, PULSE_ID, agent, "pulse", context);
     if (!sent.ok) this.record("failure", { while: "wake", why, error: sent.error.message });
     return { fired: true };
@@ -287,12 +268,7 @@ export class PulseService implements Member {
       if (msg.word === "widget.placed") {
         this.placed = Array.isArray(body.widgets) ? body.widgets.filter((w: { type?: string }) => w?.type === "card").length : 0;
         await this.evaluate();
-        return;
-      }
-      if (msg.word === "widget.action" && msg.from === "service:widgets") { this.feedback(body); return; }
-      if (!msg.from.startsWith("device:")) return;
-      const hit = this.eventOf(msg.word, body);
-      if (hit) await this.event(hit.name, hit.what);
+      } else if (msg.word === "widget.action" && msg.from === "service:widgets") this.feedback(body);
     } catch (error) { this.options.log?.("pulse could not read an event", error); }
   }
 
@@ -301,30 +277,6 @@ export class PulseService implements Member {
     if (!context || typeof context.feedback !== "string" || String(body.owner).startsWith("app:")) return;
     this.record("feedback", { card: String(body.card), title: clip(String(body.title ?? ""), 40), feedback: clip(context.feedback, 200), action: String(body.action),
       ...(typeof body.component === "string" ? { component: body.component } : {}), ...(typeof body.item === "string" ? { item: body.item } : {}) });
-  }
-
-  private eventOf(word: string, body: Record<string, any>): { name: PulseEventName; what: string } | null {
-    if (word === "sense.geofence" && (body.transition === "enter" || body.transition === "exit")) {
-      if (typeof body.ts === "number" && Math.abs(this.now() - body.ts) > FRESH_EVENT_MS) return null;
-      return { name: body.transition === "enter" ? "geofence_enter" : "geofence_exit", what: `${body.transition === "enter" ? "arrived at" : "left"} ${clip(String(body.name), 40)}` };
-    }
-    if (word === "sense.calendar" && body.kind === "upcoming") return { name: "calendar_soon", what: `calendar event soon: ${clip(String(body.event?.title ?? ""), 60)}` };
-    if (word === "sense.source" && body.state === "stale") return { name: "source_stalled", what: `data source stalled: ${clip(String(body.source), 40)}` };
-    return null;
-  }
-
-  private async event(name: PulseEventName, what: string): Promise<void> {
-    const watch = this.state.events.find((item) => item.event === name);
-    if (!watch || !this.running()) return;
-    const now = this.now();
-    const skip = (reason: string) => { this.record("skip", { why: "event", reason, event: what, event_name: name }); };
-    if (now - (this.state.event_wakes[name] ?? 0) < watch.min_gap_min * 60_000) { skip("min_gap"); return; }
-    // Events in the same hour are one wake: the agent reads the rest from its own sources.
-    if (this.state.event_hour === hourKey(now)) { skip("coalesced"); return; }
-    // Taken before the wake is sent, so a second event arriving while this one is being sent is coalesced.
-    this.state.event_wakes[name] = now; this.state.event_hour = hourKey(now); this.save();
-    const sent = await this.wake("event", { scheduledFor: now, event: what });
-    if (!sent.fired) { delete this.state.event_wakes[name]; this.state.event_hour = null; this.save(); }
   }
 
   // ---- PULSE.md ----
@@ -346,7 +298,7 @@ export class PulseService implements Member {
       case "pulse.set": return { data: await this.serial(() => this.set(body)) };
       case "pulse.history": return { data: this.page(body) };
       case "pulse.note": return { data: this.note(body) };
-      case "pulse.fire": return { data: await this.fire(body) };
+      case "pulse.fire": return { data: await this.fire() };
       case "pulse.switch": return { data: await this.switchTo(msg, ctx, body) };
       case "pulse.due": return { data: await this.dueFromClock(msg, body) };
       default: throw new WordError("not_found", `service:pulse has no word ${msg.word}`);
@@ -358,7 +310,7 @@ export class PulseService implements Member {
     const used = this.todayCount();
     const active = this.placed > 0 && this.state.enabled;
     const why = this.placed === 0 ? "no widget" : !this.state.enabled ? "switched off" : undefined;
-    return { active, ...(why ? { reason: why } : {}), enabled: this.state.enabled, schedule: structuredClone(this.state.schedule), events: structuredClone(this.state.events),
+    return { active, ...(why ? { reason: why } : {}), enabled: this.state.enabled, schedule: structuredClone(this.state.schedule),
       budget: { per_day: this.budget, today_count: used, left: Math.max(0, this.budget - used) },
       next_wakes: active ? this.expand(now, now + HORIZON_MS).slice(0, 6) : [],
       history: this.state.history.slice(-10).reverse(),
@@ -382,12 +334,10 @@ export class PulseService implements Member {
     return { recorded: true, id: entry.id };
   }
 
-  private async fire(body: Record<string, unknown>) {
-    const why = body.why === undefined ? "schedule" : body.why;
-    if (why !== "schedule" && why !== "event") bad("why must be schedule or event");
+  private async fire() {
     if (this.placed === 0) return { fired: false, reason: "no widget" };
     if (!this.state.enabled) return { fired: false, reason: "switched off" };
-    return this.wake(why as PulseWhy, { scheduledFor: this.now(), manual: true });
+    return this.wake("schedule", { scheduledFor: this.now(), manual: true });
   }
 
   private async switchTo(msg: Message, ctx: HandleContext, body: Record<string, unknown>) {
@@ -434,37 +384,18 @@ export class PulseService implements Member {
     });
   }
 
-  private checkEvents(value: unknown): PulseEventWatch[] {
-    if (!Array.isArray(value) || value.length > PULSE_EVENTS.length) bad("events must be a list of the allowed events");
-    const seen = new Set<string>();
-    return (value as unknown[]).map((item, index) => {
-      if (!plain(item) || Object.keys(item).some((key) => key !== "event" && key !== "min_gap_min")) bad(`events[${index}] takes only event and min_gap_min`);
-      const entry = item as Record<string, unknown>;
-      if (!(PULSE_EVENTS as readonly unknown[]).includes(entry.event)) bad(`events[${index}].event must be one of ${PULSE_EVENTS.join(", ")}`);
-      if (seen.has(entry.event as string)) bad(`events lists ${String(entry.event)} twice`);
-      seen.add(entry.event as string);
-      const gap = entry.min_gap_min === undefined ? DEFAULT_GAP_MIN : entry.min_gap_min;
-      if (!Number.isInteger(gap) || (gap as number) < 1 || (gap as number) > 1440) bad(`events[${index}].min_gap_min must be 1 to 1440`);
-      return { event: entry.event as PulseEventName, min_gap_min: gap as number };
-    });
-  }
-
   private async set(body: Record<string, unknown>) {
-    const unknown = Object.keys(body).filter((key) => key !== "schedule" && key !== "events" && key !== "reason");
-    if (unknown.length) bad(`unknown field ${unknown.join(", ")}; pulse.set takes schedule, events and reason (PULSE.md is yours to edit in your home folder)`);
+    const unknown = Object.keys(body).filter((key) => key !== "schedule" && key !== "reason");
+    if (unknown.length) bad(`unknown field ${unknown.join(", ")}; pulse.set takes schedule and reason (PULSE.md is yours to edit in your home folder)`);
     if (typeof body.reason !== "string" || !body.reason.trim()) bad("reason is required: say why you are changing this");
     const reason = clip(String(body.reason), 500);
     const schedule = body.schedule === undefined ? undefined : this.checkSchedule(body.schedule);
-    const events = body.events === undefined ? undefined : this.checkEvents(body.events);
-    if (schedule === undefined && events === undefined) bad("nothing to change: give schedule or events");
-    const changed: string[] = [];
-    if (schedule) { this.state.schedule = schedule; changed.push("schedule"); }
-    if (events) { this.state.events = events; changed.push("events"); }
-    this.record("change", { changed, reason, ...(schedule ? { schedule } : {}), ...(events ? { events } : {}) });
-    if (schedule) await this.reconcile();
+    if (schedule === undefined) bad("nothing to change: give schedule");
+    this.state.schedule = schedule!;
+    this.record("change", { changed: ["schedule"], reason, schedule });
+    await this.reconcile();
     const now = this.now();
-    return { changed, next_wakes: this.running() ? this.expand(now, now + HORIZON_MS).slice(0, 6) : [] };
+    return { changed: ["schedule"], next_wakes: this.running() ? this.expand(now, now + HORIZON_MS).slice(0, 6) : [] };
   }
 }
 
-export function createPulseService(options: PulseOptions): PulseService { return new PulseService(options); }

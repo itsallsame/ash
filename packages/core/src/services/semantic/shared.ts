@@ -25,7 +25,7 @@ export async function ask(router: Sender, from: string, to: string, word: string
   }
 }
 
-export interface AgentInfo { id: string; primary?: boolean; state?: string; lanes?: Record<string, unknown> }
+export interface AgentInfo { id: string; primary?: boolean; ephemeral?: boolean; state?: string; lanes?: Record<string, unknown> }
 
 export async function listAgents(router: Sender, from: string): Promise<AgentInfo[]> {
   const agents = dataOf<{ agents?: AgentInfo[] }>(await ask(router, from, "service:agents", "list"))?.agents;
@@ -40,11 +40,6 @@ export async function primaryAgent(router: Sender, from: string): Promise<string
 /** `agent:<primary>/wake {lane: "back", reason, context}`; the lane is the agent's background one. */
 export async function wakeAgent(router: Sender, from: string, agent: string, reason: string, context: Record<string, unknown>): Promise<Reply> {
   return ask(router, from, agent, "wake", { lane: "back", reason, context });
-}
-
-/** A one-shot timer on `service:clock`. Returns false when the clock refused or is away. */
-export async function setTimer(router: Sender, from: string, timer: { at: number; to: string; word: string; body: unknown; label: string }): Promise<boolean> {
-  return (await ask(router, from, "service:clock", "set", timer)).ok;
 }
 
 /** Make the clock's timers whose label starts with `prefix` exactly `want` (label -> {at, body}); the others are cancelled. */
@@ -64,17 +59,9 @@ export async function reconcileTimers(router: Sender, from: string, prefix: stri
   return problem;
 }
 
-/** One of the hub's settings (`service:admin/settings.get`), whichever way the answer nests it; undefined when it is not set. */
-export async function readSetting(router: Sender, from: string, key: string): Promise<unknown> {
-  const data = dataOf<Record<string, any>>(await ask(router, from, "service:admin", "settings.get", { keys: [key] }));
-  if (!data) return undefined;
-  for (const bag of [data, data.settings, data.values]) {
-    if (bag && typeof bag === "object" && key in bag) return (bag as Record<string, unknown>)[key];
-  }
-  let node: any = data.settings ?? data;
-  for (const part of key.split(".")) { node = node && typeof node === "object" ? node[part] : undefined; }
-  return node;
-}
+/** One of the hub's settings (`service:admin/settings.get`); undefined when it is not set. */
+export const readSetting = async (router: Sender, from: string, key: string): Promise<unknown> =>
+  dataOf<{ settings?: Record<string, unknown> }>(await ask(router, from, "service:admin", "settings.get", { keys: [key] }))?.settings?.[key];
 
 /** A text file of the main body (relative to its work folder). `missing` tells a file that is not there from a body that did not answer. */
 export async function readBodyFile(router: Sender, from: string, path: string): Promise<{ ok: true; text: string } | { ok: false; missing: boolean; message: string }> {

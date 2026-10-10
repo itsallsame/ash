@@ -158,14 +158,3 @@ export function importantByRule(event, section) {
   if (section.keywords.some((word) => { const w = word.toLowerCase(); return title.includes(w) || w.includes(title); })) return true;
   return section.keywords.length ? null : false;
 }
-
-/** In-memory guard: a kind of wake that fired within the window is dropped, not queued. */
-export class WakeLimiter {
-  constructor(intervalMs = WAKE_INTERVAL_MS) { this.intervalMs = intervalMs; this.last = new Map(); }
-  allow(bucket, now) {
-    const prior = this.last.get(bucket);
-    if (prior !== undefined && now - prior < this.intervalMs && now >= prior) return false;
-    this.last.set(bucket, now);
-    return true;
-  }
-}

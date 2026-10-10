@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { activityTimeline, cyclingWakes, geofenceWake, importantByRule, importantSection, RIDE_LOOKBACK_MS, sourceWake, WAKE_INTERVAL_MS, WakeLimiter } from "./rules.mjs";
+import { activityTimeline, cyclingWakes, geofenceWake, importantByRule, importantSection, RIDE_LOOKBACK_MS, sourceWake, WAKE_INTERVAL_MS } from "./rules.mjs";
 
 console.log = (...args) => console.error(...args);
 const DIR = process.env.ASH_APP_DIR || process.cwd();
@@ -57,8 +57,6 @@ function save() {
   writeFileSync(temp, JSON.stringify(state));
   renameSync(temp, STATE);
 }
-const limiter = new WakeLimiter(WAKE_INTERVAL_MS);
-limiter.last = new Map(Object.entries(state.last));
 const note = (entry) => { state.recent.push({ at: Date.now(), ...entry }); save(); };
 
 // ---- waking ----
@@ -94,16 +92,16 @@ async function wake(w, word) {
   if (state.woken[w.key]) { note({ word, kind: w.kind, outcome: "repeat" }); return; }
   if (await paused()) { note({ word, kind: w.kind, outcome: "paused" }); return; }
   const bucket = w.bucket ?? w.kind;
-  const before = limiter.last.get(bucket);
-  if (!w.unlimited && !limiter.allow(bucket, now)) { note({ word, kind: w.kind, outcome: "too_soon" }); return; }
+  const before = state.last[bucket];
+  // the same kind of wake at most once in ten minutes
+  if (!w.unlimited && before !== undefined && now >= before && now - before < WAKE_INTERVAL_MS) { note({ word, kind: w.kind, outcome: "too_soon" }); return; }
+  if (!w.unlimited) state.last[bucket] = now;
   state.woken[w.key] = now;
-  state.last = Object.fromEntries(limiter.last);
   const sent = await wakePrimary({ lane: "back", reason: w.kind, context: w.context });
   if (!sent.ok) {
     // not taken: neither the fact nor the time slot is used up, so a later event can try again
     delete state.woken[w.key];
-    if (before === undefined) limiter.last.delete(bucket); else limiter.last.set(bucket, before);
-    state.last = Object.fromEntries(limiter.last);
+    if (!w.unlimited) { if (before === undefined) delete state.last[bucket]; else state.last[bucket] = before; }
     note({ word, kind: w.kind, outcome: "failed", code: sent.code });
     return;
   }

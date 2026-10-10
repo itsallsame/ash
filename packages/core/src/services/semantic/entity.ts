@@ -20,8 +20,6 @@ import { ask, CLOCK_TIME, listAgents, nextMoment, primaryAgent, readSetting, rec
 export const ENTITY_ID = "service:semantic";
 export const DEFAULT_RELOAD_TIME = "04:00";
 export const RELOAD_SETTING = "semantic.reload_time";
-/** The lanes of an agent that declares none (SPEC-08: the front and the back). */
-const DEFAULT_LANES = ["front", "back"];
 
 export interface EntityOptions {
   ledger: Pick<Ledger, "db">;
@@ -104,11 +102,10 @@ export class Entity implements Member {
 
   /** The clock reported the reload time: ask every agent to reload every lane, then lay down tomorrow's timer. */
   async reload(_at: number): Promise<{ asked: number }> {
-    const agents = (await listAgents(this.options.router, ENTITY_ID)).filter((agent) => !(agent as { ephemeral?: boolean }).ephemeral);
+    const agents = (await listAgents(this.options.router, ENTITY_ID)).filter((agent) => !agent.ephemeral);
     const jobs: Promise<unknown>[] = [];
     for (const agent of agents) {
-      const lanes = agent.lanes && Object.keys(agent.lanes).length ? Object.keys(agent.lanes) : DEFAULT_LANES;
-      for (const key of lanes) jobs.push(ask(this.options.router, ENTITY_ID, "service:agents", "session.reload", { agent: agent.id, key }));
+      for (const key of Object.keys(agent.lanes ?? {})) jobs.push(ask(this.options.router, ENTITY_ID, "service:agents", "session.reload", { agent: agent.id, key }));
     }
     await Promise.allSettled(jobs);
     await this.scheduleReload();

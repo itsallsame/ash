@@ -119,4 +119,3 @@ export class PersonaService implements Member {
   }
 }
 
-export function createPersonaService(options: PersonaOptions): PersonaService { return new PersonaService(options); }

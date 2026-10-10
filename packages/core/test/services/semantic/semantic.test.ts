@@ -254,7 +254,7 @@ test("pulse: get, set, note, history; set has no guidance and note has no review
 
   assert.equal(await refused(hub, "pulse.set", { reason: "x", guidance: "# new" }), "bad_request");
   assert.equal(await refused(hub, "pulse.set", { reason: "x", review_time: "21:00" }), "bad_request");
-  assert.equal(await refused(hub, "pulse.set", { schedule: [{ time: "09:00" }] }), "bad_request");
+  assert.equal(await refused(hub, "pulse.set", { schedule: [{ time: "09:00" }] }), "bad_request");   // no reason
   assert.equal(await refused(hub, "pulse.note", { did: "x", kind: "review" }), "bad_request");
 
   const set = (await hub.send("service:pulse", "pulse.set", { schedule: [{ time: "09:00", days: "weekdays" }, { time: "13:00" }], reason: "mornings and lunch only" }, AGENT)) as any;
@@ -320,33 +320,20 @@ test("pulse: the budget, a pause and a timer that fired far too late each keep t
   assert.equal(await refused(paused, "pulse.due", { kind: "wake", at: MON(8) }, "agent:main"), "forbidden");
 });
 
-test("pulse: an event the agent watches wakes it at most once per gap and once per hour; feedback is only recorded", async () => {
+test("pulse: it hears no sensor (the organ judges those); feedback on a card is only recorded, and wakes nobody", async () => {
   const hub = await startedHub();
+  assert.deepEqual(hub.semantic.pulse.listens, ["widget.placed", "widget.action"]);
   const phone = "device:ABCDEFGHIJKLMNOPQRSTUV";
-  const events = () => pulseWakes(hub).filter((w) => w.context.why === "event");
-  await hub.advanceTo(MON(6, 50));
   await hub.event(phone, "sense.geofence", { name: "Home", transition: "exit", ts: hub.t });
-  assert.equal(events().length, 1);
-  assert.match(events()[0]!.context.event, /left Home/);
-  await hub.event(phone, "sense.geofence", { name: "Gym", transition: "enter", ts: hub.t });         // same hour: one wake
-  assert.equal(events().length, 1);
-  await hub.event(phone, "sense.geofence", { name: "Old", transition: "enter", ts: hub.t - 3 * 3_600_000 });   // news from the past
-  assert.equal(events().length, 1);
-  await hub.advanceTo(MON(7, 10));
-  await hub.event(phone, "sense.geofence", { name: "Home", transition: "exit", ts: hub.t });         // another hour, but too soon after the last exit
-  assert.equal(events().length, 1);
-  await hub.event(phone, "sense.source", { source: "watch", state: "stale", ts: hub.t, stale_hours: 30, summary: "x" });   // not watched by default
-  assert.equal(events().length, 1);
-  await hub.send("service:pulse", "pulse.set", { events: [{ event: "source_stalled", min_gap_min: 10 }], reason: "only stalls matter" }, AGENT);
-  await hub.advanceTo(MON(10, 30));
+  await hub.event(phone, "sense.calendar", { kind: "upcoming", event: { id: "e", title: "t", start: hub.t, end: hub.t + 1 } });
   await hub.event(phone, "sense.source", { source: "watch", state: "stale", ts: hub.t, stale_hours: 30, summary: "x" });
-  assert.equal(events().length, 2);
-  await hub.event(phone, "sense.geofence", { name: "Home", transition: "enter", ts: hub.t });        // no longer watched
-  assert.equal(events().length, 2);
+  assert.equal(pulseWakes(hub).length, 1);                    // only the first card, at start
   const before = hub.wakes().length;
   await hub.event("service:widgets", "widget.action", { card: "c1", action: "feedback", owner: "agent:main", title: "t", context: { feedback: "useful" } });
   assert.equal(hub.wakes().length, before);
   const history = (((await hub.send("service:pulse", "pulse.history", { limit: 100 })) as any).result.data.entries as any[]);
   assert.ok(history.some((e) => e.kind === "feedback" && e.feedback === "useful"));
+  assert.deepEqual((((await hub.send("service:pulse", "pulse.get")) as any).result.data.events), undefined);
+  assert.equal(await refused(hub, "pulse.set", { events: [{ event: "geofence_exit" }], reason: "x" }), "bad_request");
   assert.deepEqual(hub.invalid, []);
 });

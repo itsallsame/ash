@@ -134,7 +134,7 @@ export function newHub(options: { ledger?: Ledger; t?: number; budget?: number; 
     hub.agentsService,
     stub("service:admin", "service", {
       status: () => ({ now: hub.t, paused: hub.paused }),
-      "settings.get": (body) => Object.fromEntries((body.keys as string[]).filter((k) => k in hub.settings).map((k) => [k, hub.settings[k]])),
+      "settings.get": (body) => ({ settings: Object.fromEntries((body.keys as string[]).filter((k) => k in hub.settings).map((k) => [k, hub.settings[k]])) }),
     }, now),
     stub("service:senses", "service", { daily: () => hub.sensesDaily }, now),
     stub("service:widgets", "service", { "widget.list": () => ({ widgets: Array.from({ length: hub.cardWidgets }, (_, i) => ({ id: `w${i}`, type: "card", card: null })), cards: [] }) }, now),
