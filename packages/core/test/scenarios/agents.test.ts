@@ -224,17 +224,18 @@ test("S046: the owner talks to a sub-agent directly; in that turn it may answer 
   assert.equal(textOf(answer), "我是帮手，听到了");
 });
 
-test("HUB-MODULES §2.5: the owner's channels reach the agent's environment (「主人在哪」), and what the owner is looking at follows", async (t) => {
+test("HUB-MODULES §2.5: the owner's channels reach the agent's environment (「主人在哪」), without the owner's attention", async (t) => {
   const s = await startScenario(t);
   s.driver.script((turn) => { turn.say("在"); });
   const owner = await s.human();
   owner.presence({ visible: true });
-  const environmentOf = (match: RegExp) => s.driver.injections.flatMap((i) => i.modules).find((m) => m.id === "environment" && match.test(m.content));
 
   accepted(await owner.say("你好"));
 
-  await eventually(() => environmentOf(/主人在哪：手机 App（本机，正在看）/), "the line in the environment the agent was given");
+  await eventually(() => s.driver.injections.flatMap((i) => i.modules).find((m) => m.id === "environment" && /主人在哪：手机 App（本机）/.test(m.content)), "the line in the environment the agent was given");
+  const before = s.driver.injections.length;
   owner.presence({ visible: false });
   accepted(await owner.say("还在吗"));
-  await eventually(() => environmentOf(/主人在哪：手机 App（本机，不在看）/), "the environment changed with the owner's attention");
+  await eventually(() => s.driver.deliveries.some((d) => d.messages.some((m) => m.text.includes("还在吗"))), "the second message delivered");
+  assert.equal(s.driver.injections.length, before, "looking away is not a change of the environment");
 });

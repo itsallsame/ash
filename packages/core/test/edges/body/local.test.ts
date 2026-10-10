@@ -180,6 +180,14 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
     child.stdout.on("data", (chunk) => { out += chunk; });
     await new Promise((resolve) => child.on("close", resolve));
     assert.equal(out, `${await realpath(join(dir, "ws", "root", "agents", "main"))}|${join(dir, "dsh")}|x`);
+    // `..` stops at the body's root; the runtime is told the machine path of a body path (the container: the path itself).
+    const escaping = native.spawn(["dsh", "-e", "process.stdout.write(process.cwd())"], { cwd: "/root/../../../../../.." });
+    let escaped = "";
+    escaping.stdout.on("data", (chunk) => { escaped += chunk; });
+    await new Promise((resolve) => escaping.on("close", resolve));
+    assert.equal(escaped, await realpath(join(dir, "ws")), "never above the workspace");
+    assert.equal(native.runtimePath("/root/work/../../../../x"), join(dir, "ws", "x"));
+    assert.equal(native.runtimePath("sub"), join(dir, "ws", "root", "work", "sub"));
     // A relative place starts at the work directory, as in the container.
     const relative = native.spawn(["dsh", "-e", "process.stdout.write(process.cwd())"], { cwd: "sub" });
     let where = "";
@@ -199,7 +207,9 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
     assert.deepEqual([run.command, run.args, run.cwd, run.env.A, run.env.ASH_X], ["node", ["server.mjs"], join(launcher.root, "notes"), "1", "y"]);
 
     const proot: ProotConfig = { root: join(dir, "main"), rootfs: join(dir, "main", "ubuntu"), bin: "/nonexistent/proot", loader: "", lib: "" };
-    const contained = createLocalBody({ isolation: { kind: "proot", proot } }).appLauncher()!;
+    const containedBody = createLocalBody({ isolation: { kind: "proot", proot } });
+    assert.equal(containedBody.runtimePath("/root/work"), "/root/work");
+    const contained = containedBody.appLauncher()!;
     assert.equal(contained.root, join(proot.rootfs, "root", "apps"));
     assert.equal(contained.agentRoot, "/root/apps");
     const inside = contained.spawn({ server: { command: "node", args: ["server.mjs"] } } as never, join(contained.root, "notes"), { ASH_X: "y" });

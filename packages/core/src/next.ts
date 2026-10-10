@@ -209,7 +209,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id, lane) => late.agents?.currentTurn(id, lane) ?? null,
     turnActive: (id, turn) => late.agents?.turnActive(id, turn) ?? false });
   const drivers: Record<string, AgentDriverFactory> = {
-    dsh: (report) => createDshDriver({ report, spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), readBlob: (ref) => ledger.blob.get(ref) }),
+    dsh: (report) => createDshDriver({ report, spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), runtimePath: (cwd) => body.runtimePath(cwd), readBlob: (ref) => ledger.blob.get(ref) }),
     ...remote.factories,
     ...opts.drivers,
   };

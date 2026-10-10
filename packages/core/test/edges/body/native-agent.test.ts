@@ -4,7 +4,7 @@
  * isolation, the real DSH driver and a stand-in for the DSH program (the ACP agent of the driver tests).
  */
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,5 +41,9 @@ test("native isolation: agent:main starts from the shipped main.json, and its AG
   await eventually(() => existsSync(baseline) && existsSync(log), "agent:main started: its baseline file and its sessions");
   assert.match(await readFile(baseline, "utf8"), /\S/, "the baseline instructions were written");
   await eventually(async () => (await readFile(log, "utf8")).includes('"new"'), "a session opened");
+  // DSH is told the machine's path of its place: it reads AGENTS.md and runs its shell there.
+  const sessions = (await readFile(log, "utf8")).trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.new);
+  const place = await realpath(join(workspace, "root", "work"));
+  assert.ok(sessions.length > 0 && sessions.every((e) => e.cwd === join(workspace, "root", "work") || e.cwd === place), JSON.stringify(sessions));
   assert.ok(!existsSync(join(workspace, "AGENTS.md")), "nothing was written outside the body's own place");
 });

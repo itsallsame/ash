@@ -3,7 +3,7 @@
  * It connects as the owner does on a phone: the hub's local token and a signed challenge, nothing else.
  */
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +22,7 @@ test.after(() => rmSync(work, { recursive: true, force: true }));
 interface Run { code: number | null; out: string; err: string }
 
 /** Runs the bundled tool. The hub lives in this process, so the child must not block it: spawn, never execSync. */
-function owner(s: Scenario, args: string[], o: { stdin?: string; token?: string; state?: string; withToken?: boolean; bare?: boolean } = {}): Promise<Run> {
+function owner(s: Scenario, args: string[], o: { stdin?: string; token?: string; state?: string; withToken?: boolean; bare?: boolean; spawned?: (child: ChildProcess, out: () => string) => void } = {}): Promise<Run> {
   const tokenFile = join(work, `token-${Math.random().toString(36).slice(2)}`);
   writeFileSync(tokenFile, `${o.token ?? s.token()}\n`, { mode: 0o600 });
   const base = o.bare
@@ -35,6 +35,7 @@ function owner(s: Scenario, args: string[], o: { stdin?: string; token?: string;
     child.stderr.on("data", (d) => (err += d));
     child.on("close", (code) => resolve({ code, out, err }));
     child.stdin.end(o.stdin ?? "");
+    o.spawned?.(child, () => out);
   });
 }
 
@@ -139,11 +140,14 @@ test("watch prints what arrives while it listens; answer picks an option on a ca
   });
   const human = await s.human();
 
-  const watching = owner(s, ["watch", "4"]);
-  await eventually(() => human.client.state === "ready", "the test's own channel");
-  await new Promise((r) => setTimeout(r, 1500)); // the tool connects after it is spawned
+  // `--history 1` prints the last message already there as soon as the tool is connected and has its first page: that is "listening".
+  let watcher!: { child: ChildProcess; out: () => string };
+  const watching = owner(s, ["watch", "0", "--history", "1"], { spawned: (child, out) => { watcher = { child, out }; } });
+  await eventually(() => watcher?.out().includes(" history"), "the watching tool connected");
   await human.say("帮我选");
   const card = await human.seen(toOwner("show", MAIN), "the option card");
+  await eventually(() => watcher.out().includes(card.id), "the card in what the tool prints");
+  watcher.child.kill("SIGTERM");
   const run = await watching;
 
   assert.equal(run.code, 0, run.err + run.out);

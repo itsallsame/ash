@@ -32,13 +32,16 @@ export interface ModulesDeps {
   channels?(): OwnerChannel[];
 }
 
-/** One channel of the owner: which kind it is, what it is called, whether it is on this machine, whether the owner is looking at it. */
-export interface OwnerChannel { client: string; kind: "app" | "web" | "im"; label: string; local: boolean; visible: boolean }
+/**
+ * One channel of the owner: which kind it is, what it is called, whether it is on this machine. Whether the owner is looking
+ * at it is not here: that flips all the time and is only for delivery, not for what an agent is told (SPEC-08 §2.3).
+ */
+export interface OwnerChannel { client: string; kind: "app" | "web" | "im"; label: string; local: boolean }
 
-/** 「手机 App（本机，正在看）」「网页 Mac Chrome（远程，不在看）」 */
+/** 「手机 App（本机）」「网页 Mac Chrome（远程）」 */
 function channelLine(c: OwnerChannel): string {
   const name = c.kind === "app" ? "手机 App" : c.kind === "web" ? (c.label.startsWith("网页") ? c.label : `网页 ${c.label}`) : c.label;
-  return `${name}（${c.local ? "本机" : "远程"}，${c.visible ? "正在看" : "不在看"}）`;
+  return `${name}（${c.local ? "本机" : "远程"}）`;
 }
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
