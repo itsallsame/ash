@@ -41,6 +41,8 @@ export interface AgentsDeps {
   tools(agent: string, lanes: string[], allowed?: string[]): { mcp_url: string; tokens: Record<string, string>; allowed: string[] };
   /** The agent's tokens stop working (it was stopped, removed, or its process ended). */
   revokeTools?(agent: string): void;
+  /** The agent's process is up and the agent is registered (after every start, also after a crash): the tool surface tells it what it owes. */
+  started?(agent: string): void;
   rules?(decl: AgentDecl): string | Promise<string>;
   channels?(): string[];
   now?(): number;
@@ -209,6 +211,7 @@ export class AgentManager {
     const hash = staticHash(statics);
     this.runs.patch(id, (spec) => { for (const key of Object.keys(lanes)) if (!spec.sessions[key] || !spec.static_hash[key]) spec.static_hash[key] ??= hash; });
     this.deps.registry.add(this.memberFor(id));
+    this.deps.started?.(id);
     this.interruptedNotice(id, why);
     await this.syncCredentials(live);
     for (const lane of live.lanes.values()) this.bg(this.drain(live, lane), `drain ${id}/${lane.key}`);

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import type { Message } from "../../../../sdk/src/message";
 import { wordsOf } from "../../../../sdk/src/words";
 import { createAgents } from "../../../src/edges/agents";
-import { createToolsEdge } from "../../../src/edges/tools";
+import { createToolsEdge, type ToolsEdge } from "../../../src/edges/tools";
 import { fake, owner, word, world } from "../../kernel/router/world";
 import { FakeDriver, MAIN_TEMPLATE, settle, waitFor } from "../agents/helpers";
 import { deferred, fakeRegistry, MAIN, startRig, type Rig, type ToolClient } from "./helpers";
@@ -24,12 +24,14 @@ async function setup() {
   w.registry.add(fake(DEVICE, [word(DEVICE, "message.send", { effect: "act", risk: "outward" })]));
   const drivers: FakeDriver[] = [];
   const logs: unknown[][] = [];
+  const late: { edge?: ToolsEdge } = {};
   let ids = 0;
   const agents = createAgents({
     router: w.router, registry: w.registry, ledger: w.ledger, vault: { use: () => null },
     drivers: { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
     templates: { read: (name) => (name === "main" ? MAIN_TEMPLATE : null) },
     tools: (agent, lanes) => ({ mcp_url: "http://hub/mcp", tokens: Object.fromEntries(lanes.map((l) => [l, `tok-${agent}-${l}`])), allowed: ["*"] }),
+    started: (agent) => late.edge?.catchUp(agent),
     rules: () => "rules", now: () => Date.now(), newId: () => `n${++ids}`, log: (...a) => logs.push(a),
     timers: { every: () => () => {}, after: () => () => {} },
   });
@@ -38,11 +40,12 @@ async function setup() {
   const driver = drivers[0]!;
   const wakes: Message[] = [];
   w.router.subscribe({ to: MAIN, word: "wake" }, (m) => wakes.push(m));
-  return { w, agents, driver, slow, wakes, logs };
+  return { w, agents, driver, slow, wakes, logs, late };
 }
 type Setup = Awaited<ReturnType<typeof setup>>;
 
-const rigOver = (s: Setup, extra: Record<string, unknown> = {}) => startRig({
+const rigOver = async (s: Setup, extra: Record<string, unknown> = {}) => { const rig = await startRigOver(s, extra); s.late.edge = rig.edge; return rig; };
+const startRigOver = (s: Setup, extra: Record<string, unknown> = {}) => startRig({
   router: s.w.router as never, registry: s.w.registry as never, ledger: s.w.ledger,
   agentPolicy: (id) => s.agents.policyOf(id), currentTurn: (id, lane) => s.agents.currentTurn(id, lane), turnActive: (id, turn) => s.agents.turnActive(id, turn),
   log: (...a: unknown[]) => s.logs.push(a), ...extra,
@@ -208,7 +211,7 @@ test("a result over 60000 characters is an attachment: the wake carries a summar
   assert.match(outcome.note, new RegExp(id));
 });
 
-test("the agent is deleted or stopped: no wake, one line in the log", async () => {
+test("the agent is deleted: no wake, one line in the log; stopped: the wake is tried, stays owed, and goes out when the agent is up again", async () => {
   const deleted = await setup();
   let gone = false;
   const rig = await rigOver(deleted, { agentPolicy: (id: string) => (gone ? null : deleted.agents.policyOf(id)) });
@@ -221,15 +224,94 @@ test("the agent is deleted or stopped: no wake, one line in the log", async () =
   assert.equal(backWakes(deleted).length, 0);
   assert.equal(deleted.logs.filter((l) => String(l[0]).includes("no agent to wake")).length, 1);
 
+  // stopped: the wake cannot be sent now, and is sent once when the agent is up again
   const stopped = await setup();
   const rig2 = await rigOver(stopped);
   await startTurn(stopped);
-  await slowReceipt(await rig2.client());
+  const id = await slowReceipt(await rig2.client());
   await endTurn(stopped);
   await stopped.agents.manager.stopAgent(MAIN, "test");
   stopped.slow[0]!.resolve({ data: { n: 4 } });
   await tick();
   assert.equal(stopped.logs.filter((l) => String(l[0]).includes("could not wake")).length, 1, JSON.stringify(stopped.logs));
+  assert.equal(backWakes(stopped).length, 0, "the router refused it: the agent is not there");
+  assert.equal((stopped.w.ledger.db().prepare("SELECT woken FROM agent_jobs WHERE id=?").get(id) as any).woken, 0, "still owed");
+  await stopped.agents.manager.restartAgent(MAIN);
+  await waitFor(() => backWakes(stopped).length === 1, "the wake after the agent started again");
+  await tick();
+  assert.equal(backWakes(stopped).length, 1, "and no more");
+  assert.equal((backWakes(stopped)[0]!.body as any).context.request_id, id);
+  assert.equal((stopped.w.ledger.db().prepare("SELECT woken FROM agent_jobs WHERE id=?").get(id) as any).woken, 1);
+});
+
+test("an answer that came in a turn which never reached turn.ended (the agent process died) is told when the agent is up again, once", async () => {
+  const s = await setup();
+  const rig = await rigOver(s);
+  await startTurn(s);
+  const id = await slowReceipt(await rig.client());
+  s.slow[0]!.resolve({ data: { n: 6 } });
+  await tick();
+  assert.equal(backWakes(s).length, 0, "its turn is still running");
+  s.driver.die(MAIN); // the process ends: only `ended` is reported, never turn.ended
+  await waitFor(() => backWakes(s).length === 1, "the wake after the restart of the process");
+  await tick();
+  assert.equal(backWakes(s).length, 1, "once");
+  assert.equal((backWakes(s)[0]!.body as any).context.request_id, id);
+  assert.deepEqual((backWakes(s)[0]!.body as any).context.outcome, { ok: true, result: { n: 6 } });
+});
+
+test("an answer that came in a turn, and the hub restarts before the turn ends, is told once at recover", async () => {
+  const s = await setup();
+  const first = await rigOver(s);
+  await startTurn(s);
+  const id = await slowReceipt(await first.client());
+  s.slow[0]!.resolve({ data: { n: 5 } });
+  await tick();
+  first.edge.close();
+  // a new process: the agents and their turns are new too, so nothing of the old turn is running
+  const again = createToolsEdge({ router: s.w.router, registry: fakeRegistry(), ledger: s.w.ledger, agentPolicy: (a) => s.agents.policyOf(a), currentTurn: () => null, turnActive: () => false, log: (...a) => s.logs.push(a) });
+  assert.equal(backWakes(s).length, 0);
+  again.recover();
+  await waitFor(() => backWakes(s).length === 1, "the wake");
+  again.recover();
+  again.catchUp(MAIN);
+  await tick();
+  assert.equal(backWakes(s).length, 1, "once");
+  const row = s.w.ledger.db().prepare("SELECT state, taken, woken FROM agent_jobs WHERE id=?").get(id) as any;
+  assert.deepEqual({ ...row }, { state: "done", taken: 0, woken: 1 });
+  again.close();
+});
+
+test("await_result in a later turn for a call of an earlier turn: the answer that comes while it waits is handed over, not also told", async () => {
+  const s = await setup();
+  const rig = await rigOver(s);
+  await startTurn(s);
+  const client = await rig.client();
+  const id = await slowReceipt(client);
+  await endTurn(s);
+  await startTurn(s); // a new front turn
+  const pending = client.call("await_result", { request_id: id });
+  await tick(50);
+  s.slow[0]!.resolve({ data: { n: 9 } });
+  const got = await pending;
+  assert.deepEqual(got.data, { n: 9 });
+  await tick();
+  assert.equal(backWakes(s).length, 0, "the agent has the answer");
+  assert.deepEqual({ ...(s.w.ledger.db().prepare("SELECT taken, woken FROM agent_jobs WHERE id=?").get(id) as any) }, { taken: 1, woken: 0 });
+});
+
+test("an await_result that gives up before the answer comes does not hold the wake back", async () => {
+  const s = await setup();
+  const rig = await rigOver(s);
+  await startTurn(s);
+  const client = await rig.client();
+  const id = await slowReceipt(client);
+  await endTurn(s);
+  await startTurn(s);
+  const waited = await client.call("await_result", { request_id: id, timeout_ms: 40 });
+  assert.equal(waited.data.status, "accepted", "still running");
+  s.slow[0]!.resolve({ data: { n: 1 } });
+  await waitFor(() => backWakes(s).length === 1, "the wake");
 });
 
 test("after a restart the calls that were running are told once as result_unknown", async () => {

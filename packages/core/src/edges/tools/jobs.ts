@@ -80,14 +80,22 @@ export class JobTable {
     return Number(this.db.prepare("UPDATE agent_jobs SET woken=1 WHERE id=? AND woken=0 AND taken=0 AND state!='running'").run(id).changes) === 1;
   }
 
+  /** The wake could not be sent: it is owed again (the next scan tries it). */
+  unclaim(id: string): void {
+    this.db.prepare("UPDATE agent_jobs SET woken=0 WHERE id=?").run(id);
+  }
+
+  /** Every settled call that still owes a wake, or one agent's. The caller decides by the turn whether it is due. */
+  owed(agent?: string): string[] {
+    const rows = agent === undefined
+      ? this.db.prepare("SELECT id FROM agent_jobs WHERE state!='running' AND woken=0 AND taken=0 ORDER BY at").all()
+      : this.db.prepare("SELECT id FROM agent_jobs WHERE agent=? AND state!='running' AND woken=0 AND taken=0 ORDER BY at").all(agent);
+    return (rows as { id: string }[]).map((r) => r.id);
+  }
+
   /** Settled calls of one turn that still owe a wake (checked when the turn ends). */
   owing(agent: string, turn: string): string[] {
     return (this.db.prepare("SELECT id FROM agent_jobs WHERE agent=? AND turn=? AND state!='running' AND woken=0 AND taken=0 ORDER BY at").all(agent, turn) as { id: string }[]).map((r) => r.id);
-  }
-
-  /** Calls the last process left running: their agents are told once the hub is up. */
-  unknown(): string[] {
-    return (this.db.prepare("SELECT id FROM agent_jobs WHERE state='interrupted' AND woken=0 AND taken=0 ORDER BY at").all() as { id: string }[]).map((r) => r.id);
   }
 
   /** One agent's receipt; nobody else's. */

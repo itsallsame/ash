@@ -204,6 +204,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     templatesDir: join(SKILLS, "agents"),
     tools: (agent, lanes, allowed) => ({ mcp_url: `${url}/mcp`, tokens: tools.issueTokens(agent, lanes), allowed: allowed ?? [...TOOL_NAMES] }),
     revokeTools: (agent) => tools.revoke(agent),
+    started: (agent) => tools.catchUp(agent),
   });
   const launcher = body.appLauncher();
   const apps = late.apps = createApps({

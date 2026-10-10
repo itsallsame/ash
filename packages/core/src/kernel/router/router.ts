@@ -36,7 +36,6 @@ export const waitingOwner = (pendingId: string, expiresAt: number): Reply => ({ 
 
 const READ_TIMEOUT_MS = 60_000;
 const OTHER_TIMEOUT_MS = 600_000;
-/** The caller of the messages the router itself sends (a restart note). */
 const OUTGOING_KEYS = new Set(["to", "kind", "word", "body", "reply_to", "thread"]);
 
 const fail = (error: ErrorBody): Reply => ({ ok: false, error });

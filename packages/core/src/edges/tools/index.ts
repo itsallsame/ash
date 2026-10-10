@@ -70,10 +70,12 @@ export interface ToolsEdge {
   /** All the agent's tokens stop working. */
   revoke(agentId: string): void;
   /**
-   * Once at start, after `router.recover()`: the calls the last process left running answer `result_unknown`; tell their
-   * agents once (a wake, reason `result`).
+   * Once at start, after `router.recover()`: the calls the last process left running answer `result_unknown`, and answers
+   * that came in a turn the restart cut off were never told; tell their agents once (a wake, reason `result`).
    */
   recover(): void;
+  /** Call when the agent is up (registered) after any start of its process: what is owed to it, because its turn ended without `turn.ended` (a crash, a restart) or a wake could not be sent, is told now. */
+  catchUp(agentId: string): void;
   /** Stop every running call and forget all tokens. */
   close(): void;
 }
@@ -102,6 +104,8 @@ interface Job {
   done: Promise<Shaped>;
   /** In the table (a receipt was given, or the gate parked the call). */
   persisted: boolean;
+  /** How many await_result calls are waiting for this one now: they will hand the answer over, so no wake yet. */
+  awaiting: number;
 }
 
 interface Dispatch {
@@ -210,17 +214,18 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
   function wakeAgent(row: JobRow): void {
     const outcome = row.outcome ?? failure("result_unknown", "Ash restarted while this call was running; whether it was done is not known.");
     if (!options.agentPolicy(row.agent)) { options.log?.("tool surface: no agent to wake for the result", row.agent, row.id); return; }
+    // A wake that could not be sent (the agent is stopped, restarting...) is owed again: the next start of the agent, or of the hub, tries it.
+    const unsent = (why: unknown) => { options.log?.("tool surface: could not wake", row.agent, "for", row.id, why); if (!closed) table.unclaim(row.id); };
     const body = { lane: "back", reason: "result", context: { request_id: row.id, member: row.member, word: row.word, label: row.label, outcome: wakeOutcome(outcome, row.id) } };
     router.send({ to: row.agent, kind: "request", word: "wake", body }, TOOLS_CALLER)
-      .then((reply) => { if (!reply.ok) options.log?.("tool surface: could not wake", row.agent, "for", row.id, reply.error.code); },
-        (error) => options.log?.("tool surface: could not wake", row.agent, "for", row.id, error));
+      .then((reply) => { if (!reply.ok) unsent(reply.error.code); }, unsent);
   }
 
   /** Wake the agent for this call if it is owed: settled, not fetched, not told yet, and its turn is over. */
   function wakeIfDue(id: string): void {
     if (closed) return;
     const row = table.get(id);
-    if (!row || row.state === "running" || row.taken || row.woken || turnActive(row.agent, row.turn)) return;
+    if (!row || row.state === "running" || row.taken || row.woken || turnActive(row.agent, row.turn) || live.get(id)?.awaiting) return;
     if (table.claimWake(id)) wakeAgent(table.get(id)!);
   }
 
@@ -243,7 +248,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
   function start(d: Dispatch): Job {
     const id = `r_${randomBytes(9).toString("base64url")}`;
     const controller = new AbortController();
-    const job: Job = { id, agent: d.agent, member: d.to, word: d.word, label: d.label, at: now(), mode: d.mode, controller, shaped: null, done: undefined as unknown as Promise<Shaped>, persisted: false,
+    const job: Job = { id, agent: d.agent, member: d.to, word: d.word, label: d.label, at: now(), mode: d.mode, controller, shaped: null, done: undefined as unknown as Promise<Shaped>, persisted: false, awaiting: 0,
       ...(typeof d.body.expires_at === "number" ? { expires_at: d.body.expires_at } : {}) };
     const caller: Caller = { member: d.agent, via: "agent", local: true, turn: d.turn };
     const opts = { signal: controller.signal, ...(d.approval ? { approval: d.approval } : {}) };
@@ -284,7 +289,9 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     const job = live.get(id);
     if (job && job.agent === agent) {
       if (!job.shaped) {
-        await within(Promise.race([job.done, new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))]), timeoutMs);
+        job.awaiting++;
+        try { await within(Promise.race([job.done, new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))]), timeoutMs); }
+        finally { job.awaiting--; }
         if (!job.shaped) return plain(receiptData(job));
       }
       table.take(id);
@@ -433,7 +440,11 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     issueTokens,
     revoke,
     recover() {
-      for (const id of table.unknown()) wakeIfDue(id);
+      // Whatever is owed, from any turn: a turn the last process was in is not running now.
+      for (const id of table.owed()) wakeIfDue(id);
+    },
+    catchUp(agentId) {
+      for (const id of table.owed(agentId)) wakeIfDue(id);
     },
     close() {
       closed = true;
