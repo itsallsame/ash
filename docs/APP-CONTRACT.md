@@ -19,7 +19,7 @@
 
 | 步骤 | 能力 | 说明 |
 |---|---|---|
-| 读契约 | `apps.contract {}` | 返回这份文档全文、`app.json` 的 JSON Schema、最小例子 hello 的全部文件。容器里也有同样的文件：`/root/apps/APP-CONTRACT.md`、`/root/apps/_examples/hello/` |
+| 读契约 | `apps.contract {}` | 返回这份文档全文、`app.json` 的 JSON Schema、最小例子 hello 的全部文件。容器里也有这份文档：`/root/apps/APP-CONTRACT.md` |
 | 生成骨架 | `apps.scaffold {id, name, summary?, role?, surfaces?, tools?}` | 在 `/root/apps/<id>/` 写出一个能直接运行的应用：一张能用的清单（数据在 `data/`，工具 `<id>.list / add / done / remove`），第一页列出清单、每条能勾选做完/没做完。`tools` 里另起名字的工具先回一句占位话。已有 `app.json` 的文件夹不会被覆盖 |
 | 改 | 直接改文件 | `/root/apps/<id>/` 对你可写：`server.mjs` 里的工具，`ui/` 下的页面，`app.json` 的 `needs`、`listens`、`wake_events` |
 | 检查 | `apps.validate {id}` 或 `{path: "/root/apps/<文件夹>"}` | 像安装一样检查，再试运行一次服务：返回 `{ok, problems:[{level, where, problem, fix?}], tools, surfaces}`。`level: "error"` 会挡住安装，`"warning"` 不挡 |
@@ -289,7 +289,7 @@
 
 ## 9. 最小例子 hello（一个页面，一个工具）
 
-完整文件在 `docs/examples/hello/`，容器里在 `/root/apps/_examples/hello/`（`apps.contract` 的 `example.files` 也有）。它用的是 `apps.scaffold` 生成的服务框架（协议、页面拼装、数据文件夹、回 Ash 的 `ash()`），只把清单和卡片换成了一个工具 `hello.greet`、一个页面。要试：把文件夹复制成 `/root/apps/hello/`，`apps.validate {id: "hello"}`，`apps.install {id: "hello"}`。
+完整文件在 `docs/examples/hello/`，`apps.contract` 的 `example.files` 里也有（文件名到内容；容器里没有它的文件夹）。它用的是 `apps.scaffold` 生成的服务框架（协议、页面拼装、数据文件夹、回 Ash 的 `ash()`），只把清单和卡片换成了一个工具 `hello.greet`、一个页面。要试：用 `apps.scaffold {id: "hello"}` 生成同样的框架（或把 `example.files` 的文件照写进 `/root/apps/hello/`），`apps.validate {id: "hello"}`，`apps.install {id: "hello"}`。
 
 ```text
 hello/

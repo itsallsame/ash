@@ -4,8 +4,9 @@
 //   registry.add(apps.service);
 //   await apps.start();                 // endpoint for the apps, seed the hub's organs, start what is installed
 //   // on lifecycle.stop:  await apps.stopAll(event.deadline);
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { syncBuiltinApps, type BuiltinKept } from "./builtin";
 import type { Member } from "../../../../sdk/src/word";
 import { AppRuntime, type AppRuntimeOptions } from "./runtime";
 import { createAppsService } from "./words";
@@ -13,6 +14,7 @@ import { createAppsService } from "./words";
 export { AppRuntime, hostLauncher, type AppInfo, type AppLauncher, type AppOrigin, type AppReport, type AppRuntimeOptions, type AppSpawn } from "./runtime";
 export { AppBridge, APP_BRIDGE_TOOLS, ownerText, type BridgeResult, type RecentFacts } from "./bridge";
 export { AppGrants, needKey, type AppGrant } from "./store";
+export { BUILTIN_MARKER, RELEASE_DIR, type BuiltinKept, type BuiltinMarker } from "./builtin";
 export { createAppsService, APPS_ID } from "./words";
 
 export interface Apps {
@@ -31,13 +33,13 @@ export function createApps(options: AppRuntimeOptions): Apps {
 
 /**
  * The hub's own apps, built in with the release: the organs (ash-skills/organs/<id>) and the first-party apps (packages/apps,
- * bundled into the payload). Each is copied into the apps folder the first time and then left alone, because after that the
- * agent maintains it. Returns their ids, for `builtinApps` (installed without a card: the release decides, not a card).
+ * bundled into the payload). Each is copied into the apps folder the first time, with a `.builtin.json` recording what the
+ * release brought. A newer release replaces a folder the agent never changed; one it did change is kept, and appended to
+ * `kept` (the runtime tells the main agent). Returns their ids, for `builtinApps` (installed without a card: the release
+ * decides, not a card). See ./builtin.ts.
  */
-export function installBuiltinOrgans(source: string, root: string): string[] {
-  const ids = existsSync(source) ? readdirSync(source, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [];
-  for (const id of ids) if (!existsSync(join(root, id))) cpSync(join(source, id), join(root, id), { recursive: true });
-  return ids;
+export function installBuiltinOrgans(source: string, root: string, kept: BuiltinKept[] = [], log?: (...args: unknown[]) => void): string[] {
+  return syncBuiltinApps(source, root, kept, log);
 }
 
 /** The app contract as a file in the apps folder (`apps.contract` returns the same text and names this path). Rewritten only when it differs. */

@@ -44,7 +44,7 @@ export function createAppsService(runtime: AppRuntime): Member {
       case "apps.contract": {
         const { doc, docPath } = runtime.contract();
         const example = scaffoldFiles({ id: "hello", name: "Hello", summary: "A small example app: a list with a page and four tools.", publisher: "ash" });
-        return { data: { contract: APP_CONTRACT, doc, doc_path: docPath, schema: APP_SCHEMA, example: { path: runtime.agentPath("_examples/hello"), files: example } } };
+        return { data: { contract: APP_CONTRACT, doc, doc_path: docPath, schema: APP_SCHEMA, example: { files: example } } };
       }
       case "apps.surface": {
         const surface = text(body, "surface");
