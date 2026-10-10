@@ -30,12 +30,16 @@ test("no token, a wrong token, a token that was replaced or revoked, and an Orig
   assert.equal(origin.status, 403, "a browser page may not talk here even with the token");
   assert.equal(JSON.parse(origin.body).error.code, "forbidden");
 
-  const fresh = rig.edge.issueToken(MAIN);
+  const issued = rig.edge.issueTokens(MAIN, ["front", "back"]);
+  const fresh = issued.front!;
   assert.notEqual(fresh, good);
+  assert.notEqual(issued.back, fresh, "each lane has its own token");
   assert.equal((await rawPost(rig.url, { authorization: `Bearer ${good}` })).status, 401, "the old token stopped when a new one was issued");
+  assert.equal((await rawPost(rig.url, { authorization: `Bearer ${issued.back}` })).status, 200);
   assert.equal((await rawPost(rig.url, { authorization: `Bearer ${fresh}` })).status, 200);
   rig.edge.revoke(MAIN);
   assert.equal((await rawPost(rig.url, { authorization: `Bearer ${fresh}` })).status, 401, "revoked");
+  assert.equal((await rawPost(rig.url, { authorization: `Bearer ${issued.back}` })).status, 401, "revoked: every lane of the agent");
   assert.equal((await rawPost(rig.url, { authorization: `Bearer ${fresh}` }, "not json")).status, 401);
 });
 
@@ -460,4 +464,22 @@ test("a sync tool that does not answer within the longest wait gives a receipt t
   assert.equal(res.data.status, "accepted");
   gate.resolve(ok({ timers: [] }));
   assert.deepEqual((await tools.call("await_result", { request_id: res.data.request_id })).data, { timers: [] });
+});
+
+test("the token also decides the lane: a call is in the turn of the lane whose token it carries, and a lane with no turn gets none", async () => {
+  const rig = await startRig();
+  const front = await rig.client(MAIN, "front"), back = await rig.client(MAIN, "back");
+  rig.turns.set(MAIN, "turn-front");
+  rig.turns.set(`${MAIN}/back`, "turn-back");
+  await front.call("agent_list");
+  await back.call("agent_list");
+  assert.deepEqual(rig.router.sent.map((s) => s.caller.turn), ["turn-front", "turn-back"]);
+
+  rig.turns.set(`${MAIN}/back`, null);
+  const refused = await back.call("agent_list");
+  assert.equal(refused.isError, true);
+  assert.equal(refused.data.error.code, "forbidden");
+  assert.equal(rig.router.sent.length, 2, "the back lane was not given the front lane's turn");
+  // the receipt tools answer without a turn, for either lane of the same agent
+  assert.equal((await back.call("list_pending")).isError, false);
 });

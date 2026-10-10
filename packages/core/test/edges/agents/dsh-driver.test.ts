@@ -39,7 +39,7 @@ function setup(env: Record<string, string> = {}) {
 
 const module_ = (id: PromptModule["id"], body: string): PromptModule => ({ id, version: body.slice(0, 6), content: `[${id}] ${body}` });
 const spec = (over: Partial<AgentStartSpec> = {}): AgentStartSpec => ({
-  runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "/root/work" }, tools: { mcp_url: "http://127.0.0.1:1/mcp", token: "tok", allowed: [] },
+  runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "/root/work" }, tools: { mcp_url: "http://127.0.0.1:1/mcp", tokens: { front: "tok-front", back: "tok-back" }, allowed: [] },
   modules: { static: [module_("identity", "I am Ash"), module_("rules", "be kind")] }, lanes: ["front", "back"], sessions: {}, ...over,
 });
 const msg = (text: string, over: Partial<DriverMessage> = {}): DriverMessage => ({ id: `m_${text.slice(0, 6)}`, from: "person:owner", word: "say", text, lane: "front", at: 1_700_000_000_000, ...over });
@@ -52,7 +52,8 @@ test("start: baseline file, a process, one session per lane with the tool surfac
   const news = t.log().filter((l) => l.new);
   assert.equal(news.length, 2);
   assert.equal(news[0]!.cwd, "/root/work");
-  assert.deepEqual(news[0]!.mcp, [{ type: "http", name: "ash", url: "http://127.0.0.1:1/mcp", headers: [{ name: "authorization", value: "Bearer tok" }] }]);
+  assert.deepEqual(news[0]!.mcp, [{ type: "http", name: "ash", url: "http://127.0.0.1:1/mcp", headers: [{ name: "authorization", value: "Bearer tok-front" }] }]);
+  assert.deepEqual(news[1]!.mcp, [{ type: "http", name: "ash", url: "http://127.0.0.1:1/mcp", headers: [{ name: "authorization", value: "Bearer tok-back" }] }], "each lane's session carries its own token");
   const handles = t.of("handle.updated") as Extract<AgentEvent, { event: "handle.updated" }>[];
   assert.deepEqual(handles.map((h) => h.key), ["front", "back"]);
   assert.equal(t.driver.session.get("agent:main", "front"), handles[0]!.handle);

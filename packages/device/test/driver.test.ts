@@ -21,7 +21,7 @@ const dir = () => mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "ash-driver-"));
 const spec = (over: Partial<AgentStartSpec> = {}): AgentStartSpec => ({
   runtime: { kind: "codex", model: "m1", effort: "low" },
   native: { on: "device", cwd: "agents/main", env: { A: "1" } },
-  tools: { mcp_url: "http://hub/mcp", token: "tok", allowed: [] },
+  tools: { mcp_url: "http://hub/mcp", tokens: { front: "tok", back: "tok" }, allowed: [] },
   modules: { static: [{ id: "identity", version: "v1", content: "You are Ash." }, { id: "rules", version: "v1", content: "Be brief." }] },
   lanes: ["front", "back"], sessions: {}, ...over,
 });

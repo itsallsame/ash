@@ -77,8 +77,12 @@ export interface AgentStartSpec {
   runtime: { kind: string; model?: string; effort?: string };
   /** Where the agent lives (SPEC-08 §2.2). `cwd` is a path on that body. */
   native?: { on: string; cwd?: string; env?: Record<string, string> };
-  /** The tool surface of this agent: the address on `<hub url>/mcp` and its token. `allowed` is the tool list (already narrowed by delegation). */
-  tools: { mcp_url: string; token: string; allowed: string[] };
+  /**
+   * The tool surface of this agent: the address on `<hub url>/mcp` and one token per lane. A lane's session sends only its
+   * own token, and the hub takes the lane (so the turn) from the token: nothing the agent says can change it.
+   * `allowed` is the tool list (already narrowed by delegation).
+   */
+  tools: { mcp_url: string; tokens: Record<string, string>; allowed: string[] };
   /** The static modules (identity, rules) the session opens with. */
   modules: { static: PromptModule[] };
   /** The session keys (lanes) to hold open. */

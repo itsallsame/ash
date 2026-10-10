@@ -37,8 +37,8 @@ export interface AgentsDeps {
   drivers: Record<string, AgentDriverFactory>;
   /** `ash-skills/agents`: the `main` template that plants the first declaration, and the templates for `spawn`. */
   templates: Templates;
-  /** The agent's own address and token on the tool surface; `allowed` is its declared tool list (already narrowed by delegation). */
-  tools(agent: string, allowed?: string[]): { mcp_url: string; token: string; allowed: string[] };
+  /** The agent's own address on the tool surface and one token for each of its lanes (a new set on every call; the one before stops working); `allowed` is its declared tool list (already narrowed by delegation). */
+  tools(agent: string, lanes: string[], allowed?: string[]): { mcp_url: string; tokens: Record<string, string>; allowed: string[] };
   rules?(decl: AgentDecl): string | Promise<string>;
   channels?(): string[];
   now?(): number;
@@ -192,7 +192,7 @@ export class AgentManager {
     try {
       statics = await this.modules.static(decl);
       await live.driver.start(id, {
-        runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, decl.tools),
+        runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, Object.keys(lanes), decl.tools),
         modules: { static: statics }, lanes: Object.keys(lanes), sessions: run.spec.sessions,
       });
     } catch (error) {

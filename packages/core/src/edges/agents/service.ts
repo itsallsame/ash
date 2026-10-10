@@ -235,6 +235,8 @@ export function createAgentsService(manager: AgentManager): Member {
   async function answer(body: Record<string, any>, ctx: HandleContext): Promise<WordResult> {
     const row = manager.inbox.get(body.in_reply_to);
     if (!row || row.agent !== ctx.caller.member) throw new WordError("not_found", "no such message was delivered to you");
+    // The turn that took the message is the one that may answer it: not another lane's turn of the same agent.
+    if (ctx.caller.turn && row.turn && ctx.caller.turn !== row.turn) throw new WordError("forbidden", "an answer comes in the turn that took the question");
     if (manager.settle(row.id, String(body.text))) return data({ accepted: true });
     // News (tell): what the agent says back goes to the sender as a message of its own.
     if (row.from.startsWith("agent:") && row.from !== row.agent)

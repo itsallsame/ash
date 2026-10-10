@@ -232,7 +232,11 @@ export class Directory {
     const args = f.args && typeof f.args === "object" && !Array.isArray(f.args) ? (f.args as Frame) : {};
     for (const field of spec.fields) if (typeof args[field] !== "string" || !args[field]) return refuse("bad_request", `${tool} needs ${field}`);
     const body = Object.fromEntries(spec.fields.map((field) => [field, args[field]]));
-    const who: Caller = { member: entry.agent, via: "agent", local: false, ...(typeof f.turn === "string" && f.turn ? { turn: f.turn } : {}) };
+    // The computer names the lane and the turn; the hub checks that this lane is in that turn now, from the events it has
+    // seen on this connection. A call is never recorded in, or let speak in, a turn the lane is not in.
+    const turn = typeof f.key === "string" ? entry.turns.get(f.key) : undefined;
+    if (!turn || f.turn !== turn) return refuse("forbidden", "no turn is running for you on that lane; Ash tools work only while you are handling a message or a wake");
+    const who: Caller = { member: entry.agent, via: "agent", local: false, turn };
     const call = { controller: new AbortController(), agent: entry.agent, key: f.key, turn: f.turn, answer };
     computer.outbounds.add(call);
     try {
