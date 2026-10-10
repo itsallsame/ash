@@ -180,7 +180,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
 
   // 6. edges
   const isolation = spec.isolation;
-  const body = late.body = createLocalBody({ isolation });
+  const body = late.body = createLocalBody({ isolation, stateDir: dataDir, ...(spec.network ? { network: spec.network } : {}) });
   const hands = late.hands = new HandRegistry({
     db: ledger.db(), registry, router, now, splitBodyCapabilities,
     bodies: { isBound: (id) => bodies.isBound(id), forget: (id) => bodies.forget(id) },
@@ -231,7 +231,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
     summarize: createSummarizer({ llm }),
   });
-  const hostService = createHostService({ client: host, router, onStop: (deadline) => stop(deadline), log });
+  const hostService = createHostService({ client: host, router, onStop: (deadline) => stop(deadline), onNetwork: (network) => body.setNetwork(network), log });
   link.onChannel("human", human.attach);
   link.mount("/mcp", tools.handler);
   link.mount("/", staticWeb(), { relay: true });

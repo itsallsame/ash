@@ -1,7 +1,7 @@
 {
   "name": "android-node-compat",
   "version": "0.1.0",
-  "description": "Host-side runtime preload that adapts Node on Android (bionic, f2fs + SELinux app sandbox) for unmodified DeepSeek Harness installs.",
+  "description": "Host-side runtime preload that adapts Node on Android (bionic, f2fs + SELinux app sandbox) for the Ash core (ash-core.mjs).",
   "type": "commonjs",
   "main": "./index.cjs",
   "exports": {

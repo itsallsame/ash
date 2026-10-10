@@ -4,6 +4,8 @@ import { chmod } from "node:fs/promises";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import type { HandleContext, Message } from "../../../../sdk/src/message";
 import { lintWords } from "../../../../sdk/src/word";
@@ -280,4 +282,129 @@ test("the DNS servers are not written before the image is installed", async () =
     createLocalBody({ isolation: { kind: "proot", proot } }).spawn(["true"]).on("error", () => {});
     await assert.rejects(readFile(join(dir, "main", "ubuntu", "etc", "resolv.conf"), "utf8"), { code: "ENOENT" });
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+/** A fake proot: records what the body asked for and ends at once with the exit code the test wants. */
+function fakeProot(exitCode = 0, output = "") {
+  const runs: { argv: string[]; env: Record<string, string> | undefined; detached: boolean | undefined }[] = [];
+  const run = (_proot: ProotConfig, argv: string[], opts: { env?: Record<string, string>; detached?: boolean }) => {
+    runs.push({ argv, env: opts.env, detached: opts.detached });
+    const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; stderr: PassThrough; stdin: PassThrough };
+    child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
+    setImmediate(() => { if (output) child.stdout.write(output); child.stdout.end(); child.stderr.end(); setImmediate(() => child.emit("close", exitCode, null)); });
+    return child as never;
+  };
+  return { runs, run };
+}
+async function prootDir(files: string[] = []): Promise<{ dir: string; proot: ProotConfig }> {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-proot-"));
+  const rootfs = join(dir, "main", "ubuntu");
+  await mkdir(join(rootfs, "usr", "bin"), { recursive: true });
+  for (const name of files) await writeFile(join(rootfs, "usr", "bin", name), "");
+  return { dir, proot: { root: join(dir, "main"), rootfs, bin: "/nonexistent/proot", loader: "", lib: "" } };
+}
+const NO_PROXY_LOOPBACK = "127.0.0.1,localhost,::1";
+
+test("the host's proxy reaches the runtime, workspace commands and app servers in the container; NO_PROXY always keeps loopback", async () => {
+  const { dir, proot } = await prootDir();
+  const fake = fakeProot();
+  const body = createLocalBody({
+    isolation: { kind: "proot", proot }, runProot: fake.run,
+    network: { proxy: { http: "http://10.0.2.2:7890", https: "http://10.0.2.2:7891", no_proxy: "*.corp" } },
+  });
+  try {
+    body.spawn(["dsh", "--profile", "acp"], { env: { EXTRA: "1" } });
+    const spawned = fake.runs[0]!;
+    assert.equal(spawned.env!.HTTP_PROXY, "http://10.0.2.2:7890");
+    assert.equal(spawned.env!.http_proxy, "http://10.0.2.2:7890");
+    assert.equal(spawned.env!.HTTPS_PROXY, "http://10.0.2.2:7891");
+    assert.equal(spawned.env!.https_proxy, "http://10.0.2.2:7891");
+    assert.equal(spawned.env!.NO_PROXY, `*.corp,${NO_PROXY_LOOPBACK}`);
+    assert.equal(spawned.env!.no_proxy, `*.corp,${NO_PROXY_LOOPBACK}`);
+    assert.equal(spawned.env!.EXTRA, "1");
+    assert.equal(spawned.env!.DSH_PERMISSION_MODE, "danger-full-access", "the runtime's own variables stay");
+
+    await mkdir(join(proot.rootfs, "root", "work"), { recursive: true });
+    await ask(body, "workspace.bash", { command: "echo hi", yield_ms: 2000 });
+    const exec = fake.runs.find((run) => run.argv[0] === "/bin/bash")!;
+    assert.equal(exec.env!.HTTPS_PROXY, "http://10.0.2.2:7891");
+    assert.equal(exec.env!.no_proxy, `*.corp,${NO_PROXY_LOOPBACK}`);
+
+    const app = body.appLauncher()!.spawn({ server: { command: "node", args: ["s.mjs"] } } as never, join(proot.rootfs, "root", "apps", "notes"), {});
+    assert.ok(app.args.includes("HTTP_PROXY=http://10.0.2.2:7890") && app.args.includes(`NO_PROXY=*.corp,${NO_PROXY_LOOPBACK}`));
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("NO_PROXY is the loopback alone when the host excluded nothing; a proxy of one scheme sets only that scheme", async () => {
+  const { dir, proot } = await prootDir();
+  const fake = fakeProot();
+  const body = createLocalBody({ isolation: { kind: "proot", proot }, runProot: fake.run, network: { proxy: { http: "http://p:1" } } });
+  try {
+    body.spawn(["echo"]);
+    const env = fake.runs[0]!.env!;
+    assert.equal(env.NO_PROXY, NO_PROXY_LOOPBACK);
+    assert.equal(env.HTTP_PROXY, "http://p:1");
+    assert.equal("HTTPS_PROXY" in env || "https_proxy" in env, false);
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("env.changed: setNetwork gives the next process the new proxy, and clears it when the host has none", async () => {
+  const { dir, proot } = await prootDir();
+  const fake = fakeProot();
+  const body = createLocalBody({ isolation: { kind: "proot", proot }, runProot: fake.run });
+  try {
+    body.spawn(["echo", "1"]);
+    body.setNetwork({ proxy: { http: "http://new:1", https: "http://new:2" } });
+    body.spawn(["echo", "2"]);
+    body.setNetwork({ proxy: { https: "http://newer:3" } });
+    body.spawn(["echo", "3"]);
+    body.setNetwork({ proxy: null });
+    body.spawn(["echo", "4"]);
+    const [first, second, third, fourth] = fake.runs.map((run) => run.env!);
+    assert.equal(Object.keys(first!).some((key) => /proxy/i.test(key)), false);
+    assert.equal(second!.HTTP_PROXY, "http://new:1");
+    assert.equal(second!.https_proxy, "http://new:2");
+    assert.equal(third!.HTTPS_PROXY, "http://newer:3");
+    assert.equal("HTTP_PROXY" in third!, false, "the old http proxy does not linger");
+    assert.equal(Object.keys(fourth!).some((key) => /proxy/i.test(key)), false);
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("python3 is installed once in the background on first use: log in the state directory, one at a time, a failure is only a log line", async () => {
+  const { dir, proot } = await prootDir(["apt-get"]);
+  const stateDir = join(dir, "state");
+  const fake = fakeProot(100, "E: no network\n");
+  const body = createLocalBody({
+    isolation: { kind: "proot", proot }, runProot: fake.run, stateDir,
+    network: { proxy: { http: "http://p:1" } }, env: { FROM: "options" },
+  });
+  try {
+    body.spawn(["echo"]);
+    body.spawn(["echo"]);
+    await ask(body, "workspace.ls", {});
+    const installs = fake.runs.filter((run) => run.argv[0] === "/bin/sh");
+    assert.equal(installs.length, 1, "started once, at once, without waiting");
+    assert.ok(installs[0]!.argv[2]!.includes("apt-get") && installs[0]!.argv[2]!.includes("python3"));
+    assert.equal(installs[0]!.env!.HTTP_PROXY, "http://p:1", "apt goes through the phone's proxy too");
+    assert.equal(installs[0]!.env!.FROM, "options");
+    for (let i = 0; i < 100 && !(await readFile(join(stateDir, "container-provision.log"), "utf8").catch(() => "")).includes("failed"); i++) await new Promise((r) => setTimeout(r, 10));
+    const log = await readFile(join(stateDir, "container-provision.log"), "utf8");
+    assert.ok(log.includes("E: no network") && log.includes("failed: exit 100"), log);
+    // A failed attempt is not repeated in this run.
+    body.spawn(["echo"]);
+    assert.equal(fake.runs.filter((run) => run.argv[0] === "/bin/sh").length, 1);
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("python3 is not installed when the image has it, has no apt-get, or the body has no state directory", async () => {
+  for (const [files, withState] of [[["apt-get", "python3"], true], [[], true], [["apt-get"], false]] as const) {
+    const { dir, proot } = await prootDir([...files]);
+    const fake = fakeProot();
+    const body = createLocalBody({ isolation: { kind: "proot", proot }, runProot: fake.run, ...(withState ? { stateDir: join(dir, "state") } : {}) });
+    try {
+      body.spawn(["echo"]);
+      await ask(body, "workspace.ls", {});
+      assert.equal(fake.runs.filter((run) => run.argv[0] === "/bin/sh").length, 0, `${files.join(",")} state=${withState}`);
+    } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+  }
 });

@@ -17,7 +17,7 @@ data class HostSpecInput(
     /** The host interface address, e.g. `http://127.0.0.1:43127`. */
     val endpoint: String,
     val capabilities: List<String>,
-    val storageBinds: List<String> = listOf("/sdcard:/sdcard"),
+    val storageBinds: List<String> = listOf("/sdcard:/sdcard", "/storage/emulated/0:/storage/emulated/0"),
 )
 
 /** Writes the launch description of `ash-host/1` (packages/sdk/schema/host.json). */
