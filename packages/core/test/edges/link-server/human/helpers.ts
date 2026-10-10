@@ -93,7 +93,7 @@ export async function startHumanHub(over: Partial<HumanDeps> = {}): Promise<Huma
   const widgetState = { value: { revision: 1, cards: [], widgets: [], bindings: [], previews: [] } as unknown };
   const human = createHuman({
     router: mini, ledger, settings: () => settings, now: () => clock.now, timeZone: "UTC", log: () => {},
-    llm: { complete: async (_caller, request) => { summaries.push(request.messages[1]!.content.split("\n")); return { text: " 在整理日程\n" }; } },
+    summarize: async (steps) => { summaries.push(steps); return "在整理日程"; },
     primary: () => "agent:main",
     timing: { presentMs: 2000, islandMs: 3000, recordMs: 1000, summaryDelayMs: 10 },
     ...over,

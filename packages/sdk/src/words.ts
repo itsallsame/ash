@@ -242,8 +242,8 @@ add("service:link", "reconnect", "request", obj({ hand: handRef }, ["hand"]), ob
 add("service:link", "refresh_manifest", "request", obj({ hand: handRef }, ["hand"]), obj({ requested: bool }, ["requested"]),
   { callers: LINK_CALLERS, effect: "act", label: "在请手重发能力清单", description: "Ask a hand to send its capability list again, for example after you changed what it may lend." });
 add("service:link", "gateway.status", "request", empty,
-  obj({ configured: bool, url: str, claimed: bool, connected: bool, account_email: sensitive(str, "email"), last_error: str }, ["configured", "connected"], true),
-  { callers: LINK_CALLERS, label: "在看中转站", description: "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error." });
+  obj({ configured: bool, url: str, claimed: bool, connected: bool, account_email: sensitive(str, "email"), last_error: str, setup_unavailable: str }, ["configured", "connected"], true),
+  { callers: LINK_CALLERS, label: "在看中转站", description: "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error, and (setup_unavailable) why building a relay is not possible in this build." });
 add("service:link", "gateway.setup.start", "request", obj({ provider: { const: "cloudflare" } }, ["provider"]), setupInfo,
   { callers: LINK_CALLERS, effect: "act", label: "在开始搭中转站", description: "Start building a relay in the owner's Cloudflare account: a 'sign in to Cloudflare' card goes to the owner. You get a setup_id and a background message at each step." });
 add("service:link", "gateway.setup.status", "request", obj({ setup_id: id }, ["setup_id"]), setupInfo,

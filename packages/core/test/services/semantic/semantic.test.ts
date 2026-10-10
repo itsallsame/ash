@@ -4,7 +4,8 @@ import { WordError, type HandleContext, type Message } from "../../../../sdk/src
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSemantic, DONE_MARK, fileTemplates } from "../../../src/services/semantic";
+import { createSemantic, DONE_MARK } from "../../../src/services/semantic";
+import { fileTemplates } from "../../../src/services/semantic/templates";
 import { AGENT, contractOf, DAY1, local, OWNER, SERVICE, startedHub, TEMPLATES, newHub, type Hub } from "./helpers";
 
 const MON = (h: number, m = 0) => local(2026, 10, 12, h, m);

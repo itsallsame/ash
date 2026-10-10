@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentDriverFactory } from "../../sdk/src/driver";
 import { MAIN_BODY_ID } from "../../sdk/src/ids";
 import { WordError, type Caller } from "../../sdk/src/message";
-import { createAgents, bodyFileWriter, fileTemplates } from "./edges/agents";
+import { createAgents, bodyFileWriter } from "./edges/agents";
 import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
 import { createRemoteDrivers } from "./edges/agents/remote";
 import { createApps, installBuiltinOrgans } from "./edges/apps";
@@ -22,6 +22,7 @@ import { createHostService, HostClient, loadHostBoot } from "./edges/host";
 import { createLlm } from "./edges/llm";
 import { createReviewer } from "./edges/llm/review";
 import { createLlmService } from "./edges/llm/service";
+import { createSummarizer } from "./edges/llm/summary";
 import { createLinkServer } from "./edges/link-server";
 import { relayBundleFile, RELAY_BUNDLE_FILE } from "./edges/link-server/control/bundle";
 import { createLinkControl } from "./edges/link-server/control/words";
@@ -194,7 +195,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   };
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
-    templates: fileTemplates(join(SKILLS, "agents")),
+    templatesDir: join(SKILLS, "agents"),
     tools: (agent, allowed) => ({ mcp_url: `${url}/mcp`, token: tools.issueToken(agent), allowed: allowed ?? [...TOOL_NAMES] }),
   });
   const launcher = body.appLauncher();
@@ -204,7 +205,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   });
   const human = createHuman({
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
-    llm,
+    summarize: createSummarizer({ llm }),
   });
   const hostService = createHostService({ client: host, router, onStop: (deadline) => stop(deadline), log });
   link.onChannel("human", human.attach);

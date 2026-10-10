@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
-import { createLlm, LlmError, withOrigin, type Complete, type LlmUsageReport } from "../../../src/edges/llm";
+import { createLlm, LlmError, type Complete, type LlmUsageReport } from "../../../src/edges/llm";
 
 const FAKE_DEEPSEEK = "fake-deepseek-key-0001";
 const FAKE_OPENROUTER = "fake-openrouter-key-0002";
@@ -241,11 +241,4 @@ test("baseUrl: DeepSeek (no path) and OpenRouter (/api/v1) keep the model's own 
   await llm.post("a", { provider: "openrouter", path: "/api/v1/chat/completions", body: {} });
   assert.deepEqual(seen, ["http://127.0.0.1:9", "http://127.0.0.1:9/api/v1"]);
   assert.deepEqual(sent, ["http://127.0.0.1:9/chat/completions", "http://127.0.0.1:9/api/v1/chat/completions"]);
-});
-
-test("withOrigin swaps protocol, host and port and keeps the path", () => {
-  assert.equal(withOrigin("https://api.deepseek.com", "http://h:1"), "http://h:1");
-  assert.equal(withOrigin("https://api.deepseek.com/", "http://h:1"), "http://h:1");
-  assert.equal(withOrigin("https://openrouter.ai/api/v1", "http://h:1"), "http://h:1/api/v1");
-  assert.equal(withOrigin("https://openrouter.ai/api/v1/", "https://x.test:8443"), "https://x.test:8443/api/v1");
 });

@@ -105,7 +105,7 @@ function checkNumbers(request: { max_tokens?: number; timeout_ms?: number }): vo
 }
 
 /** [address] with its protocol, host and port replaced by [origin]'s; its path is kept. */
-export function withOrigin(address: string, origin: string): string {
+function withOrigin(address: string, origin: string): string {
   const { pathname } = new URL(address);
   return `${origin}${pathname === "/" ? "" : pathname.replace(/\/+$/, "")}`;
 }

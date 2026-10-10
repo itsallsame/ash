@@ -116,6 +116,7 @@ export class RelaySetup {
 
   /** Opens the listener, asks the owner to sign in, and returns at once. */
   async start(initiator: string): Promise<SetupInfo> {
+    this.requireBundle();                       // before the owner signs in to Cloudflare for nothing
     for (const row of this.rows()) {
       if (row.state === "waiting_login" || row.state === "deploying") {
         throw new WordError("conflict", `relay setup ${row.setup_id} is still ${row.state}`, { recovery_hint: "Wait for it, or cancel it with gateway.setup.cancel, then start again." });
@@ -158,6 +159,14 @@ export class RelaySetup {
 
   status(id: string): SetupInfo { return this.info(id); }
 
+  /** Why a relay cannot be built with this build right now (no packaged relay program), or null. */
+  unavailable(): string | null { return this.d.bundle ? this.d.bundleMissing?.() ?? null : "this build has no packaged relay program"; }
+
+  private requireBundle(): void {
+    const missing = this.unavailable();
+    if (missing) throw new WordError("unavailable", missing, { recovery_hint: "Update Ash, or use an existing relay with gateway.use." });
+  }
+
   /** Starts the deployment of an authorized setup; the result is `deploying` and the rest is told as it happens. */
   deploy(id: string, name?: string): SetupInfo {
     const row = this.row(id);
@@ -166,8 +175,7 @@ export class RelaySetup {
     }
     const script = name ?? DEFAULT_SCRIPT;
     if (!SCRIPT_NAME.test(script)) throw new WordError("bad_request", "name must be lowercase letters, digits and dashes");
-    const missing = this.d.bundle ? this.d.bundleMissing?.() ?? null : "this build has no packaged relay program";
-    if (missing) throw new WordError("unavailable", missing, { recovery_hint: "Update Ash, or use an existing relay with gateway.use." });
+    this.requireBundle();
     this.move(id, "deploying");
     void this.runDeploy(id, script).catch((error) => this.fail(id, this.reason(error)));
     return this.info(id);

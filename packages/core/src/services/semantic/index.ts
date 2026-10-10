@@ -10,36 +10,27 @@
  * find the primary agent and the lanes, `agent:<primary>/wake`, `service:agents/session.reload`, `service:senses/daily`,
  * `service:admin` (settings, pause), `body:main/workspace.*`.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Member } from "../../../../sdk/src/word";
 import type { Ledger } from "../../kernel/ledger";
 import { DailyReview } from "./daily";
 import { Entity } from "./entity";
-import { PersonaService, type PersonaFile } from "./persona";
+import { PersonaService } from "./persona";
 import { PulseService } from "./pulse";
 import { SemanticKv, type Sender } from "./shared";
+import { fileTemplates, type SemanticTemplates } from "./templates";
 
 export { PersonaService, PERSONA_ID, PERSONA_FILES, type PersonaFile } from "./persona";
 export { PulseService, PULSE_ID, DEFAULT_SCHEDULE } from "./pulse";
 export { DailyReview, DONE_MARK, DEFAULT_REVIEW_TIME, REVIEW_SETTING } from "./daily";
 export { Entity, ENTITY_ID, DEFAULT_RELOAD_TIME, RELOAD_SETTING } from "./entity";
 
-export type SemanticTemplates = Record<PersonaFile, string> & { "PULSE.md": string };
-
-/** The starting texts are `<dir>/<SOUL|IDENTITY|PULSE>.template.md` (ash-skills/persona). Throws when one is missing. */
-export function fileTemplates(dir: string): SemanticTemplates {
-  const read = (name: string): string => readFileSync(join(dir, `${name}.template.md`), "utf8");
-  return { "SOUL.md": read("SOUL"), "IDENTITY.md": read("IDENTITY"), "PULSE.md": read("PULSE") };
-}
-
 export interface SemanticOptions {
   ledger: Pick<Ledger, "db" | "tx">;
   router: Sender;
-  /** The starting text of the persona files and of PULSE.md. Give this or `templatesDir`. */
-  templates?: SemanticTemplates;
-  /** Where the starting texts are files (ash-skills/persona); read once, here. */
+  /** `ash-skills/persona`: `<SOUL|IDENTITY|PULSE>.template.md`, read here. */
   templatesDir?: string;
+  /** Tests: the starting texts already in memory, instead of `templatesDir`. */
+  templates?: SemanticTemplates;
   now?: () => number;
   /** Wakes a day for the pulse (default 16). */
   budget?: number;

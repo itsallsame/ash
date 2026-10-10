@@ -70,23 +70,6 @@ test("the process summary comes from the injected small model, once a burst of t
   assert.deepEqual(hub.summaries[0], ["做a", "做b", "做c"]);
 });
 
-test("the summary is asked of llm as the owner, and a failing or empty model leaves the tool's own line", async (t) => {
-  const asked: string[] = [];
-  let answer: () => Promise<{ text: string }> = async () => { throw new Error("model down"); };
-  const hub = await startHumanHub({ llm: { complete: async (caller) => { asked.push(caller); return answer(); } } }); t.after(() => hub.stop());
-  const island = await Channel.open(hub, { surfaces: ["chat", "status"] });
-  hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] });
-  hub.mini.announce("agent.tool", { turn: "t1", name: "a", phase: "start", summary: "做a" });
-  await eventually(() => asked.length === 1, "asked once");
-  assert.deepEqual(asked, ["person:owner"]);
-  assert.equal(last(island).text, "做a", "the model failed: the tool's own line");
-  answer = async () => ({ text: "  \n" });
-  hub.mini.announce("agent.tool", { turn: "t1", name: "a", phase: "end", summary: "做a", ok: true });
-  hub.mini.announce("agent.tool", { turn: "t1", name: "b", phase: "start", summary: "做b" });
-  await eventually(() => asked.length === 2, "asked again");
-  assert.equal(last(island).text, "做b", "an empty answer is no summary");
-});
-
 test("a frame names the agent of the turn, else the primary, else no agent", async (t) => {
   let primary: string | null = "agent:main";
   const hub = await startHumanHub({ primary: () => primary }); t.after(() => hub.stop());

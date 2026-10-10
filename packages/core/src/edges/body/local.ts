@@ -17,6 +17,19 @@ import { Workspace, type Executor, type StreamPublisher } from "../../../../work
 import type { AppJson } from "../../../../sdk/src/app";
 import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot } from "./proot";
 
+/** Where DSH and its patch file are inside the container; the agent runtime only says `dsh --patch <that file>`. */
+const PROOT_DSH = "/opt/dsh/node_modules/.bin/dsh";
+const PROOT_PATCH = "/opt/ash/patch.yml";
+
+/** DSH's arguments on this machine: its `--patch` file is the host's own, or none. */
+function nativeRuntimeArgs(args: string[], patch: string | undefined): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--patch" && args[i + 1] === PROOT_PATCH) { if (patch) out.push("--patch", patch); i++; } else out.push(args[i]!);
+  }
+  return out;
+}
+
 export interface LocalBodyOptions {
   /** How the host isolates the main body (host.json `isolation`). */
   isolation: HostIsolation;
@@ -41,6 +54,7 @@ export interface LocalBody extends Member {
   /**
    * Starts a program on this body with piped stdio (the agent runtime's process). `cwd` is a path on the body. Where and how
    * it runs depends on the isolation: in the container through proot, or directly on this machine for `native`.
+   * The program named `dsh` is the agent runtime: only the body knows where it is (and its `--patch` file) in either form.
    */
   spawn(argv: string[], opts?: { env?: Record<string, string>; cwd?: string }): ChildProcessWithoutNullStreams;
   /** Where the apps live on this body and how their servers are started; null when this body cannot run them. */
@@ -87,16 +101,17 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     words: () => bodyWords(MAIN_BODY_ID),
     spawn(argv, opts = {}) {
       if (isolation.kind === "proot") {
-        return runInProot(isolation.proot, argv, { ...(opts.cwd ? { workdir: opts.cwd } : {}), ...(opts.env ? { env: opts.env } : {}), stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
+        return runInProot(isolation.proot, argv[0] === "dsh" ? [PROOT_DSH, ...argv.slice(1)] : argv, { ...(opts.cwd ? { workdir: opts.cwd } : {}), ...(opts.env ? { env: opts.env } : {}), stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
       }
       if (isolation.kind === "native") {
         // The development form: the program runs straight on this machine, its place under the workspace. `dsh` is the
-        // runtime the host names (its binary and home); any other program runs as written.
+        // runtime the host names (its binary, home and patch file); any other program runs as written.
         const cwd = join(isolation.native.workspace, opts.cwd ?? "");
         mkdirSync(cwd, { recursive: true });
         const runtime = argv[0] === "dsh";
-        return spawnProcess(runtime ? isolation.native.dsh_bin : argv[0]!, argv.slice(1), {
-          cwd, env: { ...process.env, ...(runtime ? { DSH_HOME: isolation.native.dsh_home } : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
+        const { dsh_bin, dsh_home, dsh_patch } = isolation.native;
+        return spawnProcess(runtime ? dsh_bin : argv[0]!, runtime ? nativeRuntimeArgs(argv.slice(1), dsh_patch) : argv.slice(1), {
+          cwd, env: { ...process.env, ...(runtime ? { DSH_HOME: dsh_home } : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
         });
       }
       throw new WordError("unavailable", `The ${isolation.kind} main body cannot run a program yet`);

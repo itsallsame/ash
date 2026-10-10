@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { createAgents } from "../../../src/edges/agents";
 import { fileTemplates, readDecl } from "../../../src/edges/agents/runs";
 
 const TEMPLATES = new URL("../../../../ash-skills/agents", import.meta.url).pathname;
@@ -22,4 +23,8 @@ test("no agent's name is written in the agents module's code", () => {
   const dir = new URL("../../../src/edges/agents", import.meta.url).pathname;
   const files = [...readdirSync(dir).map((f) => join(dir, f)).filter((f) => f.endsWith(".ts")), ...readdirSync(join(dir, "dsh")).map((f) => join(dir, "dsh", f))];
   for (const file of files) assert.ok(!/agent:(main|keeper)\b/.test(readFileSync(file, "utf8")), `${file} names an agent`);
+});
+
+test("createAgents takes the templates as a directory (templatesDir) and refuses to be made with neither", () => {
+  assert.throws(() => createAgents({} as never), /templatesDir/);
 });
