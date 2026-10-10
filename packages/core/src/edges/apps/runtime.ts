@@ -58,8 +58,6 @@ export interface AppRuntimeOptions {
   recent?: RecentFacts;
   /** How long a trial run may take to start and answer. */
   trialMs?: number;
-  /** How long the owner has to answer an install card. */
-  installCardMs?: number;
 }
 
 /** Who made an app, as far as the hub can tell: the hub's own organ, written by an agent (not published), or anyone else. */
@@ -75,16 +73,10 @@ export interface AppInfo {
 type Found = { id: string; dir: string; manifest: AppJson } | { id: string; dir: string; error: string };
 interface LastExit { ts: number; code: number | null; signal: string | null; reason: string }
 
-/** Words any app may call without being granted them by name: they read, or are harmless by contract, and they are how an organ does its job. */
-const OPEN_WORDS: Record<string, readonly string[]> = {
-  "service:llm": ["complete"],
-  "service:senses": ["query", "daily", "now"],
-};
-const isOpen = (member: string, word: string): boolean => (/^agent:/.test(member) ? word === "wake" : (OPEN_WORDS[member]?.includes(word) ?? false));
-
 /** At most this many wakes a day per app, however many wake-worthy events it reports. */
 const WAKES_A_DAY = 3;
 const EVENT_BODY_MAX = 4000;
+const SERVICE_CALLER: Caller = { member: "service:apps", via: "service", local: false };
 /** Events waiting to be handed to one app's `ash.on_event`; more than this are dropped (the app is stuck or slow). */
 const EVENT_QUEUE_MAX = 200;
 const ON_EVENT_TIMEOUT_MS = 10_000;
@@ -116,6 +108,8 @@ export class AppRuntime {
   private readonly failures = new Map<string, number>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastError = new Map<string, string>();
+  /** What the install card of each app showed (needs and listens); memory only. */
+  private readonly shown = new Map<string, string>();
   private readonly output = new Map<string, { lines: string[]; exit: LastExit | null }>();
   private closed = false;
   private readonly log: (...args: unknown[]) => void;
@@ -125,7 +119,7 @@ export class AppRuntime {
     this.grants = new AppGrants(options.ledger, () => this.now());
     this.bridge = new AppBridge({
       router: options.router, registry: options.registry, log: this.log, waitMs: options.bridgeWaitMs, clock: options.clock,
-      allows: (app, member, word) => this.mayUse(app, member, word), event: (id, name, body) => this.emit(id, name, body),
+      granted: (app, member, word) => this.granted(app, member, word), event: (id, name, body) => this.emit(id, name, body),
       ...(options.recent ? { recent: options.recent } : {}),
     });
   }
@@ -133,11 +127,17 @@ export class AppRuntime {
   private now(): number { return this.options.clock?.now() ?? Date.now(); }
   private get root(): string | null { return this.options.launcher?.root ?? null; }
 
-  /** The app's grants (or the open words), and only while it is running and not switched off. */
-  private mayUse(app: string, member: string, word: string): boolean {
+  /**
+   * May app:<id> reach `to`/`word`? This is the one permission check for an app, called by the router (`appGranted`) on
+   * every request an app sends. A word needs a grant in app.json's `needs`, approved at install; an event (`to` null) must
+   * be one the running app declared. Only a running, enabled app has anything.
+   */
+  granted(app: string, to: string | null, word: string): boolean {
     const id = app.replace(/^app:/, "");
-    if (!this.running.has(id) || !this.grants.get(id)?.enabled) return false;
-    return isOpen(member, word) || this.grants.allows(app, member, word);
+    const state = this.running.get(id);
+    if (!state || !this.grants.get(id)?.enabled) return false;
+    if (to === null) return (state.manifest.events ?? []).includes(word);
+    return this.grants.allows(app, to, word);
   }
 
   // ---- lifecycle ----------------------------------------------------------------------------------------------------
@@ -439,7 +439,8 @@ export class AppRuntime {
     if (targets.length && this.grants.take(id, "wake", WAKES_A_DAY)) {
       const context = { app: `app:${id}`, name: manifest.name, role: manifest.role ?? manifest.summary, event: name, body };
       for (const agent of targets) {
-        void this.options.router.send({ to: agent, kind: "request", word: "wake", body: { reason: "app_event", context } }, caller)
+        // From the app edge itself: the owner approved on the install card that these events wake that agent.
+        void this.options.router.send({ to: agent, kind: "request", word: "wake", body: { reason: "app_event", context } }, SERVICE_CALLER)
           .then((reply) => { if (!reply.ok) this.log("app event wake failed", id, name, agent, reply.error.message); },
             (error) => this.log("app event wake failed", id, name, agent, error instanceof Error ? error.message : error));
       }
@@ -457,30 +458,39 @@ export class AppRuntime {
     this.grants.grant(id, manifest.version, manifest.needs ?? [], manifest.listens ?? [], { builtin: true });
   }
 
-  /** The owner's card for installing an app: everything it asks for, and what each of its events does. */
-  private installCard(manifest: AppJson, origin: AppOrigin): { title: string; detail: string } {
-    const name = clean(manifest.name, 20);
+  /** What the install approval card says about the app: everything it asks for and what its events do. */
+  private installDetail(manifest: AppJson, origin: AppOrigin): string {
     const lines = (manifest.needs ?? []).map((need) => ("member" in need
       ? `· ${clean(need.why, 200)}（${need.member}：${need.words.join("、")}）`
       : `· ${clean(need.why, 200)}（${({ notify: "提醒你", widgets: "小组件", card: "在对话里放入口卡片" } as Record<string, string>)[needKey(need)]}）`));
     const who = origin === "builtin" ? "Ash 自带" : origin === "agent" ? "Ash 自己写的，没有发布过，也没有别人检查过" : `发布者写的是「${clean(manifest.publisher, 40)}」，Ash 无法核实`;
     const listens = manifest.listens ?? [];
     const wakes = wakeEvents(manifest);
-    return {
-      title: origin === "agent" ? `安装 Ash 写的应用「${name}」` : `安装「${name}」`,
-      detail: `${clean(manifest.name, 40)} ${manifest.version}（${who}）：${clean(manifest.summary, 200)}\n它需要：\n${lines.length ? lines.join("\n") : "· 不需要用 Ash 的其他东西"}\n` +
-        (listens.length ? `它要实时收到这些事件：${listens.join("、")}\n` : "") +
-        (wakes.length ? `这些事件发生时它会叫醒 agent：${wakes.map((item) => `${item.event}${item.agent ? ` → ${item.agent}` : ""}`).join("、")}\n` : "") +
-        `批准后它在容器里运行（文件在 ${this.agentPath(manifest.id)}/），成为 app:${manifest.id}；可以随时撤销。`,
-    };
+    return `${clean(manifest.name, 40)} ${manifest.version}（${who}）：${clean(manifest.summary, 200)}\n它需要：\n${lines.length ? lines.join("\n") : "· 不需要用 Ash 的其他东西"}\n` +
+      (listens.length ? `它要实时收到这些事件：${listens.join("、")}\n` : "") +
+      (wakes.length ? `这些事件发生时它会叫醒 agent：${wakes.map((item) => `${item.event}${item.agent ? ` → ${item.agent}` : ""}`).join("、")}\n` : "") +
+      `批准后它在容器里运行（文件在 ${this.agentPath(manifest.id)}/），成为 app:${manifest.id}；可以随时撤销。`;
   }
 
   /**
-   * apps.install: the folder is checked and tried first (a broken app never reaches the owner), then the owner approves
-   * on one card everything it needs and listens to, then the grants are stored and it starts. The owner's answer is for
-   * the files as they are now: if app.json asks for more by the time the owner answers, nothing is installed.
+   * The text the gate adds to the approval card of an `apps.install`, and a note (in memory) of exactly what the owner is
+   * shown: the needs and listens. Null when there is no such app.
    */
-  async install(id: string): Promise<AppInfo> {
+  cardDetail(id: string): string | null {
+    this.rediscover(id);
+    const manifest = this.manifest(id);
+    if (!manifest) return null;
+    this.shown.set(id, JSON.stringify([manifest.needs ?? [], manifest.listens ?? []]));
+    return this.installDetail(manifest, /^agent(?::|$)/.test(manifest.publisher) ? "agent" : this.grants.get(id)?.builtin ? "builtin" : "other");
+  }
+
+  /**
+   * apps.install: the folder is checked and tried first (a broken app never reaches the owner), then the grants are
+   * stored and the app starts. The owner's approval is the gate's card (see `cardDetail`); the owner installing by hand
+   * is the approval itself. For an agent's install the approval is for the needs and listens on the card: if they are
+   * different now, or the card is not remembered (the hub restarted), nothing is installed.
+   */
+  async install(id: string, caller: Caller): Promise<AppInfo> {
     this.rediscover(id);
     const first = this.manifest(id);
     if (!first) {
@@ -489,21 +499,16 @@ export class AppRuntime {
     }
     const report = await this.validate({ id });
     if (!report.ok) throw this.refusal(report);
-    const manifest = this.manifest(id) ?? first;
-    const card = this.installCard(manifest, /^agent(?::|$)/.test(manifest.publisher) ? "agent" : this.grants.get(id)?.builtin ? "builtin" : "other");
-    const shown = JSON.stringify([manifest.needs ?? [], manifest.listens ?? []]);
-    const answer = await this.options.router.send({ to: OWNER_ID, kind: "request", word: "ask", body: {
-      title: card.title, detail: card.detail, options: [{ id: "allow", label: "安装" }, { id: "deny", label: "不装" }],
-      expires_at: this.now() + (this.options.installCardMs ?? 10 * 60_000) } }, { member: "service:apps", via: "service", local: false });
-    if (!answer.ok) throw fail(answer.error.code, answer.error.message, { detail: answer.error.detail, recovery_hint: answer.error.recovery_hint });
-    const choice = (answer.result?.data as { choice?: unknown } | undefined)?.choice;
-    if (choice !== "allow") throw fail("denied", "the owner did not approve the install", { recovery_hint: "Do not ask again unless the owner wants it; the app stays as it is." });
     this.rediscover(id);
-    const now = this.manifest(id);
-    if (!now || JSON.stringify([now.needs ?? [], now.listens ?? []]) !== shown)
-      throw fail("conflict", `${this.agentPath(id)}/app.json 的 needs 或 listens 在主人看卡片之后改了，没有安装`, { recovery_hint: "Install again so the owner sees the current ones." });
+    const manifest = this.manifest(id) ?? first;
+    if (caller.member !== OWNER_ID) {
+      const shown = this.shown.get(id);
+      this.shown.delete(id);
+      if (shown === undefined || shown !== JSON.stringify([manifest.needs ?? [], manifest.listens ?? []]))
+        throw fail("conflict", `${this.agentPath(id)}/app.json 的 needs 或 listens 和主人批准时看到的不一样了（或中枢重启过）；没有安装`, { recovery_hint: "Call apps.install again so the owner sees the current ones." });
+    }
     await this.stop(id);
-    this.grants.grant(id, now.version, now.needs ?? [], now.listens ?? []);
+    this.grants.grant(id, manifest.version, manifest.needs ?? [], manifest.listens ?? []);
     this.failures.delete(id);
     await this.launch(id);
     return this.info(id)!;
@@ -547,7 +552,7 @@ export class AppRuntime {
     if (ID.test(folder)) this.rediscover(folder);
     if (!manifest) return report(problems);
     for (const need of manifest.needs ?? []) {
-      if (!("member" in need)) continue;
+      if (!("member" in need) || need.member.includes("*")) continue;
       const described = this.options.registry.describe(need.member);
       if (!described) problems.push({ level: "warning", where: `app.json needs ${need.member}`, problem: `现在没有成员 ${need.member}（可能不在线）：装上后调用会失败，直到它回来` });
       else {
@@ -660,7 +665,7 @@ export class AppRuntime {
   }
 
   /** Read a surface (a ui:// resource) of a running app. */
-  async surface(id: string, surfaceId: string): Promise<{ mime: string; html: string }> {
+  async surface(id: string, surfaceId: string): Promise<{ mime: string; html: string; csp: { connectDomains: string[]; resourceDomains: string[] } }> {
     const manifest = this.manifest(id);
     if (!manifest) throw fail("not_found", `no app ${id}`);
     const surface = manifest.surfaces?.find((item) => item.id === surfaceId);
@@ -673,7 +678,9 @@ export class AppRuntime {
     if (!content) throw fail("failed", `${surface.resource} returned nothing`);
     const html = typeof (content as { text?: unknown }).text === "string" ? String((content as { text: string }).text)
       : typeof (content as { blob?: unknown }).blob === "string" ? Buffer.from(String((content as { blob: string }).blob), "base64").toString("utf8") : "";
-    return { mime: content.mimeType ?? UI_MIME, html };
+    const csp = (content as { _meta?: { ui?: { csp?: Record<string, unknown> } } })._meta?.ui?.csp ?? {};
+    const domains = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 32) : []);
+    return { mime: content.mimeType ?? UI_MIME, html, csp: { connectDomains: domains(csp.connectDomains), resourceDomains: domains(csp.resourceDomains) } };
   }
 
   /** apps.scaffold: a new app's files, written only where nothing would be overwritten. */

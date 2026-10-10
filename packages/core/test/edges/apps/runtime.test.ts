@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { AGENT, call, dataOf, installFixtureFolder, until, world, type World } from "./helpers";
+import { AGENT, call, dataOf, installFixtureFolder, OWNER, until, world, type World } from "./helpers";
 
 async function installed(options: Parameters<typeof world>[0] = {}): Promise<World> {
   const w = world(options);
@@ -13,20 +13,22 @@ async function installed(options: Parameters<typeof world>[0] = {}): Promise<Wor
 }
 const heard = async (w: World) => dataOf(await call(w, "app:fixture", "fixture.list")).events as { word: string; body: unknown; from: string; at: number }[];
 
-test("install: a card with everything the app asks for goes to the owner; approved, the app runs as member app:<id>", async () => {
+test("install by an agent: the one approval card carries everything the app asks for; approved, the app runs as member app:<id>", async () => {
   const w = world();
   await w.apps.start();
   assert.equal(w.registry.find("app:fixture", "fixture.list"), null, "nothing runs before the owner approves");
-  const reply = await call(w, "service:apps", "apps.install", { id: "fixture" });
+  const reply = await call(w, "service:apps", "apps.install", { id: "fixture" }, AGENT);
   const info = dataOf(reply);
   assert.equal(info.running, true);
   assert.equal(info.granted, true);
-  assert.equal(w.router.cards.length, 1);
+  assert.equal(w.router.cards.length, 1, "one card, from the gate; the app edge asks nobody itself");
+  assert.equal(w.router.sent.filter((s) => s.msg.word === "ask").length, 0);
   const card = w.router.cards[0]!;
-  assert.match(card.title, /Fixture/);
-  assert.match(card.detail, /device:phone：location\.get/, "the need is on the card");
-  assert.match(card.detail, /sense\.\*/, "what it listens to is on the card");
-  assert.match(card.detail, /fixture\.alert/, "what wakes an agent is on the card");
+  assert.equal(card.word, "apps.install");
+  assert.match(card.detail!, /Fixture 1\.0\.0/);
+  assert.match(card.detail!, /device:\*：location\.get/, "the need is on the card");
+  assert.match(card.detail!, /sense\.\*/, "what it listens to is on the card");
+  assert.match(card.detail!, /fixture\.alert/, "what wakes an agent is on the card");
   const described = w.registry.describe("app:fixture")!;
   assert.equal(described.info.kind, "app");
   assert.deepEqual(w.registry.members.get("app:fixture")!.listens, ["sense.*"]);
@@ -40,10 +42,10 @@ test("install: the owner says no, or does not answer -> nothing is installed or 
   const w = world();
   await w.apps.start();
   w.router.ownerChoice = "deny";
-  const denied = await call(w, "service:apps", "apps.install", { id: "fixture" });
+  const denied = await call(w, "service:apps", "apps.install", { id: "fixture" }, AGENT);
   assert.equal(denied.ok === false && denied.error.code, "denied");
   w.router.ownerChoice = undefined;
-  const silent = await call(w, "service:apps", "apps.install", { id: "fixture" });
+  const silent = await call(w, "service:apps", "apps.install", { id: "fixture" }, AGENT);
   assert.equal(silent.ok === false && silent.error.code, "timeout");
   assert.equal(w.registry.find("app:fixture", "fixture.list"), null);
   assert.equal(w.apps.runtime.grants.get("fixture"), null);
@@ -59,7 +61,7 @@ test("install: an app.json that fails the schema is refused with its problems, b
   const problems = (pre.error.detail as { problems: { where: string; problem: string }[] }).problems;
   assert.ok(problems.some((p) => /summary/.test(p.problem)), JSON.stringify(problems));
   assert.ok(problems.some((p) => /surprise/.test(p.problem)));
-  const reply = await call(w, "service:apps", "apps.install", { id: "fixture" });
+  const reply = await call(w, "service:apps", "apps.install", { id: "fixture" }, AGENT);
   assert.equal(reply.ok, false);
   assert.equal(w.router.cards.length, 0);
 });
@@ -72,7 +74,7 @@ test("install: a wake event that is not a declared event is a schema-level probl
   assert.match(JSON.stringify(reply), /wake_events/);
 });
 
-test("install: app.json asking for more while the card is open -> conflict, nothing installed", async () => {
+test("install by an agent: app.json asking for more after the owner saw the card -> conflict, nothing installed", async () => {
   const w = world();
   await w.apps.start();
   w.router.onCard = () => {
@@ -81,9 +83,20 @@ test("install: app.json asking for more while the card is open -> conflict, noth
     app.listens.push("calendar.event");
     writeFileSync(file, JSON.stringify(app));
   };
-  const reply = await call(w, "service:apps", "apps.install", { id: "fixture" });
+  const reply = await call(w, "service:apps", "apps.install", { id: "fixture" }, AGENT);
   assert.equal(reply.ok === false && reply.error.code, "conflict");
   assert.equal(w.apps.runtime.grants.get("fixture"), null);
+});
+
+test("install by an agent with no card remembered (the hub restarted since) -> conflict; the owner installing by hand needs no card", async () => {
+  const w = world();
+  await w.apps.start();
+  await assert.rejects(w.apps.runtime.install("fixture", AGENT), (error: { code: string }) => error.code === "conflict");
+  assert.equal(w.apps.runtime.grants.get("fixture"), null);
+  const by_hand = await call(w, "service:apps", "apps.install", { id: "fixture" }, OWNER);
+  assert.equal(by_hand.ok, true);
+  assert.equal(w.router.cards.length, 0, "no card: doing it by hand is the approval");
+  assert.equal(dataOf(by_hand).running, true);
 });
 
 test("tools: a read tool and a write tool become words with the risk of their MCP annotations (SPEC-02 5.3)", async () => {
@@ -164,7 +177,7 @@ test("wake_events: a plain entry wakes the primary agent (its full id), with the
   const wake = await until(() => w.router.sent.find((s) => s.msg.word === "wake"), "a wake");
   assert.equal(wake.msg.to, "agent:chief");
   assert.equal(wake.msg.kind, "request");
-  assert.deepEqual(wake.caller, { member: "app:fixture", via: "app", local: false });
+  assert.deepEqual(wake.caller, { member: "service:apps", via: "service", local: false }, "the owner approved it on the install card");
   const body = wake.msg.body as { reason: string; context: Record<string, unknown> };
   assert.equal(body.reason, "app_event");
   assert.deepEqual(body.context, { app: "app:fixture", name: "Fixture", role: "Test organ: keeps notes, hears sense events, reports fixture events.", event: "fixture.alert", body: { why: "x" } });

@@ -25,8 +25,7 @@ export function createLlmService(llm: Pick<Llm, "complete">): Member {
     words: (): WordContract[] => wordsOf(LLM_ID),
     async handle(msg: Message, ctx: HandleContext): Promise<WordResult> {
       if (msg.word !== "complete") throw new WordError("not_found", `${LLM_ID} has no word ${msg.word}`);
-      const body = msg.body && typeof msg.body === "object" ? msg.body as { model?: string; messages: LlmMessage[]; max_tokens?: number } : null;
-      if (!body) throw new WordError("bad_request", "body must be an object");
+      const body = msg.body as { model?: string; messages: LlmMessage[]; max_tokens?: number };
       try {
         const out = await llm.complete(ctx.caller.member, {
           ...(body.model === undefined ? {} : { model: body.model }), messages: body.messages,

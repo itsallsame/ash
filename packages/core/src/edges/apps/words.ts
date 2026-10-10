@@ -15,7 +15,7 @@ const text = (body: Record<string, unknown>, key: string): string => (typeof bod
 
 export function createAppsService(runtime: AppRuntime): Member {
   async function run(msg: Message, ctx: HandleContext): Promise<WordResult> {
-    const body = msg.body && typeof msg.body === "object" && !Array.isArray(msg.body) ? msg.body as Record<string, unknown> : {};
+    const body = msg.body as Record<string, unknown>;
     const id = text(body, "id");
     switch (msg.word) {
       case "apps.list": return { data: { apps: runtime.list() } };
@@ -25,7 +25,7 @@ export function createAppsService(runtime: AppRuntime): Member {
         if (!info) throw new WordError("not_found", `no app ${id}`, { recovery_hint: "apps.list shows what exists." });
         return { data: info };
       }
-      case "apps.install": return { data: await runtime.install(id) };
+      case "apps.install": return { data: await runtime.install(id, ctx.caller) };
       case "apps.enable": return { data: await runtime.enable(id) };
       case "apps.disable": return { data: await runtime.disable(id) };
       case "apps.revoke": return { data: await runtime.revoke(id, typeof body.need === "string" ? body.need : undefined) };
@@ -49,7 +49,7 @@ export function createAppsService(runtime: AppRuntime): Member {
       case "apps.surface": {
         const surface = text(body, "surface");
         const page = await runtime.surface(id, surface);
-        return { data: { id, surface, mime: page.mime, html: page.html } };
+        return { data: { id, surface, mime: page.mime, html: page.html, csp: page.csp } };
       }
       case "apps.icon": {
         const icon = runtime.icon(id);
@@ -67,11 +67,14 @@ export function createAppsService(runtime: AppRuntime): Member {
     /** An app that would not install is refused before anyone is asked: static checks of the folder. */
     precheck(msg: Message): Reply | null {
       if (msg.word !== "apps.install") return null;
-      const body = msg.body && typeof msg.body === "object" ? msg.body as Record<string, unknown> : {};
-      const report = runtime.precheckInstall(text(body, "id"));
+      const report = runtime.precheckInstall(text(msg.body as Record<string, unknown>, "id"));
       if (!report) return null;
       const refusal = runtime.refusal(report);
       return { ok: false, error: errorBody(refusal.code, refusal.message, { detail: refusal.detail, recovery_hint: refusal.recovery_hint }) };
+    },
+    /** The gate puts this under the approval card of an install: what the app needs and listens to. */
+    cardDetail(msg: Message): string | null {
+      return msg.word === "apps.install" ? runtime.cardDetail(text(msg.body as Record<string, unknown>, "id")) : null;
     },
     handle: run,
   };

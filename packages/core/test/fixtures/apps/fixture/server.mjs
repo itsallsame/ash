@@ -64,6 +64,6 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
       send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data } });
     } catch (error) { send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: String(error.message || error) }], isError: true } }); }
   } else if (method === "resources/read" && params.uri === "ui://fixture/home")
-    send({ jsonrpc: "2.0", id, result: { contents: [{ uri: params.uri, mimeType: "text/html;profile=mcp-app", text: "<!doctype html><html><body><h1>Fixture</h1><script>window.addEventListener('message',()=>{});</script></body></html>" }] } });
+    send({ jsonrpc: "2.0", id, result: { contents: [{ uri: params.uri, mimeType: "text/html;profile=mcp-app", _meta: { ui: { csp: { connectDomains: ["https://api.example"], resourceDomains: [] } } }, text: "<!doctype html><html><body><h1>Fixture</h1><script>window.addEventListener('message',()=>{});</script></body></html>" }] } });
   else send({ jsonrpc: "2.0", id, error: { code: -32601, message: "unknown method " + method } });
 });

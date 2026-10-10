@@ -16,7 +16,7 @@ const phone = () => stubMember("device:phone", "device", [
 async function setup(options: Parameters<typeof world>[0] = {}): Promise<{ w: World; phone: ReturnType<typeof phone> }> {
   const w = world({
     bridgeWaitMs: 150,
-    fixture: (app) => { app.needs = [{ member: "device:phone", words: ["location.get", "screen.tap", "slow.read", "app.edit", "screen.read"], why: "tests" }]; },
+    fixture: (app) => { app.needs = [{ member: "device:*", words: ["location.get", "screen.tap", "slow.read", "app.edit", "screen.read"], why: "tests" }]; },
     ...options,
   });
   const p = phone();
@@ -48,13 +48,14 @@ test("an app calls a word that carries risk: the gate answers forbidden, with th
   assert.equal(p.received.length, 0, "it never reached the phone");
 });
 
-test("a word that is not in the app's grants is forbidden before the router; neither is a word for owners and agents only", async () => {
-  const { w } = await setup({ fixture: (app) => { app.needs = [{ member: "device:phone", words: ["location.get", "screen.read"], why: "tests" }]; } });
+test("a word that is not in the app's grants is forbidden by the router; so is a word for owners and agents only", async () => {
+  const { w, phone: p } = await setup({ fixture: (app) => { app.needs = [{ member: "device:*", words: ["location.get", "screen.read"], why: "tests" }]; } });
   const notGranted = await viaApp(w, "device:phone", "slow.read");
   assert.equal(notGranted.error.code, "forbidden");
-  assert.ok(!w.router.sent.some((s) => s.msg.word === "slow.read"));
+  assert.equal(p.received.length, 0);
   const notForApps = await viaApp(w, "device:phone", "screen.read");
   assert.equal(notForApps.error.code, "forbidden", "its callers leave apps out");
+  assert.equal(p.received.length, 0);
 });
 
 test("a member that is away: offline, with the owner's sentence; a hand that left is not called", async () => {
@@ -92,14 +93,28 @@ test("the catalog lists every granted word, and marks the ones that need approva
   assert.deepEqual(first.input_schema, { type: "object" });
 });
 
-test("words every organ needs are open without a grant: service:llm/complete and an agent's wake", async () => {
-  const { w } = await setup({ fixture: (app) => { app.needs = []; } });
+test("services and agents are used the same way as hands: through needs, and nothing else", async () => {
+  const { w } = await setup({ fixture: (app) => { app.needs = [{ member: "service:llm", words: ["complete"], why: "small model" }, { member: "agent:main", words: ["wake"], why: "wake the agent" }]; } });
   w.registry.add(stubMember("service:llm", "service", [{ word: "complete" }], { complete: () => ({ text: "hi" }) }));
   w.registry.add(stubMember("agent:main", "agent", [{ word: "wake", effect: "act", risk: "none" }]));
   w.registry.add(stubMember("service:vault", "service", [{ word: "list" }]));
   assert.deepEqual(await viaApp(w, "service:llm", "complete", { messages: [] }), { ok: true, result: { text: "hi" } });
   assert.equal((await viaApp(w, "agent:main", "wake", { reason: "x" })).ok, true);
-  assert.equal((await viaApp(w, "service:vault", "list")).error.code, "forbidden", "other services still need a grant");
+  assert.equal((await viaApp(w, "service:vault", "list")).error.code, "forbidden", "not in needs");
+  assert.equal((await viaApp(w, "service:llm", "other")).error.code, "forbidden", "another word of a granted member");
+});
+
+test("the runtime's granted(): needs for words, declared events for events, nothing for an app that is not running", async () => {
+  const { w } = await setup();
+  const granted = w.apps.runtime.granted.bind(w.apps.runtime);
+  assert.equal(granted("app:fixture", "device:abc", "location.get"), true, "device:* stands for any hand");
+  assert.equal(granted("app:fixture", "device:abc", "screen.nothing"), false);
+  assert.equal(granted("app:fixture", "service:llm", "complete"), false);
+  assert.equal(granted("app:fixture", null, "fixture.ping"), true);
+  assert.equal(granted("app:fixture", null, "sense.location"), false);
+  assert.equal(granted("app:nobody", "device:abc", "location.get"), false);
+  await call(w, "service:apps", "apps.disable", { id: "fixture" });
+  assert.equal(granted("app:fixture", "device:abc", "location.get"), false);
 });
 
 test("a long call answers accepted with a request_id after the wait; await_result brings the result, once", async () => {

@@ -12,5 +12,5 @@
   "wake_events": ["fixture.alert"],
   "listens": ["sense.*"],
   "data_dir": "data",
-  "needs": [{ "member": "device:phone", "words": ["location.get"], "why": "Read where the phone is, to test grants." }]
+  "needs": [{ "member": "device:*", "words": ["location.get"], "why": "Read where the phone is, to test grants." }]
 }

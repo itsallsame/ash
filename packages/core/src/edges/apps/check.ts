@@ -2,7 +2,7 @@
 // without guessing. The static part reads the folder (synchronous, so it can run in the service's `precheck`); the trial
 // run starts the server once (ASH_TRIAL=1, no usable credential), lists its tools and reads every page.
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, join } from "node:path";
+import { join } from "node:path";
 import Ajv, { type ErrorObject } from "ajv";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -116,15 +116,7 @@ export function checkFolder(dir: string, folder: string): { manifest: AppJson | 
   else {
     const file = join(dir, manifest.icon);
     if (!existsSync(file)) problems.push(warning("app.json /icon", `图标文件 ${manifest.icon} 不存在：会显示默认图标`));
-    else {
-      const bytes = readFileSync(file);
-      const kind = extname(file).toLowerCase();
-      const looks = kind === ".png" ? bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-        : kind === ".webp" ? bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP"
-          : /<svg[\s>]/i.test(bytes.subarray(0, 2000).toString("utf8"));
-      if (!looks) problems.push(warning("app.json /icon", `${manifest.icon} 的内容不是 ${kind.slice(1).toUpperCase()}`));
-      if (bytes.length > 512 * 1024) problems.push(warning("app.json /icon", `图标有 ${Math.round(bytes.length / 1024)} KB，太大`, "控制在 512 KB 以内"));
-    }
+    else if (statSync(file).size > 512 * 1024) problems.push(warning("app.json /icon", `图标有 ${Math.round(statSync(file).size / 1024)} KB，太大`, "控制在 512 KB 以内"));
   }
   // `node server.mjs`, `python3 app.py`: the script must be there (relative to the app folder).
   const script = manifest.server.args?.[0];

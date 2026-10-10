@@ -63,10 +63,12 @@ export function fakeRegistry(): Registry & { members: Map<string, Member> } {
 export interface Sent { msg: Outgoing; caller: Caller }
 export interface FakeRouter extends Router {
   sent: Sent[];
-  /** What the owner answers to a card (`person:owner/ask`): the choice id. Undefined: nobody answers (an error). */
+  /** What the owner answers to an approval card: the choice id. Undefined: nobody answers (an error). */
   ownerChoice: string | undefined;
-  /** The owner's cards, as asked. */
-  cards: { title: string; detail: string }[];
+  /** The approval cards, as the gate would show them: the word and the detail the member added (`cardDetail`). */
+  cards: { word: string; detail: string | null }[];
+  /** The router's one permission check for an app (the runtime's `granted`); set once the app edge exists. */
+  appGranted?: (app: string, to: string | null, word: string) => boolean;
   /** Run before an edit of the files lands in the answer: tests change app.json here to simulate an edit while the card is open. */
   onCard?: () => void;
 }
@@ -87,6 +89,8 @@ export function fakeRouter(registry: Registry): FakeRouter {
       router.sent.push({ msg: out, caller });
       const message: Message = { seq: ++seq, id: `m_${seq}`, ts: 1_000 + seq, from: caller.member, to: out.to, kind: out.kind, word: out.word, body: out.body };
       const signal = opts?.signal ?? new AbortController().signal;
+      if (caller.via === "app" && !router.appGranted?.(caller.member, out.kind === "event" ? null : out.to, out.word))
+        return { ok: false, error: errorBody("forbidden", `${caller.member} may not use ${out.to ?? "an event"}/${out.word}`, { recovery_hint: "ask the agent or the owner" }) };
       if (out.kind === "event") {
         const targets = new Map<string, Member>();
         for (const info of registry.list()) {
@@ -96,19 +100,20 @@ export function fakeRouter(registry: Registry): FakeRouter {
         for (const member of targets.values()) { try { await member.handle(message, { signal, caller, raw: out.body }); } catch { /* an event handler's failure is not the sender's */ } }
         return { ok: true };
       }
-      if (out.to === "person:owner" && out.word === "ask") {
-        const body = out.body as { title: string; detail: string };
-        router.cards.push({ title: body.title, detail: body.detail });
-        router.onCard?.();
-        return router.ownerChoice === undefined
-          ? { ok: false, error: errorBody("timeout", "nobody answered") }
-          : { ok: true, result: { data: { choice: router.ownerChoice } } };
-      }
       const found = out.to ? registry.find(out.to, out.word) : null;
       if (!found) return { ok: false, error: errorBody(out.to && registry.describe(out.to) ? "not_found" : "offline", `${out.to} cannot be reached`) };
       // The gate for an app: only a read or a risk-none word, and only one that lists apps among its callers.
       if (caller.via === "app" && (!found.contract.callers.includes("app") || (found.contract.effect !== "read" && found.contract.risk !== "none")))
         return { ok: false, error: errorBody("forbidden", "an app may only use reads and harmless words", { recovery_hint: "ask the agent or the owner" }) };
+      const early = found.member.precheck?.(message);
+      if (early) return early;
+      // An approval card for whoever is not the owner and asks for what needs one (here: an install): the member adds its detail.
+      if (caller.member !== "person:owner" && caller.via !== "service" && found.contract.risk !== "none") {
+        router.cards.push({ word: out.word, detail: found.member.cardDetail?.(message) ?? null });
+        router.onCard?.();
+        if (router.ownerChoice === undefined) return { ok: false, error: errorBody("timeout", "nobody answered") };
+        if (router.ownerChoice !== "allow") return { ok: false, error: errorBody("denied", "the owner said no") };
+      }
       try {
         const result = await found.member.handle(message, { signal, caller, raw: out.body });
         return { ok: true, ...(result ? { result } : {}) };
@@ -176,6 +181,7 @@ export function world(options: Partial<AppRuntimeOptions> & { fixture?: boolean 
     backoffMs: () => 60_000, trialMs: 15_000, log: () => {}, ...rest,
   });
   registry.add(apps.service);
+  router.appGranted = (app, to, word) => apps.runtime.granted(app, to, word);
   later(() => apps.stopAll(Date.now() + 3000));
   return { apps, registry, router, ledger, root, dbPath };
 }

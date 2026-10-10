@@ -1,8 +1,8 @@
 // The app's way back into the hub: one loopback MCP endpoint, one credential per running app (SPEC-02 §5.2).
 // Tools: capability_list, capability_describe, capability_call, await_result, ash_event. Every call is made as
-// Caller{member: "app:<id>", via: "app"} through `router.send`; the app's grants are checked here, and whether a word is
-// harmless enough for an app (read or risk none) is the gate's decision, not repeated here. An app has no approvals and no
-// pending requests: a word that would need one comes back `forbidden`.
+// Caller{member: "app:<id>", via: "app"} through `router.send`; the app's grants are not checked here, and whether a word is
+// harmless enough for an app (read or risk none) is the router's and gate's decision, not repeated here: the one place that
+// checks an app's permissions is the router. An app has no approvals and no pending requests.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -24,8 +24,8 @@ export type RecentFacts = (member: string, word: string, body: Record<string, un
 export interface AppBridgeOptions {
   router: Router;
   registry: Registry;
-  /** May app:<id> use member/word? The grants, plus the few words every app may use. */
-  allows: (app: string, member: string, word: string) => boolean;
+  /** May app:<id> use member/word? Only for the catalog: the router is the one place that enforces it. */
+  granted: (app: string, member: string, word: string) => boolean;
   /** An event the app emitted; returns what to tell the app. */
   event: (id: string, name: string, body: Record<string, unknown>) => Promise<{ ok: true } | { ok: false; code: ErrorCode; message: string }>;
   log?: (...args: unknown[]) => void;
@@ -189,7 +189,7 @@ export class AppBridge {
   private visible(app: string, memberId: string): WordContract[] {
     const described = this.options.registry.describe(memberId);
     if (!described) return [];
-    return described.words.filter((word) => word.kind === "request" && word.callers.includes("app") && this.options.allows(app, memberId, word.word));
+    return described.words.filter((word) => word.kind === "request" && word.callers.includes("app") && this.options.granted(app, memberId, word.word));
   }
 
   private entry(word: WordContract) {
@@ -237,10 +237,6 @@ export class AppBridge {
     if (typeof args.member !== "string" || typeof args.word !== "string") return this.failure("", "", {}, "bad_request", "member and word are required");
     if (args.body !== undefined && (typeof args.body !== "object" || args.body === null || Array.isArray(args.body))) return this.failure(args.member, args.word, {}, "bad_request", "body must be an object");
     const member = args.member, word = args.word, body = (args.body ?? {}) as Record<string, unknown>;
-    const found = this.options.registry.find(member, word);
-    // The first layer (callers) and the app's grants. An offline member has no contract to look at: the grants decide.
-    if (found && !found.contract.callers.includes("app")) return this.failure(member, word, body, "forbidden", `${member}/${word} is not for apps`);
-    if (!this.options.allows(app, member, word)) return this.failure(member, word, body, "forbidden", `${member}/${word} was not granted to this app`);
     this.sweep();
     const mine = [...this.jobs.values()].filter((job) => job.app === app);
     if (mine.length >= JOBS_PER_APP) return this.failure(member, word, body, "unavailable", "too many long calls are still running or uncollected");
@@ -282,11 +278,6 @@ export class AppBridge {
       const code = isErrorCode(reply.error.code) ? reply.error.code : "failed";
       return this.failure(member, word, body, code, reply.error.message, { ...(reply.error.recovery_hint ? { recovery_hint: reply.error.recovery_hint } : {}), detail: reply.error.detail });
     }
-    const data = reply.result?.data as { status?: unknown } | undefined;
-    // An app has no approvals: should the router ever park the request for the owner, the app is simply refused.
-    if (data && typeof data === "object" && data.status === "waiting_owner")
-      return this.failure(member, word, body, "forbidden", `${member}/${word} needs the owner's approval, and an app cannot ask for one`,
-        { recovery_hint: "Leave this to the agent or the owner; an app may only use words that need no approval." });
     return { ok: true, result: reply.result?.data ?? {}, ...(reply.result?.content?.length ? { content: reply.result.content } : {}) };
   }
 }

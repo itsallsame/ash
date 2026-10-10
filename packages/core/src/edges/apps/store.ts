@@ -1,8 +1,8 @@
-// What the app edge remembers, in three tables of the ledger's database (created through `ledger.db()`):
+// What the app edge remembers, in two tables of the ledger's database (created through `ledger.db()`):
 //   apps_installed  which apps the owner installed, whether they run, which `listens` the owner approved
 //   app_grants      what each app may use of the hub: one row per need (a member id, or notify / widgets / card)
-//   app_quota       a count per app, kind and day (wakes and the like)
-// Every call an app makes is checked against app_grants; nothing here widens without an install approval.
+// The router checks every call an app makes against app_grants (through the runtime's `granted`); nothing here widens
+// without an install approval. Daily counts (wakes) live in memory only.
 import type { AppNeed } from "../../../../sdk/src/app";
 import type { Db, Ledger } from "../../kernel/ledger";
 
@@ -36,19 +36,13 @@ CREATE TABLE IF NOT EXISTS app_grants (
   granted_at INTEGER NOT NULL,
   PRIMARY KEY (app, need)
 );
-CREATE TABLE IF NOT EXISTS app_quota (
-  app TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  day TEXT NOT NULL,
-  n INTEGER NOT NULL,
-  PRIMARY KEY (app, kind)
-);
 `;
 
 type Row = Record<string, unknown>;
 
 export class AppGrants {
   private readonly db: Db;
+  private readonly quota = new Map<string, { day: string; n: number }>();
   constructor(private readonly ledger: Pick<Ledger, "db" | "tx">, private readonly now: () => number = Date.now) {
     this.db = ledger.db();
     this.db.exec(SQL);
@@ -95,7 +89,7 @@ export class AppGrants {
     if (need === undefined) {
       this.db.prepare("DELETE FROM app_grants WHERE app=?").run(id);
       this.db.prepare("DELETE FROM apps_installed WHERE id=?").run(id);
-      this.db.prepare("DELETE FROM app_quota WHERE app=?").run(id);
+      for (const key of [...this.quota.keys()]) if (key.startsWith(`${id}/`)) this.quota.delete(key);
       return null;
     }
     if (need === "listens") this.db.prepare("UPDATE apps_installed SET listens='[]' WHERE id=?").run(id);
@@ -103,11 +97,12 @@ export class AppGrants {
     return this.get(id);
   }
 
-  /** May app:<id> use member/word through a need? Only an enabled app, only a granted word. */
+  /** May app:<id> use member/word through a need? Only an enabled app, only a granted word; `device:*` stands for every hand. */
   allows(app: string, member: string, word: string): boolean {
     const id = app.replace(/^app:/, "");
     const grant = this.get(id);
-    return Boolean(grant?.enabled && grant.needs.some((need) => "member" in need && need.member === member && need.words.includes(word)));
+    return Boolean(grant?.enabled && grant.needs.some((need) => "member" in need && need.words.includes(word)
+      && (need.member === member || (need.member === "device:*" && member.startsWith("device:")))));
   }
 
   has(id: string, kind: "notify" | "widgets" | "card"): boolean {
@@ -115,13 +110,14 @@ export class AppGrants {
     return Boolean(grant?.enabled && grant.needs.some((need) => needKey(need) === kind));
   }
 
-  /** At most `limit` of this kind per app per local day. Records the use when it is allowed. */
+  /** At most `limit` of this kind per app per local day, counted in memory (a restart starts the day's count again). */
   take(id: string, kind: string, limit: number): boolean {
     const day = new Date(this.now()).toLocaleDateString("sv-SE");
-    const row = this.db.prepare("SELECT day, n FROM app_quota WHERE app=? AND kind=?").get(id, kind) as Row | undefined;
-    const used = row && row.day === day ? Number(row.n) : 0;
+    const key = `${id}/${kind}`;
+    const row = this.quota.get(key);
+    const used = row && row.day === day ? row.n : 0;
     if (used >= limit) return false;
-    this.db.prepare("INSERT OR REPLACE INTO app_quota (app, kind, day, n) VALUES (?,?,?,?)").run(id, kind, day, used + 1);
+    this.quota.set(key, { day, n: used + 1 });
     return true;
   }
 }

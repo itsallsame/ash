@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { wordsOf } from "../../../../sdk/src/words";
-import { call, dataOf, installFixtureFolder, until, world, type World } from "./helpers";
+import { AGENT, call, dataOf, installFixtureFolder, until, world, type World } from "./helpers";
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 async function installed(options: Parameters<typeof world>[0] = {}): Promise<World> {
@@ -41,7 +41,7 @@ test("list, describe, refresh: what is in the folder and what the owner installe
   assert.equal(listed[0].path, `${w.root}/fixture`);
   const described = dataOf(await words(w, "apps.describe", { id: "fixture" }));
   assert.deepEqual(described.events, ["fixture.ping", "fixture.alert"]);
-  assert.equal(described.needs[0].member, "device:phone");
+  assert.equal(described.needs[0].member, "device:*");
   const missing = await words(w, "apps.describe", { id: "nope" });
   assert.equal(missing.ok === false && missing.error.code, "not_found");
   installFixtureFolder(w.root, (app) => { app.id = "second"; }, "second");
@@ -56,7 +56,7 @@ test("disable stops the app and keeps its grants; enable starts it again; revoke
   assert.equal(w.registry.find("app:fixture", "fixture.list"), null);
   const on = dataOf(await words(w, "apps.enable", { id: "fixture" }));
   assert.deepEqual([on.enabled, on.running], [true, true]);
-  const narrowed = dataOf(await words(w, "apps.revoke", { id: "fixture", need: "device:phone" }));
+  const narrowed = dataOf(await words(w, "apps.revoke", { id: "fixture", need: "device:*" }));
   assert.deepEqual(narrowed.needs, []);
   assert.equal(narrowed.running, true);
   const gone = dataOf(await words(w, "apps.revoke", { id: "fixture" }));
@@ -119,6 +119,7 @@ test("surface gives the page of a running app; icon gives the file; both say wha
   const page = dataOf(await words(w, "apps.surface", { id: "fixture", surface: "home" }));
   assert.equal(page.mime, "text/html;profile=mcp-app");
   assert.match(page.html, /<h1>Fixture<\/h1>/);
+  assert.deepEqual(page.csp, { connectDomains: ["https://api.example"], resourceDomains: [] });
   assert.equal((await words(w, "apps.surface", { id: "fixture", surface: "other" })).ok, false);
   const icon = dataOf(await words(w, "apps.icon", { id: "fixture" }));
   assert.equal(icon.mime, "image/png");
@@ -185,9 +186,9 @@ test("scaffold: writes an app that validates, installs and works; it refuses to 
   assert.equal(report.ok, true, JSON.stringify(report.problems));
   assert.ok(report.tools.includes("todo.archive"));
   assert.deepEqual(report.surfaces, ["home"]);
-  const info = dataOf(await words(w, "apps.install", { id: "todo" }));
+  const info = dataOf(await words(w, "apps.install", { id: "todo" }, AGENT));
   assert.equal(info.running, true);
-  assert.match(w.router.cards[0]!.title, /Ash 写的应用/);
+  assert.match(w.router.cards[0]!.detail!, /Ash 自己写的/);
   await call(w, "app:todo", "todo.add", { text: "buy milk" });
   const items = dataOf(await call(w, "app:todo", "todo.list")).items;
   assert.equal(items[0].text, "buy milk");
