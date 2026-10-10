@@ -60,7 +60,7 @@ T17 (agents + a driver). The "also needs" column lists only what a test needs on
 | link | SPEC-03 §11.2 wrong token / no token / wrong signature → 4001 (3 tests) | T5, T15 (token handoff) |
 | | SPEC-03 §11.2, 3a second device connection → 4009; two chat tabs coexist | T5, T6 |
 | | SPEC-03 §2.3 local human channel `local:true` | T5, T6 |
-| timers | S082 reminder to the owner | `service:clock` (T3 journal; the service itself has no task, see gaps) |
+| timers | S082 reminder to the owner | `service:clock` (T21) |
 | | S083, agent 9 timer wakes an agent on `back` | clock, T7 `timer_set`, T17 (`wake` → back lane) |
 | | S084 list and cancel | clock |
 | | S084, 设备 host alarm: `wake.at`, then `wake.fired` fires it | clock, T15 `service:host/wake.at`, host events, `HubOptions.now` + `stdin` |
@@ -80,7 +80,7 @@ T17 (agents + a driver). The "also needs" column lists only what a test needs on
 | | SPEC-08 §5.7 spawn: temporary agent, gone afterwards | T17 |
 | | SPEC-08 §5.8 front and back lanes run at once | T17 |
 | | S170, S171, SPEC-00 §6.5 restart mid-turn: no replay, "interrupted" note | T3/T4 `recover()`, T17 |
-| | S164, S165 pause interrupts all, resume is the owner's | `service:admin` (no task, see gaps), T17 `session.interrupt` |
+| | S164, S165 pause interrupts all, resume is the owner's | `service:admin` (T6), T17 `session.interrupt` |
 | | S028 first meeting wake, once | T19 |
 | | SPEC-08 §5.7 `primary.set` | T17 |
 | | S046 owner talks to a sub-agent directly | T17, T4 structural rule |

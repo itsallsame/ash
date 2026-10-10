@@ -65,7 +65,10 @@ export interface HubOptions {
   port?: number;
   /** The environment the host started the hub with (SPEC-07: `ASH_HOST_SPEC`, `ASH_VAULT_SEAL_KEY`, `ASH_HOST_TOKEN`). Absent: `process.env`. The hub reads host.json itself. */
   env?: NodeJS.ProcessEnv;
-  /** Where the host's events arrive, one JSON line each (`wake.fired`, `env.changed`, `lifecycle.stop`). Absent: `process.stdin`. */
+  /**
+   * Where the host's events arrive, one JSON line each (`wake.fired`, `env.changed`, `lifecycle.stop`). Absent: `process.stdin`.
+   * One stream per start; after `stop()` the hub no longer reads it.
+   */
   stdin?: Readable;
   /** Where the hub's small model lives; overrides the providers' own addresses (BUILD-PROGRESS §7, decision 1). Absent: the real ones. */
   llm?: { baseUrl: string };

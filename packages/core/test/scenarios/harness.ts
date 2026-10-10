@@ -16,6 +16,7 @@ import { generateKeyPairSync, sign as signBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import type { TestContext } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -199,7 +200,7 @@ class ToolLine {
 interface Running { abort: AbortController; record: TurnRecord }
 
 /**
- * A fake agent runtime. It registers under every runtime kind a scenario might declare (`dsh`, `scripted`, ...), keeps one
+ * A fake agent runtime. It registers under `dsh` by default and under any other runtime kind a scenario names, keeps one
  * script per agent (or one for all), and runs it as the body of each turn. Everything the hub asked of it is recorded.
  */
 export class ScriptedDriver {
@@ -635,6 +636,8 @@ export class Scenario {
   private handoffs = 0;
   private current: { port: number; token: string } | undefined;
   private booted = false;
+  /** This boot's standard input: a fresh stream per start, like a new process gets a new pipe. */
+  private stdin: PassThrough | undefined;
 
   constructor(private readonly options: ScenarioOptions = {}) {
     this.driver = scriptedDriver(["dsh", ...(options.runtimes ?? [])]);
@@ -658,8 +661,10 @@ export class Scenario {
     // The hub boots the way a host starts it (SPEC-07): the environment names host.json, carries the seal key and the host
     // token (a copy: the hub takes them out of what it is given); the host's events arrive on its standard input.
     const launch = this.host.writeLaunch();
+    this.stdin = new PassThrough();
+    this.host.stdin.pipe(this.stdin);
     this.hubValue = await startHub({
-      dataDir: this.dataDir, port: 0, env: { ...launch.env }, stdin: this.host.stdin, drivers: this.driver.drivers,
+      dataDir: this.dataDir, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
       ...(this.options.llm ? { llm: this.options.llm } : {}),
       ...(this.options.fakeNow ? { now: this.clock.now } : {}),
     });
@@ -675,6 +680,8 @@ export class Scenario {
     await this.driver.dispose();
     await this.hub.stop();
     this.hubValue = undefined;
+    // Events the host sends while the hub is down wait in the host's stream for the next boot's pipe.
+    if (this.stdin) { this.host.stdin.unpipe(this.stdin); this.stdin.end(); }
     const returning = [...this.clients].filter((client) => client.state !== "stopped");
     await eventually(() => returning.every((client) => client.state !== "ready"), "the connections noticing that the hub is gone");
     await this.boot();
