@@ -304,7 +304,7 @@ add("person:owner", "ask", "request", {
     options: { type: "array", items: obj({ id: nonempty, label: nonempty }, ["id", "label"]), minItems: 1 }, expires_at: num,
     source: obj({ word: nonempty, to: id, body_preview: str, body_full: str }, ["word", "to", "body_preview"]),
   }, ["title"]),
-  // A question (the default kind) needs its options; a confirmation gets the usual yes / no from the tool.
+  // A question (the default kind) needs its options; a confirmation gets the usual yes / no from the owner's side.
   if: { properties: { human_kind: { const: "confirmation" } }, required: ["human_kind"] },
   else: { required: ["options"], properties: { options: { type: "array" } } },
 }, obj({ choice: nonempty, text: str }, ["choice"]),
@@ -505,8 +505,9 @@ senseEvent("sense.source", obj({ source: senseText(64), state: choice("stale", "
 // ===================================================================================================================
 // service:directory, service:history, service:blobs: finding things out
 // ===================================================================================================================
-add("service:directory", "list", "request", obj({ member: nonempty }), obj({ members: array(obj({ id: nonempty, kind: nonempty, name: str, online: bool, words: strings }, ["id", "kind"])) }, ["members"]),
-  { label: "在查能做什么", description: "The members you can reach and the words of each that you may call (name only). Pass a member id to see just that one." });
+add("service:directory", "list", "request", obj({ member: nonempty }), obj({ members: array(obj({ id: nonempty, kind: nonempty, name: str, online: bool,
+  words: array(obj({ name: nonempty, label: str, needs_approval: { anyOf: [{ type: "boolean" }, { const: "per_call" }] } }, ["name"])) }, ["id", "kind"])) }, ["members"]),
+  { label: "在查能做什么", description: "The members you can reach and the words of each that you may call, with the label and whether a call needs the owner's approval (true, or per_call when it is judged per call). Pass a member id to see just that one." });
 add("service:directory", "describe", "request", obj({ member: nonempty, word: nonempty }, ["member"]), obj({ member: nonempty, words: array(free) }, ["member", "words"]),
   { label: "在查怎么做", description: "The full contract of a member's words you may call (description, input and result schemas, effect, risk), or of one word." });
 add("service:history", "query", "request", obj({ text: nonempty, speaker: id, lane: nonempty, thread: id, before: positiveSafe, after: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 200 } }),
@@ -623,6 +624,8 @@ add("service:widgets", "widget.action", "event", obj({ card: widgetCardId, actio
   context: obj({}, [], true) }, ["card", "action", "owner"]), undefined,
   { direction: "out", label: "在转达小组件上的点击", description: "The owner tapped, toggled or chose something on a home-screen card. owner is the card's creator, who decides what it means; component is the element, item the list item's key, checked / value the new state. " +
     "On an app's card (owner app:<id>) the tap goes to the app's own action tool, which changes the app's data; otherwise the tap itself does nothing else." });
+add("person:owner", "widget.state", "event", obj({}, [], true), undefined,
+  { callers: KERNEL, direction: "out", label: "在更新桌面卡片", description: "The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list." });
 add("service:widgets", "widget.problem", "event", obj({ card: widgetCardId, owner: id, title: str, problem: nonempty }, ["card", "owner", "problem"]), undefined,
   { direction: "out", label: "在转达卡片画不出来", description: "The phone could not fully draw a home-screen card (problem says what and why); the card's creator should fix it." });
 

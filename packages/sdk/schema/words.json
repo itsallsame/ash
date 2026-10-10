@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "4d9480ef2eaf84609a6aaf49af84cd960d45d58d09c6919dcfaf37032dc39c26",
+ "hash": "a05bf83c203853d3aa8a9e2a42d5d2202d931a24383799b2ab3d7d5bf7adc190",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -11514,7 +11514,7 @@
    "word": "list",
    "kind": "request",
    "direction": "in",
-   "description": "The members you can reach and the words of each that you may call (name only). Pass a member id to see just that one.",
+   "description": "The members you can reach and the words of each that you may call, with the label and whether a call needs the owner's approval (true, or per_call when it is judged per call). Pass a member id to see just that one.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -11551,7 +11551,30 @@
         "words": {
          "type": "array",
          "items": {
-          "type": "string"
+          "type": "object",
+          "properties": {
+           "name": {
+            "type": "string",
+            "minLength": 1
+           },
+           "label": {
+            "type": "string"
+           },
+           "needs_approval": {
+            "anyOf": [
+             {
+              "type": "boolean"
+             },
+             {
+              "const": "per_call"
+             }
+            ]
+           }
+          },
+          "required": [
+           "name"
+          ],
+          "additionalProperties": false
          }
         }
        },
@@ -12971,6 +12994,27 @@
    ],
    "label": {
     "doing": "在打开页面"
+   }
+  },
+  {
+   "member": "person:owner",
+   "word": "widget.state",
+   "kind": "event",
+   "direction": "out",
+   "description": "The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list.",
+   "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": true
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在更新桌面卡片"
    }
   },
   {
