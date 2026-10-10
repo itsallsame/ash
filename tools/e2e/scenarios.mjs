@@ -1519,12 +1519,22 @@ defineScenario({
   id: "S005", category: "recovery", codes: ["S006", "S007", "S008", "S009"], name: "对话失败重试：DSH 在回答中途被杀，出失败提示和 [重试]，点了能做完", disruptive: true, needs: ["llm", "kill"],
   async run(ctx) {
     if (!(await ctx.dshPids()).length) skip("cannot find DSH's process (looked for '--profile acp' in ps)");
-    const base = await ctx.head();
-    const a = await ctx.send(longJob("S005"));
-    check(await ctx.startedTurnOf(base, a.id, { ms: 60_000 }), "the message never started a turn");
-    await sleep(4000);
-    const gone = await ctx.kill(await ctx.dshPids());
-    if (!gone.length) skip(`could not kill DSH; ${fill(REMEDY.kill, ctx)}`);
+    // The kill has to land while the owner's turn is still running: a fast model can finish a short essay within
+    // seconds, and then the kill only hits a background turn (which never shows a card). Ask for a long text, kill as
+    // soon as the turn has started, and try again when the turn had already ended by then.
+    let base, a;
+    for (let attempt = 1; ; attempt++) {
+      base = await ctx.head();
+      a = await ctx.send(`（S005-${attempt}）请不用任何工具，认真写一篇 2000 字的短文《一个人的春天》，分十段，每段都写细。`);
+      check(await ctx.startedTurnOf(base, a.id, { ms: 60_000, every: 300 }), "the message never started a turn");
+      await sleep(800);
+      const gone = await ctx.kill(await ctx.dshPids());
+      if (!gone.length) skip(`could not kill DSH; ${fill(REMEDY.kill, ctx)}`);
+      const ended = await ctx.wait(base, (ms) => turnsGiven(ms, a.id).find((t) => t.outcome), { ms: 60_000, every: 1000 });
+      if (ended && ended.value.outcome !== "completed") break;
+      if (attempt >= 3) fail(`the turn kept finishing before DSH was killed (${ended ? ended.value.outcome : "no end"}); the model is too fast for this test`);
+      for (let i = 0; i < 60 && !(await ctx.dshPids()).length; i++) await sleep(1000);   // DSH is brought back on its own
+    }
     const got = await ctx.expect(base, (ms) => retryCard(ms), "no failure card with a retry option came", { ms: 240_000, every: 4000 });
     const turn = turnsGiven(ctx.lastLedger, a.id)[0];
     check((await ctx.owner.answer(got.value.id, got.value.retry)).ok, "the retry pick was refused");
