@@ -459,12 +459,23 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
+/**
+ * Leaves once everything written has reached stdout and stderr. `process.exit` drops what a pipe has not taken yet
+ * (a large result was cut at 64 KB when another program read it through a pipe), so wait for both to drain first.
+ */
+function exit(code: number): void {
+  let pending = 2;
+  const done = () => { if (--pending === 0) process.exit(code); };
+  process.stdout.write("", done);
+  process.stderr.write("", done);
+}
+
 main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
+  (code) => exit(code),
   (error) => {
-    if (error instanceof UsageError) { process.stderr.write(`owner.mjs: ${error.message}\n(owner.mjs help)\n`); process.exit(64); }
-    if (error instanceof Failure) { line("error", { message: error.message }); process.exit(error.code); }
+    if (error instanceof UsageError) { process.stderr.write(`owner.mjs: ${error.message}\n(owner.mjs help)\n`); exit(64); return; }
+    if (error instanceof Failure) { line("error", { message: error.message }); exit(error.code); return; }
     line("error", { message: error instanceof Error ? error.message : String(error) });
-    process.exit(1);
+    exit(1);
   },
 );

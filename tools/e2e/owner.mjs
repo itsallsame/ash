@@ -12574,20 +12574,30 @@ async function main(argv) {
       throw new UsageError(`unknown command ${command}`);
   }
 }
+function exit(code) {
+  let pending = 2;
+  const done = () => {
+    if (--pending === 0) process.exit(code);
+  };
+  process.stdout.write("", done);
+  process.stderr.write("", done);
+}
 main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
+  (code) => exit(code),
   (error) => {
     if (error instanceof UsageError) {
       process.stderr.write(`owner.mjs: ${error.message}
 (owner.mjs help)
 `);
-      process.exit(64);
+      exit(64);
+      return;
     }
     if (error instanceof Failure) {
       line("error", { message: error.message });
-      process.exit(error.code);
+      exit(error.code);
+      return;
     }
     line("error", { message: error instanceof Error ? error.message : String(error) });
-    process.exit(1);
+    exit(1);
   }
 );
