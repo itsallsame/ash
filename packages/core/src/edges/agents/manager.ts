@@ -91,8 +91,8 @@ export const retryDelay = (failures: number): number => RETRY_STEPS_MS[Math.min(
 export const TROUBLE_NOTICE_AT = 4;
 /** A start that has not finished by then counts as failed (the runtime hung). Under the host's own five minutes for a core to say it is ready. */
 export const START_TIMEOUT_MS = 180_000;
-/** Before a turn opens, the keys are written again while the owner keeps saving new ones, at most this many times. */
-const KEY_SYNC_TRIES = 3;
+/** Before a turn opens, the keys are written once, and once more when the owner saved again meanwhile: at most this many writes. */
+const KEY_SYNC_TRIES = 2;
 /** A runtime that has not taken a key by then is let go of (the answer is lost, not the turns of every agent behind it). */
 export const KEY_SYNC_TIMEOUT_MS = 15_000;
 /** A temporary worker is tried this many times at once and is not waited for: its asker is waiting. */
@@ -155,8 +155,6 @@ interface Slot {
   why: string;
   /** The `keySaves` that stood when the last key write to this agent's runtime was started and landed (none: nothing was saved at boot, the runtime keeps its own). Kept across restarts: the runtime keeps the keys. */
   keysSeen?: number;
-  /** The `keySaves` for which a key write failed or timed out: the turn that finds this goes on without trying again at once (the next one does). */
-  keysGaveUp?: number;
   /** The proxy the attempt began with. */
   proxy: string;
   /** Ends the wait of `backoff`. */
@@ -1003,11 +1001,7 @@ export class AgentManager {
       if (ok && slot && slot.live === live) slot.keysSeen = seen;
       return ok;
     };
-    const work = (this.keySync.get(live.id) ?? Promise.resolve()).then(async () => {
-      const ok = await this.within(KEY_SYNC_TIMEOUT_MS, `${live.id} did not take the key`, land()).catch((error) => { this.log(`agents: keys for ${live.id}: ${errorText(error)}`); return false; });
-      if (!ok && slot) slot.keysGaveUp = this.keySaves;
-      return ok;
-    });
+    const work = (this.keySync.get(live.id) ?? Promise.resolve()).then(() => this.within(KEY_SYNC_TIMEOUT_MS, `${live.id} did not take the key`, land()).catch((error) => { this.log(`agents: keys for ${live.id}: ${errorText(error)}`); return false; }));
     const tail = work.then(() => {});
     this.keySync.set(live.id, tail);
     return work.finally(() => { if (this.keySync.get(live.id) === tail) this.keySync.delete(live.id); });
@@ -1015,19 +1009,19 @@ export class AgentManager {
 
   /**
    * Before a turn opens: wait for the key writes on their way, then, if the owner has saved a key since the last one that landed,
-   * write the latest (and again when more were saved meanwhile, a few times at most). This is the one place the keys' being in
-   * time depends on; `onVaultChanged` only makes them arrive early.
+   * write the latest (and once more when keys were saved meanwhile). A write that fails or times out is logged and this turn goes
+   * on; the next turn compares and tries again, so a stuck runtime costs each turn up to KEY_SYNC_TIMEOUT_MS and no more. This is
+   * the one place the keys' being in time depends on; `onVaultChanged` only makes them arrive early.
    */
   private async ensureKeys(live: Live): Promise<void> {
     const slot = this.slots.get(live.id);
     if (!slot) return;
-    for (let tries = 0; ; tries++) {
-      await this.keySync.get(live.id);
+    await this.keySync.get(live.id);
+    for (let writes = 0; writes < KEY_SYNC_TRIES; writes++) {
       if ((slot.keysSeen ?? 0) === this.keySaves || !this.isUp(live)) return;
-      if (slot.keysGaveUp === this.keySaves) { slot.keysGaveUp = undefined; return; }
-      if (tries >= KEY_SYNC_TRIES) { this.log(`agents: ${live.id} still lacks the latest keys after ${KEY_SYNC_TRIES} tries; the turn goes on`); return; }
-      if (!(await this.syncKeys(live, true))) return; // it did not take them in time: the next turn tries again
+      if (!(await this.syncKeys(live, true))) return;
     }
+    if ((slot.keysSeen ?? 0) !== this.keySaves && this.isUp(live)) this.log(`agents: ${live.id} still lacks the latest keys after ${KEY_SYNC_TRIES} writes; the turn goes on`);
   }
 
   async onVaultChanged(ref: string, action: string): Promise<void> {

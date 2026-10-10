@@ -158,6 +158,10 @@ test("a runtime that never takes the key holds back only its own agent, and only
 
   assert.ok(f.fire(KEY_SYNC_TIMEOUT_MS), "the key timeout is armed");
   await saved;
+  // r's turn tries the write itself once more (the runtime has not taken the key), and is let go after that one's timeout
+  await waitFor(() => f.waiting(KEY_SYNC_TIMEOUT_MS).length === 1, "the turn's own write");
+  assert.ok(!d.of("send").some((c) => c[1] === "agent:r"));
+  assert.ok(f.fire(KEY_SYNC_TIMEOUT_MS));
   await waitFor(() => d.of("send").some((c) => c[1] === "agent:r"), "r goes on once the timeout let go");
   assert.ok(f.logs.some((l) => /agent:r did not take the key/.test(String(l[0]))));
 });
@@ -288,4 +292,63 @@ test("a lane that cannot be ended tells those who asked in its turn: result_unkn
   assert.equal(r.e?.code, "result_unknown");
   assert.match(r.e.message, /went away in the middle/, "told by the cut itself, not later by the restart");
   assert.ok(f.logs.some((l) => /ending the turn of agent:main\/back/.test(String(l[0]))));
+});
+
+test("an old write that lands late, after a newer one: the next turn writes the latest over it, whatever the timeout said", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-v1" } });
+  await f.start();
+  const d = f.driver();
+  const late = gate();
+  let first = true;
+  d.credentialsSet = async (agent: string, ref: string, value: string) => {
+    d.calls.push(["credentialsSet", agent, ref]);
+    if (first) { first = false; await late.promise; }
+    d.credentials.set(ref, value);
+  };
+  f.secrets[KEY] = "sk-v2";
+  const one = f.service("vault.changed", { ref: KEY, action: "saved" }, vault); // hangs on the runtime
+  await settle();
+  f.secrets[KEY] = "sk-v3";
+  const two = f.service("vault.changed", { ref: KEY, action: "saved" }, vault); // queued behind the first, saved before it times out
+  await settle();
+  assert.ok(f.fire(KEY_SYNC_TIMEOUT_MS));
+  await Promise.all([one, two]);
+  assert.equal(d.credentials.get(KEY), "sk-v3");
+  late.open();
+  await settle();
+  assert.equal(d.credentials.get(KEY), "sk-v2", "the old write landed last");
+
+  const atSend: (string | undefined)[] = [];
+  const send = d.send.bind(d);
+  d.send = async (a: string, k: string, b: Parameters<typeof send>[2]) => { atSend.push(d.credentials.get(KEY)); return send(a, k, b); };
+  await f.call(M, "say", { text: "hi" });
+  await waitFor(() => d.of("send").length === 1);
+  assert.deepEqual(atSend, ["sk-v3"], "the turn does not meet the old key");
+});
+
+test("a runtime that fails the key write: every turn tries again before it opens, and the first turn after it recovers has the key", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-v1" } });
+  await f.start();
+  const d = f.driver();
+  d.instantTurns = true;
+  let failing = true;
+  d.credentialsSet = async (agent: string, ref: string, value: string) => {
+    d.calls.push(["credentialsSet", agent, ref]);
+    if (failing) throw Object.assign(new Error("no"), { code: "failed" });
+    d.credentials.set(ref, value);
+  };
+  f.secrets[KEY] = "sk-v2";
+  await f.service("vault.changed", { ref: KEY, action: "saved" }, vault); // fails
+  const atSend: (string | undefined)[] = [];
+  const send = d.send.bind(d);
+  d.send = async (a: string, k: string, b: Parameters<typeof send>[2]) => { atSend.push(d.credentials.get(KEY)); return send(a, k, b); };
+  for (let i = 1; i <= 3; i++) {
+    const sets = d.of("credentialsSet").length;
+    if (i === 3) failing = false; // the runtime recovers before the third turn
+    await f.call(M, "say", { text: `t${i}` });
+    await waitFor(() => d.of("send").length === i, `turn ${i}`);
+    await settle();
+    assert.ok(d.of("credentialsSet").length > sets, `turn ${i} tried the write again`);
+  }
+  assert.deepEqual(atSend, ["sk-v1", "sk-v1", "sk-v2"]);
 });
