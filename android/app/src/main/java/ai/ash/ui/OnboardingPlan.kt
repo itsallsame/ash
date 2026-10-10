@@ -15,6 +15,12 @@ object OnboardingPlan {
     /** One thing the owner can set: [state] is one of `granted`, `missing`, `unsupported` (the words of `config.status`). */
     data class Row(val item: String, val state: String)
 
+    /**
+     * What one row says: the mark, the name and why the owner would want it, in the owner's words. The English `detail`
+     * of `config.status` is for an agent reading it and is not shown here (it repeated the Chinese line beneath it).
+     */
+    fun rowText(mark: String, name: String, why: String) = if (why.isEmpty()) "$mark $name" else "$mark $name\n$why"
+
     private const val GRANTED = "granted"
     private const val UNSUPPORTED = "unsupported"
 

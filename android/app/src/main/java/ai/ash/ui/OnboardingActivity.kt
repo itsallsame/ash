@@ -226,11 +226,10 @@ class OnboardingActivity : Activity() {
         val (name, why) = OWN[item.item] ?: ((permission?.title ?: item.item) to (permission?.why ?: ""))
         val ok = item.state == ConfigStatus.GRANTED || item.state == ConfigStatus.UNSUPPORTED
         val mark = when (item.state) { ConfigStatus.GRANTED -> "✅"; ConfigStatus.UNSUPPORTED -> "➖"; else -> "⚪️" }
-        val detail = item.detail?.takeIf { !ok }?.let { "\n$it" }.orEmpty()
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(10))
             addView(TextView(context).apply {
-                text = "$mark $name\n$why$detail"; textSize = 14f; setTextColor(fg); setLineSpacing(0f, 1.2f)
+                text = OnboardingPlan.rowText(mark, name, why); textSize = 14f; setTextColor(fg); setLineSpacing(0f, 1.2f)
             }, LinearLayout.LayoutParams(0, -2, 1f))
             if (!ok) addView(Button(context).apply { text = "去开启"; isAllCaps = false; setOnClickListener { act(item.item) } })
             if (permission?.awaitsWord(this@OnboardingActivity) == true)

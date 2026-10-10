@@ -151,8 +151,9 @@ class HomeActivity : Activity() {
                 chooseFiles(cb, params)
         }
 
-        setContentView(web)
-        ai.ash.apps.Ui.insets(web) // edge to edge (targetSdk 35): clear of the bars and the keyboard
+        // Edge to edge (targetSdk 35): a WebView ignores its own padding, so the frame around it keeps clear of the bars and
+        // the keyboard, and the page is laid out in what is left (its composer then sits on top of the keyboard).
+        setContentView(ai.ash.apps.Ui.inset(this, web).apply { setBackgroundColor(if (night) 0xFF141415.toInt() else 0xFFF7F7F5.toInt()) })
         focusInput = intent?.getBooleanExtra(EXTRA_FOCUS_INPUT, false) == true
         web.loadUrl(UI_ASSET_URL)
         val firstStart = OnboardingActivity.showOnce(this)

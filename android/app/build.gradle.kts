@@ -108,6 +108,8 @@ tasks.withType<Test>().configureEach { inputs.file(rootProject.file("../packages
 dependencies {
     implementation(files("libs/shizuku-api.aar", "libs/shizuku-provider.aar", "libs/shizuku-aidl.aar"))
     implementation("androidx.webkit:webkit:1.17.1")
+    // WindowInsetsCompat, for the one insets helper every screen uses (ai.ash.apps.Ui). Already pulled in by webkit at this version.
+    implementation("androidx.core:core:1.12.0")
     // Spring physics for the island's transitions (SpringAnimation).
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
     // Health Connect (read only): the platform's store on Android 14+, the Health Connect app before that.
