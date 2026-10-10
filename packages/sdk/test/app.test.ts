@@ -45,8 +45,8 @@ test("an app tool compiles to a word contract", () => {
 });
 
 test("wake_events may name the agent to wake", () => {
-  const app = { wake_events: ["notes.due", { event: "message.received", agent: "ash-chat" }, { event: "x.y" }] } as Pick<AppJson, "wake_events">;
-  assert.deepEqual(wakeEvents(app), [{ event: "notes.due" }, { event: "message.received", agent: "ash-chat" }, { event: "x.y" }]);
+  const app = { wake_events: ["notes.due", { event: "message.received", agent: "agent:ash-chat" }, { event: "x.y" }] } as Pick<AppJson, "wake_events">;
+  assert.deepEqual(wakeEvents(app), [{ event: "notes.due" }, { event: "message.received", agent: "agent:ash-chat" }, { event: "x.y" }]);
   assert.deepEqual(wakeEvents({}), []);
 });
 
@@ -55,10 +55,10 @@ test("wake_events may name the agent to wake", () => {
 // A key that is missing here, or not in AppJson, fails to compile: the field list and the type cannot drift apart.
 const APP_JSON_FIELDS: Record<keyof AppJson, true> = {
   contract: true, id: true, name: true, version: true, icon: true, summary: true, role: true, publisher: true, server: true, surfaces: true,
-  events: true, wake_events: true, listens: true, data_dir: true, cards: true, needs: true, tools: true,
+  events: true, wake_events: true, listens: true, data_dir: true, cards: true, needs: true,
 };
 const validateApp = compileSchema({ ...APP_SCHEMA, $schema: undefined });
-const BASE = { contract: "ash-app/1", id: "demo", name: "Demo", version: "1.0.0", summary: "A demo app.", publisher: "ash", server: { command: "node", args: ["server.mjs"] } };
+const BASE: AppJson = { contract: "ash-app/1", id: "demo", name: "Demo", version: "1.0.0", summary: "A demo app.", publisher: "ash", server: { command: "node", args: ["server.mjs"] } };
 
 test("the app schema has exactly the fields of AppJson, and the required ones", () => {
   assert.deepEqual(Object.keys(APP_SCHEMA.properties).sort(), Object.keys(APP_JSON_FIELDS).sort());
@@ -72,8 +72,8 @@ test("docs/app.schema.json is what APP_SCHEMA generates", () => {
 
 test("listens and wake_events as the schema accepts them", () => {
   const good: AppJson = {
-    ...BASE, contract: "ash-app/1", events: ["message.received", "digest.ready"],
-    wake_events: ["digest.ready", { event: "message.received", agent: "ash-feishu" }, { event: "digest.ready" }],
+    ...BASE, events: ["message.received", "digest.ready"],
+    wake_events: ["digest.ready", { event: "message.received", agent: "agent:ash-feishu" }, { event: "digest.ready" }],
     listens: ["sense.location", "sense.*", "calendar.event.created"],
   };
   assert.equal(validateApp(good), true, JSON.stringify(validateApp.errors));
@@ -84,8 +84,9 @@ test("listens and wake_events as the schema accepts them", () => {
   assert.equal(bad({ listens: ["sense.*.x"] }), false, "the wildcard is the last segment only");
   assert.equal(bad({ listens: ["Sense.Location"] }), false);
   assert.equal(bad({ listens: "sense.location" }), false);
-  assert.equal(bad({ wake_events: [{ agent: "ash-feishu" }] }), false, "the object form needs the event");
-  assert.equal(bad({ wake_events: [{ event: "a.b", agent: "agent:x" }] }), false, "the agent is a name, not an id");
+  assert.equal(bad({ wake_events: [{ agent: "agent:ash-feishu" }] }), false, "the object form needs the event");
+  assert.equal(bad({ wake_events: [{ event: "a.b", agent: "ash-feishu" }] }), false, "the agent is a full id (agent:<name>), not a bare name");
+  assert.equal(bad({ wake_events: [{ event: "a.b", agent: "service:x" }] }), false);
   assert.equal(bad({ wake_events: [{ event: "a.b", extra: 1 }] }), false);
   assert.equal(bad({ wake_events: [{ event: "nodot" }] }), false);
 });

@@ -8,7 +8,7 @@
  * own edges and services (the human module, the hands module, the agents module), never by an agent or an app.
  * An agent's name never appears here; `agent:*` stands for every declared agent.
  */
-import { AGENT_ID, AGENT_ID_PATTERN, APP_NAME_PATTERN, BODY_ID_PATTERN, CLIENT_ID_PATTERN, DATE_PATTERN, DEDUPE_KEY_PATTERN, DEVICE_ID_PATTERN, HAND_ID_PATTERN, SURFACE_ID_PATTERN } from "./ids";
+import { AGENT_ID, AGENT_ID_PATTERN, APP_NAME_PATTERN, BODY_ID_PATTERN, CLIENT_ID_PATTERN, DATE_PATTERN, DEDUPE_KEY_PATTERN, DEVICE_ID_PATTERN, HAND_ID_PATTERN, SURFACE_ID_PATTERN, TOOL_NAME_PATTERN } from "./ids";
 import { ACTIVITY_STATES } from "./namespaces";
 import {
   DEFAULT_CALLERS, RISKS, secret, sensitive, wordEffect,
@@ -703,7 +703,7 @@ add("service:apps", "apps.remove", "request", obj({ id: appId, keep_data: bool }
     "keep_data: true keeps the folder (its data and files) so it can be installed again as it was. Ash's own apps cannot be removed (they come back): disable them instead." });
 // Writing apps: the contract to read, a skeleton to start from, and a check that says exactly what is wrong.
 const appProblem = obj({ level: choice("error", "warning"), where: str, problem: str, fix: str }, ["level", "where", "problem"]);
-const appTool = obj({ name: { type: "string", pattern: "^[a-z][a-z0-9_.-]{0,63}$" }, title: { type: "string", minLength: 1, maxLength: 60 },
+const appTool = obj({ name: { type: "string", pattern: TOOL_NAME_PATTERN }, title: { type: "string", minLength: 1, maxLength: 60 },
   description: { type: "string", minLength: 1, maxLength: 2000 }, read_only: bool }, ["name"]);
 const surfaceId: JsonSchema = { type: "string", pattern: SURFACE_ID_PATTERN };
 const appSurface = obj({ id: surfaceId, title: { type: "string", minLength: 1, maxLength: 20 } }, ["id", "title"]);

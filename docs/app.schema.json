@@ -153,8 +153,8 @@
               },
               "agent": {
                 "type": "string",
-                "pattern": "^[a-z][a-z0-9_-]{0,31}$",
-                "description": "The name of the agent to wake (agent:<name>); leave it out to wake the primary agent."
+                "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$",
+                "description": "The agent to wake, as agent:<name>; leave it out to wake the primary agent."
               }
             }
           }
@@ -321,10 +321,6 @@
           }
         ]
       }
-    },
-    "tools": {
-      "type": "array",
-      "description": "Informational only: the server's tools/list is what counts."
     }
   }
 }

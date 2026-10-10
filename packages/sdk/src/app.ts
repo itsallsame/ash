@@ -2,7 +2,7 @@
  * The app contract `ash-app/1`: the shape of `app.json`, and how an app tool's MCP annotations become its effect and
  * risk (SPEC-02 §5.3). The runtime that starts apps compiles each tool with `appToolContract`.
  */
-import { AGENT_NAME_PATTERN, APP_NAME_PATTERN, SURFACE_ID_PATTERN } from "./ids";
+import { AGENT_ID_PATTERN, APP_NAME_PATTERN, SURFACE_ID_PATTERN, TOOL_NAME_PATTERN } from "./ids";
 import { APP_CONTRACT } from "./versions";
 import { DEFAULT_CALLERS, type Effect, type JsonSchema, type Risk, type WordContract } from "./word";
 
@@ -37,7 +37,7 @@ export type AppNeed =
   | { notify: true; why: string }
   | { widgets: true; why: string }
   | { card: true; why: string };
-/** An event that wakes an agent at once. A plain name wakes the primary agent; `agent` names another one. */
+/** An event that wakes an agent at once. A plain name wakes the primary agent; `agent` (`agent:<name>`) names another one. */
 export type AppWakeEvent = string | { event: string; agent?: string };
 
 export interface AppJson {
@@ -60,8 +60,6 @@ export interface AppJson {
   data_dir?: string;
   cards?: AppCard[];
   needs?: AppNeed[];
-  /** Informational only: the server's tools/list is what counts. */
-  tools?: unknown[];
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -71,7 +69,6 @@ export interface AppJson {
 const EVENT_NAME_PATTERN = "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9_-]+)+$";
 /** An event a `listens` entry names: an exact event (`sense.location`), or every event under a prefix (`sense.*`). */
 export const LISTEN_PATTERN = "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9_-]+)*\\.(?:[a-z0-9_-]+|\\*)$";
-const TOOL_NAME_PATTERN = "^[a-z][a-z0-9_.-]{0,63}$";
 const why: JsonSchema = { type: "string", minLength: 1, maxLength: 200 };
 const needFlag = (flag: string): JsonSchema => ({
   type: "object", required: [flag, "why"], additionalProperties: false, properties: { [flag]: { const: true }, why },
@@ -128,7 +125,7 @@ export const APP_SCHEMA: JsonSchema = {
             type: "object", required: ["event"], additionalProperties: false,
             properties: {
               event: { type: "string", pattern: EVENT_NAME_PATTERN },
-              agent: { type: "string", pattern: AGENT_NAME_PATTERN, description: "The name of the agent to wake (agent:<name>); leave it out to wake the primary agent." },
+              agent: { type: "string", pattern: AGENT_ID_PATTERN, description: "The agent to wake, as agent:<name>; leave it out to wake the primary agent." },
             },
           },
         ],
@@ -175,7 +172,6 @@ export const APP_SCHEMA: JsonSchema = {
         ],
       },
     },
-    tools: { type: "array", description: "Informational only: the server's tools/list is what counts." },
   },
 };
 
