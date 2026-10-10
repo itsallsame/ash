@@ -1,12 +1,78 @@
 // ACP superset for ash: the official ACP bridge keeps every standard method; this plugin owns stdin/stdout,
-// answers ash's extension methods (_ash/steer, _ash/inject, _ash/plugins) through the live Agent and DSH's own services, and passes everything else through.
+// answers ash's extension methods (_ash/steer, _ash/inject, _ash/plugins, _ash/credentials.has, _ash/credentials.set,
+// _ash/usage) through the live Agent and DSH's own services, and passes everything else through.
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 
 export const name = "dsh-ash-control";
-export const inject = ["agents", "llm", "sessionPersistence", "sessions", "acpAppStartup"];
+export const inject = ["agents", "llm", "sessionPersistence", "sessions", "acpAppStartup", "credentials"];
+
+// ash-cost (a sibling DSH plugin in this process) leaves its collector here; see packages/ash-cost.
+const COST_COLLECTOR = Symbol.for("ash.cost.collector");
+const CREDENTIAL_REF = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MAX_SECRET = 8192;
+// A balance read this recent is reused; an older one is refreshed (best effort) when ash pulls usage.
+const BALANCE_FRESH_MS = 5 * 60_000;
+
+class RpcError extends Error {
+  constructor(code, message) { super(message); this.code = code; }
+}
+const invalid = (message) => new RpcError(-32602, message);
+const unavailable = (message) => new RpcError(-32603, message);
+
+/**
+ * The extension methods that need only DSH's services, not the ACP stream: ash asks whether DSH holds a key, hands it
+ * one, and pulls the usage ash-cost recorded. Each takes the request params and returns the result, or throws RpcError.
+ * No method ever returns a credential value, and none writes one to a log.
+ */
+export function createAshMethods(ctx, findCollector = () => globalThis[COST_COLLECTOR]) {
+  const store = () => {
+    if (!ctx.credentials) throw unavailable("credential service unavailable");
+    return ctx.credentials;
+  };
+  const refOf = (params) => {
+    const ref = params?.ref;
+    if (typeof ref !== "string" || !CREDENTIAL_REF.test(ref)) throw invalid("ref must be a credential name such as DEEPSEEK_API_KEY");
+    return ref;
+  };
+  return {
+    // {ref} -> {has, source?}: whether DSH resolves this key, and which of its sources supplied it. Never the value.
+    "_ash/credentials.has": async (params) => {
+      const ref = refOf(params);
+      const service = store();
+      let hit;
+      try { hit = await service.resolve(ref); } catch { throw unavailable("credential lookup failed"); }
+      if (typeof hit?.value !== "string" || !hit.value) return { has: false };
+      return typeof hit.source === "string" ? { has: true, source: hit.source } : { has: true };
+    },
+    // {ref, value} -> {ok: true}: store the key in DSH's own credential file. The value is neither echoed nor logged.
+    "_ash/credentials.set": async (params) => {
+      const ref = refOf(params);
+      const value = params?.value;
+      if (typeof value !== "string" || !value || value.length > MAX_SECRET) throw invalid("value must be a non-empty string");
+      const service = store();
+      try { await service.set(ref, value); } catch (error) {
+        throw unavailable(`credential could not be stored: ${String(error?.message ?? error).split(value).join("***").replace(/\s+/g, " ").slice(0, 200)}`);
+      }
+      return { ok: true };
+    },
+    // {since} -> {records, balance?}: what ash-cost recorded after `since` (ms), and the latest balance it has read.
+    "_ash/usage": async (params) => {
+      const since = params?.since ?? 0;
+      if (typeof since !== "number" || !Number.isFinite(since) || since < 0) throw invalid("since must be a millisecond timestamp");
+      const collector = findCollector();
+      if (!collector || typeof collector.since !== "function") throw unavailable("ash-cost is not loaded");
+      const known = collector.lastBalance?.();
+      if (typeof collector.balance === "function" && (!known || Date.now() - known.at > BALANCE_FRESH_MS)) {
+        try { await collector.balance({ timeoutMs: 5000 }); } catch { /* a missing or unreachable balance is simply left out */ }
+      }
+      const balance = collector.lastBalance?.();
+      return { records: collector.since(since), ...(balance ? { balance } : {}) };
+    },
+  };
+}
 
 export async function apply(ctx, config) {
   const req = createRequire(realpathSync(process.argv[1]));
@@ -63,12 +129,20 @@ export async function apply(ctx, config) {
     }
   };
 
+  const methods = createAshMethods(ctx);
+  const callMethod = async (msg) => {
+    try { reply(msg.id, await methods[msg.method](msg.params)); } catch (error) {
+      reply(msg.id, undefined, error instanceof RpcError ? { code: error.code, message: error.message } : { code: -32603, message: "internal error" });
+    }
+  };
+
   const lines = createInterface({ input: process.stdin });
   lines.on("line", (line) => {
     let msg;
     try { msg = JSON.parse(line); } catch { return; }
     if (typeof msg?.method === "string" && (msg.method === "_ash/steer" || msg.method === "_ash/inject")) return extension(msg);
     if (msg?.method === "_ash/plugins") return void plugins(msg);
+    if (typeof msg?.method === "string" && msg.id !== undefined && Object.hasOwn(methods, msg.method)) return void callMethod(msg);
     feed.enqueue(encoder.encode(line + "\n"));
   });
   lines.on("close", () => { try { feed.close(); } catch {} });
