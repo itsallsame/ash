@@ -7,7 +7,7 @@ import test from "node:test";
 import { Ledger } from "../../src/world/ledger";
 import { RouterError, WorldRouter, type TrustedRouteContext } from "../../src/world/router";
 import type { WordSpec } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 
 const owner: TrustedRouteContext = { transport: "api", transportPrincipal: "owner-login", member: "person:owner", local: true, remote: false, ownerProxy: false };
 const agent: TrustedRouteContext = { transport: "agent", transportPrincipal: "agent:main", member: "agent:main", local: true, remote: false, ownerProxy: false };

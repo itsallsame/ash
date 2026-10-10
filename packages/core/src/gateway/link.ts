@@ -7,7 +7,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import { Connection, GatewayError } from "ash-gateway/client/client";
 import { b64u, fromB64u, LIMITS, type Permission, PERMISSIONS, randomToken, shortFingerprint } from "ash-gateway/src/protocol";
 import type { CallResult } from "../../../sdk/src/api";
-import { isWordEffect } from "../../../sdk/src/words";
+import { isWordEffect } from "../../../sdk/src/legacy/words";
 import { DeviceMember } from "../members/device";
 import type { EdgeCaller, EdgeResponse, EdgeRouter } from "../server";
 import type { DeviceCapability } from "../world/router";

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
-import { AGENT_ID, wordContract } from "../../../sdk/src/words";
+import { AGENT_ID, wordContract } from "../../../sdk/src/legacy/words";
 import type { AgentMember } from "../members/agent";
 import type { Member, WorldMembers } from "../world/member";
 import type { RouteHandlerContext, TrustedRouteContext, WorldRouter } from "../world/router";

@@ -2,7 +2,7 @@ import type { CallResult } from "../../sdk/src/api";
 import type { HostManifestV2 } from "../../sdk/src/legacy/host";
 import { hostPresentationErrors, type HostPresentationV2 } from "../../sdk/src/legacy/host";
 import { DeviceMember } from "./members/device";
-import { isWordEffect } from "../../sdk/src/words";
+import { isWordEffect } from "../../sdk/src/legacy/words";
 import type { Signer } from "./gateway/link";
 import type { DeviceCapability } from "./world/router";
 import type { WorldMembers } from "./world/member";

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Edit, Message, MessageErrorCode, ResponseBody, WordSpec } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import type { Member } from "../world/member";
 import type { Ledger } from "../world/ledger";
 import type { RouteHandlerContext, WorldRouter } from "../world/router";

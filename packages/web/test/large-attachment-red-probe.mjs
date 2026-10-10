@@ -7,7 +7,7 @@ import { Ledger } from "../../core/src/world/ledger.ts";
 import { WorldRouter } from "../../core/src/world/router.ts";
 import { WorldMembers } from "../../core/src/world/member.ts";
 import { EdgeRouter, startEdgeServer } from "../../core/src/server.ts";
-import { wordContract } from "../../sdk/src/words.ts";
+import { wordContract } from "../../sdk/src/legacy/words.ts";
 import { readSse } from "../js/net.js";
 
 const root = mkdtempSync(join(tmpdir(), "ash-attachment-red-"));

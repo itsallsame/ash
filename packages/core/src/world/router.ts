@@ -6,7 +6,7 @@ import addFormats from "ajv-formats";
 import type { ValidateFunction } from "ajv";
 import type { AuthenticatedCallerContext, JsonSchema, Message, MessageErrorCode, ResponseBody, SendRequestV2, WordEffect, WordSpec } from "../../../sdk/src/api";
 import { matchesSchema, schemaErrors } from "../../../sdk/src/schema";
-import { AGENT_ID, deviceWordSpec, isWordEffect, optionReplyErrors, senseBodyErrors, wordContract, wordEffect } from "../../../sdk/src/words";
+import { AGENT_ID, deviceWordSpec, isWordEffect, optionReplyErrors, senseBodyErrors, wordContract, wordEffect } from "../../../sdk/src/legacy/words";
 import type { ReviewFacts, Reviewer, ReviewVerdict } from "../review/reviewer";
 import { gateBodyDigest, gateRulePattern, gateTarget, Ledger, type HumanPendingRecord, type RequestContextSnapshot, type RequestPhase, type TrackedRequest } from "./ledger";
 

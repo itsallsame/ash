@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { createAgentMember } from "../../src/members/agent";
 import { Ledger } from "../../src/world/ledger";
 import { WorldMembers } from "../../src/world/member";

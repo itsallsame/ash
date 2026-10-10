@@ -7,7 +7,7 @@ import { dirname, basename, join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { STREAM_RAW_PAGE_BYTES, type GateAccessItemV2, type GateHistoryItemV2, type GateRuleItemV2, type LegacyConversationMetadata, type Message, type MessageSummaryV2, type PostDeliveryBodyV2, type ResponseBody, type StreamPageEndV2, type WorkRunInfoV2, type WorkRunStepBodyV2 } from "../../../sdk/src/api";
 import { matchesSchema } from "../../../sdk/src/schema";
-import { AGENT_ID, wordContract, workRunTurn, workRunsResultErrors } from "../../../sdk/src/words";
+import { AGENT_ID, wordContract, workRunTurn, workRunsResultErrors } from "../../../sdk/src/legacy/words";
 import { readSummaryPage, type StreamPageQuery } from "./stream-page";
 
 type Row = Record<string, unknown>;

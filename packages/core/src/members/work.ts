@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Message, ResponseBody, SendRequestV2, WordSpec, WorkRunInfoV2 } from "../../../sdk/src/api";
 import { matchesSchema } from "../../../sdk/src/schema";
-import { wordContract, workRunTurn } from "../../../sdk/src/words";
+import { wordContract, workRunTurn } from "../../../sdk/src/legacy/words";
 import type { Member } from "../world/member";
 import type { Ledger } from "../world/ledger";
 import { WorldRouter, type RouteHandlerContext, type TrustedRouteContext } from "../world/router";

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { SCREEN_REGISTRATION_TTL_MS, type ResponseBody } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { AdminMember } from "../../src/members/admin";
 import { createAgentMember } from "../../src/members/agent";
 import { ScreenRegistry } from "../../src/server";

@@ -9,7 +9,7 @@ import { Ledger } from "../../src/world/ledger";
 import { type Member, WorldMembers } from "../../src/world/member";
 import { RouterError, WorldRouter, type DeviceCapability, type TrustedRouteContext } from "../../src/world/router";
 import { checkRepository, checkTree } from "../arch/checks";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 
 const owner: TrustedRouteContext = { transport: "api", transportPrincipal: "owner", member: "person:owner", local: true, remote: false, ownerProxy: false };
 const agent: TrustedRouteContext = { transport: "agent", transportPrincipal: "main", member: "agent:main", local: true, remote: false, ownerProxy: false };

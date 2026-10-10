@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Message } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { proactiveFlow } from "../../src/flows/proactive";
 import { createSelfMember } from "../../src/members/self";
 import { WorkMember } from "../../src/members/work";

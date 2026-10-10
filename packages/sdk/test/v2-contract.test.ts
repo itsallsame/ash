@@ -6,7 +6,7 @@ import { HOST_ROUTES_V2 } from "../src/legacy/host";
 import { RUNTIME_CONTRACT_V2 } from "../src/runtime-contract";
 import { matchesSchema } from "../src/schema";
 import { workerResultErrors } from "../src/worker-validation";
-import { CARD_SCHEMA, cardErrors, deviceWordSpec, optionReplyErrors, postDeliverySnapshotErrors, WORD_CONTRACTS, wordContract } from "../src/words";
+import { CARD_SCHEMA, cardErrors, deviceWordSpec, optionReplyErrors, postDeliverySnapshotErrors, WORD_CONTRACTS, wordContract } from "../src/legacy/words";
 
 function example(schema: JsonSchema): unknown {
   if (schema.const !== undefined) return schema.const;

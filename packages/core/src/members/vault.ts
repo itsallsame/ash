@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import type { Member } from "../world/member";
 import type { WorldRouter, RouteHandlerContext, TrustedRouteContext } from "../world/router";
 

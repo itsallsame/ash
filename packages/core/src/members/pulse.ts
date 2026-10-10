@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
-import { PULSE_EVENTS, wordContract } from "../../../sdk/src/words";
+import { PULSE_EVENTS, wordContract } from "../../../sdk/src/legacy/words";
 import type { Member } from "../world/member";
 import type { RouteHandlerContext, TrustedRouteContext, WorldRouter } from "../world/router";
 

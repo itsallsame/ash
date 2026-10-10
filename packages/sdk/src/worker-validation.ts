@@ -1,6 +1,6 @@
 import type { Claim, WorkerName, WorkerRequest } from "./api";
 import { matchesSchema } from "./schema";
-import { wordContract } from "./words";
+import { wordContract } from "./legacy/words";
 
 function claimErrors(claims: Claim[], evidenceIds: Set<string>): string[] {
   const errors: string[] = [];

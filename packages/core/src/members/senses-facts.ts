@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Message } from "../../../sdk/src/api";
-import { ACTIVITY_STATES } from "../../../sdk/src/words";
+import { ACTIVITY_STATES } from "../../../sdk/src/legacy/words";
 
 /** Pure sensing arithmetic shared by the wake rules and the daily summary. No I/O, no model. */
 export type SenseKind = "location" | "activity" | "health" | "geofence";

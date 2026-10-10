@@ -11,7 +11,7 @@ import { WorldRouter } from "../../core/src/world/router.ts";
 import { WorldMembers } from "../../core/src/world/member.ts";
 import { EdgeRouter, startEdgeServer } from "../../core/src/server.ts";
 import { PostPresenceMember } from "../../core/src/members/post.ts";
-import { wordContract } from "../../sdk/src/words.ts";
+import { wordContract } from "../../sdk/src/legacy/words.ts";
 
 const directory = mkdtempSync(join(tmpdir(), "ash-pending-browser-"));
 const profile = join(directory, "profile");

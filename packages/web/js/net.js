@@ -1,5 +1,5 @@
 import { AUTH_SCOPE_EVENT, MESSAGE_SUMMARY_EVENT, POST_DELIVERY_SNAPSHOT_EVENT, SCREEN_REGISTRATION_EVENT, SCREEN_TOKEN_HEADER, STREAM_ERROR_EVENT, STREAM_PAGE_END_EVENT, isAuthScopeControlV2, isMessageSummaryV2, isScreenRegistration, isStreamErrorV2, isStreamPageEndV2 } from "../../sdk/src/api.ts";
-import { postDeliverySnapshotErrors } from "../../sdk/src/words.ts";
+import { postDeliverySnapshotErrors } from "../../sdk/src/legacy/words.ts";
 import { openPendingStore } from "./pending-store.js";
 import { browserUiTransport } from "./ui-transport.js";
 

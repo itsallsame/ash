@@ -8,7 +8,7 @@ import { Ledger } from "../../src/world/ledger";
 import { WorldRouter } from "../../src/world/router";
 import { WorldMembers } from "../../src/world/member";
 import { EdgeRouter, startEdgeServer, type EdgeCaller, type EdgeRequest, type EdgeResponse } from "../../src/server";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { HostDeviceLink } from "../../src/host-v2";
 import { DeviceMember } from "../../src/members/device";
 import { OwnerMember } from "../../src/members/owner";

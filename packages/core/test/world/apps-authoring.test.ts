@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { ownerText } from "../../src/apps/bridge";
 import { installAppDocs } from "../../src/apps/builtin";
 import { checkManifest } from "../../src/apps/check";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { WorkRunInfoV2, WorkRunStepBodyV2 } from "../src/api";
 import { matchesSchema } from "../src/schema";
-import { wordContract, workRunTurn, workRunsResultErrors } from "../src/words";
+import { wordContract, workRunTurn, workRunsResultErrors } from "../src/legacy/words";
 
 test("run.step is outbound-only, closed, and carries bounded metadata rather than content", () => {
   const contract = wordContract("service:work", "run.step")!;

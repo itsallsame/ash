@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { WordEffect } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import type { ReviewFacts, Reviewer, ReviewVerdict } from "../../src/review/reviewer";
 import { Ledger } from "../../src/world/ledger";
 import { WorldRouter, type TrustedRouteContext } from "../../src/world/router";

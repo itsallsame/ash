@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { matchesSchema } from "../src/schema";
-import { wordContract } from "../src/words";
+import { wordContract } from "../src/legacy/words";
 
 test("managed editor writes require exact hash or explicit new-file null", () => {
   const read = wordContract("service:self", "read")!;

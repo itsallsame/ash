@@ -2,7 +2,7 @@ import type { WorkFlow } from "../members/work";
 import type { SenseArchive } from "../members/senses-archive";
 import { activityTimeline, cyclingSessions, dayStart, hops, localDate, nextDate, segmentEnd, trackDistance, type GeofenceLine,
   type SenseLines } from "../members/senses-facts";
-import { ACTIVITY_STATES } from "../../../sdk/src/words";
+import { ACTIVITY_STATES } from "../../../sdk/src/legacy/words";
 
 export interface DailySummary {
   date: string;

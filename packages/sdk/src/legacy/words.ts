@@ -1,6 +1,6 @@
-import type { Card, JsonSchema, WordEffect, WordSpec } from "./api";
-import { matchesSchema } from "./schema";
-import { DEVICE_WORDS } from "./device-words";
+import type { Card, JsonSchema, WordEffect, WordSpec } from "../api";
+import { matchesSchema } from "../schema";
+import { DEVICE_WORDS } from "../device-words";
 
 export interface WordContract extends WordSpec { member: string; direction: "in" | "out" }
 const str: JsonSchema = { type: "string" };

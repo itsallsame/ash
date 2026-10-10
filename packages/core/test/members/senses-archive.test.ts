@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { SenseArchive } from "../../src/members/senses-archive";
 import { SensesMember } from "../../src/members/senses";
 import { Ledger } from "../../src/world/ledger";

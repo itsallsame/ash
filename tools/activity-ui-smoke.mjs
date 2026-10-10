@@ -10,7 +10,7 @@ import { WorldRouter } from "../packages/core/src/world/router.ts";
 import { WorldMembers } from "../packages/core/src/world/member.ts";
 import { EdgeRouter, startEdgeServer } from "../packages/core/src/server.ts";
 import { PostPresenceMember } from "../packages/core/src/members/post.ts";
-import { wordContract } from "../packages/sdk/src/words.ts";
+import { wordContract } from "../packages/sdk/src/legacy/words.ts";
 import { TaskStatusBridge } from "../packages/core/src/task-status.ts";
 const dir = mkdtempSync(join(tmpdir(), "ash-activity-ui-"));
 const out = "build/evidence/activity-v3"; mkdirSync(out, { recursive: true });

@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type { Message } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { installBuiltinApps } from "../../src/apps/builtin";
 import { BUILTIN_APPS } from "../../src/apps/builtin.generated";
 import { AppRuntime, appCapabilities, type AppLauncher } from "../../src/apps/runtime";

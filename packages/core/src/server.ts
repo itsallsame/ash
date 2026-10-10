@@ -5,7 +5,7 @@ import { constants as fsConstants, existsSync, lstatSync, mkdirSync, openSync, r
 import { extname, join, relative, resolve, sep } from "node:path";
 import type { Message, MessageSummaryV2, ResponseBody, ScreenRegistration, SendRequestV2, StreamPageEndV2, WordSpec } from "../../sdk/src/api";
 import { AUTH_SCOPE_EVENT, MESSAGE_SUMMARY_EVENT, POST_DELIVERY_SNAPSHOT_EVENT, SCREEN_REGISTRATION_EVENT, SCREEN_REGISTRATION_TTL_MS, SCREEN_TOKEN_HEADER, STREAM_ERROR_EVENT, STREAM_PAGE_END_EVENT, STREAM_RAW_PAGE_BYTES, STREAM_SUMMARY_PAGE_BYTES } from "../../sdk/src/api";
-import { wordContract } from "../../sdk/src/words";
+import { wordContract } from "../../sdk/src/legacy/words";
 import { WorldMembers } from "./world/member";
 import { RouterError, WorldRouter, type TrustedRouteContext } from "./world/router";
 import { Ledger } from "./world/ledger";

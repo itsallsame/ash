@@ -1,5 +1,5 @@
 import type { Message, WordSpec } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import type { Member } from "../world/member";
 export { PostMember, LedgerUiPresenter, isQuiet, quietEnd } from "./post-delivery";
 export type { HostPresenter, UiPresenter, PostOptions, ScreenPresence } from "./post-delivery";

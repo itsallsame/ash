@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { wordContract } from "../../packages/sdk/src/words";
+import { wordContract } from "../../packages/sdk/src/legacy/words";
 import { ClockMember } from "../../packages/core/src/members/clock";
 import { OwnerMember } from "../../packages/core/src/members/owner";
 import { Ledger } from "../../packages/core/src/world/ledger";

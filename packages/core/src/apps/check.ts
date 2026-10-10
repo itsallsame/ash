@@ -5,7 +5,7 @@ import { extname, join } from "node:path";
 import Ajv, { type ErrorObject } from "ajv";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { deviceWordSpec } from "../../../sdk/src/words";
+import { deviceWordSpec } from "../../../sdk/src/legacy/words";
 import { CardError, validateCard } from "../members/widgets-card";
 import { ajvFor } from "../world/router";
 import { APP_ID_PATTERN, APP_SCHEMA, validateManifest, type AppManifest } from "./schema";
