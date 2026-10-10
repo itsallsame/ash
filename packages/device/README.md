@@ -50,7 +50,7 @@ The operation's fields are the driver method's arguments by name:
 
 | op | fields | result |
 |---|---|---|
-| `agent.start` | `spec` (`AgentStartSpec`) | `{sessions:{<key>:<handle>}, attached}` |
+| `agent.start` | `spec` (`AgentStartSpec`; the runtime is `spec.runtime`) | `{sessions:{<key>:<handle>}, attached}` |
 | `agent.stop` | `reason` | `{}` |
 | `agent.list` | | `{agents:[{agent, runtime, state, detail?}]}` |
 | `session.get` | `key` | `{handle: string\|null}` |
@@ -70,7 +70,7 @@ Events go out as `{t:"agent", event, ...}`: the sdk's `AgentEvent`, and `agent.s
 (`starting`, `running`, `exited`, `failed`). A runtime's call of an Ash tool goes out as
 `{t:"agent", id, outbound: <tool>, agent, key, turn, args}` and is answered by
 `{t:"agent", id, outbound_result: <tool>, ok, result | error:{message}}`. Only `agent_list`, `agent_ask`, `agent_tell`
-are offered (SPEC-08 §2.7).
+are offered (SPEC-08 §2.7). Calls not answered when the turn ends or the connection drops fail.
 
 - The hub's tool address is not reachable from here, so the tool list in the spec is not used; the hub decides on its side
   what each call may do.
@@ -82,8 +82,9 @@ are offered (SPEC-08 §2.7).
 - A runtime that dies ends its turn as `error`, then `ended` (and `agent.status failed`) is reported once, and the whole agent
   is closed; the hub starts it again with its saved handles.
 - When the connection drops the agents keep running for ten minutes. Their events are kept (the last 2000) and sent when
-  the channel opens again; an `agent.start` for an agent that is still running attaches (and says where every lane is)
-  instead of starting it over. After ten minutes without the hub they are stopped.
+  the channel opens again; an `agent.start` for an agent that is still running attaches instead of starting it over: it
+  reports each lane's handle and re-sends `turn.started` for a turn still running, so the hub may see `turn.started`
+  twice and de-duplicates by turn. After ten minutes without the hub they are stopped.
 
 ## Install and update
 
