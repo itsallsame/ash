@@ -1,5 +1,6 @@
 package ai.ash.host
 
+import ai.ash.link.HumanSend
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -48,7 +49,8 @@ class NotificationPauseReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                val result = CoreClient(ctx.applicationContext).sendPresentAction(JSONObject()
+                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
+                val result = HumanSend.send(JSONObject()
                     .put("to", "service:admin").put("kind", "request").put("word", "pause")
                     .put("body", JSONObject()).put("client_id", UUID.randomUUID().toString()).put("wait", true))
                 val accepted = result.optString("id")

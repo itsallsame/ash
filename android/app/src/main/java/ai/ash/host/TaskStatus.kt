@@ -1,5 +1,6 @@
 package ai.ash.host
 
+import ai.ash.link.HumanSend
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -124,7 +125,8 @@ object TaskStatus {
         val ids = frame.cards.filter { it.state == "waiting" || it.kind == "approval" && it.state == "answered" }.map { it.pendingId }.distinct()
         Thread({
             val accepted = runCatching {
-                val out = CoreClient(ctx).sendPresentAction(JSONObject().put("to", "service:reflex").put("kind", "request")
+                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
+                val out = HumanSend.send(JSONObject().put("to", "service:reflex").put("kind", "request")
                     .put("word", "task.end").put("body", JSONObject().put("turn", turn).put("pending_ids", org.json.JSONArray(ids)))
                     .put("wait", true).put("client_id", "capsule-end:${frame.session}:$turn"))
                 val reply = out.optJSONObject("reply")
@@ -161,7 +163,8 @@ object TaskStatus {
         if (!prefs.edit().putString(id, value).commit()) { done(false, "无法保存答复，请重试"); return@post }
         Thread({
             val ok = runCatching {
-                CoreClient(ctx).sendPresentAction(JSONObject().put("to", route.to).put("kind", "response").put("word", "ask")
+                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
+                HumanSend.send(JSONObject().put("to", route.to).put("kind", "response").put("word", "ask")
                     .put("reply_to", id).put("body", JSONObject().put("ok", true).put("result", result))
                     .put("client_id", "capsule-answer:$id")).optString("id").isNotBlank()
             }.getOrDefault(false)
@@ -177,7 +180,8 @@ object TaskStatus {
         }
         Thread({
             val accepted = runCatching {
-                val response = CoreClient(ctx).sendPresentAction(JSONObject().put("to", target).put("kind", "request")
+                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
+                val response = HumanSend.send(JSONObject().put("to", target).put("kind", "request")
                     .put("word", "say").put("body", JSONObject().put("text", text)).put("wait", false).put("client_id", clientId))
                 response.optString("id").isNotBlank()
             }.getOrDefault(false)
@@ -190,7 +194,8 @@ object TaskStatus {
         stopping = turn; notice = "正在停止…"; render()
         Thread({
             val accepted = runCatching {
-                val out = CoreClient(ctx).sendPresentAction(JSONObject().put("to", "service:reflex").put("kind", "request")
+                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
+                val out = HumanSend.send(JSONObject().put("to", "service:reflex").put("kind", "request")
                     .put("word", "task.stop").put("body", JSONObject().put("turn", turn)).put("wait", true)
                     .put("client_id", UUID.randomUUID().toString()))
                 val id = out.optString("id"); val reply = out.optJSONObject("reply")

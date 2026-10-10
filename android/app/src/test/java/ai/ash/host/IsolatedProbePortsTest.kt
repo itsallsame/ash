@@ -7,13 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IsolatedProbePortsTest {
-    @Test fun buildVariantKeepsCoreHostAndSensePortsTogether() {
+    @Test fun buildVariantKeepsTheCorePortAndTheCoreProcessTogether() {
         val probe = BuildConfig.APPLICATION_ID == "ai.ash.agent.probe"
         assertEquals(probe, BuildConfig.ISOLATED_PROBE)
         assertEquals(if (probe) 14763 else 4700, BuildConfig.CORE_PORT)
-        assertEquals(if (probe) 14764 else 4710, BuildConfig.HOST_PORT)
-        assertEquals(if (probe) 14763 else if (BuildConfig.APPLICATION_ID.endsWith(".sensesprobe")) 4870 else 4700,
-            BuildConfig.SENSE_PORT)
         assertEquals(BuildConfig.CORE_PORT, CoreProcess.PORT)
     }
 

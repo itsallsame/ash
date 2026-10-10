@@ -7,10 +7,9 @@ import org.json.JSONObject
 /**
  * One thing the phone can do for ash (and, through ash, for its agents).
  *
- * ash core fetches the phone's manifest (`GET /manifest` on the host bridge) and calls
- * capabilities with `POST /call`; grants and owner confirmations are enforced by ash core,
- * so a capability only does its job. `confirm = true` makes ash ask the owner before every call.
- * Capabilities run on a bridge worker thread (never the main thread) and may block.
+ * The kernel reads the phone's manifest and calls capabilities over the link's device channel
+ * (`ai.ash.link`); approvals are enforced by the kernel, so a capability only does its job.
+ * Capabilities run on a link worker thread (never the main thread) and may block.
  */
 interface Capability {
     /** Dotted name, e.g. "screen.tap", "clipboard.get". */

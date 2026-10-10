@@ -1,5 +1,6 @@
 package ai.ash.host
 
+import ai.ash.link.HumanSend
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.app.RemoteInput
@@ -241,11 +242,9 @@ object Present {
             }
         }
         PresentOutbox(store, { raw ->
-            try { CoreClient(ctx).sendPresentAction(JSONObject(raw)); PresentDelivery.Accepted }
-            catch (e: CoreClient.HttpError) {
-                if (e.status in 400..499) PresentDelivery.Rejected("core rejected action (${e.status})")
-                else { Log.w(TAG, "core temporarily unavailable", e); PresentDelivery.Retry }
-            } catch (e: Exception) { Log.w(TAG, "will retry action after core returns", e); PresentDelivery.Retry }
+            // TODO(T11b-2): sent over the human channel; until then HumanSend fails and the action stays queued.
+            try { HumanSend.send(JSONObject(raw)); PresentDelivery.Accepted }
+            catch (e: Exception) { Log.w(TAG, "will retry action after the kernel returns", e); PresentDelivery.Retry }
         }, { Notifications.presentFailure(ctx, it.presentation) }).flush()
     }
 

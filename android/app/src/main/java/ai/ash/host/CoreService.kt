@@ -14,13 +14,11 @@ import ai.ash.BuildConfig
 /**
  * The resident part of the app: a foreground service that
  *   1. installs/updates the payload and the agent container when the APK carries new ones,
- *   2. serves the host bridge (the phone's capabilities, notifications, Keystore),
- *   3. keeps exactly one ash core process running (restart with backoff, stop on request).
+ *   2. keeps exactly one ash core process running (restart with backoff, stop on request).
  * The UI is optional: after boot or an update nothing needs to be opened for the agent to work.
  */
 class CoreService : Service() {
     @Volatile private var running = false
-    private var host: HostServer? = null
     private var supervisor: Thread? = null
     private var calendarSense: CalendarSense? = null
     private var deviceSense: DeviceSense? = null
@@ -34,13 +32,10 @@ class CoreService : Service() {
         Present.restore(this)
         TaskStatus.start(this)
         running = true
-        val h = HostServer(this, Secrets(this).hostToken)
-        h.start(BuildConfig.HOST_PORT)
-        host = h
         calendarSense = CalendarSense(this, BuildConfig.SENSE_RESCAN_MS).also { it.start() }
         deviceSense = DeviceSense(this).also { it.start() }
         state = "starting"
-        supervisor = Thread({ supervise(h.port) }, "ash-supervisor").apply { start() }
+        supervisor = Thread({ supervise(NO_HOST_PORT) }, "ash-supervisor").apply { start() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -80,7 +75,6 @@ class CoreService : Service() {
         supervisor?.interrupt()
         calendarSense?.stop()
         deviceSense?.stop()
-        host?.stop()
         TaskStatus.close()
         super.onDestroy()
     }
@@ -177,6 +171,8 @@ class CoreService : Service() {
 
     companion object {
         private const val TAG = "ash.service"
+        /** The old core is told there is no host bridge any more; the phone reaches the kernel over the link (`ai.ash.link`). */
+        private const val NO_HOST_PORT = 0
         const val ACTION_START = "ai.ash.START"
         const val ACTION_STOP = "ai.ash.STOP"
         const val ACTION_RESTART = "ai.ash.RESTART"

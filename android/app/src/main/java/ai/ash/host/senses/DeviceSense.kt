@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.util.Log
-import ai.ash.host.CoreClient
+import ai.ash.link.Link
 import org.json.JSONObject
 import java.util.UUID
 
@@ -40,7 +40,7 @@ class DeviceSense(private val ctx: Context) {
         registered = true
     }
 
-    /** Opening the app often cold-starts the core, so the event waits until the core can take it. */
+    /** Opening the app often cold-starts the kernel; the event waits in the link's queue until it can take it. */
     fun appOpen() {
         serial.submit {
             val now = System.currentTimeMillis()
@@ -94,7 +94,7 @@ class DeviceSense(private val ctx: Context) {
     }
 
     private fun send(word: String, body: JSONObject, id: String): Boolean = try {
-        CoreClient(ctx).sendSense(word, body, id)
+        Link.emit(ctx, word, body, id)
         true
     } catch (e: Exception) {
         Log.w("sense.device", "delivery unavailable: ${e.javaClass.simpleName}: ${e.message?.take(80)}")

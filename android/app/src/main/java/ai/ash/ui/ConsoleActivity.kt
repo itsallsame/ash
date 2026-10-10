@@ -17,7 +17,7 @@ import android.widget.TextView
 import android.widget.Toast
 import ai.ash.host.CoreProcess
 import ai.ash.host.CoreService
-import ai.ash.host.HostServer
+import ai.ash.link.Link
 import ai.ash.host.LogShareProvider
 import ai.ash.host.ContainerInstaller
 import ai.ash.host.PayloadInstaller
@@ -147,7 +147,7 @@ class ConsoleActivity : Activity() {
             val text = buildString {
                 append("服务：${CoreService.state}\n")
                 append("ash core：${pid?.let { "pid $it" } ?: "未运行"}${if (open) "，端口 ${CoreProcess.PORT} 在线" else ""}\n")
-                append("本机桥：127.0.0.1:${HostServer.PORT}\n")
+                append("内核连接：${Link.describe()}\n")
                 append("运行环境：${PayloadInstaller.installedBuild(p) ?: "未安装"}")
                 PayloadInstaller.shippedBuild(this@ConsoleActivity)?.let { if (it != PayloadInstaller.installedBuild(p)) append("（待安装 $it）") }
                 append("\n工作环境：${ContainerInstaller.installedVersion(p) ?: "未安装"}")
