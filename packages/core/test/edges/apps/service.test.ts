@@ -172,6 +172,7 @@ test("contract: the document, the schema and a runnable example", async () => {
   assert.equal(out.doc_path, "/root/apps/APP-CONTRACT.md");
   assert.equal(out.schema.title, "Ash app description (ash-app/1)");
   assert.ok("app.json" in out.example.files && "server.mjs" in out.example.files);
+  assert.equal(out.example.path, undefined, "the example is its files; there is no folder for it in the apps folder");
 });
 
 test("scaffold: writes an app that validates, installs and works; it refuses to overwrite", async () => {

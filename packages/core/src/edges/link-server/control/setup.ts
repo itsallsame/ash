@@ -15,6 +15,7 @@ import type { AddressInfo } from "node:net";
 import { WordError, type Caller } from "../../../../../sdk/src/message";
 import type { Db } from "../../../kernel/ledger";
 import type { Router, Vault } from "../../../kernel/types";
+import type { RelayProgram } from "./bundle";
 
 export const SETUP_STATES = ["waiting_login", "authorized", "deploying", "claimed", "connected", "failed"] as const;
 export type SetupState = (typeof SETUP_STATES)[number];
@@ -57,8 +58,8 @@ export interface SetupDeps {
   activate(url: string, claimSecret: string, account: { email?: string }): Promise<void>;
   /** True once the hub is connected to the relay, waiting at most [timeoutMs]. */
   connected(timeoutMs: number): Promise<boolean>;
-  /** The relay program packaged in this build, as one module (SPEC-03 §8.1 item 5). */
-  bundle?(): Promise<string>;
+  /** The relay program packaged in this build, as one module with the gateway's upload metadata (SPEC-03 §8.1 item 5). */
+  bundle?(): Promise<RelayProgram>;
   /** Why the packaged relay program cannot be used right now, or null when it can; asked at every deploy. */
   bundleMissing?(): string | null;
   cloudflare?: Partial<CloudflareEndpoints>;
@@ -79,7 +80,6 @@ const SERVICE_ID = "service:link";
 const SERVICE: Caller = { member: SERVICE_ID, via: "service", local: true };
 const SCRIPT_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_SCRIPT = "ash-gateway";
-const COMPATIBILITY_DATE = "2026-09-01";
 const SCHEMA = `CREATE TABLE IF NOT EXISTS link_setups (
   setup_id TEXT PRIMARY KEY, initiator TEXT NOT NULL, state TEXT NOT NULL, reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);`;
 
@@ -315,7 +315,7 @@ export class RelaySetup {
   // ---- deploying -----------------------------------------------------------------------------------------------------------
 
   private async runDeploy(id: string, script: string): Promise<void> {
-    const source = await this.d.bundle!();
+    const program = await this.d.bundle!();
     this.alive(id);
     let token = await this.accessToken();
     const account = await this.account(token);
@@ -326,7 +326,7 @@ export class RelaySetup {
     token = await this.accessToken();
     const scripts = await this.api<{ id?: string }[]>(token, "GET", `/accounts/${account}/workers/scripts`);
     const secret = b64u(randomBytes(32));
-    await this.upload(token, account, script, source, secret, !scripts.some((s) => s.id === script));
+    await this.upload(token, account, script, program, secret, !scripts.some((s) => s.id === script));
     this.alive(id);
     await this.api(token, "POST", `/accounts/${account}/workers/scripts/${script}/subdomain`, { enabled: true, previews_enabled: false });
     const url = this.cf.siteUrl?.(script, subdomain) ?? `https://${script}.${subdomain}.workers.dev`;
@@ -357,17 +357,20 @@ export class RelaySetup {
     throw new Failure("could not make a workers.dev address in the account");
   }
 
-  private async upload(token: string, account: string, script: string, source: string, secret: string, first: boolean): Promise<void> {
+  /**
+   * Uploads the gateway's own metadata (entry module, compatibility, bindings, what a redeploy keeps, observability) with the two
+   * things only this deploy knows: the claim secret, and the migration, which a script that already exists has applied.
+   */
+  private async upload(token: string, account: string, script: string, program: RelayProgram, secret: string, first: boolean): Promise<void> {
+    const { migrations, bindings, ...rest } = program.metadata as { migrations?: unknown; bindings?: unknown[] };
     const metadata = {
-      main_module: "worker.mjs", compatibility_date: COMPATIBILITY_DATE, compatibility_flags: ["enable_request_signal"],
-      bindings: [{ type: "durable_object_namespace", name: "HUB", class_name: "GatewayHub" }, { type: "secret_text", name: "BOOTSTRAP_SECRET", text: secret }],
-      // A later deploy keeps what the owner set by hand in Cloudflare (for example RESET_EPOCH).
-      keep_bindings: ["plain_text"],
-      ...(first ? { migrations: { new_tag: "v1", new_sqlite_classes: ["GatewayHub"] } } : {}),
+      ...rest,
+      bindings: [...(bindings ?? []), { type: "secret_text", name: "BOOTSTRAP_SECRET", text: secret }],
+      ...(first && migrations ? { migrations } : {}),
     };
     const form = new FormData();
     form.set("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
-    form.set("worker.mjs", new Blob([source], { type: "application/javascript+module" }), "worker.mjs");
+    form.set(program.metadata.main_module, new Blob([program.source], { type: "application/javascript+module" }), program.metadata.main_module);
     await this.api(token, "PUT", `/accounts/${account}/workers/scripts/${script}`, form);
   }
 
