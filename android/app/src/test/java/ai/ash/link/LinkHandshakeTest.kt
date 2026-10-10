@@ -33,7 +33,7 @@ class LinkHandshakeTest {
 
         conn.welcome()
         awaitTrue("ready") { link.client.state == LinkClient.State.READY }
-        assertEquals(1, link.handlers.welcomes.get())
+        awaitTrue("welcomed") { link.handlers.welcomes.get() == 1 }
         assertTrue(link.client.channelOpen("device"))
         assertTrue(link.client.channelOpen("human"))
     }

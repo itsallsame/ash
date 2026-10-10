@@ -553,7 +553,7 @@ class LinkClient(private val o: LinkOptions) {
         }
         // The slot is freed before the answer goes out, so a call the kernel sends after seeing it finds the slot free.
         post { if (running[request.id] === entry) running.remove(request.id) }
-        if (!entry.claim()) return // dropped with the connection: nobody is listening
+        if (!synchronized(entry) { entry.claim() }) return // dropped with the connection: nobody is listening
         // A late interrupt (or one the handler ignored) must not make sending the result, e.g. a stream, fail.
         Thread.interrupted()
         reply(c, request.id, outcome)
