@@ -71,6 +71,8 @@ export class FakeDriver implements AgentDriver {
   handles = new Map<string, string>();
   statuses = new Map<string, AgentStatus0>();
   startFailures = 0;
+  /** While set, `start` waits for it: the process is still coming up (DSH takes 15-20 s on the phone). */
+  startGate: Promise<void> | null = null;
   steerResult = true;
   /** A turn that starts and ends inside `send`, before it returns (what a remote driver can look like). */
   instantTurns = false;
@@ -84,6 +86,7 @@ export class FakeDriver implements AgentDriver {
 
   async start(agent: string, spec: AgentStartSpec) {
     this.calls.push(["start", agent, spec]);
+    if (this.startGate) await this.startGate;
     if (this.startFailures > 0) { this.startFailures--; throw new WordError("failed", "no start"); }
     this.statuses.set(agent, { state: "running" });
     for (const key of spec.lanes) {
@@ -141,7 +144,7 @@ export class FakeDriver implements AgentDriver {
 type AgentStatus0 = { state: "starting" | "running" | "exited" | "failed"; detail?: string };
 
 export const MAIN_TEMPLATE = { id: "agent:main", name: "main", summary: "the main agent", brief: "You are main.", runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "/root/work" },
-  lanes: { front: { from: ["person:owner"] }, back: { from: ["wake", "timer", "event"], guide: "PULSE.md" } }, primary: true };
+  lanes: { front: { from: ["person:owner"] }, back: { from: ["wake", "event"], guide: "PULSE.md" } }, primary: true };
 
 /** A directory of `<name>.json` templates, as `createAgents` reads them; a null entry is a template that is not there. */
 export function templateDir(templates: Record<string, unknown>): string {

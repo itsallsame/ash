@@ -32,7 +32,7 @@ export function createAgentsService(manager: AgentManager): Member {
     const d = run.spec.decl;
     const state = manager.stateOf(run.id);
     return {
-      id: run.id, name: d.name, summary: d.summary, state, available: state === "idle" || state === "working", primary: !!d.primary, ephemeral: !!d.ephemeral,
+      id: run.id, name: d.name, summary: d.summary, state, available: state === "idle" || state === "working", reachable: manager.reachable(run.id), primary: !!d.primary, ephemeral: !!d.ephemeral,
       brief: d.brief, runtime: d.runtime, ...(d.native ? { native: d.native } : {}), created_by: d.created_by,
       tools: d.tools ?? null, words: d.words ?? null, lanes: lanesOf(d), modules: d.modules ?? null,
     };
