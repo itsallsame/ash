@@ -472,7 +472,7 @@ add("service:reflex", "screen.plan", "request", obj({ agent: agentRef, lane: non
   { callers: KERNEL, effect: "act", timeout_ms: 15000, label: "在判断在哪块屏幕上做", description: "Before a turn that the owner started opens: decide whether the turn's phone-screen work belongs on the real screen or on a background virtual screen, and give the text to put into that turn. The agent names the lane because the turn does not have an id yet. Whatever cannot be judged (no phone, no judge, unsure) is mode none with no text: the turn goes on untouched." });
 add("service:reflex", "screen.reconcile", "request", obj({ turn: id, agent: agentRef, lane: nonempty, outcome: choice("completed", "cancelled", "error", "interrupted") }, ["turn", "agent", "lane"]),
   obj({ acted: array(str) }, ["acted"]),
-  { callers: KERNEL, effect: "act", timeout_ms: 30000, label: "在收拾屏幕", description: "After a turn ended: if the phone still shows what this turn left behind, go back to the app that was in front or close the virtual screen this turn opened. Each step acts only when the screen state the decision saw is still current." });
+  { callers: KERNEL, effect: "act", timeout_ms: 30000, label: "在收拾后台屏幕", description: "After a turn ended: close the virtual screen this turn opened when its work is done, if the screen state the decision saw is still current. The real screen is never touched; the owner chooses when to go back to Ash." });
 
 // ===================================================================================================================
 // service:senses: the archive of what the hands sense. The rules for waking anyone are an organ's, not ours.

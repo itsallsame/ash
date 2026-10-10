@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "73683608feb3ee04718037a2d6d27c234d875fadf4fc86e6be9061974a9b713b",
+ "hash": "547ac71d88b87d32cbeca2bf235bf41b2cb3cd6857196b9d572286270ad43574",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -11063,7 +11063,7 @@
    "word": "screen.reconcile",
    "kind": "request",
    "direction": "in",
-   "description": "After a turn ended: if the phone still shows what this turn left behind, go back to the app that was in front or close the virtual screen this turn opened. Each step acts only when the screen state the decision saw is still current.",
+   "description": "After a turn ended: close the virtual screen this turn opened when its work is done, if the screen state the decision saw is still current. The real screen is never touched; the owner chooses when to go back to Ash.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -11118,7 +11118,7 @@
    ],
    "timeout_ms": 30000,
    "label": {
-    "doing": "在收拾屏幕"
+    "doing": "在收拾后台屏幕"
    }
   },
   {

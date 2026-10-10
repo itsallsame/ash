@@ -7,7 +7,7 @@
  *   task.outcome {turn}                               a label for how a finished turn ended, for the island and capsule
  *   screen.plan {agent, lane, ids?}                   before a turn the owner started: real screen or virtual screen, and the text for that
  *                                                     turn. Not judged = mode none. screen.reconcile {turn, agent, lane, outcome?}
- *                                                     after it: back to the app that was in front, or close the virtual screen
+ *                                                     after it: close the virtual screen the turn opened
  *   task.stop {turn}, task.end {turn, pending_ids}    the owner stops or ends a task: sent on as session words
  *                                                     of service:agents, and only for the turn that is still running
  *

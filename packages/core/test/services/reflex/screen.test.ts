@@ -11,13 +11,13 @@ const ok = (data: unknown): Reply => ({ ok: true, result: { data } });
 const SURFACE = { home_visible: true, page_live: true, visibility_epoch: 3, virtual_available: true };
 const SCREEN = { foreground_package: "ai.ash", state_epoch: 10, virtual_generation: 0, virtual_owner_turn: "", virtual_open: false };
 const pick = (choice: string, confidence = 0.9) => ({ answers: { execution_screen: { choice, confidence } } });
-const cleanup = (virtual?: string, real?: string) => ({ answers: { ...(virtual ? { virtual_screen: { choice: virtual, confidence: 0.9 } } : {}), ...(real ? { real_screen: { choice: real, confidence: 0.9 } } : {}) } });
+const cleanup = (virtual: string) => ({ answers: { virtual_screen: { choice: virtual, confidence: 0.9 } } });
 
 function setup(opts: { hand?: boolean; jev?: (() => unknown) | "none"; hands?: Record<string, (body: any, caller: Caller) => Reply> } = {}) {
   const { ledger } = openLedger();
   const sent: { msg: Outgoing; caller: Caller }[] = [];
   const hands: Record<string, (body: any, caller: Caller) => Reply> = {
-    "decision.surface": () => ok(SURFACE), "decision.screen": () => ok(SCREEN), "decision.return": () => ok({ acted: true }), "decision.virtual_close": () => ok({ acted: true }), ...opts.hands };
+    "decision.surface": () => ok(SURFACE), "decision.screen": () => ok(SCREEN), "decision.virtual_close": () => ok({ acted: true }), ...opts.hands };
   const router = { send: async (msg: Outgoing, who: Caller): Promise<Reply> => {
     sent.push({ msg, caller: who });
     const h = msg.to === "device:phone" ? hands[msg.word] : undefined;
@@ -69,6 +69,19 @@ test("plan: no_preference and an unsure answer are mode none with no text", asyn
 test("plan: a virtual screen that is not available becomes the real screen", async () => {
   const f = setup({ jev: () => pick("virtual_task"), hands: { "decision.surface": () => ok({ ...SURFACE, virtual_available: false }) } });
   assert.equal((await f.call("screen.plan", planBody(f.owner("查价格")))).mode, "foreground_task");
+});
+
+test("plan: a virtual screen that went away while JEV thought becomes the real screen", async () => {
+  let n = 0;
+  const f = setup({ jev: () => pick("virtual_task"), hands: { "decision.surface": () => ok({ ...SURFACE, virtual_available: ++n === 1 }) } });
+  assert.equal((await f.call("screen.plan", planBody(f.owner("查价格")))).mode, "foreground_task");
+});
+
+test("without JEV neither word asks the phone", async () => {
+  const f = setup({ jev: "none" });
+  assert.deepEqual(await f.call("screen.plan", planBody(f.owner("x"))), { mode: "none" });
+  assert.deepEqual(await f.call("screen.reconcile", done), { acted: [] });
+  assert.equal(f.sent.length, 0);
 });
 
 test("plan: no hand, a hand that fails, Ash not in front, or a screen that changed while JEV thought: none", async () => {
@@ -143,35 +156,32 @@ test("reconcile: the virtual screen of another turn, or JEV saying keep, is left
   assert.equal(keep.calls("decision.virtual_close").length, 0);
 });
 
-test("reconcile: a real-screen task that left Ash is brought back with the epoch it saw; a handoff is never", async () => {
-  const f = await planned("foreground_task", () => ({ foreground_package: "com.xianyu", state_epoch: 15 }), () => cleanup(undefined, "return"));
-  assert.deepEqual(await f.call("screen.reconcile", done), { acted: ["return"] });
-  assert.deepEqual((f.calls("decision.return")[0]!.msg.body as any).expected_package, "com.xianyu");
-  assert.deepEqual((f.calls("decision.return")[0]!.msg.body as any).expected_state_epoch, 15);
-  const leave = await planned("foreground_task", () => ({ foreground_package: "com.xianyu" }), () => cleanup(undefined, "leave"));
-  assert.deepEqual(await leave.call("screen.reconcile", done), { acted: [] });
-  const handoff = await planned("foreground_handoff", () => ({ foreground_package: "com.xianyu" }), () => cleanup(undefined, "return"));
-  assert.deepEqual(await handoff.call("screen.reconcile", done), { acted: [] });
-  assert.equal(handoff.asked.length, 1); // only the plan asked JEV
-  assert.equal(handoff.calls("decision.return").length, 0);
+test("reconcile: the real screen is never touched, however the turn left it", async () => {
+  for (const mode of ["foreground_task", "foreground_handoff", "virtual_task"]) {
+    const f = await planned(mode, () => ({ foreground_package: "com.xianyu", state_epoch: 15 }), () => cleanup("close"));
+    assert.deepEqual(await f.call("screen.reconcile", done), { acted: [] }, mode);
+    assert.equal(f.asked.length, 1, mode); // only the plan asked JEV: no virtual screen, nothing to decide
+    assert.equal(f.calls("decision.return").length + f.calls("decision.virtual_close").length, 0, mode);
+  }
 });
 
 test("reconcile: nothing is done when the screen moved on between the look and the act (epoch, package or generation)", async () => {
   for (const field of ["state_epoch", "foreground_package", "virtual_generation"]) {
     let looks = 0;
-    const f = await planned("foreground_task", () => {
+    const f = await planned("virtual_task", () => {
       looks++;
       const base = { foreground_package: "com.xianyu", state_epoch: 15, virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 4 };
       return looks <= 1 ? base : { ...base, [field]: field === "foreground_package" ? "com.other" : 99 };
-    }, () => cleanup("close", "return"));
+    }, () => cleanup("close"));
     assert.deepEqual(await f.call("screen.reconcile", done), { acted: [] }, field);
-    assert.equal(f.calls("decision.return").length + f.calls("decision.virtual_close").length, 0, field);
+    assert.equal(f.calls("decision.virtual_close").length, 0, field);
   }
 });
 
-test("reconcile: both are done when both are due; return comes last", async () => {
-  const f = await planned("foreground_task", () => ({ foreground_package: "com.xianyu", virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 2 }), () => cleanup("close", "return"));
-  assert.deepEqual(await f.call("screen.reconcile", done), { acted: ["virtual_close", "return"] });
+test("reconcile: a turn that used both screens only has its virtual screen closed", async () => {
+  const f = await planned("foreground_task", () => ({ foreground_package: "com.xianyu", virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 2 }), () => cleanup("close"));
+  assert.deepEqual(await f.call("screen.reconcile", done), { acted: ["virtual_close"] });
+  assert.equal(f.calls("decision.return").length, 0);
 });
 
 test("reconcile: a phone that says it did not act, a failing JEV or hand, an unfinished turn, or no plan: nothing happens and nothing throws", async () => {
