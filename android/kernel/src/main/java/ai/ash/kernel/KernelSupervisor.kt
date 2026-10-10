@@ -45,7 +45,7 @@ object RestartBackoff {
     fun delayMs(failures: Int): Long = minOf(FIRST_MS shl (failures - 1).coerceIn(0, 6), MAX_MS)
 }
 
-/** Liveness of a core that said it is ready: any call to the host interface is a heartbeat; 180 s of silence is a hang. */
+/** Liveness of a core that said it is ready (a core that never does is caught by the start timeout): any call to the host interface is a heartbeat; 180 s of silence is a hang. */
 class HeartbeatWatch(private val timeoutMs: Long = TIMEOUT_MS) {
     private var readyAt = -1L
     private var last = -1L
@@ -53,6 +53,8 @@ class HeartbeatWatch(private val timeoutMs: Long = TIMEOUT_MS) {
     @Synchronized fun reset() { readyAt = -1L; last = -1L }
     @Synchronized fun ready(now: Long) { readyAt = now; last = now }
     @Synchronized fun beat(now: Long) { if (readyAt >= 0) last = now }
+
+    @Synchronized fun isReady(): Boolean = readyAt >= 0
 
     /** Only a core that has said `lifecycle.ready` can be late: booting is not watched. */
     @Synchronized fun expired(now: Long): Boolean = readyAt >= 0 && now - last > timeoutMs
@@ -150,7 +152,11 @@ class KernelSupervisor(
                 return
             }
             if (n != null && !n.isRunning()) { onExit(); return tickStart() }
-            if (n == null) return tickStart()
+            if (n == null) {
+                // A restart asked for while the core is down (even inside a crash backoff) starts it now.
+                if (restartRequested) { failures = 0; nextStartAt = 0 }
+                return tickStart()
+            }
             // running
             if (restartRequested) {
                 restartRequested = false
@@ -160,6 +166,11 @@ class KernelSupervisor(
                 failures = 0
                 nextStartAt = 0
                 return tickStart()
+            }
+            if (!watch.isReady() && clock.now() - startedAt > START_TIMEOUT_MS) {
+                note("ash core ${pidText(n)} did not say lifecycle.ready within ${START_TIMEOUT_MS / 1000} s; restarting it")
+                n.stop(null, 0)
+                return
             }
             if (watch.expired(clock.now())) {
                 note("ash core ${pidText(n)} sent no heartbeat for ${HeartbeatWatch.TIMEOUT_MS / 1000} s; restarting it")
@@ -261,5 +272,8 @@ class KernelSupervisor(
     private companion object {
         const val TICK_MS = 5_000L
         const val PROVISION_RETRY_MS = 60_000L
+
+        /** A core that has not said lifecycle.ready this long after its process started is stuck in startup. */
+        const val START_TIMEOUT_MS = 5 * 60_000L
     }
 }

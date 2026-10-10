@@ -69,7 +69,7 @@ class KernelService : Service() {
             stopped = { secrets.stopped },
             show = ::show,
             note = { Log.i(TAG, it); log.note(it) },
-            onNodeGone = { connector.forget() },
+            onNodeGone = { api.token = null; connector.forget() },
             powerSaver = { getSystemService(PowerManager::class.java).isPowerSaveMode },
         )
 
@@ -83,6 +83,8 @@ class KernelService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Any start request is a chance to bind a hand app that was installed after the kernel started (no-op when bound).
+        connector.start()
         when (intent?.action) {
             ACTION_STOP -> { secrets.stopped = true; supervisor.poke() }
             ACTION_START -> { secrets.stopped = false; supervisor.poke() }

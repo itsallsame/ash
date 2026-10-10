@@ -112,16 +112,16 @@ class SupervisorTest {
         assertTrue(launcher.launched.last().running)
     }
 
-    @Test fun aCoreThatNeverSaidReadyIsNotWatched() {
+    @Test fun aBootingCoreIsNotHeartbeatWatchedOnlyTimedByTheStartTimeout() {
         sup.tick()
-        clock.advance(30 * 60_000); sup.tick()
+        clock.advance(4 * 60_000); sup.tick()
         assertTrue(launcher.launched.last().running)
     }
 
     @Test fun heartbeatsBeforeReadyDoNotArmTheWatch() {
         sup.tick()
         sup.onActivity()
-        clock.advance(600_000); sup.tick()
+        clock.advance(4 * 60_000); sup.tick()
         assertTrue(launcher.launched.last().running)
     }
 
@@ -130,8 +130,57 @@ class SupervisorTest {
         sup.onReady("0.4.0", 1)
         crash()
         while (launcher.launched.size < 2) { clock.advance(1_000); sup.tick() }
-        clock.advance(600_000); sup.tick()
-        assertTrue(launcher.launched.last().running) // not ready yet, so not expired
+        clock.advance(4 * 60_000); sup.tick()
+        assertTrue(launcher.launched.last().running) // not ready yet, so not heartbeat-expired
+    }
+
+    @Test fun restartRequestedDuringACrashBackoffStartsAtOnce() {
+        sup.tick()
+        repeat(4) {
+            crash()
+            sup.tick() // notices; backoff grows to 40 s
+            while (launcher.launched.size < it + 2) { clock.advance(1_000); sup.tick() }
+        }
+        crash()
+        sup.tick() // inside a long backoff now
+        val count = launcher.launched.size
+        clock.advance(1_000); sup.tick()
+        assertEquals(count, launcher.launched.size)
+        sup.requestRestart("owner asked")
+        sup.tick()
+        assertEquals(count + 1, launcher.launched.size)
+        assertEquals(clock.now(), launcher.launchTimes.last())
+        // And the backoff starts over: the next crash waits 5 s again.
+        crash()
+        val crashedAt = clock.now()
+        sup.tick()
+        while (launcher.launched.size < count + 2) { clock.advance(1_000); sup.tick() }
+        assertTrue(launcher.launchTimes.last() - crashedAt in 5_000L..6_000L)
+    }
+
+    @Test fun aCoreThatIsNotReadyWithinFiveMinutesIsKilledAndBacksOff() {
+        sup.tick()
+        val node = launcher.launched.last()
+        clock.advance(299_000); sup.tick()
+        assertTrue(node.running)
+        clock.advance(2_000); sup.tick()
+        assertFalse("stuck in startup", node.running)
+        assertNull("no graceful stop line for a stuck core", node.stopLine)
+        val killedAt = clock.now()
+        sup.tick() // notices the exit
+        assertEquals(1, launcher.launched.size)
+        while (launcher.launched.size < 2) { clock.advance(1_000); sup.tick() }
+        assertTrue(launcher.launchTimes.last() - killedAt in 5_000L..6_000L)
+    }
+
+    @Test fun readyWithinFiveMinutesStopsTheStartTimeout() {
+        sup.tick()
+        val node = launcher.launched.last()
+        clock.advance(200_000); sup.tick()
+        sup.onReady("0.4.0", 1)
+        sup.onActivity()
+        clock.advance(100_000); sup.tick()
+        assertTrue(node.running)
     }
 
     // ---- environment: told, not restarted

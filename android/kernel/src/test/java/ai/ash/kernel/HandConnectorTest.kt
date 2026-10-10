@@ -131,6 +131,18 @@ class HandConnectorTest {
         assertEquals(listOf(Triple(5, "t", "0.4.0")), fresh.attaches)
     }
 
+    @Test fun startAgainBindsAHandInstalledLaterAndSkipsAnAlreadyBoundOne() {
+        link.installed = false
+        connector.start()
+        assertEquals(listOf(300_000L), sched.pendingDelays())
+        link.installed = true
+        connector.start() // e.g. any start intent after the hand app was installed
+        assertEquals(2, link.binds)
+        assertTrue(sched.pendingDelays().isEmpty())
+        connector.start()
+        assertEquals("already bound: nothing to do", 2, link.binds)
+    }
+
     @Test fun stopUnbindsAndForgets() {
         connector.start()
         connector.onConnected(FakeRemote())
