@@ -1,6 +1,7 @@
 package ai.ash.caps.config
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.Manifest
 import android.app.AppOpsManager
 import android.app.NotificationManager
@@ -103,7 +104,7 @@ object Permissions {
             add(Permission(
                 "battery", "不受电池优化限制", "让 Ash 在后台常驻，定时提醒准时响起",
                 { it.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(it.packageName) },
-                { a -> a.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkgUri(a))) },
+                { a -> BatteryExemption.open(a) },
             ))
             add(Permission(
                 "autostart", "Ash 自启动与后台运行", "被系统清理或手机重启后，Ash 自己回来；不开的话，被清理后要等你再打开它",
@@ -248,8 +249,8 @@ object Permissions {
 
     /**
      * Once per install change (an upgrade or reinstall), on Ash's first screen: the keep-alive switches are looked at
-     * again (see [KeepAliveRecheck]) and, if one may be off, the usual fix is offered once — the system's question
-     * for the battery exemption, or the one-tap fix, which still waits for the owner's 「确定」.
+     * again (see [KeepAliveRecheck]) and, if one may be off, the usual fix is offered once — a question of Ash's own
+     * for the battery exemption (the system page opens only on its 「去开启」), or the one-tap fix (waits for 「确定」).
      */
     fun recheckAfterUpgrade(a: Activity, firstStart: Boolean) {
         val prefs = a.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -264,7 +265,11 @@ object Permissions {
         val plan = KeepAliveRecheck.plan(previous, now, battery, PhoneMaker.current.ownSwitches, KeepAliveFlow.available(a))
         if (plan.forgetWords) prefs.edit().apply { for (k in KeepAliveRecheck.WORD_KEYS) remove("confirmed:$k") }.apply()
         when (plan.offer) {
-            KeepAliveRecheck.Offer.BATTERY -> all.first { it.key == "battery" }.open(a)
+            // Ash only asks; the system's page opens on the owner's tap, never on its own.
+            KeepAliveRecheck.Offer.BATTERY -> AlertDialog.Builder(a).setTitle("不受电池优化限制")
+                .setMessage("Ash 刚更新过，系统可能把它的电池优化放行取消了。现在去重新放行，让 Ash 在后台常驻？")
+                .setPositiveButton("去开启") { _, _ -> all.first { it.key == "battery" }.open(a) }
+                .setNegativeButton("以后再说", null).show()
             KeepAliveRecheck.Offer.SWITCHES -> KeepAliveFlow.offer(a, "Ash 刚更新过，系统可能把它的自启动关掉了。") {}
             KeepAliveRecheck.Offer.NONE -> {}
         }

@@ -71,6 +71,9 @@
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.google.android.apps.healthdata" />
         <package android:name="nodomain.freeyourgadget.gadgetbridge" />
+        <!-- Who can open the battery-exemption pages: some ROMs have two handlers, and BatteryExemption picks one rather than let the system ask. -->
+        <intent><action android:name="android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><data android:scheme="package" /></intent>
+        <intent><action android:name="android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS" /></intent>
     </queries>
 
     <application

@@ -40,7 +40,7 @@ object PermissionRequest {
             "exact_alarm" ->
                 if (Build.VERSION.SDK_INT >= 31) a.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, own))
             // The system's one-tap question works for the calling app only; the kernel is found in the list.
-            "kernel_battery_optimization" -> a.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            "kernel_battery_optimization" -> BatteryExemption.openList(a, ai.ash.caps.screen.KeepAliveSwitches.KERNEL_PACKAGE)
             else -> {
                 val key = ConfigStatus.PERMISSION_KEY.getValue(name)
                 Permissions.all.firstOrNull { it.key == key }?.open(a)
