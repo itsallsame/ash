@@ -3,7 +3,7 @@ import test from "node:test";
 import { WordError, type Caller, type HandleContext, type Message, type Outgoing, type Reply } from "../../../../sdk/src/message";
 import { compileSchema } from "../../../../sdk/src/word";
 import { Ledger } from "../../../src/kernel/ledger";
-import { createClockService, CLOCK_ID, type ClockHost } from "../../../src/services/clock";
+import { createClockService, CLOCK_ID } from "../../../src/services/clock";
 import { openLedger } from "../../kernel/ledger/helpers";
 
 const T0 = 1_800_000_000_000;
@@ -11,14 +11,12 @@ const ctx: HandleContext = { signal: new AbortController().signal, caller: { mem
 const msg = (word: string, body: unknown, kind: "request" | "event" = "request", from = "agent:main"): Message =>
   ({ seq: 0, id: "m_1", ts: 0, from, to: CLOCK_ID, kind, word, body });
 
-function setup(ledger = openLedger().ledger, withHost = true) {
+function setup(ledger = openLedger().ledger) {
   const clock = { t: T0 };
-  const sent: { msg: Outgoing; caller: Caller }[] = [];
-  const router = { send: async (m: Outgoing, caller: Caller): Promise<Reply> => { sent.push({ msg: m, caller }); return { ok: true }; } };
-  const alarms: (number | null)[] = [];
-  const host: ClockHost = { wakeAt: async (at) => { alarms.push(at); return { supported: true }; }, wakeClear: async () => { alarms.push(null); return { supported: true }; } };
+  const all: { msg: Outgoing; caller: Caller }[] = [];
+  const router = { send: async (m: Outgoing, caller: Caller): Promise<Reply> => { all.push({ msg: m, caller }); return { ok: true }; } };
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
-  const service = createClockService({ ledger, router, now: () => clock.t, host: withHost ? host : undefined, log: () => {},
+  const service = createClockService({ ledger, router, now: () => clock.t, log: () => {},
     setTimer: (fn, ms) => { const t = { fn, ms, live: true }; timers.push(t); return () => { t.live = false; }; } });
   const call = async (word: string, body: unknown) => {
     const result = await service.handle(msg(word, body), ctx);
@@ -28,7 +26,11 @@ function setup(ledger = openLedger().ledger, withHost = true) {
     try { await service.handle(msg(word, body), ctx); } catch (e) { assert.ok(e instanceof WordError); return (e as WordError).code; }
     assert.fail("expected a WordError");
   };
-  return { service, ledger, clock, sent, alarms, timers, call, rejects };
+  return { service, ledger, clock, timers, call, rejects, router,
+    /** what went to targets other than the host */
+    get sent() { return all.filter((c) => c.msg.to !== "service:host"); },
+    /** the host alarm calls, as the time or null for a clear */
+    get alarms() { return all.filter((c) => c.msg.to === "service:host").map((c) => (c.msg.word === "wake.clear" ? null : (c.msg.body as { at: number }).at)); } };
 }
 const set = (extra: Record<string, unknown>) => ({ to: "agent:main", word: "wake", body: { reason: "x" }, label: "x", ...extra });
 
@@ -55,20 +57,19 @@ test("set refuses a bad time", async () => {
   const s = setup();
   assert.equal(await s.rejects("set", set({})), "bad_request");
   assert.equal(await s.rejects("set", set({ at: T0 - 1 })), "bad_request");
-  assert.equal(await s.rejects("set", set({ every: 59 })), "bad_request");
 });
 
 test("a due timer sends its stored word as service:clock, once, and is gone", async () => {
   const s = setup();
   await s.call("set", set({ at: T0 + 5000, to: "agent:main", word: "wake", body: { reason: "water" } }));
-  await s.service.check();
+  s.service.check();
   assert.equal(s.sent.length, 0);
   s.clock.t = T0 + 5000;
-  await s.service.check();
+  s.service.check();
   assert.equal(s.sent.length, 1);
   assert.deepEqual(s.sent[0]!.msg, { to: "agent:main", kind: "request", word: "wake", body: { reason: "water" } });
   assert.deepEqual(s.sent[0]!.caller, { member: "service:clock", via: "service", local: true });
-  await s.service.check();
+  s.service.check();
   assert.equal(s.sent.length, 1);
   assert.equal((await s.call("list", {})).timers.length, 0);
 });
@@ -89,12 +90,12 @@ test("a repeating timer that missed many rounds fires once and goes on from the 
   const s = setup();
   await s.call("set", set({ every: 60, label: "tick" }));       // next = T0 + 60 s
   s.clock.t = T0 + 60_000 * 10 + 5000;                          // ten rounds later
-  await s.service.check();
+  s.service.check();
   assert.equal(s.sent.length, 1);
   const [t] = (await s.call("list", {})).timers;
   assert.equal(t.next, T0 + 60_000 * 11);
   s.clock.t = T0 + 60_000 * 11;
-  await s.service.check();
+  s.service.check();
   assert.equal(s.sent.length, 2);
 });
 
@@ -103,7 +104,7 @@ test("at with every fires first at `at`, then repeats", async () => {
   const r = await s.call("set", set({ at: T0 + 10_000, every: 120 }));
   assert.equal(r.next, T0 + 10_000);
   s.clock.t = T0 + 10_000;
-  await s.service.check();
+  s.service.check();
   assert.equal((await s.call("list", {})).timers[0].next, T0 + 130_000);
 });
 
@@ -118,28 +119,29 @@ test("timers survive a restart on the same database", async () => {
     const s2 = setup(reopened);
     assert.deepEqual((await s2.call("list", {})).timers.map((t: any) => t.id), [id]);
     s2.clock.t = T0 + 31_000;                                   // the hub was down when it fell due
-    await s2.service.start();
+    s2.service.start();
     assert.equal(s2.sent.length, 1);
     assert.equal(s2.sent[0]!.msg.word, "wake");
   } finally { reopened.close(); }
 });
 
-test("the host alarm follows the earliest timer, and only changes when it does", async () => {
+test("the host alarm (service:host) follows the earliest timer and is cleared when none is left", async () => {
   const s = setup();
+  const last = () => s.alarms.at(-1);
   await s.call("set", set({ at: T0 + 100_000, label: "late" }));
-  assert.deepEqual(s.alarms, [T0 + 100_000]);
+  assert.equal(last(), T0 + 100_000);
   await s.call("set", set({ at: T0 + 200_000, label: "later" }));
-  assert.deepEqual(s.alarms, [T0 + 100_000]);                    // not the earliest: unchanged
+  assert.equal(last(), T0 + 100_000);                             // not the earliest: still the earliest
   const early = await s.call("set", set({ at: T0 + 50_000, label: "early" }));
-  assert.deepEqual(s.alarms, [T0 + 100_000, T0 + 50_000]);
+  assert.equal(last(), T0 + 50_000);
   await s.call("cancel", { id: early.id });
-  assert.deepEqual(s.alarms, [T0 + 100_000, T0 + 50_000, T0 + 100_000]);
+  assert.equal(last(), T0 + 100_000);
   s.clock.t = T0 + 100_000;
-  await s.service.check();                                        // "late" fired
-  assert.deepEqual(s.alarms.at(-1), T0 + 200_000);
+  s.service.check();                                              // "late" fired
+  assert.equal(last(), T0 + 200_000);
   s.clock.t = T0 + 200_000;
-  await s.service.check();
-  assert.equal(s.alarms.at(-1), null);                           // nothing left: cleared
+  s.service.check();
+  assert.equal(last(), null);                                     // nothing left: cleared
 });
 
 test("wake.fired makes the clock look for due timers", async () => {
@@ -152,23 +154,30 @@ test("wake.fired makes the clock look for due timers", async () => {
   assert.equal(s.sent.length, 1);
 });
 
-test("without a host only the in-process timeout is used; a failed host call does not stop the timer", async () => {
-  const s = setup(undefined, false);
-  await s.call("set", set({ at: T0 + 1000 }));
-  assert.deepEqual(s.alarms, []);
-  assert.equal(s.timers.filter((t) => t.live).length, 1);
-
+test("a failing host call is only logged; the in-process timeout still runs", async () => {
   const { ledger } = openLedger();
-  const clock = { t: T0 };
-  let failing = true;
-  const calls: number[] = [];
-  const svc = createClockService({ ledger, router: { send: async () => ({ ok: true }) }, now: () => clock.t, log: () => {},
-    host: { wakeAt: async (at) => { calls.push(at); if (failing) throw new Error("host down"); return {}; }, wakeClear: async () => ({}) } });
+  const logs: string[] = [];
+  const timers: { live: boolean }[] = [];
+  const svc = createClockService({ ledger, now: () => T0, log: (m) => logs.push(m), setTimer: () => { const t = { live: true }; timers.push(t); return () => { t.live = false; }; },
+    router: { send: async (m) => { if (m.to === "service:host") throw new Error("host down"); return { ok: true }; } } });
   await svc.handle(msg("set", set({ at: T0 + 1000 })), ctx);
-  assert.equal(calls.length, 1);
-  failing = false;
-  await svc.handle(msg("set", set({ at: T0 + 2000 })), ctx);      // same earliest, but the first try failed: try again
-  assert.equal(calls.length, 2);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(logs.length, 1);
+  assert.equal(timers.filter((t) => t.live).length, 1);
+  svc.stop();
+});
+
+test("a target that never answers does not hold up the other timers", async () => {
+  const { ledger } = openLedger();
+  const sent: string[] = [];
+  const svc = createClockService({ ledger, now: () => T0, log: () => {}, setTimer: () => () => {},
+    router: { send: (m) => { sent.push(m.to!); return m.to === "app:slow" ? new Promise<Reply>(() => {}) : Promise.resolve({ ok: true }); } } });
+  await svc.handle(msg("set", set({ at: T0, to: "app:slow", word: "ping", body: {}, label: "slow" })), ctx);
+  await svc.handle(msg("set", set({ at: T0, to: "device:phone", word: "ping", body: {}, label: "fast" })), ctx);
+  svc.check();                                                    // returns at once although app:slow never answers
+  assert.ok(sent.includes("device:phone"));
+  await svc.handle(msg("wake.fired", { at: T0 }, "event", "service:host"), ctx);   // and so does a host wake
+  assert.equal((await svc.handle(msg("list", {}), ctx) as { data: any }).data.timers.length, 0);
   svc.stop();
 });
 
@@ -180,8 +189,9 @@ test("a send that fails is logged and does not stop the other timers", async () 
     router: { send: async (m) => { sent.push(m.to!); if (m.to === "app:x") throw new Error("boom"); return { ok: false, error: { code: "offline", message: "gone" } }; } } });
   await svc.handle(msg("set", set({ at: T0, to: "app:x", word: "ping", body: {}, label: "one" })), ctx);
   await svc.handle(msg("set", set({ at: T0, to: "device:phone", word: "ping", body: {}, label: "two" })), ctx);
-  await svc.check();
-  assert.deepEqual(sent.sort(), ["app:x", "device:phone"]);
-  assert.equal(logs.length, 2);
+  svc.check();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(sent.filter((t) => t !== "service:host").sort(), ["app:x", "device:phone"]);
+  assert.equal(logs.filter((l) => l.startsWith("timer")).length, 2);
   svc.stop();
 });

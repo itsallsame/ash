@@ -2,25 +2,24 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { WordError, type Caller, type HandleContext, type Message, type Outgoing, type Reply } from "../../../../sdk/src/message";
+import { WordError, type Caller, type HandleContext, type Message } from "../../../../sdk/src/message";
 import { compileSchema } from "../../../../sdk/src/word";
-import { createSensesService, ensureDailyTimer, DAILY_LABEL } from "../../../src/services/senses";
-import { openLedger, tempDir } from "../../kernel/ledger/helpers";
+import { createSensesService } from "../../../src/services/senses";
+import { tempDir } from "../../kernel/ledger/helpers";
 
 const at = (iso: string) => Date.parse(`${iso}Z`);
 const NOW = at("2026-10-10T12:00:00");
 const owner: Caller = { member: "person:owner", via: "human", local: true };
-const clockCaller: Caller = { member: "service:clock", via: "service", local: true };
 const ctxOf = (caller: Caller): HandleContext => ({ signal: new AbortController().signal, caller, raw: null });
 const msg = (word: string, body: unknown, kind: "request" | "event" = "request", from = "device:phone"): Message =>
   ({ seq: 0, id: "m_1", ts: 0, from, to: "service:senses", kind, word, body });
 
-function setup(dir = tempDir(), ledger = openLedger().ledger) {
+function setup(dir = tempDir()) {
   const clock = { t: NOW };
-  const service = createSensesService({ ledger, dataDir: dir, now: () => clock.t, timeZone: "UTC", log: () => {} });
+  const service = createSensesService({ dataDir: dir, now: () => clock.t, timeZone: "UTC", log: () => {} });
   const event = (word: string, body: unknown) => service.handle(msg(word, body, "event"), ctxOf({ member: "device:phone", via: "hand", local: true }));
   const call = async (word: string, body: unknown, caller: Caller = owner) => ((await service.handle(msg(word, body), ctxOf(caller))) as { data: any }).data;
-  return { dir, ledger, clock, service, event, call, file: (m: string) => join(dir, "senses", `${m}.jsonl`) };
+  return { dir, clock, service, event, call, file: (m: string) => join(dir, "senses", `${m}.jsonl`) };
 }
 const lines = (path: string) => readFileSync(path, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const loc = (ts: number, lat = 31, lon = 121) => ({ ts, lat, lon, accuracy_m: 10, provider: "fused" });
@@ -34,7 +33,7 @@ test("the member is service:senses with the sdk's words, and the sense events va
   assert.ok(compileSchema(contract.input_schema)({ batch_id: "b1", items: [loc(NOW)] }));
 });
 
-test("events land in the month file, not in the ledger", async () => {
+test("events land in the month file", async () => {
   const s = setup();
   await s.event("sense.location", { batch_id: "b1", items: [loc(at("2026-10-10T11:00:00")), loc(at("2026-10-10T11:05:00"))] });
   await s.event("sense.battery", { level: 80 });
@@ -44,7 +43,6 @@ test("events land in the month file, not in the ledger", async () => {
   assert.deepEqual(rows.map((r) => r.kind), ["location", "location", "battery", "geofence"]);
   assert.equal(rows[0].batch_id, "b1");
   assert.equal(rows[2].ts, NOW);
-  assert.equal((s.ledger.db().prepare("SELECT COUNT(*) AS n FROM messages").get() as { n: number }).n, 0);
 });
 
 test("a re-delivered batch is archived once; a batch across a month end goes to both files", async () => {
@@ -68,7 +66,7 @@ test("sense.notification is not archived; it is only the latest one", async () =
   assert.equal(now.readings.notification.age_ms, 0);
   assert.deepEqual((await s.call("query", { kind: "notification" })).rows.map((r: any) => r.title), ["Bill"]);
   // a fresh process knows no notification: it was never written down
-  const again = setup(s.dir, s.ledger);
+  const again = setup(s.dir);
   assert.equal((await again.call("now", {})).readings.notification, undefined);
 });
 
@@ -82,7 +80,7 @@ test("now gives the newest reading of each kind with its age, also after a resta
   assert.equal(now.readings.location.reading.lat, 32);
   assert.equal(now.readings.location.age_ms, NOW + 60_000 - at("2026-10-10T11:50:00"));
   assert.equal(now.readings.battery.reading.level, 79);
-  const again = setup(s.dir, s.ledger);
+  const again = setup(s.dir);
   const back = await again.call("now", {});
   assert.equal(back.readings.location.reading.lat, 32);
   assert.equal(back.readings.battery.reading.level, 79);
@@ -111,7 +109,7 @@ test("a torn last line does not swallow the next event", async () => {
   await s.event("sense.battery", { level: 50 });
   const { appendFileSync } = await import("node:fs");
   appendFileSync(s.file("2026-10"), '{"kind":"battery","ts":1,"lev');
-  const again = setup(s.dir, s.ledger);
+  const again = setup(s.dir);
   await again.event("sense.battery", { level: 49 });
   assert.deepEqual(((await again.call("query", { kind: "battery" })).rows as any[]).map((r) => r.level), [50, 49]);
 });
@@ -121,7 +119,7 @@ test("unknown words are refused", async () => {
   await assert.rejects(s.call("nope", {}), (e) => e instanceof WordError && e.code === "not_found");
 });
 
-test("daily: the clock's call works out the recent finished days; other callers read what is stored", async () => {
+test("daily is worked out from the archive for the date asked, yesterday by default", async () => {
   const s = setup();
   // 2026-10-09: a ride, a walk, steps from two sources, a stay at home
   await s.event("sense.activity", { batch_id: "a1", items: [
@@ -135,46 +133,31 @@ test("daily: the clock's call works out the recent finished days; other callers 
   await s.event("sense.geofence", { name: "home", transition: "enter", ts: at("2026-10-09T18:00:00") });
   await s.event("sense.geofence", { name: "home", transition: "exit", ts: at("2026-10-09T19:00:00") });
 
-  // nothing is stored until the clock asks
-  assert.deepEqual(await s.call("daily", {}), { date: "2026-10-09", available: false });
-  assert.equal((s.ledger.db().prepare("SELECT COUNT(*) AS n FROM senses_daily").get() as { n: number }).n, 0);
+  const day = await s.call("daily", { date: "2026-10-09" });
+  assert.equal(day.date, "2026-10-09");
+  assert.equal(day.activity_min.walking, 30);
+  assert.equal(day.activity_min.cycling, 20);
+  assert.equal(day.cycling.count, 1);
+  assert.equal(day.steps.total, 5000);
+  assert.deepEqual(day.steps.by_source, { phone: 4000, watch: 5000 });
+  assert.equal(day.geofences.home.inside_min, 60);
+  assert.equal(day.health_latest.weight.value, 70);
 
-  s.clock.t = at("2026-10-10T00:30:00");
-  const fromClock = await s.call("daily", {}, clockCaller);
-  assert.equal(fromClock.available, true);
-  assert.equal(fromClock.date, "2026-10-09");
-  assert.equal(fromClock.activity_min.walking, 30);
-  assert.equal(fromClock.activity_min.cycling, 20);
-  assert.equal(fromClock.cycling.count, 1);
-  assert.equal(fromClock.steps.total, 5000);
-  assert.deepEqual(fromClock.steps.by_source, { phone: 4000, watch: 5000 });
-  assert.equal(fromClock.geofences.home.inside_min, 60);
-  assert.equal(fromClock.health_latest.weight.value, 70);
-
-  // the owner reads the same from the table, by date or by default
-  const read = await s.call("daily", { date: "2026-10-09" });
-  assert.equal(read.steps.total, 5000);
-  assert.equal((await s.call("daily", {})).date, "2026-10-09");
-  assert.deepEqual(await s.call("daily", { date: "2026-10-08" }), { date: "2026-10-08", available: false });
-
-  // it is the service's own table, and survives a restart
-  const again = setup(s.dir, s.ledger);
-  again.clock.t = s.clock.t;
-  assert.equal((await again.call("daily", { date: "2026-10-09" })).geofences.home.inside_min, 60);
+  assert.deepEqual(await s.call("daily", {}), day);                              // default: yesterday (now is 2026-10-10)
+  assert.equal((await s.call("daily", { date: "2026-10-08" })).counts.location, 0);   // a day with nothing in the archive
+  assert.equal((await setup(s.dir).call("daily", { date: "2026-10-09" })).geofences.home.inside_min, 60);   // from the files, after a restart
 });
 
-test("a late batch for yesterday is picked up by the next daily run", async () => {
+test("a late batch for a past day is counted the next time that day is asked for", async () => {
   const s = setup();
-  s.clock.t = at("2026-10-10T00:30:00");
   await s.event("sense.activity", { batch_id: "a1", items: [{ ts_start: at("2026-10-09T08:00:00"), ts_end: at("2026-10-09T08:10:00"), state: "walking" }] });
-  assert.equal((await s.call("daily", {}, clockCaller)).activity_min.walking, 10);
+  assert.equal((await s.call("daily", { date: "2026-10-09" })).activity_min.walking, 10);
+  s.clock.t = at("2026-10-11T08:00:00");
   await s.event("sense.activity", { batch_id: "a2", items: [{ ts_start: at("2026-10-09T09:00:00"), ts_end: at("2026-10-09T09:10:00"), state: "walking" }] });
-  s.clock.t = at("2026-10-11T00:30:00");
-  assert.equal((await s.call("daily", { date: "2026-10-09" }, clockCaller)).activity_min.walking, 20);
+  assert.equal((await s.call("daily", { date: "2026-10-09" })).activity_min.walking, 20);
 });
 
-test("senses sends nothing by itself: events and words never touch a router", async () => {
-  // the service has no router at all; the only thing that ever sends is ensureDailyTimer, to the clock
+test("senses sends nothing by itself: it has no router, so it cannot wake anyone", async () => {
   const s = setup();
   await s.event("sense.geofence", { name: "home", transition: "enter", ts: NOW });
   await s.event("sense.source", { source: "watch", state: "stale", ts: NOW, stale_hours: 6, summary: "x" });
@@ -182,24 +165,4 @@ test("senses sends nothing by itself: events and words never touch a router", as
   await s.event("sense.screen", { state: "app_open", away_ms: 9 * 3_600_000 });
   assert.equal(Object.keys(s.service).filter((k) => /router/i.test(k)).length, 0);
   assert.equal(lines(s.file("2026-10")).filter((l) => l.kind === "source").length, 0);   // a source notice is not a reading
-});
-
-test("ensureDailyTimer sets the clock's daily timer once", async () => {
-  const sent: { msg: Outgoing; caller: Caller }[] = [];
-  const timers: any[] = [];
-  const router = { send: async (m: Outgoing, caller: Caller): Promise<Reply> => {
-    sent.push({ msg: m, caller });
-    if (m.word === "list") return { ok: true, result: { data: { timers } } };
-    timers.push({ id: "t1", label: (m.body as any).label });
-    return { ok: true, result: { data: { id: "t1", next: 0 } } };
-  } };
-  const opts = { now: () => NOW, timeZone: "UTC" };
-  assert.deepEqual(await ensureDailyTimer(router, opts), { set: true });
-  assert.deepEqual(await ensureDailyTimer(router, opts), { set: false });
-  const setCalls = sent.filter((c) => c.msg.word === "set");
-  assert.equal(setCalls.length, 1);
-  assert.deepEqual(setCalls[0]!.msg, { to: "service:clock", kind: "request", word: "set",
-    body: { at: at("2026-10-11T00:30:00"), every: 86_400, to: "service:senses", word: "daily", body: {}, label: DAILY_LABEL } });
-  assert.equal(setCalls[0]!.caller.member, "service:senses");
-  assert.ok(sent.every((c) => c.msg.to === "service:clock"), "nothing but the clock is addressed");
 });

@@ -54,10 +54,10 @@ export function geofenceTime(before: readonly GeofenceLine[], day: readonly Geof
 
 /**
  * Per-day totals from archived lines. `lines` holds the day itself; `history` holds what came before
- * (activity to know the state at midnight, geofences to know where the day began). `until` caps an unfinished day.
+ * (activity to know the state at midnight, geofences to know where the day began).
  */
-export function dailySummary(date: string, timeZone: string, lines: SenseLines, history: Pick<SenseLines, "activity" | "geofence">, until?: number): DailySummary {
-  const from = dayStart(date, timeZone), to = dayStart(nextDate(date), timeZone), end = Math.min(to, until ?? to);
+export function dailySummary(date: string, timeZone: string, lines: SenseLines, history: Pick<SenseLines, "activity" | "geofence">): DailySummary {
+  const from = dayStart(date, timeZone), to = dayStart(nextDate(date), timeZone), end = to;
   const within = <T extends { ts: number }>(items: readonly T[]) => items.filter((item) => item.ts >= from && item.ts < to);
   const location = within(lines.location), health = within(lines.health), geofence = within(lines.geofence);
   const timeline = activityTimeline([...history.activity, ...lines.activity]);
