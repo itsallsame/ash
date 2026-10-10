@@ -13,15 +13,12 @@
 import { WordError, type Caller, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import { mayCall, wordEffect, type CallerKind, type Member, type WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
+import { agentMay, type AgentPolicy } from "../../kernel/router";
 import type { Registry } from "../../kernel/types";
 
 export const DIRECTORY_ID = "service:directory";
 
-/** What an agent's declaration lets it use; `null` or absent = no limit. `words` are `member/word` patterns, `*` matches any run. */
-export interface AgentPolicy {
-  tools?: readonly string[] | null;
-  words?: readonly string[] | null;
-}
+export type { AgentPolicy };
 
 export interface DirectoryOptions {
   registry: Pick<Registry, "list" | "describe">;
@@ -35,9 +32,6 @@ export interface DirectoryOptions {
 
 const KIND: Record<Caller["via"], CallerKind | null> = { human: "owner", agent: "agent", app: "app", service: "kernel", hand: null };
 
-const glob = (pattern: string, text: string): boolean =>
-  new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`).test(text);
-
 /** Does the call put a question to the owner? An indication from the contract; the gate decides. */
 export const needsApproval = (contract: WordContract): boolean | "per_call" => (contract.per_call_risk ? "per_call" : contract.risk !== "none");
 
@@ -49,12 +43,10 @@ export function createDirectoryService(options: DirectoryOptions): Member {
     if (!kind) return [];
     const policy = caller.via === "agent" ? options.agentPolicy(caller.member) : null;
     if (caller.via === "agent" && !policy) return [];
-    const patterns = policy && (policy.tools || policy.words)
-      ? [...(policy.words ?? []), ...(policy.tools ?? []).flatMap((t) => options.toolWords?.(t) ?? [])] : null;
     return (registry.describe(member)?.words ?? []).filter((c) =>
       c.kind === "request" && c.direction === "in" && mayCall(c.callers, kind)
       && !(c.local_only && caller.via === "human" && !caller.local)
-      && (!patterns || patterns.some((p) => glob(p, `${member}/${c.word}`)))
+      && (!policy || agentMay(policy, member, c.word, options.toolWords ?? (() => [])))
       && (caller.via !== "app" || options.appGranted?.(caller.member, member, c.word) === true));
   }
 

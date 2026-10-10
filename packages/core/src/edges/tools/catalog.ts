@@ -4,10 +4,10 @@
  * authorization (step 3) decides the same way, so what the catalog lists is what a call can reach.
  */
 import { mayCall, wordEffect, type WordContract } from "../../../../sdk/src/word";
-import { agentMay, type AgentPolicy } from "../../kernel/router";
+import { agentMay, glob, type AgentPolicy } from "../../kernel/router";
 import type { Registry } from "../../kernel/types";
 import { failure, plain, type Shaped } from "./result";
-import { FIXED_TOOLS, glob, RECEIPT_TOOLS, toolWords } from "./tools";
+import { FIXED_TOOLS, RECEIPT_TOOLS, toolWords } from "./tools";
 
 export type { AgentPolicy };
 

@@ -6,6 +6,7 @@
 import type { CapabilitySpec } from "../../../../../sdk/src/link";
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../../sdk/src/message";
 import { DEFAULT_CALLERS, wordEffect, type Member, type Risk, type WordContract } from "../../../../../sdk/src/word";
+import { wordsOf } from "../../../../../sdk/src/words";
 import { LinkError, type LinkSession } from "../../../../../link/src/server";
 
 /** The deadline when a capability names none: the router's own defaults (reads 60 s, everything else 600 s). */
@@ -27,12 +28,32 @@ export function capabilityContract(member: string, cap: CapabilitySpec): WordCon
   };
 }
 
+/** Events go to the fixed service of their namespace; nothing is broadcast (SPEC-03 §4.3). */
+export const EVENT_TARGETS: Readonly<Record<string, string>> = { sense: "service:senses", widget: "service:widgets", config: "service:devices" };
+
+/**
+ * An event the hand declared in its manifest, as a word the hand itself sends: the router lets a sender emit what its
+ * own words declare. The schema is the one of the service the event goes to; an event that service does not know keeps
+ * any object.
+ */
+export function eventContract(member: string, word: string): WordContract {
+  const target = EVENT_TARGETS[word.slice(0, word.indexOf("."))];
+  const known = target ? wordsOf(target).find((c) => c.word === word && c.kind === "event") : undefined;
+  if (known) return { ...known, member, direction: "out" };
+  return {
+    member, word, kind: "event", direction: "out", description: `The hand reports ${word}, which it declared in its manifest.`,
+    input_schema: { type: "object", additionalProperties: true }, effect: "read", risk: "none", callers: ["kernel"], label: { doing: `在报告 ${word}` },
+  };
+}
+
 export interface HandMemberInit {
   /** `device:<hand_id>` or `body:<hand_id>`. */
   id: string;
   kind: "device" | "body";
   name: string;
   capabilities: readonly CapabilitySpec[];
+  /** The events the manifest declares (only a device sends them; a body does not). */
+  events?: readonly string[];
   /** The hand's live connection with the device channel open, or null when it is gone. */
   session(): LinkSession | null;
   /** The hand is on the local link: `registry.findByWord` prefers it. */
@@ -53,8 +74,8 @@ export class HandMember implements Member {
     this.kind = init.kind;
     this.name = init.name;
     this.local = init.local;
-    this.contracts = init.capabilities.map((cap) => capabilityContract(init.id, cap));
-    for (const contract of this.contracts) this.byWord.set(contract.word, contract);
+    this.contracts = [...init.capabilities.map((cap) => capabilityContract(init.id, cap)), ...(init.events ?? []).map((word) => eventContract(init.id, word))];
+    for (const contract of this.contracts) if (contract.kind === "request") this.byWord.set(contract.word, contract);
   }
 
   words(): WordContract[] { return this.contracts; }

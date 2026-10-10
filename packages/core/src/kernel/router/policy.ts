@@ -20,7 +20,7 @@ const alwaysOpen = (to: string, word: string): boolean => to === "service:gate" 
  * May the agent call `to/word`? Without limits, yes. Otherwise it needs a match among the declaration's `words` and
  * the words the declaration's fixed tools stand for (`toolWords`; a meta tool stands for none).
  */
-export function agentMay(policy: AgentPolicy, to: string, word: string, toolWords: (toolOrPattern: string) => string[]): boolean {
+export function agentMay(policy: AgentPolicy, to: string, word: string, toolWords: (toolOrPattern: string) => readonly string[]): boolean {
   if (alwaysOpen(to, word)) return true;
   if (!policy.tools && !policy.words) return true;
   const patterns = [...(policy.words ?? []), ...(policy.tools ?? []).flatMap(toolWords)];

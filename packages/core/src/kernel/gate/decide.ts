@@ -13,11 +13,12 @@ import { Carry } from "./carry";
 import { contractFingerprint, objectOf, stable, type GateStore } from "./store";
 
 
-/** Words an agent can never get approved for good: it asks the owner every time, and 「以后都可以」 is not offered. */
+/** Words an agent can never get approved for good: it asks the owner every time, and 「以后都可以」 is not offered. Installing an app grants an organ its powers, so the review model cannot pass it either. */
 export const ALWAYS_ASK: ReadonlySet<string> = new Set([
   "service:gate/rules.set", "service:gate/rules.revoke", "service:gate/mode.set",
   "service:devices/access_set", "service:devices/revoke", "service:devices/pair_approve", "service:devices/update",
   "service:persona/propose",
+  "service:apps/apps.install",
 ]);
 
 const PAYMENT = /\b(pay|payment|purchase|checkout|transfer)\b|支付|付款|购买|下单|转账|充值|买单/i;

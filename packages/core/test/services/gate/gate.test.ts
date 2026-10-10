@@ -212,6 +212,22 @@ test("an approval is good until the original expires_at, not longer", async () =
   assert.equal(s.ledger.request(id)?.state, "done");
 });
 
+test("an approval nobody carried out expires with the sweep too, and its request is closed with a timeout", async () => {
+  const s = setup();
+  const id = success(await s.ask("never redeemed")).pending_id;
+  await flush();
+  s.owner.answer("once"); await flush();
+  assert.equal(s.store.getPending(id)?.state, "approved");
+  const notes = s.main.inbox.length;
+  s.clock.now += 10 * 60_000;
+  assert.deepEqual(s.store.expireDue().map((p) => [p.id, p.state]), [[id, "expired"]]);
+  assert.equal(s.ledger.request(id)?.state, "done");
+  const response = s.ledger.page({ limit: 100 }).find((m) => m.kind === "response" && m.reply_to === id) as any;
+  assert.equal(response.body.error.code, "timeout");
+  assert.equal(s.main.inbox.length, notes, "the agent was told of the answer already; an approval running out is not announced again");
+  assert.deepEqual(s.store.expireDue(), []);
+});
+
 test("the card names the effect and the risk", async () => {
   const s = setup();
   await s.ask("x");

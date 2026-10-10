@@ -179,22 +179,25 @@ export class GateStore {
     return { ...JSON.parse(String(row.data)), id: String(row.id), originator: String(row.originator), state: row.state as PendingState,
       created_at: Number(row.created_at), expires_at: Number(row.expires_at) };
   }
-  /** The record as it is now: a question still waiting after its time is expired, which counts as a refusal. */
+  /**
+   * The record as it is now: a question still waiting after its time is expired, which counts as a refusal; an approval
+   * not carried out by then is expired too.
+   */
   getPending(id: string): PendingRecord | null {
     const row = this.db.prepare("SELECT * FROM gate_pending WHERE id=?").get(id) as Row | undefined;
     if (!row) return null;
     const rec = this.pending(row);
-    if (rec.state === "waiting" && rec.expires_at <= this.now()) return this.setState(id, ["waiting"], "expired") ?? rec;
+    if ((rec.state === "waiting" || rec.state === "approved") && rec.expires_at <= this.now()) return this.setState(id, [rec.state], "expired") ?? rec;
     return rec;
   }
   listPending(originator: string): PendingRecord[] {
     const rows = this.db.prepare("SELECT id FROM gate_pending WHERE originator=? AND state IN ('waiting','approved','denied','expired') ORDER BY created_at").all(originator) as { id: string }[];
     return rows.map((r) => this.getPending(r.id)!);
   }
-  /** Waiting records whose time has come; they become expired. */
+  /** Waiting and approved records whose time has come; they become expired. */
   expireDue(): PendingRecord[] {
-    const rows = this.db.prepare("SELECT id FROM gate_pending WHERE state='waiting' AND expires_at<=?").all(this.now()) as { id: string }[];
-    return rows.map((r) => this.setState(r.id, ["waiting"], "expired")).filter((p): p is PendingRecord => p !== null);
+    const rows = this.db.prepare("SELECT id FROM gate_pending WHERE state IN ('waiting','approved') AND expires_at<=?").all(this.now()) as { id: string }[];
+    return rows.map((r) => this.getPending(r.id)).filter((p): p is PendingRecord => p !== null && p.state === "expired");
   }
   waiting(): PendingRecord[] {
     return (this.db.prepare("SELECT id FROM gate_pending WHERE state='waiting' ORDER BY created_at").all() as { id: string }[])

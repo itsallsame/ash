@@ -11,7 +11,7 @@
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import type { Member, WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
-import { HASH_PATTERN, referencingMessages, type Ledger } from "../../kernel/ledger";
+import { HASH_PATTERN, type Ledger } from "../../kernel/ledger";
 
 export const BLOBS_ID = "service:blobs";
 /** How much `read` returns when `limit` is not given. */
@@ -23,8 +23,6 @@ export interface BlobsOptions {
   /** Open a stream for the bytes on the connection the caller came in through and return its id (`stream` frames, SPEC-03 §3.4). Without it `get` answers `unavailable`. */
   openStream?: (bytes: Uint8Array, mime: string, ctx: HandleContext) => string | Promise<string>;
 }
-
-export { referencingMessages };
 
 const isTextMime = (mime: string): boolean => {
   const base = mime.split(";")[0]!.trim().toLowerCase();

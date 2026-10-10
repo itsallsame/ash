@@ -82,7 +82,7 @@ test("agent step 3: a payment always asks, with no 「以后都可以」", async
 test("agent step 4: the words that always ask the owner, and only those", async () => {
   const g = make({ review: async () => "allow", tier: () => "full" });
   for (const [member, w] of [["service:gate", "rules.set"], ["service:gate", "rules.revoke"], ["service:gate", "mode.set"], ["service:devices", "access_set"],
-    ["service:devices", "revoke"], ["service:devices", "pair_approve"], ["service:devices", "update"], ["service:persona", "propose"]] as const) {
+    ["service:devices", "revoke"], ["service:devices", "pair_approve"], ["service:devices", "update"], ["service:persona", "propose"], ["service:apps", "apps.install"]] as const) {
     const c = word(member, w, { effect: "write", risk: "structure" });
     const d = await verdict(g, req("agent:main", member, w), c);
     assert.deepEqual([d.verdict, d.by, d.offer_always], ["ask", "always_ask", false], `${member}/${w}`);

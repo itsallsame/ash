@@ -163,8 +163,6 @@ export function toolDefinitions(): readonly ToolDefinition[] {
 // patterns: the declaration's `tools` and `words`
 // ---------------------------------------------------------------------------------------------------------------------
 
-export { glob };
-
 /**
  * The `member/word` patterns a fixed tool (or a pattern of tool names such as `device_*`) stands for. Meta and receipt
  * tools stand for none: through capability_call an agent reaches what its `words` allow. The router's authorization

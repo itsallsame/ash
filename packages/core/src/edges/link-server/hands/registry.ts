@@ -15,7 +15,7 @@ import type { Risk } from "../../../../../sdk/src/word";
 import type { LinkSession, ManifestCheck, SessionHandlers } from "../../../../../link/src/server";
 import type { Db } from "../../../kernel/ledger";
 import type { Registry, Router } from "../../../kernel/types";
-import { HandMember } from "./hand-member";
+import { EVENT_TARGETS, HandMember } from "./hand-member";
 
 export interface HandRecord {
   id: string;
@@ -72,8 +72,6 @@ CREATE TABLE IF NOT EXISTS hands (
 CREATE TABLE IF NOT EXISTS hand_capabilities (
   hand TEXT NOT NULL, name TEXT NOT NULL, spec TEXT NOT NULL, PRIMARY KEY (hand, name));`;
 
-/** Events go to the fixed service of their namespace; nothing is broadcast (SPEC-03 §4.3). */
-const EVENT_TARGETS: Record<string, string> = { sense: "service:senses", widget: "service:widgets", config: "service:devices" };
 /** The service was not there or failed: the event is not acked, the hand sends it again. Any other refusal is final. */
 const RETRY_CODES = new Set(["offline", "unavailable", "internal", "timeout"]);
 /** Event ids remembered per hand, to drop a resend. */
@@ -220,7 +218,7 @@ export class HandRegistry {
     const hand = this.get(id)!;
     const split = this.d.splitBodyCapabilities({ id, bound: this.d.bodies.isBound(id) }, l.capabilities);
     const make = (memberId: string, kind: "device" | "body", capabilities: CapabilitySpec[]) => {
-      const member = new HandMember({ id: memberId, kind, name: hand.name, capabilities, local: l.local, session: () => { const now = this.live.get(id); return now && !now.session.closed ? now.session : null; }, now: this.d.now });
+      const member = new HandMember({ id: memberId, kind, name: hand.name, capabilities, ...(kind === "device" ? { events: [...l.events] } : {}), local: l.local, session: () => { const now = this.live.get(id); return now && !now.session.closed ? now.session : null; }, now: this.d.now });
       this.members.set(memberId, member);
       this.d.registry.add(member);
     };

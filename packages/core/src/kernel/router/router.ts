@@ -97,11 +97,7 @@ export class HubRouter implements Router {
     const { store } = this.deps;
     const pending = store.getPending(pendingId);
     if (!pending) return fail(errorBody("not_found", "no such pending request"));
-    if (pending.state !== "approved") return fail(errorBody("conflict", pending.state === "redeemed" ? "this approval was already used" : `this request is ${pending.state}, not approved`));
-    if (pending.expires_at <= this.now()) {
-      store.setState(pendingId, ["approved"], "expired");
-      return fail(errorBody("conflict", "this approval ran out; make the request again"));
-    }
+    if (pending.state !== "approved") return fail(errorBody("conflict", pending.state === "redeemed" ? "this approval was already used" : pending.state === "expired" ? "this approval ran out; make the request again" : `this request is ${pending.state}, not approved`));
     const msg: Outgoing = { to: pending.to, kind: "request", word: pending.word, body: pending.body, ...(pending.thread ? { thread: pending.thread } : {}) };
     return this.run(msg, { ...pending.caller, turn: redeemer.turn }, opts, pending);
   }
