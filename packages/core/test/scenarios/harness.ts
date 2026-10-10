@@ -1,0 +1,779 @@
+/**
+ * The scenario harness: starts the new hub (`startHub`) and talks to it the way the outside world does, and only that way.
+ *
+ *   - a person: a `packages/link` client on the human channel of the local connection (`Authorization: Bearer <local
+ *     token>` + a signed challenge), the way the phone app's chat page connects;
+ *   - a hand: a `packages/link` client on the device channel, with a signed identity and a manifest;
+ *   - an agent: `scriptedDriver()`, a fake `AgentDriver` that takes its turns from a script and calls the hub's tools on
+ *     `/mcp` with the token the hub gave it in `start()` (SPEC-08 §1.4 `spec.tools`);
+ *   - the host: the T15 `FakeHost` (the hub reports to it, the harness plays its events).
+ *
+ * Nothing here imports a hub module, opens the database or reads a file of the hub's. If the hub does something, a test
+ * sees it as a frame a person gets, a call a hand gets, a message an agent is given, a call the host gets, or a record
+ * `service:history` returns.
+ */
+import { generateKeyPairSync, sign as signBytes } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import type { TestContext } from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createNodeClient, type CallOutcome, type HandClient, type HandHandlers, type PresentOutcome } from "../../../link/src";
+import type { CallFrame, CapabilitySpec, HandKind, HelloChannels, ManifestAckFrame, PresentFrame, SendRequest, SendResultFrame, SyncPageFrame } from "../../../sdk/src/link";
+import { HOST_ENV } from "../../../sdk/src/host";
+import { base64url, deviceId, handId } from "../../../sdk/src/ids";
+import type { Message, Reply } from "../../../sdk/src/message";
+import { standardAction } from "../../../sdk/src/namespaces";
+import { HostClient, loadHostBoot } from "../../src/edges/host";
+import {
+  startHub, type AgentDriver, type AgentDriverFactory, type AgentEvent, type AgentStartSpec, type DriverMessage, type Hub,
+} from "../../src/next";
+import { FAKE_SEAL_KEY, FakeHost } from "../fixtures/host";
+import { eventually } from "../fixtures/wait";
+
+export const OWNER = "person:owner";
+export const MAIN = "agent:main";
+export const GATE = "service:gate";
+
+// --- small things every test uses ----------------------------------------------------------------------------------------
+
+export function deferred<T = void>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+/**
+ * Lets things that must NOT happen have their chance to happen. The only fixed wait in the scenarios; it is used for
+ * negative checks (nothing woke the agent, no card appeared) and never to wait for something that should arrive.
+ */
+export const quiet = (ms = 300): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const bodyOf = (m: { body: unknown }): Record<string, unknown> => (m.body && typeof m.body === "object" ? (m.body as Record<string, unknown>) : {});
+export const textOf = (m: { body: unknown }): string => {
+  const text = bodyOf(m).text;
+  return typeof text === "string" ? text : "";
+};
+
+/** Predicates over ledger messages (what a person's `sync` shows). */
+export const sentBy = (from: string, word?: string) => (m: Message): boolean => m.from === from && (word === undefined || m.word === word);
+export const toOwner = (word: string, from?: string) => (m: Message): boolean => m.to === OWNER && m.word === word && (from === undefined || m.from === from);
+/** The approval card: the gate asks the owner. */
+export const isApprovalAsk = (m: Message): boolean => m.kind === "request" && m.from === GATE && m.to === OWNER && m.word === "ask";
+
+export const ownerMessage = (text: string) => (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && textOf(m) === text;
+export const fromGate = (m: DriverMessage): boolean => m.from === GATE;
+
+// --- identities (a hand proves itself by signing the challenge, SPEC-03 §2.2) --------------------------------------------
+
+export interface Identity {
+  /** SPKI, base64url */
+  publicKey: string;
+  handId: string;
+  /** ECDSA P-256 over the UTF-8 bytes of the nonce, ASN.1 DER, base64url */
+  sign(nonce: string): string;
+}
+
+export async function newIdentity(): Promise<Identity> {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const spki = publicKey.export({ type: "spki", format: "der" });
+  return {
+    publicKey: base64url(spki),
+    handId: await handId(spki),
+    sign: (nonce) => base64url(signBytes("sha256", Buffer.from(nonce, "utf8"), { key: privateKey, dsaEncoding: "der" })),
+  };
+}
+
+// --- capabilities a hand can offer -----------------------------------------------------------------------------------------
+
+/** A capability as the standard namespaces define it (SPEC-02 §4.3); [over] changes fields for the scenario. */
+export function standardCapability(name: string, over: Partial<CapabilitySpec> = {}): CapabilitySpec {
+  const action = standardAction(name);
+  if (!action) throw new Error(`${name} is not a standard action`);
+  return {
+    name: action.name, description: action.description, label: action.label, input_schema: action.input_schema as Record<string, unknown>,
+    result_schema: action.result_schema as Record<string, unknown>, effect: action.effect, risk: action.risk,
+    ...(action.foreground ? { foreground: true } : {}), ...(action.per_call_risk ? { per_call_risk: true } : {}),
+    ...(action.callers ? { callers: [...action.callers] } : {}), ...over,
+  };
+}
+
+/** An extension capability (`x.<name>.<action>`) for scenarios that need a particular effect and risk. */
+export function extensionCapability(name: string, over: Partial<CapabilitySpec> = {}): CapabilitySpec {
+  return { name, description: `${name}: a capability of the scenario hand.`, label: `在${name}`, input_schema: { type: "object" }, effect: "read", risk: "none", ...over };
+}
+
+export const textResult = (text: string, data?: unknown): CallOutcome => ({ ok: true, content: [{ type: "text", text }], ...(data !== undefined ? { data } : {}) });
+
+// --- the scripted agent driver ---------------------------------------------------------------------------------------------
+
+/** What a tool call on `/mcp` gave back. Results are JSON in the first text part; an error has `isError`. */
+export interface ToolResult {
+  isError: boolean;
+  text: string;
+  /** The text parsed as JSON, or undefined when it is not JSON. */
+  json: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
+/** The error code in a failed tool result, wherever the surface puts it (`{error:{code}}` or `{code}`). */
+export const errorCode = (r: ToolResult): string | undefined => r.json?.error?.code ?? r.json?.code;
+
+/** The payload of a tool result: `capability_call` may wrap the word's result as `{result}` or hand it back as is. */
+export const resultOf = (r: ToolResult): any => r.json?.result ?? r.json; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+export interface ToolCallRecord { agent: string; key: string; turn: string; name: string; args: Record<string, unknown>; result: ToolResult }
+
+export interface TurnContext {
+  agent: string;
+  /** The lane (session key). */
+  key: string;
+  turn: string;
+  /** What the hub gave this turn. */
+  messages: DriverMessage[];
+  /** Aborted when the hub interrupts the turn. */
+  signal: AbortSignal;
+  /** Text said into the running turn by `steer`. */
+  steers: string[];
+  /** The agent speaks: the hub turns it into a `say` to the owner (front lane). */
+  say(text: string): void;
+  /** One tool of the hub's tool surface. */
+  tool(name: string, args?: Record<string, unknown>): Promise<ToolResult>;
+  /** `capability_call`; [envelope] holds the call metadata (`wait`, `approval_ttl_minutes`, `purpose`, SPEC-02 §3.3). */
+  call(member: string, word: string, body?: Record<string, unknown>, envelope?: { wait?: boolean; approval_ttl_minutes?: number; purpose?: string }): Promise<ToolResult>;
+  /** Waits for [promise] but gives up (resolves undefined) when the turn is interrupted. */
+  until<T>(promise: Promise<T>): Promise<T | undefined>;
+}
+export type TurnScript = (turn: TurnContext) => void | Promise<void>;
+
+export type TurnOutcome = "running" | "completed" | "cancelled" | "error" | "interrupted";
+export interface TurnRecord {
+  agent: string;
+  key: string;
+  turn: string;
+  messages: DriverMessage[];
+  outcome: TurnOutcome;
+  /** The script's own error, when the turn ended in `error`. */
+  error?: string;
+  said: string[];
+  steers: string[];
+  /** Resolves when the turn has ended. */
+  done: Promise<void>;
+}
+
+export interface Delivery { via: "send" | "followup" | "steer"; agent: string; key: string; messages: DriverMessage[] }
+
+/** The tool surface as one agent sees it: a Streamable HTTP MCP client with the agent's own bearer token. */
+class ToolLine {
+  private client: Promise<Client> | undefined;
+  constructor(private readonly tools: AgentStartSpec["tools"]) {}
+  private connect(): Promise<Client> {
+    this.client ??= (async () => {
+      const client = new Client({ name: "scripted-driver", version: "0.0.0" });
+      await client.connect(new StreamableHTTPClientTransport(new URL(this.tools.mcp_url), { requestInit: { headers: { Authorization: `Bearer ${this.tools.token}` } } }));
+      return client;
+    })();
+    return this.client;
+  }
+  async call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const client = await this.connect();
+    const res = (await client.callTool({ name, arguments: args })) as { content?: unknown; isError?: unknown };
+    const parts = Array.isArray(res.content) ? (res.content as { type?: string; text?: string }[]) : [];
+    const text = parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
+    let json: unknown;
+    try { json = JSON.parse(text); } catch { /* not JSON */ }
+    return { isError: Boolean(res.isError), text, json };
+  }
+  async close(): Promise<void> {
+    const client = await this.client?.catch(() => undefined);
+    await client?.close().catch(() => {});
+  }
+}
+
+interface Running { abort: AbortController; record: TurnRecord }
+
+/**
+ * A fake agent runtime. It registers under every runtime kind a scenario might declare (`dsh`, `scripted`, ...), keeps one
+ * script per agent (or one for all), and runs it as the body of each turn. Everything the hub asked of it is recorded.
+ */
+export class ScriptedDriver {
+  readonly drivers: Record<string, AgentDriverFactory>;
+  readonly turns: TurnRecord[] = [];
+  readonly calls: ToolCallRecord[] = [];
+  readonly starts: { agent: string; spec: AgentStartSpec }[] = [];
+  readonly stops: { agent: string; reason: string }[] = [];
+  /** Everything handed to `send`, `followup` and `steer`, in order. */
+  readonly deliveries: Delivery[] = [];
+  readonly interrupts: { agent: string; key: string }[] = [];
+  private fallback: TurnScript = () => {};
+  private readonly scripts = new Map<string, TurnScript>();
+  private readonly lines = new Map<string, ToolLine>();
+  private readonly running = new Map<string, Running>();
+  private readonly queued = new Map<string, DriverMessage[][]>();
+  private serial = 0;
+
+  constructor(kinds: readonly string[] = ["dsh", "scripted", "codex", "claude"]) {
+    this.drivers = Object.fromEntries(kinds.map((kind) => [kind, (report: (event: AgentEvent) => void) => this.driver(report)]));
+  }
+
+  /** The script of every turn of every agent that has no script of its own. */
+  script(fn: TurnScript): void { this.fallback = fn; }
+  /** The script of one agent (`agent:main`). */
+  scriptFor(agent: string, fn: TurnScript): void { this.scripts.set(agent, fn); }
+
+  /** The first turn that matches, waiting for it. */
+  turn(match: (record: TurnRecord) => boolean, what: string): Promise<TurnRecord> {
+    return eventually(() => this.turns.find(match), what);
+  }
+  /** The first delivery that holds a message that matches (any of send, followup, steer), waiting for it. */
+  async delivery(match: (message: DriverMessage) => boolean, what: string): Promise<{ delivery: Delivery; message: DriverMessage }> {
+    return eventually(() => {
+      for (const delivery of this.deliveries) {
+        const message = delivery.messages.find(match);
+        if (message) return { delivery, message };
+      }
+      return null;
+    }, what);
+  }
+  /** Every message the driver was given (send and followup), flattened. */
+  messages(): DriverMessage[] { return this.deliveries.flatMap((d) => d.messages); }
+  /** The first tool call of this name, waiting for it. */
+  toolCall(name: string, what = `a ${name} call`): Promise<ToolCallRecord> {
+    return eventually(() => this.calls.find((call) => call.name === name), what);
+  }
+
+  /** Ends everything (the scenario is over or the hub is being restarted). */
+  async dispose(): Promise<void> {
+    for (const run of this.running.values()) run.abort.abort();
+    this.running.clear();
+    this.queued.clear();
+    await Promise.all([...this.lines.values()].map((line) => line.close()));
+    this.lines.clear();
+  }
+
+  private driver(report: (event: AgentEvent) => void): AgentDriver {
+    const safe = (event: AgentEvent) => { try { report(event); } catch { /* the hub is gone */ } };
+    return {
+      start: async (agent, spec) => {
+        this.starts.push({ agent, spec });
+        await this.lines.get(agent)?.close();
+        this.lines.set(agent, new ToolLine(spec.tools));
+      },
+      stop: async (agent, reason) => {
+        this.stops.push({ agent, reason });
+        for (const [slot, run] of this.running) if (slot.startsWith(`${agent}/`)) run.abort.abort();
+        await this.lines.get(agent)?.close();
+        this.lines.delete(agent);
+      },
+      send: async (agent, key, batch) => {
+        this.deliveries.push({ via: "send", agent, key, messages: batch });
+        this.begin(safe, agent, key, batch);
+      },
+      followup: async (agent, key, batch) => {
+        this.deliveries.push({ via: "followup", agent, key, messages: batch });
+        const slot = `${agent}/${key}`;
+        if (this.running.has(slot)) this.queued.set(slot, [...(this.queued.get(slot) ?? []), batch]);
+        else this.begin(safe, agent, key, batch);
+      },
+      steer: async (agent, key, text) => {
+        this.deliveries.push({ via: "steer", agent, key, messages: [{ id: `steer-${++this.serial}`, from: OWNER, word: "say", lane: key, at: Date.now(), body: { text } }] });
+        this.running.get(`${agent}/${key}`)?.record.steers.push(text);
+      },
+      interrupt: async (agent, key) => {
+        this.interrupts.push({ agent, key });
+        this.running.get(`${agent}/${key}`)?.abort.abort();
+      },
+    };
+  }
+
+  private begin(report: (event: AgentEvent) => void, agent: string, key: string, batch: DriverMessage[]): void {
+    const slot = `${agent}/${key}`;
+    if (this.running.has(slot)) { this.queued.set(slot, [...(this.queued.get(slot) ?? []), batch]); return; }
+    void this.run(report, agent, key, batch);
+  }
+
+  private async run(report: (event: AgentEvent) => void, agent: string, key: string, batch: DriverMessage[]): Promise<void> {
+    const slot = `${agent}/${key}`;
+    const turn = `t_${++this.serial}`;
+    const abort = new AbortController();
+    const finished = deferred();
+    const record: TurnRecord = { agent, key, turn, messages: batch, outcome: "running", said: [], steers: [], done: finished.promise };
+    this.turns.push(record);
+    this.running.set(slot, { abort, record });
+    report({ event: "turn.started", agent, key, turn, ids: batch.map((m) => m.id) });
+
+    const aborted = new Promise<undefined>((resolve) => abort.signal.addEventListener("abort", () => resolve(undefined), { once: true }));
+    const tool = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
+      const line = this.lines.get(agent);
+      if (!line) throw new Error(`${agent} has no tool line (the hub never called start())`);
+      report({ event: "tool", agent, key, turn, phase: "start", name });
+      const result = await line.call(name, args);
+      this.calls.push({ agent, key, turn, name, args, result });
+      report({ event: "tool", agent, key, turn, phase: "end", name, summary: result.text.slice(0, 120) });
+      return result;
+    };
+    const ctx: TurnContext = {
+      agent, key, turn, messages: batch, signal: abort.signal, steers: record.steers,
+      say: (text) => { record.said.push(text); report({ event: "output", agent, key, turn, text }); },
+      tool,
+      call: (member, word, body = {}, envelope = {}) => tool("capability_call", { member, word, body, ...envelope }),
+      until: <T>(promise: Promise<T>) => Promise.race([promise, aborted]),
+    };
+
+    let outcome: Exclude<TurnOutcome, "running"> = "completed";
+    try {
+      await (this.scripts.get(agent) ?? this.fallback)(ctx);
+      if (abort.signal.aborted) outcome = "interrupted";
+    } catch (error) {
+      outcome = abort.signal.aborted ? "interrupted" : "error";
+      if (outcome === "error") record.error = error instanceof Error ? error.message : String(error);
+    }
+    record.outcome = outcome;
+    this.running.delete(slot);
+    report({ event: "turn.ended", agent, key, turn, outcome, ...(record.error ? { error: record.error } : {}) });
+    finished.resolve();
+    const next = this.queued.get(slot)?.shift();
+    if (next) void this.run(report, agent, key, next);
+  }
+}
+
+/** A script that does something different for each of the owner's exact sentences (and nothing for other turns). */
+export function byOwnerText(handlers: Record<string, TurnScript>): TurnScript {
+  return async (turn) => {
+    for (const message of turn.messages) {
+      if (message.from !== OWNER) continue;
+      const handler = handlers[textOf(message)];
+      if (handler) return handler(turn);
+    }
+  };
+}
+
+/** The first `{$blob, ...}` reference inside a ledger body (long text is stored as an attachment, SPEC-01 §4.3). */
+export function findBlob(value: unknown): { $blob: string; mime?: string; size?: number; summary?: string } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.$blob === "string") return record as { $blob: string };
+  for (const child of Object.values(record)) {
+    const found = findBlob(child);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+export const scriptedDriver = (kinds?: readonly string[]): ScriptedDriver => new ScriptedDriver(kinds);
+
+// --- a person --------------------------------------------------------------------------------------------------------------
+
+export type HumanSurface = "chat" | "notification" | "island" | "widget" | "status";
+export interface HumanOptions {
+  name?: string;
+  label?: string;
+  /** What this channel can show (SPEC-03 §2.1); the hub only presents on surfaces that are declared. Default: chat. */
+  surfaces?: HumanSurface[];
+  /** Reuse an identity: a new connection of the same phone/browser. */
+  identity?: Identity;
+}
+
+const OPTION_LABELS = { once: /这次|一次|once|allow/i, always: /以后|总是|always/i, deny: /不行|拒绝|deny|no\b/i } as const;
+
+/**
+ * The owner on one channel: a hand that opened the human channel on the local connection. Everything the hub puts in the
+ * conversation arrives through `sync`; everything it presents arrives as `present` frames.
+ */
+export class Human {
+  /** Every message seen through sync, in arrival order (each id once). */
+  readonly messages: Message[] = [];
+  readonly presents: PresentFrame[] = [];
+  /** `client:<sid>` of this channel. */
+  clientId = "";
+  private cursor = 0;
+  private presentCursor = 0;
+  private readonly known = new Set<string>();
+  private presenter: (frame: PresentFrame) => PresentOutcome | Promise<PresentOutcome> = () => ({ ok: true });
+  private firstPage = deferred();
+
+  constructor(readonly client: HandClient, readonly identity: Identity) {}
+
+  private cached: HandHandlers | undefined;
+  /** @internal wired by the scenario */
+  handlers(): HandHandlers {
+    return (this.cached ??= {
+      welcome: (welcome) => {
+        const grant = welcome.channels.human;
+        if (grant && "client" in grant) this.clientId = grant.client;
+        this.client.openSync({ after: 0, follow: true, summary: true }, {
+          page: (frame) => { this.take(frame.messages); if (frame.end) this.firstPage.resolve(); },
+          message: (frame) => this.take([frame.message]),
+        });
+      },
+      present: async (frame) => {
+        this.presents.push(frame);
+        return this.presenter(frame);
+      },
+    });
+  }
+  /** @internal */
+  ready(): Promise<void> { return this.firstPage.promise; }
+
+  private take(messages: Record<string, unknown>[]): void {
+    for (const raw of messages) {
+      const message = raw as unknown as Message;
+      if (this.known.has(message.id)) continue;
+      this.known.add(message.id);
+      this.messages.push(message);
+    }
+  }
+
+  /** How this channel answers `present` frames (default: shown). */
+  onPresent(fn: (frame: PresentFrame) => PresentOutcome | Promise<PresentOutcome>): void { this.presenter = fn; }
+
+  // --- saying things
+
+  send(request: SendRequest): Promise<SendResultFrame> {
+    return this.client.send({ client_id: `c_${Math.random().toString(36).slice(2)}`, ...request });
+  }
+  /** The owner says something to an agent (default `agent:main`) or answers an option card (`inReplyTo` + `optionId`). */
+  say(text: string, o: { to?: string; clientId?: string; inReplyTo?: string; optionId?: string } = {}): Promise<SendResultFrame> {
+    const body: Record<string, unknown> = {};
+    if (text) body.text = text;
+    if (o.inReplyTo) { body.in_reply_to = o.inReplyTo; body.option_id = o.optionId; }
+    return this.send({ to: o.to ?? MAIN, kind: "request", word: "say", body, ...(o.clientId ? { client_id: o.clientId } : {}) });
+  }
+  /** Calls a word as the owner and waits for the response. */
+  async call(to: string, word: string, body: Record<string, unknown> = {}): Promise<Reply> {
+    const sent = await this.send({ to, kind: "request", word, body, wait: true });
+    if (!sent.ok) return { ok: false, error: sent.error };
+    return (sent.response as Reply | undefined) ?? { ok: true };
+  }
+  /** Answers a card the hub asked (`ask`): [which] is `once`, `always` or `deny` for an approval card, or an option id. */
+  answer(ask: Message, which: string, text?: string): Promise<SendResultFrame> {
+    const options = (bodyOf(ask).options as { id: string; label?: string; text?: string }[] | undefined) ?? [];
+    const pattern = (OPTION_LABELS as Record<string, RegExp>)[which];
+    const option = options.find((o) => o.id === which) ?? (pattern ? options.find((o) => pattern.test(`${o.label ?? ""}${o.text ?? ""}`)) : undefined);
+    return this.send({ to: ask.from, kind: "response", word: "ask", reply_to: ask.id, body: { ok: true, result: { choice: option?.id ?? which, ...(text ? { text } : {}) } } });
+  }
+  presence(state: { visible?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
+
+  // --- seeing things
+
+  /** The next message (after the ones already taken by `next`) that matches. */
+  next(match: (m: Message) => boolean, what: string): Promise<Message> {
+    return eventually(() => {
+      for (let i = this.cursor; i < this.messages.length; i++) {
+        if (match(this.messages[i]!)) { this.cursor = i + 1; return this.messages[i]!; }
+      }
+      return null;
+    }, what);
+  }
+  /** Any message seen so far that matches, waiting for one; does not move the cursor. */
+  seen(match: (m: Message) => boolean, what: string): Promise<Message> {
+    return eventually(() => this.messages.find(match), what);
+  }
+  /** The next presented frame that matches. */
+  nextPresent(match: (f: PresentFrame) => boolean, what: string): Promise<PresentFrame> {
+    return eventually(() => {
+      for (let i = this.presentCursor; i < this.presents.length; i++) {
+        if (match(this.presents[i]!)) { this.presentCursor = i + 1; return this.presents[i]!; }
+      }
+      return null;
+    }, what);
+  }
+  /** One page of history without following (scrolling up): messages before [seq]. */
+  page(params: { after?: number; before?: number; limit?: number }): Promise<SyncPageFrame> {
+    return new Promise((resolve) => {
+      const handle = this.client.openSync({ ...params, summary: true }, {
+        page: (frame) => { if (frame.end) { handle.close(); resolve(frame); } },
+        message: () => {},
+      });
+    });
+  }
+  /** Everything the hub's ledger holds that the owner may read, newest first (`service:history/query`, all pages). */
+  async ledger(filter: Record<string, unknown> = {}): Promise<Message[]> {
+    const all: Message[] = [];
+    let before: number | undefined;
+    for (let pages = 0; pages < 50; pages++) {
+      const reply = await this.call("service:history", "query", { limit: 200, ...filter, ...(before ? { before } : {}) });
+      if (!reply.ok) throw new Error(`history query failed: ${reply.error.code} ${reply.error.message}`);
+      const result = reply.result as { messages?: Message[]; next_before?: number };
+      all.push(...(result.messages ?? []));
+      if (!result.next_before) break;
+      before = result.next_before;
+    }
+    return all;
+  }
+}
+
+/** The send result, asserted ok. */
+export function accepted(result: SendResultFrame): { message: { id: string; seq: number }; duplicate?: boolean; response?: Record<string, unknown> } {
+  if (!result.ok) throw new Error(`the hub refused: ${result.error.code}: ${result.error.message}`);
+  return result;
+}
+
+// --- a hand ---------------------------------------------------------------------------------------------------------------
+
+export type Responder = (call: CallFrame, ctx: { signal: AbortSignal; progress(text: string): void }) => CallOutcome | Promise<CallOutcome>;
+
+export interface HandOptions {
+  name?: string;
+  kind?: HandKind;
+  capabilities?: CapabilitySpec[];
+  /** The event words this hand declares (`sense.location`, ...). */
+  events?: string[];
+  identity?: Identity;
+}
+
+/** A hand on the device channel: answers calls from scripts, records them, reports events. */
+export class Hand {
+  readonly calls: CallFrame[] = [];
+  /** Ids of calls the hub cancelled. */
+  readonly cancelled: string[] = [];
+  /** [capability, args] of every `assess` frame. */
+  readonly assessed: { capability: string; args: Record<string, unknown> }[] = [];
+  ack!: ManifestAckFrame;
+  private readonly responders = new Map<string, Responder>();
+  private readonly assessors = new Map<string, (args: Record<string, unknown>) => "none" | "outward" | "structure">();
+
+  constructor(readonly client: HandClient, readonly identity: Identity) {}
+
+  /** `device:<hand_id>` */
+  get member(): string { return deviceId(this.identity.handId); }
+
+  private cached: HandHandlers | undefined;
+  /** @internal */
+  handlers(): HandHandlers {
+    return (this.cached ??= {
+      call: async (call, ctx) => {
+        this.calls.push(call);
+        ctx.signal.addEventListener("abort", () => this.cancelled.push(call.id), { once: true });
+        const responder = this.responders.get(call.capability);
+        return responder ? responder(call, ctx) : textResult("ok");
+      },
+      assess: async (capability, args) => {
+        this.assessed.push({ capability, args });
+        const assess = this.assessors.get(capability);
+        if (!assess) throw new Error(`no assessment scripted for ${capability}`);
+        return { risk: assess(args) };
+      },
+    });
+  }
+
+  /** How this hand answers a capability. */
+  on(capability: string, responder: Responder): this { this.responders.set(capability, responder); return this; }
+  /** How this hand assesses one call of a `per_call_risk` capability. */
+  assessAs(capability: string, assess: "none" | "outward" | "structure" | ((args: Record<string, unknown>) => "none" | "outward" | "structure")): this {
+    this.assessors.set(capability, typeof assess === "function" ? assess : () => assess);
+    return this;
+  }
+  /** A capability that never answers until [release] (or the hub cancels it, or the connection drops). */
+  hold(capability: string): { release(outcome?: CallOutcome): void; started: Promise<CallFrame> } {
+    const started = deferred<CallFrame>();
+    let release: (outcome: CallOutcome) => void = () => {};
+    this.on(capability, (call, ctx) => new Promise<CallOutcome>((resolve) => {
+      release = resolve;
+      ctx.signal.addEventListener("abort", () => resolve({ ok: false, error: { code: "cancelled", message: "stopped" } }), { once: true });
+      started.resolve(call);
+    }));
+    return { release: (outcome = textResult("released")) => release(outcome), started: started.promise };
+  }
+
+  /** The first call of a capability (waits for it). */
+  call(capability: string, what = `a call of ${capability}`): Promise<CallFrame> {
+    return eventually(() => this.calls.find((c) => c.capability === capability), what);
+  }
+  /** Reports an event (the word must be in this hand's manifest events). */
+  emit(word: string, body: Record<string, unknown>): Promise<string> { return this.client.emit(word, body); }
+  /** Goes away (a normal close). */
+  disconnect(): void { this.client.stop(); }
+}
+
+// --- the scenario ----------------------------------------------------------------------------------------------------------
+
+export interface ScenarioOptions {
+  /** Give the hub a clock the test moves with `advance()`. Default: the system clock. */
+  fakeNow?: boolean;
+}
+
+/** A clock the test moves. Starts at 2026-10-10 07:00 UTC. */
+export class ManualNow {
+  constructor(public t: number = Date.UTC(2026, 9, 10, 7, 0, 0)) {}
+  readonly now = (): number => this.t;
+}
+
+export interface RawHand {
+  client: HandClient;
+  identity: Identity;
+  /** Every time the connection ended. */
+  closes: { code: number; reason: string; willReconnect: boolean }[];
+}
+
+interface ConnectOptions {
+  kind?: HandKind;
+  name?: string;
+  channels: HelloChannels;
+  token?: string | null;
+  identity: Identity;
+  signWith?: Identity;
+  handlers?: HandHandlers;
+}
+
+export class Scenario {
+  readonly host = new FakeHost();
+  readonly driver = scriptedDriver();
+  readonly clock = new ManualNow();
+  readonly dataDir = mkdtempSync(join(tmpdir(), "ash-scenario-"));
+  private hubValue: Hub | undefined;
+  private events = new PassThrough();
+  private readonly clients = new Set<HandClient>();
+  private handoffs = 0;
+  private current: { port: number; token: string } | undefined;
+  private booted = false;
+
+  constructor(private readonly options: ScenarioOptions = {}) {}
+
+  // --- the hub
+
+  get hub(): Hub { if (!this.hubValue) throw new Error("the hub is not running"); return this.hubValue; }
+  /** `ws://127.0.0.1:<port>/link` */
+  linkUrl(): string { return `${this.hub.url.replace(/^http/, "ws")}/link`; }
+  /** `http://127.0.0.1:<port>/mcp` */
+  mcpUrl(): string { return `${this.hub.url}/mcp`; }
+  /** The local connection token the hub gave the host (`hands.handoff`), the way it reaches the phone app. */
+  token(): string {
+    if (!this.current) throw new Error("the hub has not handed the local token to the host");
+    return this.current.token;
+  }
+
+  async boot(): Promise<void> {
+    if (!this.host.endpoint) await this.host.start();
+    const launch = this.host.writeLaunch();
+    const loaded = loadHostBoot({ env: { ...launch.env } });
+    if (!loaded.ok) throw new Error(`fake host boot failed: ${loaded.reason}`);
+    const host = new HostClient({ endpoint: loaded.boot.spec.endpoint, token: loaded.boot.secrets.token, capabilities: loaded.boot.spec.capabilities });
+    // The vault seal key reaches the hub as the host's environment would give it (SPEC-07). HubOptions has no field for it yet.
+    process.env[HOST_ENV.sealKey] = FAKE_SEAL_KEY;
+    this.events = new PassThrough();
+    this.hubValue = await startHub({
+      dataDir: this.dataDir, port: 0, host, hostEvents: this.events, drivers: this.driver.drivers,
+      ...(this.options.fakeNow ? { now: this.clock.now } : {}),
+    });
+    this.booted = true;
+    this.handoffs += 1;
+    const handoff = await eventually(() => this.host.callsOf("hands.handoff")[this.handoffs - 1], "the hub handing its port and token to the host");
+    this.current = handoff.body as { port: number; token: string };
+    if (`http://127.0.0.1:${this.current.port}` !== this.hub.url) throw new Error(`the host was told port ${this.current.port} but the hub is at ${this.hub.url}`);
+  }
+
+  /** Stops the hub and starts it again on the same data directory; every connected client reconnects. */
+  async restart(): Promise<void> {
+    await this.driver.dispose();
+    await this.hub.stop();
+    this.hubValue = undefined;
+    const returning = [...this.clients].filter((client) => client.state !== "stopped");
+    await eventually(() => returning.every((client) => client.state !== "ready"), "the connections noticing that the hub is gone");
+    await this.boot();
+    for (const client of returning) client.reconnectNow();
+    await eventually(() => returning.every((client) => client.state === "ready"), "the connections coming back");
+  }
+
+  /** Moves the hub's clock (needs `fakeNow`). */
+  advance(ms: number): void {
+    if (!this.options.fakeNow) throw new Error("advance() needs startScenario(t, { fakeNow: true })");
+    this.clock.t += ms;
+  }
+  /** Plays a host event on the hub's standard input (`wake.fired`, `env.changed`, `lifecycle.stop`). */
+  hostEvent(event: Record<string, unknown>): void { this.events.write(`${JSON.stringify(event)}\n`); }
+
+  // --- connections
+
+  /**
+   * A connection with whatever channels, token and signature the test wants (`token: null` sends no token, `signWith`
+   * signs the challenge with another key). Started, not waited for.
+   */
+  async raw(o: Omit<ConnectOptions, "identity"> & { identity?: Identity }): Promise<RawHand> {
+    return this.connect({ ...o, identity: o.identity ?? (await newIdentity()) });
+  }
+
+  private connect(o: ConnectOptions): RawHand {
+    const identity = o.identity;
+    const closes: RawHand["closes"] = [];
+    const client = createNodeClient({
+      url: () => this.linkUrl(),
+      headers: (): Record<string, string> => (o.token === null ? {} : { authorization: `Bearer ${o.token ?? this.token()}` }),
+      hand: { kind: o.kind ?? "phone", name: o.name ?? "scenario hand", version: "0.0.0-scenario", platform: "test", public_key: identity.publicKey },
+      channels: o.channels,
+      sign: (nonce) => (o.signWith ?? identity).sign(nonce),
+      handlers: { ...o.handlers, closed: (info) => { closes.push({ code: info.code, reason: info.reason, willReconnect: info.willReconnect }); o.handlers?.closed?.(info); } },
+    });
+    this.clients.add(client);
+    client.start();
+    return { client, identity, closes };
+  }
+
+  /** The owner on a new channel of the local connection (the phone app's chat page). */
+  async human(o: HumanOptions = {}): Promise<Human> {
+    const identity = o.identity ?? (await newIdentity());
+    let human!: Human;
+    const proxy: HandHandlers = {
+      welcome: (w) => human.handlers().welcome?.(w),
+      present: (f) => human.handlers().present!(f),
+    };
+    const { client } = this.connect({
+      kind: "phone", name: o.name ?? "scenario phone", identity,
+      channels: { human: { label: o.label ?? "手机 · 对话", surfaces: o.surfaces ?? ["chat"] } },
+      handlers: proxy,
+    });
+    human = new Human(client, identity);
+    await client.ready();
+    await human.ready();
+    return human;
+  }
+
+  /** A hand on the device channel of the local connection: declares its manifest and waits for the ack. */
+  async hand(o: HandOptions = {}): Promise<Hand> {
+    const identity = o.identity ?? (await newIdentity());
+    let hand!: Hand;
+    const proxy: HandHandlers = {
+      call: (call, ctx) => hand.handlers().call!(call, ctx),
+      assess: (capability, args) => hand.handlers().assess!(capability, args),
+    };
+    const { client } = this.connect({ kind: o.kind ?? "phone", name: o.name ?? "scenario hand", identity, channels: { device: {} }, handlers: proxy });
+    hand = new Hand(client, identity);
+    await client.ready();
+    hand.ack = await client.setManifest(o.capabilities ?? [], (o.events ?? []).map((word) => ({ word, description: `${word} from the scenario hand` })));
+    return hand;
+  }
+
+  /** A phone with the capabilities most scenarios use: reading the location (read, none) and opening an app (act, outward). */
+  phone(o: HandOptions = {}): Promise<Hand> {
+    return this.hand({
+      name: "scenario phone", kind: "phone",
+      capabilities: [standardCapability("location.get"), standardCapability("apps.open"), ...(o.capabilities ?? [])],
+      events: ["sense.location", "sense.battery", "sense.geofence", "sense.calendar", "sense.source", "sense.activity", ...(o.events ?? [])],
+      ...(o.identity ? { identity: o.identity } : {}),
+    });
+  }
+
+  // --- the end
+
+  async dispose(): Promise<void> {
+    for (const client of this.clients) client.stop();
+    this.clients.clear();
+    await this.driver.dispose();
+    await this.hubValue?.stop().catch(() => {});
+    this.hubValue = undefined;
+    await this.host.stop().catch(() => {});
+    rmSync(this.dataDir, { recursive: true, force: true });
+    if (this.booted) this.booted = false;
+  }
+}
+
+/**
+ * Starts a hub for one test and stops it when the test ends. Until the hub is assembled this throws
+ * "hub not assembled yet" (and the directory, host and clients are cleaned up all the same).
+ */
+export async function startScenario(t: TestContext, options: ScenarioOptions = {}): Promise<Scenario> {
+  const scenario = new Scenario(options);
+  t.after(() => scenario.dispose());
+  await scenario.boot();
+  return scenario;
+}

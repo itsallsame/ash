@@ -1,0 +1,64 @@
+/**
+ * HUB-MODULES §4 / SPEC-02 §4.1.1: a flow that takes minutes and waits for a person (building a relay, pairing a computer)
+ * tells whoever started it, with a background message at each step, and does not put those into the owner's conversation.
+ */
+import assert from "node:assert/strict";
+import test from "node:test";
+import { accepted, byOwnerText, errorCode, quiet, resultOf, startScenario, type ToolResult } from "./harness";
+import { eventually } from "../fixtures/wait";
+
+test("HUB-MODULES §4, SPEC-03 §9.5.2: a relay setup the agent started tells the agent when its state changes, not the owner", async (t) => {
+  const s = await startScenario(t);
+  const state: { started?: ToolResult } = {};
+  s.driver.script(byOwnerText({
+    "帮我搭中转站": async (turn) => { state.started = await turn.call("service:link", "gateway.setup.start", { provider: "cloudflare" }); },
+  }));
+  const owner = await s.human();
+
+  accepted(await owner.say("帮我搭中转站"));
+
+  await eventually(() => state.started, "the agent's setup_id");
+  const setupId = resultOf(state.started!)?.setup_id as string;
+  assert.ok(setupId, "the agent gets a setup_id");
+  await owner.seen((m) => m.to === "person:owner" && /cloudflare/i.test(JSON.stringify(m.body)), "the sign-in card for the owner");
+
+  const cancelled = await owner.call("service:link", "gateway.setup.cancel", { setup_id: setupId });
+  assert.ok(cancelled.ok, "the owner cancels it");
+
+  const { message } = await s.driver.delivery((m) => m.from !== "person:owner" && JSON.stringify(m.body).includes(setupId), "a background message to the agent about the change");
+  assert.equal(message.lane, "back");
+  await quiet();
+  assert.ok(
+    !owner.messages.some((m) => m.to === "person:owner" && m.word === "say" && JSON.stringify(m.body).includes(setupId)),
+    "the owner's conversation has no such message",
+  );
+});
+
+test("SPEC-03 §9.5.4, SPEC-00 §6.9: an agent starts a pairing and never sees the code; the ledger has no code either", async (t) => {
+  const s = await startScenario(t);
+  const state: { started?: ToolResult; peek?: ToolResult } = {};
+  s.driver.script(byOwnerText({
+    "配对一台电脑": async (turn) => {
+      state.started = await turn.call("service:devices", "pair_start", { kind: "computer", name: "我的 Mac" });
+      state.peek = await turn.call("service:devices", "pair_code", { pair_id: resultOf(state.started)?.pair_id ?? "x" });
+    },
+  }));
+  const owner = await s.human();
+
+  accepted(await owner.say("配对一台电脑"));
+
+  await eventually(() => state.peek, "the agent's attempts");
+  const started = resultOf(state.started!);
+  assert.ok(started.pair_id && started.expires_at, "the agent gets pair_id and expires_at");
+  assert.ok(!("code" in started), "and not the code");
+  assert.ok(state.peek!.isError);
+  assert.ok(["forbidden", "not_found"].includes(errorCode(state.peek!) ?? ""), "asking for the code is refused");
+
+  const code = await owner.call("service:devices", "pair_code", { pair_id: started.pair_id });
+  assert.ok(code.ok, "the owner, on this machine, can see it");
+  const secret = (code.result as { code: string }).code;
+  assert.ok(secret.length > 0);
+  const ledger = JSON.stringify(await owner.ledger());
+  assert.ok(!ledger.includes(secret), "the ledger only has the masked version");
+  assert.ok(!JSON.stringify(state.started).includes(secret) && !state.peek!.text.includes(secret));
+});
