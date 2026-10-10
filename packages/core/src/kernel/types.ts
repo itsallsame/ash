@@ -26,6 +26,8 @@ export interface Registry {
   find(to: string, word: string): { member: Member; contract: WordContract } | null;
   /** Members that speak a word, e.g. who can do health.read; online local ones first. */
   findByWord(word: string, prefer?: { kind?: MemberKind }): Member[];
+  /** Members that asked to hear this event (`listens`, exact or a prefix like "sense.*"). */
+  listeners(word: string): Member[];
   list(filter?: { kind?: MemberKind }): MemberInfo[];
   describe(id: string): { info: MemberInfo; words: WordContract[] } | null;
   onChange(cb: (id: string, change: "added" | "removed") => void): () => void;
@@ -43,12 +45,15 @@ export interface SendOptions {
   approval?: { ttl_minutes?: number; purpose?: string };
 }
 
+/** A reply, the id of the request, and the id of the response message when the ledger recorded it. */
+export type SendReply = Reply & { id?: string; ref?: string };
+
 export interface Router {
   /**
-   * `id` is the request's message id (the router always sets it, recorded or not; fakes may leave it out); `ref` is the id of the response message when
-   * the ledger recorded it (a large result is an attachment of that message).
+   * `id` is the request's message id (the router always sets it once the message is stamped, recorded or not; fakes may leave it out); `ref` is the id
+   * of the response message when the ledger recorded it (a large result is an attachment of that message).
    */
-  send(msg: Outgoing, caller: Caller, opts?: SendOptions): Promise<Reply & { id?: string; ref?: string }>;
+  send(msg: Outgoing, caller: Caller, opts?: SendOptions): Promise<SendReply>;
   /** Read-only: the human edge's sync and the activity page. */
   subscribe(filter: { to?: string; from?: string; involving?: string; word?: string }, cb: (m: Message) => void): () => void;
   /** Once at start: unfinished dispatched requests become interrupted (`result_unknown`), never replayed. */

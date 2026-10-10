@@ -1,0 +1,148 @@
+/**
+ * The gate (HUB-MODULES §1.5, SPEC-01 §6): one request in, allow / ask / deny out. A decision only; asking the owner
+ * is the router's job. Every request comes through `decide`, and there is no way around it.
+ *
+ *   person:owner via a human channel -> allow        service -> allow       hand -> deny (a hand only sends events)
+ *   app   -> allow only a read or a risk-none word; everything else is refused (an app cannot be asked about)
+ *   agent -> SPEC-01 §6.4, steps 2 to 11
+ */
+import { OWNER_ID } from "../../../../sdk/src/ids";
+import type { Risk } from "../../../../sdk/src/word";
+import type { Caller, Decision, Gate, GateDeps, Message, WordContract } from "../types";
+import { Carry } from "./carry";
+import { contractFingerprint, objectOf, stable, type GateStore } from "./store";
+
+
+/** Words an agent can never get approved for good: it asks the owner every time, and 「以后都可以」 is not offered. */
+export const ALWAYS_ASK: ReadonlySet<string> = new Set([
+  "service:gate/rules.set", "service:gate/rules.revoke", "service:gate/mode.set",
+  "service:devices/access_set", "service:devices/revoke", "service:devices/pair_approve", "service:devices/update",
+  "service:persona/propose",
+]);
+
+const PAYMENT = /\b(pay|payment|purchase|checkout|transfer)\b|支付|付款|购买|下单|转账|充值|买单/i;
+/** Payments always reach the owner: no review, no carry-over, no 「以后都可以」. */
+export const isPayment = (contract: WordContract): boolean => PAYMENT.test(contract.word.replace(/[._-]/g, " ")) || PAYMENT.test(contract.label.doing);
+
+export const ASSESS_MS = 10_000;
+export const REVIEW_MS = 5_000;
+/** The default time a question to the owner stays open. */
+export const DEFAULT_TTL_MINUTES = 10;
+export const RULE_DAYS = 30;
+
+export interface GateOptions {
+  now?: () => number;
+  assessMs?: number;
+  reviewMs?: number;
+  carry?: Carry;
+}
+
+function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([promise.catch(() => null), new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); })]).finally(() => clearTimeout(timer));
+}
+
+export function createGate(deps: GateDeps, store: GateStore, options: GateOptions = {}): Gate & { carry: Carry } {
+  const now = options.now ?? store.now;
+  const carry = options.carry ?? new Carry(now);
+
+  const evidence = (req: Message, contract: WordContract, caller: Caller, risk: Risk, extra: { by: string; decision?: string; reason?: string; rule_id?: string; offer_always?: boolean }) => {
+    const text = stable(req.body);
+    store.record({
+      request_id: req.id, at: now(), requester: caller.member, member: req.to ?? contract.member, word: req.word, label: contract.label.doing, effect: contract.effect, risk,
+      ...(req.turn ? { turn: req.turn } : {}), content: text.length > 500 ? `${text.slice(0, 500)}…` : text,
+      object: objectOf(req.body) ?? "*", fingerprint: contractFingerprint(contract), decided_by: extra.by,
+      ...(extra.decision ? { decision: extra.decision } : {}), ...(extra.reason ? { reason: extra.reason } : {}),
+      ...(extra.rule_id ? { rule_id: extra.rule_id } : {}), ...(extra.offer_always !== undefined ? { offer_always: extra.offer_always } : {}),
+    });
+  };
+  const carryKey = (req: Message, contract: WordContract, caller: Caller) =>
+    [caller.member, req.to, req.word, contractFingerprint(contract), objectOf(req.body) ?? `exact:${stable(req.body)}`].join("\0");
+
+  async function decide(req: Message, contract: WordContract, caller: Caller): Promise<Decision> {
+    // 1. who is asking (SPEC-01 §6.1)
+    if (caller.via === "human") {
+      return caller.member === OWNER_ID ? { verdict: "allow", by: "human", offer_always: false } : { verdict: "deny", by: "human", offer_always: false, reason: "only the owner comes in through a human channel" };
+    }
+    if (caller.via === "service") {
+      if (contract.effect !== "read") evidence(req, contract, caller, contract.risk, { by: "service", decision: "service" });
+      return { verdict: "allow", by: "service", offer_always: false };
+    }
+    if (caller.via === "hand") return { verdict: "deny", by: "hand", offer_always: false, reason: "a hand sends events, not requests" };
+
+    // risk: the declared one, or what the hand or member says about this call (SPEC-01 §6.3)
+    let risk: Risk = contract.risk;
+    let assessed = false;
+    if (contract.per_call_risk && deps.assess && !isPayment(contract)) {
+      const answer = await within(deps.assess(req), options.assessMs ?? ASSESS_MS);
+      if (answer === "none" || answer === "outward" || answer === "structure") { risk = answer; assessed = true; }
+    }
+
+    if (caller.via === "app") {
+      if (contract.effect === "read" || risk === "none") return { verdict: "allow", by: "app", offer_always: false };
+      return { verdict: "deny", by: "app", offer_always: false, reason: "needs_approval: an app cannot ask the owner; leave it to an agent or the owner" };
+    }
+
+    // 2. a read
+    if (contract.effect === "read") return { verdict: "allow", by: "read", offer_always: false };
+
+    const payment = isPayment(contract);
+    const ask = (by: string, reason: string, offer: boolean): Decision => {
+      evidence(req, contract, caller, risk, { by, reason, offer_always: offer });
+      return { verdict: "ask", by, offer_always: offer, reason };
+    };
+    const allow = (by: string, decision: string, extra: { reason?: string; rule_id?: string } = {}): Decision => {
+      evidence(req, contract, caller, risk, { by, decision, ...extra });
+      return { verdict: "allow", by, offer_always: false, ...(extra.reason ? { reason: extra.reason } : {}) };
+    };
+    // 3. a payment   4. the words that always ask
+    if (payment) return ask("payment", "a payment", false);
+    if (ALWAYS_ASK.has(`${req.to}/${req.word}`)) return ask("always_ask", "this word always asks the owner", false);
+    // 5. no risk
+    if (risk === "none") return allow(assessed ? "assessed_none" : "declared_none", assessed ? "assessed_none" : "declared_none");
+    // 6. a hand, or a computer lent as a body, that the owner trusts fully (body:main is always "ask")
+    const target = req.to ?? "";
+    if ((target.startsWith("device:") || target.startsWith("body:")) && deps.tier(target) === "full") return allow("hand_full", "hand_full");
+    // 7. the owner wants every outward action asked about
+    if (deps.mode() === "always") return ask("mode_always", "the approval mode is always", false);
+
+    const execute = contract.effect === "execute";
+    const fingerprint = contractFingerprint(contract);
+    // 8. a rule (never for a command)
+    if (!execute) {
+      const rule = store.matchRule(caller.member, target, req.word, fingerprint, objectOf(req.body));
+      if (rule) return allow("rule", "rule", { rule_id: rule.id });
+    }
+    // 9. carry-over (never for a command)
+    if (!execute && carry.has(carryKey(req, contract, caller))) return allow("carry", "carry");
+    // 10. the review model: a command goes here too, and nothing it says is remembered
+    const verdict = await within(deps.review(req, contract), options.reviewMs ?? REVIEW_MS);
+    if (verdict === "allow") {
+      if (!execute) carry.remember(carryKey(req, contract, caller));
+      return allow("review", "review", { reason: "the review model found it fine" });
+    }
+    // 11. everything else
+    return ask("ask", verdict === null ? "the review model gave no answer" : "the review model asked", !execute);
+  }
+
+  return {
+    carry,
+    decide,
+    answered(req, answer) {
+      const e = store.evidence(req.id);
+      if (!e) return;
+      const t = now();
+      if (answer === "deny") { store.amend(req.id, { decision: "deny", answered_at: t }); return; }
+      const always = answer === "always" && e.offer_always === true;
+      store.amend(req.id, { decision: always ? "always" : "once", answered_at: t });
+      if (!e.offer_always) return;
+      const subject = e.requester;
+      if (always) {
+        store.addRule({ subject, to: e.member, word: e.word, object_pattern: e.object ?? "*", risk: e.risk, contract_fingerprint: e.fingerprint ?? "",
+          expires_at: t + RULE_DAYS * 86_400_000, created_by: OWNER_ID });
+      } else {
+        carry.remember([subject, e.member, e.word, e.fingerprint, e.object && e.object !== "*" ? e.object : `exact:${stable(req.body)}`].join("\0"));
+      }
+    },
+  };
+}

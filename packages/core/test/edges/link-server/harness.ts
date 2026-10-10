@@ -43,6 +43,7 @@ export class FakeRegistry implements Registry {
     return member && contract ? { member, contract } : null;
   }
   findByWord(word: string): Member[] { return [...this.members.values()].filter((m) => m.words().some((w) => w.word === word)); }
+  listeners(): Member[] { return []; }
   list(): MemberInfo[] { return [...this.members.values()].map((m) => ({ id: m.id, kind: m.kind, name: m.name })); }
   describe(): null { return null; }
   onChange(): () => void { return () => {}; }

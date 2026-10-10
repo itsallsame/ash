@@ -1,0 +1,82 @@
+/**
+ * Redaction (HUB-MODULES §1.6, SPEC-01 §10.0). The ledger holds only the masked version; the original of a sensitive
+ * result goes to the owner alone, from memory. What counts as sensitive is what the contract says (`x-ash-secret`,
+ * `x-ash-sensitive`), never a guess from the content.
+ */
+import type { Reply } from "../../../../sdk/src/message";
+import { OWNER_ID } from "../../../../sdk/src/ids";
+import { SECRET_KEYWORD, SENSITIVE_KEYWORD, type JsonSchema, type SensitiveMask } from "../../../../sdk/src/word";
+import type { Caller, Message, Redact, WordContract } from "../types";
+
+const HIDDEN = "[仅主人可见]";
+
+function mask(kind: SensitiveMask, value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => mask(kind, item));
+  if (typeof value !== "string" || value === "") return HIDDEN;
+  switch (kind) {
+    case "email": {
+      const at = value.lastIndexOf("@");
+      return at < 1 ? HIDDEN : `${value[0]}***${value.slice(at)}`;
+    }
+    case "tail4": return value.length <= 4 ? "****" : `****${value.slice(-4)}`;
+    case "ip": {
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) return `${value.split(".").slice(0, 2).join(".")}.*.*`;
+      return value.includes(":") ? `${value.split(":")[0]}:*` : HIDDEN;
+    }
+    default: return HIDDEN;
+  }
+}
+
+const fits = (value: unknown, type: unknown): boolean => {
+  if (type === undefined) return true;
+  const kinds = Array.isArray(type) ? type : [type];
+  const actual = value === null ? "null" : Array.isArray(value) ? "array" : typeof value === "number" && Number.isInteger(value) ? "integer" : typeof value;
+  return kinds.some((k) => k === actual || (k === "number" && actual === "integer"));
+};
+
+/** Walk a value along its schema and replace what the markers name. `secrets` also replaces x-ash-secret. */
+function walk(value: unknown, schema: unknown, secrets: boolean): unknown {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema) || value === undefined || value === null) return value;
+  const node = schema as JsonSchema;
+  if (secrets && node[SECRET_KEYWORD] === true) return { set: true, length: typeof value === "string" ? value.length : JSON.stringify(value).length };
+  const marker = node[SENSITIVE_KEYWORD] as { mask?: SensitiveMask } | undefined;
+  if (marker?.mask) return mask(marker.mask, value);
+  let out: unknown = value;
+  for (const key of ["allOf", "anyOf", "oneOf"]) {
+    if (Array.isArray(node[key])) for (const branch of node[key]) if (fits(out, (branch as JsonSchema).type)) out = walk(out, branch, secrets);
+  }
+  if (Array.isArray(out)) {
+    const { items, prefixItems } = node as { items?: unknown; prefixItems?: unknown };
+    return out.map((item, i) => walk(item, Array.isArray(prefixItems) && i < prefixItems.length ? prefixItems[i] : items, secrets));
+  }
+  if (out && typeof out === "object") {
+    const props = (node.properties ?? {}) as Record<string, unknown>;
+    const rest = node.additionalProperties;
+    let copy: Record<string, unknown> | undefined;
+    for (const [key, child] of Object.entries(out as Record<string, unknown>)) {
+      const next = walk(child, Object.hasOwn(props, key) ? props[key] : rest, secrets);
+      if (next !== child) { copy ??= { ...(out as Record<string, unknown>) }; copy[key] = next; }
+    }
+    return copy ?? out;
+  }
+  return out;
+}
+
+export function createRedact(): Redact {
+  return {
+    forLedger(m: Message, contract: WordContract): Message {
+      if (m.kind === "response") {
+        const reply = m.body as Reply | undefined;
+        if (!reply || reply.ok !== true || !reply.result || reply.result.data === undefined) return m;
+        const data = walk(reply.result.data, contract.result_schema, true);
+        return data === reply.result.data ? m : { ...m, body: { ...reply, result: { ...reply.result, data } } };
+      }
+      const body = walk(m.body, contract.input_schema, true);
+      return body === m.body ? m : { ...m, body };
+    },
+    forCaller(result: unknown, contract: WordContract, caller: Caller): unknown {
+      if (caller.member === OWNER_ID) return result;
+      return walk(result, contract.result_schema, false);
+    },
+  };
+}
