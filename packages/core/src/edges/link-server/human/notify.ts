@@ -34,6 +34,8 @@ export class Notifier {
   private readonly running = new Set<string>();
   /** turn -> the reply that was shown quietly and is the turn's last so far, and the channels it was shown on. */
   private readonly quietReplies = new Map<string, { id: string; clients: string[] }>();
+  /** The replies of a running turn still being shown: its end waits for them, so a reply whose channel has not answered yet still counts. */
+  private readonly showing = new Map<string, Promise<void>>();
 
   constructor(private readonly d: NotifierDeps) { this.delivery = new Delivery(d.zone); }
 
@@ -61,7 +63,18 @@ export class Notifier {
   }
 
   /** `person:owner/say`. */
-  async say(msg: Message): Promise<void> {
+  say(msg: Message): Promise<void> {
+    const turn = msg.turn;
+    const done = this.deliver(msg);
+    if (turn) {
+      const all = Promise.all([this.showing.get(turn), done.catch(() => undefined)]).then(() => undefined);
+      this.showing.set(turn, all);
+      void all.then(() => { if (this.showing.get(turn) === all) this.showing.delete(turn); });
+    }
+    return done;
+  }
+
+  private async deliver(msg: Message): Promise<void> {
     const body = msg.body as { text: string; kind?: DeliveryKind; dedupe_key?: string };
     const kind: DeliveryKind = body.kind ?? "reply";
     if (!mayRing(kind)) return;
@@ -98,6 +111,7 @@ export class Notifier {
 
   async turnEnded(turn: string): Promise<void> {
     this.running.delete(turn);
+    await this.showing.get(turn);
     const quiet = this.quietReplies.get(turn);
     this.quietReplies.delete(turn);
     if (!quiet || await this.watching()) return;
