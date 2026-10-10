@@ -7,9 +7,6 @@ import ai.ash.host.Notifications
 
 class AshApp : Application() {
     override fun onCreate() {
-        // First, before any token is loaded: the agent container runs as this app's Linux user, and a dumpable
-        // process's memory is readable to it through /proc. The library's constructor makes this process non-dumpable.
-        runCatching { System.loadLibrary("ashnodump") }
         super.onCreate()
         // The app pages (ai.ash.apps.AppActivity) run in the ":app" process, whose WebView keeps its data in a
         // directory of its own; nothing else of Ash starts there.

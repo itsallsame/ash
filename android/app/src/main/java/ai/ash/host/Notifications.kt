@@ -25,7 +25,6 @@ object Notifications {
     const val CH_URGENT = "ash.urgent.v2"
     const val CH_CONFIRM = "ash.confirm.v2"
     const val CH_BROWSING = "ash.browsing"
-    const val ID_SERVICE = 1
     private val RETIRED_CHANNELS = listOf("ash.messages", "ash.urgent", "ash.confirm", "ash.status")
     private const val CHAT_SHORTCUT = "ash.chat"
     private val VIBRATION = longArrayOf(0, 250, 150, 250)
@@ -96,21 +95,6 @@ object Notifications {
 
     private fun openApp(ctx: Context, req: Int): PendingIntent =
         PendingIntent.getActivity(ctx, req, Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-
-    fun service(ctx: Context, text: String): Notification =
-        builder(ctx, CH_STATUS)
-            .setContentTitle("Ash")
-            .setContentText(text)
-            .setOngoing(true)
-            .setContentIntent(openApp(ctx, 1))
-            .addAction(Notification.Action.Builder(null, "暂停", PendingIntent.getBroadcast(
-                ctx, 2, Intent(ctx, NotificationPauseReceiver::class.java).setAction(NotificationPauseReceiver.ACTION_PAUSE),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).build())
-            .build()
-
-    fun updateService(ctx: Context, text: String) {
-        ctx.getSystemService(NotificationManager::class.java).notify(ID_SERVICE, service(ctx, text))
-    }
 
     private fun action(ctx: Context, id: String, choice: String, mutable: Boolean = false): PendingIntent {
         val uri = Uri.Builder().scheme("ash").authority("present-action").appendPath(id).appendPath(choice).build()
@@ -291,7 +275,6 @@ object Notifications {
     fun clearLegacy(ctx: Context) {
         val manager = ctx.getSystemService(NotificationManager::class.java)
         for (notice in manager.activeNotifications) {
-            if (notice.id == ID_SERVICE && notice.tag == null) continue
             if (notice.tag?.startsWith("present:") == true || notice.tag?.startsWith("present-failed:") == true) continue
             manager.cancel(notice.tag, notice.id)
         }

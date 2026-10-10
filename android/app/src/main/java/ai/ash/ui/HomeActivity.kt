@@ -80,9 +80,6 @@ class HomeActivity : Activity() {
         // night mode — so the theme is chosen here to make the ash UI follow the system.
         setTheme(if (night) R.style.Ash_Dark else R.style.Ash_Light)
         super.onCreate(savedInstanceState)
-        // The app does not run the core: if the kernel package is not running, ask it to start; it then binds HandService.
-        KernelLauncher.start(this)
-
         // Browser cookies are not port-scoped. This WebView never receives the core owner token.
         CookieManager.getInstance().setAcceptCookie(false)
         if (BuildConfig.ISOLATED_PROBE) WebView.setWebContentsDebuggingEnabled(true)

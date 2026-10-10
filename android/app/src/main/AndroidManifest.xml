@@ -134,7 +134,6 @@
         </service>
 
         <receiver android:name=".host.PresentActionReceiver" android:exported="false" />
-        <receiver android:name=".host.NotificationPauseReceiver" android:exported="false" />
         <receiver android:name=".host.TaskStopReceiver" android:exported="false" />
         <receiver android:name=".host.PresentExpiryReceiver" android:exported="false" />
         <receiver android:name=".host.senses.CalendarAlarmReceiver" android:exported="false" />
@@ -184,12 +183,6 @@
         <provider
             android:name=".host.media.CaptureProvider"
             android:authorities="${applicationId}.capture"
-            android:exported="false"
-            android:grantUriPermissions="true" />
-
-        <provider
-            android:name=".host.LogShareProvider"
-            android:authorities="${applicationId}.logshare"
             android:exported="false"
             android:grantUriPermissions="true" />
 
