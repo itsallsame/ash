@@ -247,7 +247,8 @@ test("cancel stops the call: the router is told through the signal and the recei
 });
 
 test("a call the gate parks for the owner answers waiting_owner with the pending_id (and a request_id); await_result gives the same, no waiting", async () => {
-  const rig = await startRig({ router: fakeRouter(() => ok({ status: "waiting_owner", pending_id: "m_pending1", expires_at: 1234 })) });
+  // A long wait window, so "no waiting" cannot be mistaken for a round trip that is merely slow on a busy machine.
+  const rig = await startRig({ router: fakeRouter(() => ok({ status: "waiting_owner", pending_id: "m_pending1", expires_at: 1234 })), maxWaitMs: 20_000 });
   const tools = await rig.client();
   const res = await tools.call("capability_call", { member: PHONE_ID, word: "screen.tap", body: {}, purpose: "open the note", approval_ttl_minutes: 3 });
   assert.equal(res.isError, false);
@@ -258,7 +259,7 @@ test("a call the gate parks for the owner answers waiting_owner with the pending
   assert.ok(res.data.guidance);
   const t0 = Date.now();
   const again = await tools.call("await_result", { request_id: res.data.request_id });
-  assert.ok(Date.now() - t0 < 200, "does not wait");
+  assert.ok(Date.now() - t0 < 5_000, "does not wait");
   assert.deepEqual(again.data, res.data);
   assert.deepEqual((await tools.call("list_pending")).data, { pending: [] }, "the card is the owner's now; human_pending lists it");
 });
