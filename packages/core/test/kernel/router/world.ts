@@ -65,7 +65,7 @@ export function fakeAgent(name = "main") {
 }
 
 export interface WorldOptions {
-  review?: "allow" | "ask" | "hang";
+  review?: "allow" | "ask" | "hang" | { verdict: "allow" | "ask" | "deny"; reason?: string };
   tiers?: Record<string, "ask" | "full">;
   assess?: (msg: Message) => Promise<"none" | "outward" | "structure" | null>;
   policies?: Record<string, { tools?: string[] | null; words?: string[] | null } | null>;
@@ -86,7 +86,11 @@ export function world(options: WorldOptions = {}) {
     tier: (t) => options.tiers?.[t] ?? "ask",
     mode: () => store.mode(),
     ...(options.assess ? { assess: options.assess } : {}),
-    review: async () => { state.reviews++; if (state.review === "hang") return new Promise(() => {}); return state.review; },
+    review: async () => {
+      state.reviews++;
+      if (state.review === "hang") return new Promise(() => {});
+      return typeof state.review === "string" ? { verdict: state.review } : state.review;
+    },
   };
   const gate = createGate(deps, store, { now: () => clock.now, reviewMs: 30, assessMs: 30 });
   const errors: { where: string; error: unknown }[] = [];

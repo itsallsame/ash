@@ -200,7 +200,7 @@ export class HubRouter implements Router {
         return fail(caller.via === "app" ? errorBody("forbidden", decision.reason ?? "an app cannot do this", { recovery_hint: "An app cannot ask the owner. Leave it to an agent or the owner." })
           : errorBody("denied", decision.reason ?? "the gate refused"));
       }
-      if (decision.verdict === "ask") return this.park(stamped, view, raw, contract, caller, decision.offer_always, opts, member);
+      if (decision.verdict === "ask") return this.park(stamped, view, raw, contract, caller, decision.offer_always, opts, member, decision.review_reason);
     }
 
     // 6. record: a request that was parked is in the ledger already and only goes on
@@ -227,7 +227,7 @@ export class HubRouter implements Router {
     return shown;
   }
 
-  private park(stamped: Message, view: Message, raw: unknown, contract: WordContract, caller: Caller, offerAlways: boolean, opts: SendOptions, member: Member): Reply {
+  private park(stamped: Message, view: Message, raw: unknown, contract: WordContract, caller: Caller, offerAlways: boolean, opts: SendOptions, member: Member, reviewReason?: string): Reply {
     // A secret is never written down, so a request that carries one cannot wait for the owner.
     if (JSON.stringify(view.body) !== JSON.stringify(raw)) return fail(errorBody("forbidden", "a request that carries a secret cannot wait for the owner's approval", { recovery_hint: "The owner can do this directly; an agent cannot." }));
     const ttl = Math.min(Math.max(Math.trunc(opts.approval?.ttl_minutes ?? DEFAULT_TTL_MINUTES) || DEFAULT_TTL_MINUTES, 1), 10_080);
@@ -243,6 +243,7 @@ export class HubRouter implements Router {
           id: stamped.id, originator: caller.member, caller, to: stamped.to!, word: stamped.word, body: view.body, effect: contract.effect, risk: contract.risk,
           ...(stamped.thread ? { thread: stamped.thread } : {}), label: contract.label.doing, expires_at: expires, offer_always: offerAlways,
           ...(opts.approval?.purpose ? { purpose: opts.approval.purpose } : {}), ...(detail ? { detail } : {}),
+          ...(reviewReason ? { review_reason: reviewReason } : {}),
         });
       });
       queueMicrotask(() => { try { this.deps.onParked(pending); } catch (error) { this.deps.onError?.("onParked", error); } });

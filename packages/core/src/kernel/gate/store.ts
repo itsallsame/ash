@@ -69,6 +69,8 @@ export interface PendingRecord {
   purpose?: string;
   /** What the member itself says the request will do (`Member.cardDetail`), shown on the card after the usual detail. */
   detail?: string;
+  /** The review model's one sentence on what the request does and where the risk is; the card's first line. */
+  review_reason?: string;
   answer?: { choice: string; at: number };
 }
 

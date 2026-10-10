@@ -96,7 +96,7 @@ export function createGateService(deps: GateServiceDeps): GateService {
     const options = [{ id: "once", label: "可以" }, ...(p.offer_always ? [{ id: "always", label: "以后都可以" }] : []), { id: "deny", label: "不行" }];
     const body = {
       title: `需要你确认：${p.label ?? p.word}`,
-      detail: [`${p.originator} 想对 ${p.to} 做「${p.word}」（${p.label ?? p.word}；效果 ${p.effect}，风险 ${p.risk}）。${p.purpose ? `目的：${p.purpose}` : ""}`.trim(), p.detail].filter(Boolean).join("\n"),
+      detail: [p.review_reason ? `审核：${p.review_reason}` : "", `${p.originator} 想对 ${p.to} 做「${p.word}」（${p.label ?? p.word}；效果 ${p.effect}，风险 ${p.risk}）。${p.purpose ? `目的：${p.purpose}` : ""}`.trim(), p.detail].filter(Boolean).join("\n"),
       human_kind: "question", options, expires_at: p.expires_at,
       source: { word: p.word, to: p.to, body_preview: preview.slice(0, 300), ...(preview.length > 300 ? { body_full: preview } : {}) },
     };
