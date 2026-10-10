@@ -7,8 +7,12 @@
  *         notification / island / status / widget / chat pages: `present` frames to the channels that declared the surface
  *   words say, show, react, ask, open (the contracts of sdk/words.ts)
  *
- * Assembly: `link.onChannel("human", human.attach)`, `registry.add(human.member)`; the widgets service is given
- * `human.widgets`, the small model goes in as `summarize` (see `summaryRequest`).
+ * Cards on the home screen: `service:widgets` sends the event `person:owner/widget.state` with the whole state; it is
+ * presented to every channel that declared `widget`, and what a channel reports becomes `widget.rendered`. A channel that
+ * has just connected is given the current state from `service:widgets/widget.list`.
+ *
+ * Assembly: `link.onChannel("human", human.attach)`, `registry.add(human.member)`; the small model goes in as
+ * `summarize` (see `summaryRequest`).
  */
 import { isAgentId, OWNER_ID } from "../../../../../sdk/src/ids";
 import type { HelloFrame } from "../../../../../sdk/src/link";
@@ -38,22 +42,20 @@ export interface HumanDeps {
   ledger: Pick<Ledger, "db" | "page" | "get">;
   /** The hub's settings by key (`service:admin`); here only `delivery.quiet_hours` and `delivery.dedupe_minutes` are read. */
   settings(): Record<string, unknown>;
-  /** The primary agent's id (default `agent:main`). */
-  primary?: () => string;
+  /** The primary agent's id, or null while there is no agent: then replies on notifications have nobody to go to and are not sent. */
+  primary(): string | null;
   /** One short line about what the agent is doing, from the small model; null when there is none. */
   summarize?: Summarize;
   now?: () => number;
   /** IANA zone for quiet hours; default the host's local time. */
   timeZone?: string;
   log?: (message: string, error?: unknown) => void;
-  timing?: Partial<{ presentMs: number; islandMs: number; waitMs: number; recordMs: number; summaryDelayMs: number }>;
+  timing?: Partial<{ presentMs: number; islandMs: number; recordMs: number; summaryDelayMs: number }>;
 }
 
-/** What the widgets service uses to reach the phone's home screen. */
+/** What the widgets service still uses directly. */
 export interface WidgetSurface {
-  /** Presents the full widget state on every channel with the `widget` surface; what each reports goes on as `widget.rendered`. Resolves with how many channels answered. */
-  state(state: unknown): Promise<number>;
-  /** The picture of a card as the home screen shows it, from the first channel that can draw one. */
+  /** The picture of a card as the home screen shows it, from the first channel that can draw one. (No word carries this yet.) */
   preview(card: unknown, size: unknown): Promise<PresentResult>;
 }
 
@@ -75,7 +77,7 @@ const SELF: Caller = { member: "service:human", via: "service", local: true };
 export function createHuman(deps: HumanDeps): HumanEdge {
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((message, error) => console.error(`[human] ${message}${error ? `: ${(error as Error).message}` : ""}`));
-  const t = { presentMs: 10_000, islandMs: 1500, waitMs: 60_000, recordMs: 3000, ...deps.timing };
+  const t = { presentMs: 10_000, islandMs: 1500, recordMs: 3000, ...deps.timing };
   const db = deps.ledger.db();
 
   const clients = new Clients(db, now);
@@ -84,7 +86,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
   const syncs = new Syncs(deps.ledger, log);
 
   const status = new TaskStatus({
-    session: `ts_${now().toString(36)}`,
+    session: `ts_${now().toString(36)}`, primary: () => deps.primary(),
     asks: () => asks.list(),
     ...(deps.summarize ? { summarize: deps.summarize } : {}),
     ...(t.summaryDelayMs !== undefined ? { summaryDelayMs: t.summaryDelayMs } : {}),
@@ -92,7 +94,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
   });
   const notifier: Notifier = new Notifier({
     clients, presenter, settings: deps.settings, now, islandMs: t.islandMs, ...(deps.timeZone ? { zone: deps.timeZone } : {}),
-    primary: deps.primary ?? (() => "agent:main"),
+    primary: deps.primary,
     noted: (id, client) => asks.noted(id, client), isOpen: (id) => asks.has(id),
   });
   const asks: Asks = new Asks({
@@ -100,7 +102,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     ended: (ask, notified) => notifier.hide(ask.id, notified),
     changed: () => status.asksChanged(),
   });
-  const inbound = new Inbound({ router: deps.router, ledger: deps.ledger, recorded, asks, now, waitMs: t.waitMs, recordMs: t.recordMs, log });
+  const inbound = new Inbound({ router: deps.router, ledger: deps.ledger, recorded, asks, now, recordMs: t.recordMs, log });
 
   const sendEvent = (out: Outgoing) => void deps.router.send(out, SELF).then((reply) => { if (!reply.ok) log(`${out.word} to ${out.to} refused: ${reply.error.message}`); }, (error) => log(`${out.word} to ${out.to} failed`, error));
 
@@ -125,6 +127,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     async handle(msg: Message, ctx: HandleContext): Promise<WordResult | void> {
       const body = (msg.body ?? {}) as Record<string, any>;
       switch (msg.word) {
+        case "widget.state": void pushWidgets(body, clients.withSurface("widget")); return;
         case "say":
           void notifier.say(msg).catch((error) => log("notification failed", error));
           return { data: { accepted: true } };
@@ -172,7 +175,10 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     };
     clients.add(c);
     // After the welcome, which the link server sends right after this returns.
-    if (surfaces.includes("status")) setImmediate(() => void presenter.send(c, { surface: "status", op: "frame", body: status.frame() as never }));
+    setImmediate(() => {
+      if (surfaces.includes("status")) void presenter.send(c, { surface: "status", op: "frame", body: status.frame() as never });
+      if (surfaces.includes("widget")) greetWidgets(c);
+    });
 
     return {
       human(frame) {
@@ -204,21 +210,27 @@ export function createHuman(deps: HumanDeps): HumanEdge {
 
   // ---- what other modules use -----------------------------------------------------------------------------------------
 
+  /** Presents the whole widget state on [targets]; what each reports goes on as `widget.rendered`. */
+  async function pushWidgets(state: unknown, targets: LiveClient[]): Promise<void> {
+    const results = await Promise.all(targets.map((c) => presenter.send(c, { surface: "widget", op: "state", body: state as never })));
+    for (const result of results) {
+      if (!result.ok || !result.data || typeof result.data !== "object") continue;
+      const data = result.data as { widgets?: unknown; rendered?: unknown };
+      sendEvent({ to: "service:widgets", kind: "event", word: "widget.rendered", body: {
+        ...(Array.isArray(data.widgets) ? { widgets: data.widgets } : {}), rendered: Array.isArray(data.rendered) ? data.rendered : [],
+      } });
+    }
+  }
+
+  /** A channel that just connected gets the current state. */
+  function greetWidgets(c: LiveClient): void {
+    void deps.router.send({ to: "service:widgets", kind: "request", word: "widget.list", body: {} }, SELF).then(
+      (reply) => { if (reply.ok && reply.result?.data !== undefined) return pushWidgets(reply.result.data, [c]); },
+      (error) => log("widget.list failed", error),
+    );
+  }
+
   const widgets: WidgetSurface = {
-    async state(state) {
-      const targets = clients.withSurface("widget");
-      const results = await Promise.all(targets.map((c) => presenter.send(c, { surface: "widget", op: "state", body: state as never })));
-      let answered = 0;
-      for (const result of results) {
-        if (!result.ok || !result.data || typeof result.data !== "object") continue;
-        answered++;
-        const data = result.data as { widgets?: unknown; rendered?: unknown };
-        sendEvent({ to: "service:widgets", kind: "event", word: "widget.rendered", body: {
-          ...(Array.isArray(data.widgets) ? { widgets: data.widgets } : {}), rendered: Array.isArray(data.rendered) ? data.rendered : [],
-        } });
-      }
-      return answered;
-    },
     async preview(card, size) {
       let last: PresentResult = { ok: false, error: { code: "offline", message: "no channel can draw a card" } };
       for (const c of clients.withSurface("widget")) {

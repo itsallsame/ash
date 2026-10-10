@@ -69,3 +69,21 @@ test("the process summary comes from the injected small model, once a burst of t
   assert.equal(hub.summaries.length, 1, "asked once for the burst");
   assert.deepEqual(hub.summaries[0], ["做a", "做b", "做c"]);
 });
+
+test("a frame names the agent of the turn, else the primary, else no agent", async (t) => {
+  let primary: string | null = "agent:main";
+  const hub = await startHumanHub({ primary: () => primary }); t.after(() => hub.stop());
+  const island = await Channel.open(hub, { surfaces: ["chat", "status"] });
+  await eventually(() => frames(island).length === 1, "the idle frame");
+  assert.equal(last(island).agent, "agent:main", "no turn yet: the primary");
+
+  hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] }, "agent:helper");
+  await eventually(() => last(island).turn === "t1", "the turn");
+  assert.equal(last(island).agent, "agent:helper");
+
+  primary = null;
+  const bare = await Channel.open(hub, { surfaces: ["chat", "status"] });
+  await eventually(() => frames(bare).length === 1, "a frame for the new channel");
+  assert.equal(last(bare).agent, "agent:helper", "the turn's own agent is kept");
+  hub.mini.announce("turn.ended", { turn: "t1", lane: "front", outcome: "completed" }, "agent:helper");
+});

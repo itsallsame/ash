@@ -9,7 +9,7 @@
 import { isAgentId } from "../../../../../sdk/src/ids";
 import type { Message } from "../../../../../sdk/src/message";
 import type { Clients, LiveClient } from "./clients";
-import { Delivery, rulesOf, type DeliveryKind } from "./delivery";
+import { Delivery, rings as mayRing, rulesOf, type DeliveryKind } from "./delivery";
 import type { PendingAsk } from "./ask";
 import type { Presenter } from "./present";
 
@@ -26,8 +26,8 @@ export interface NotifierDeps {
   /** How long the island may take to say whether it is on screen. */
   islandMs: number;
   noted(askId: string, client: string): void;
-  /** The primary agent: the one a reply on a notification goes to when the message did not come from an agent. */
-  primary(): string;
+  /** The primary agent: the one a reply on a notification goes to when the message did not come from an agent; null when there is no agent yet. */
+  primary(): string | null;
   /** Whether the question is still waiting for an answer. */
   isOpen(askId: string): boolean;
 }
@@ -70,11 +70,14 @@ export class Notifier {
   async say(msg: Message): Promise<void> {
     const body = msg.body as { text: string; kind?: DeliveryKind; dedupe_key?: string };
     const kind: DeliveryKind = body.kind ?? "reply";
+    if (!mayRing(kind)) return;
     const turn = msg.turn;
     const quiet = kind === "reply" && turn !== undefined && this.running.has(turn);
-    if (!(await this.rings(kind, body.dedupe_key))) { if (turn) this.quietReplies.delete(turn); return; }
+    // A notification says who a reply goes to; with no agent at all there is nobody to reply to.
+    const target = isAgentId(msg.from) ? msg.from : this.d.primary();
+    if (!target || !(await this.rings(kind, body.dedupe_key))) { if (turn) this.quietReplies.delete(turn); return; }
     const reached = await this.showTo(msg.id, {
-      id: msg.id, kind, title: TITLES[kind] ?? "Ash", text: clip(body.text), reply_to: msg.id, reply_target: isAgentId(msg.from) ? msg.from : this.d.primary(), ...(kind === "reply" ? { alert: quiet ? "quiet" : "strong" } : {}),
+      id: msg.id, kind, title: TITLES[kind] ?? "Ash", text: clip(body.text), reply_to: msg.id, reply_target: target, ...(kind === "reply" ? { alert: quiet ? "quiet" : "strong" } : {}),
     });
     if (turn && kind === "reply") { if (quiet && reached.length) this.quietReplies.set(turn, msg.id); else this.quietReplies.delete(turn); }
   }
@@ -107,7 +110,7 @@ export class Notifier {
     const id = this.quietReplies.get(turn);
     this.quietReplies.delete(turn);
     const clients = id ? this.shown.get(id) : undefined;
-    if (!id || !clients || await this.watching()) return;
+    if (!id || !clients || this.delivery.quiet(this.d.now(), rulesOf(this.d.settings())) || await this.watching()) return;
     for (const client of clients) {
       const c = this.d.clients.get(client);
       if (c) await this.d.presenter.send(c, { surface: "notification", op: "alert", body: { id } });

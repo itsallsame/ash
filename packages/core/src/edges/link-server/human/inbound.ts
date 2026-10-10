@@ -3,8 +3,7 @@
  * came from. A `send` with the same `client_id` and the same content is answered again with the first message
  * (`duplicate: true`), with other content it is a `conflict`.
  *
- * The router does not hand back the message it recorded, so the answer's `{id, seq}` is read from the router's own
- * announcement of it (`subscribe`): the first message of the owner from this channel that matches what was sent.
+ * The router returns the id of the message it recorded; `seq` is read from the ledger.
  *
  * The owner's answer to a question (`kind: "response"`, `reply_to` the ask) is not a request to anyone: it ends the
  * pending `person:owner/ask` here, and the router records it as that request's response.
@@ -12,7 +11,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { SendFrame } from "../../../../../sdk/src/link";
-import { errorBody, type ErrorBody, type HumanOrigin, type Message, type Outgoing, type Reply } from "../../../../../sdk/src/message";
+import { errorBody, type ErrorBody, type Message, type Outgoing, type Reply } from "../../../../../sdk/src/message";
 import { OWNER_ID } from "../../../../../sdk/src/ids";
 import type { Ledger } from "../../../kernel/ledger";
 import type { Caller, Router } from "../../../kernel/types";
@@ -24,24 +23,22 @@ export type SendOutcome =
   | { ok: true; message: { id: string; seq: number }; duplicate?: true; response?: Record<string, unknown> }
   | { ok: false; error: ErrorBody };
 
-/** The caller the router is given for the owner on a channel; the origin is how the router fills `Message.origin`. */
-export type OwnerCaller = Caller & { origin: HumanOrigin };
-
-export const ownerCaller = (c: Pick<LiveClient, "client" | "hand" | "channel" | "provider" | "label" | "local">): OwnerCaller => ({
+/** The caller the router is given for the owner on a channel; `origin` is what the router stamps on the message. */
+export const ownerCaller = (c: Pick<LiveClient, "client" | "hand" | "channel" | "provider" | "label" | "local">): Caller => ({
   member: OWNER_ID, via: "human", local: c.local, client: c.client,
   origin: { channel: c.channel, client: c.client, hand: c.hand, ...(c.provider ? { provider: c.provider } : {}), label: c.label },
 });
 
-/** Waits for the router to announce a message of the owner. */
+/** Waits for the router to announce a message of the owner (used for the response that records an answer). */
 export class Recorded {
   private readonly waiters = new Set<{ match(m: Message): boolean; found: Message | null; resolve(m: Message): void }>();
 
-  /** Must be called before the thing that makes the message. `value()` is the match once it has come. */
-  expect(match: (m: Message) => boolean): { promise: Promise<Message>; value(): Message | null; cancel(): void } {
+  /** Must be called before the thing that makes the message. */
+  expect(match: (m: Message) => boolean): { promise: Promise<Message>; cancel(): void } {
     let waiter!: { match(m: Message): boolean; found: Message | null; resolve(m: Message): void };
     const promise = new Promise<Message>((resolve) => { waiter = { match, found: null, resolve }; });
     this.waiters.add(waiter);
-    return { promise, value: () => waiter.found, cancel: () => void this.waiters.delete(waiter) };
+    return { promise, cancel: () => void this.waiters.delete(waiter) };
   }
 
   offer(m: Message): void {
@@ -61,8 +58,7 @@ export interface InboundDeps {
   recorded: Recorded;
   asks: Asks;
   now(): number;
-  /** How long `wait: true` waits for the response (60 s), and how long an answer waits to be recorded. */
-  waitMs: number;
+  /** How long an answer waits to be recorded. */
   recordMs: number;
   log(message: string, error?: unknown): void;
 }
@@ -107,20 +103,15 @@ export class Inbound {
   private async deliver(c: LiveClient, req: Request): Promise<SendOutcome> {
     if (req.kind === "response") return this.answer(req);
     const out: Outgoing = { to: req.to, kind: req.kind, word: req.word, body: req.body, ...(req.reply_to ? { reply_to: req.reply_to } : {}) };
-    const seen = this.d.recorded.expect((m) => m.kind === out.kind && m.word === out.word && m.to === out.to && m.origin?.client === c.client && m.reply_to === out.reply_to);
-    const sending: Promise<Reply> = this.d.router.send(out, ownerCaller(c)).catch((error) => {
+    const sending: Promise<Reply & { id?: string }> = this.d.router.send(out, ownerCaller(c)).catch((error) => {
       this.d.log(`send ${out.to}/${out.word} failed`, error);
       return { ok: false, error: errorBody("internal", "the hub failed while handling this request") } as Reply;
     });
-    const first = await Promise.race([seen.promise.then(() => null), sending]);
-    const message = seen.value();
-    seen.cancel();
-    if (first && !first.ok) return fail(first.error);
-    if (!message) return fail(errorBody("internal", "the message was accepted but not recorded"));
-    const ref = { id: message.id, seq: message.seq };
-    if (req.wait !== true) { void sending; return { ok: true, message: ref }; }
-    const response = await Promise.race([sending, later(this.d.waitMs)]);
-    return { ok: true, message: ref, ...(response ? { response: response as unknown as Record<string, unknown> } : {}) };
+    const reply = await sending;
+    if (!reply.ok) return fail(reply.error);
+    if (!reply.id) return fail(errorBody("internal", "the message was accepted but the router gave no id"));
+    const ref = { id: reply.id, seq: this.d.ledger.get(reply.id)?.seq ?? 0 };
+    return { ok: true, message: ref, ...(req.wait === true ? { response: { ok: true, ...(reply.result ? { result: reply.result } : {}) } as Record<string, unknown> } : {}) };
   }
 
   private async answer(req: Request): Promise<SendOutcome> {

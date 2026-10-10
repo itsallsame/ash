@@ -5,7 +5,7 @@
  *
  * Settings (read at the moment of delivery, through the injected `settings()`):
  *   delivery.quiet_hours     "HH:MM-HH:MM" in the host's local time, may cross midnight; "" or absent: no quiet hours. Default "21:30-09:00".
- *   delivery.dedupe_minutes  how long a second offer / heads_up with the same dedupe_key is a repeat. Default 60; 0 turns it off.
+ *   delivery.dedupe_minutes  how long a second reply with the same dedupe_key is a repeat. Default 60; 0 turns it off.
  */
 export const QUIET_HOURS_KEY = "delivery.quiet_hours";
 export const DEDUPE_MINUTES_KEY = "delivery.dedupe_minutes";
@@ -14,8 +14,10 @@ export const DEFAULT_DEDUPE_MINUTES = 60;
 
 /** What the message is: say's kind, or an ask. */
 export type DeliveryKind = "reply" | "due" | "offer" | "heads_up" | "ask";
-/** Offers and heads-ups are unprompted: quiet hours and repeats apply to them only. */
-const unprompted = (kind: DeliveryKind) => kind === "offer" || kind === "heads_up";
+/** Offers and heads-ups only appear in the conversation: they never ring, so no rule below touches them. */
+export const rings = (kind: DeliveryKind) => kind !== "offer" && kind !== "heads_up";
+/** Quiet hours and repeats govern replies and questions (and the strong ring at a turn's end); a reminder that is due always rings. */
+const governed = (kind: DeliveryKind) => kind === "reply" || kind === "ask";
 
 export interface Rules { quiet: string | null; dedupeMs: number }
 
@@ -46,7 +48,7 @@ export function isQuiet(at: number, quiet: string | null, zone?: string): boolea
   return start < end ? now >= start && now < end : now >= start || now < end;
 }
 
-export type Verdict = "ring" | "watching" | "quiet" | "duplicate";
+export type Verdict = "ring" | "silent" | "watching" | "quiet" | "duplicate";
 
 export class Delivery {
   /** dedupe_key -> when it was last seen. */
@@ -54,18 +56,23 @@ export class Delivery {
 
   constructor(private readonly zone?: string) {}
 
+  /** Whether [at] is inside the quiet hours. */
+  quiet(at: number, rules: Rules): boolean { return isQuiet(at, rules.quiet, this.zone); }
+
   /**
-   * Whether a message may ring now. Order: a repeat of an offer is dropped first (and counted as seen even when the
-   * owner is looking); then "the owner is looking" means no ring; then quiet hours hold back what was unprompted.
+   * Whether a message may ring now. Order: offers and heads-ups never ring; a repeat of a reply is dropped (and counted
+   * as seen even when the owner is looking); then "the owner is looking" means no ring; then quiet hours hold back
+   * replies and questions.
    */
   decide(m: { kind: DeliveryKind; dedupe_key?: string }, at: number, watching: boolean, rules: Rules): Verdict {
-    if (unprompted(m.kind) && m.dedupe_key && rules.dedupeMs > 0) {
+    if (!rings(m.kind)) return "silent";
+    if (governed(m.kind) && m.dedupe_key && rules.dedupeMs > 0) {
       for (const [key, when] of this.seen) if (at - when >= rules.dedupeMs) this.seen.delete(key);
       if (this.seen.has(m.dedupe_key)) return "duplicate";
       this.seen.set(m.dedupe_key, at);
     }
     if (watching) return "watching";
-    if (unprompted(m.kind) && isQuiet(at, rules.quiet, this.zone)) return "quiet";
+    if (governed(m.kind) && this.quiet(at, rules)) return "quiet";
     return "ring";
   }
 }

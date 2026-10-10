@@ -18,7 +18,9 @@ export interface TaskFrame {
   session: string; revision: number; turn: string | null; started_at: number;
   state: "idle" | "thinking" | "working" | "done" | "waiting_you";
   text: string; steps: string[]; can_stop: boolean; tool: string; step_started_at: number; outcome: string;
-  reply: string; cards: TaskCard[]; agent: string;
+  reply: string; cards: TaskCard[];
+  /** The agent of this turn, else the primary; absent when there is no agent at all. */
+  agent?: string;
 }
 
 /** What the summarizer is asked: the recent steps, oldest first. The assembly turns it into a call of edges/llm. */
@@ -47,6 +49,8 @@ export interface StatusOptions {
   /** Wait after a tool event before asking for a summary, so a burst of tools asks once. */
   summaryDelayMs?: number;
   session: string;
+  /** The primary agent, for a frame that has no turn of its own; null when there is none. */
+  primary(): string | null;
 }
 
 export class TaskStatus {
@@ -113,11 +117,12 @@ export class TaskStatus {
       : this.state === "idle" ? "在线"
       : this.ended ? OUTCOME_TEXT[this.outcome] ?? "本轮已结束"
       : running?.label ?? (this.summary || "等待模型响应");
+    const agent = this.agent || this.o.primary();
     const visible = this.steps.slice(-MAX_STEPS).map((s) => `${s.state === "ok" ? "✓ " : s.state === "failed" ? "失败 · " : ""}${s.label}`);
     return {
       session: this.o.session, revision: ++this.revision, turn: this.turn, started_at: this.started, state, text, steps: visible,
       can_stop: this.turn !== null && !this.ended, tool: running?.label ?? "", step_started_at: this.started, outcome: this.outcome,
-      reply: this.replies.join("\n\n"), cards, agent: this.agent,
+      reply: this.replies.join("\n\n"), cards, ...(agent ? { agent } : {}),
     };
   }
 

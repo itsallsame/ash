@@ -3,7 +3,7 @@
  * does what the real one does for these tests (authorizes `local_only`, records, announces, delivers) and keeps what it was asked.
  */
 import { randomBytes } from "node:crypto";
-import { errorBody, WordError, type Caller, type HumanOrigin, type Message, type Outgoing, type Reply } from "../../../../../sdk/src/message";
+import { errorBody, WordError, type Caller, type Message, type Outgoing, type Reply } from "../../../../../sdk/src/message";
 import type { PresentFrame, SyncMsgFrame, SyncPageFrame } from "../../../../../sdk/src/link";
 import type { Member } from "../../../../../sdk/src/word";
 import { wordsOf } from "../../../../../sdk/src/words";
@@ -23,11 +23,11 @@ export class MiniRouter implements Router {
   private readonly subs = new Set<(m: Message) => void>();
   constructor(private readonly ledger: Ledger) {}
 
-  stub(id: string, words: string[] = ["say"]): void {
+  stub(id: string, words: string[] = ["say"], answer: () => unknown = () => ({ accepted: true })): void {
     this.members.set(id, {
       id, kind: id.startsWith("agent:") ? "agent" : "service", name: id,
       words: () => wordsOf(id).filter((w) => words.includes(w.word)),
-      async handle() { return { data: { accepted: true } }; },
+      async handle() { return { data: answer() }; },
     });
   }
 
@@ -40,18 +40,20 @@ export class MiniRouter implements Router {
     this.publish({ seq: 0, id: `e_${randomBytes(4).toString("hex")}`, ts: Date.now(), from, to, kind: "event", word, body });
   }
 
-  async send(msg: Outgoing, caller: Caller): Promise<Reply> {
+  async send(msg: Outgoing, caller: Caller): Promise<Reply & { id?: string }> {
     this.sent.push({ msg, caller });
     const member = msg.to ? this.members.get(msg.to) : undefined;
     const contract = member?.words().find((w) => w.word === msg.word);
     if (msg.kind === "event") {
-      this.publish({ seq: 0, id: `e_${randomBytes(4).toString("hex")}`, ts: Date.now(), from: caller.member, to: msg.to, kind: "event", word: msg.word, body: msg.body });
-      return { ok: true };
+      const event = { seq: 0, id: `e_${randomBytes(4).toString("hex")}`, ts: Date.now(), from: caller.member, to: msg.to, kind: "event" as const, word: msg.word, body: msg.body };
+      this.publish(event);
+      if (member) await member.handle(event, { signal: new AbortController().signal, caller, raw: msg.body });
+      return { ok: true, id: event.id };
     }
     if (!member) return { ok: false, error: errorBody("offline", `${msg.to} is not connected`) };
     if (!contract) return { ok: false, error: errorBody("not_found", `${msg.to} has no word ${msg.word}`) };
     if (contract.local_only && caller.via === "human" && !caller.local) return { ok: false, error: errorBody("forbidden", "only from a channel on this machine") };
-    const origin = (caller as { origin?: HumanOrigin }).origin;
+    const origin = caller.origin;
     const stored = this.ledger.append({ from: caller.member, to: msg.to, kind: "request", word: msg.word, body: msg.body, ...(msg.reply_to ? { reply_to: msg.reply_to } : {}), ...(origin ? { origin } : {}), ...(caller.turn ? { turn: caller.turn } : {}) });
     this.publish(stored);
     let reply: Reply;
@@ -63,7 +65,8 @@ export class MiniRouter implements Router {
     }
     const response = this.ledger.append({ from: msg.to!, to: caller.member, kind: "response", word: msg.word, body: reply, reply_to: stored.id });
     this.publish(response);
-    return reply;
+    // The id rides along without being part of what tests compare.
+    return Object.defineProperty({ ...reply }, "id", { value: stored.id, enumerable: false });
   }
 }
 
@@ -74,6 +77,8 @@ export interface HumanHub extends Hub {
   clock: { now: number };
   settings: Record<string, unknown>;
   summaries: string[][];
+  /** What `service:widgets/widget.list` answers. */
+  widgetState: { value: unknown };
 }
 
 export async function startHumanHub(over: Partial<HumanDeps> = {}): Promise<HumanHub> {
@@ -83,18 +88,21 @@ export async function startHumanHub(over: Partial<HumanDeps> = {}): Promise<Huma
   const clock = { now: Date.now() };
   const settings: Record<string, unknown> = {};
   const summaries: string[][] = [];
+  const widgetState = { value: { revision: 1, cards: [], widgets: [], bindings: [], previews: [] } as unknown };
   const human = createHuman({
     router: mini, ledger, settings: () => settings, now: () => clock.now, timeZone: "UTC", log: () => {},
     summarize: async (steps) => { summaries.push(steps); return "在整理日程"; },
-    timing: { presentMs: 2000, islandMs: 300, waitMs: 2000, recordMs: 1000, summaryDelayMs: 10 },
+    primary: () => "agent:main",
+    timing: { presentMs: 2000, islandMs: 300, recordMs: 1000, summaryDelayMs: 10 },
     ...over,
   });
   mini.members.set("person:owner", human.member);
   mini.stub("agent:main", ["say", "wake"]);
   mini.stub("service:vault", ["set"]);
+  mini.stub("service:widgets", ["widget.list"], () => widgetState.value);
   hub.server.onChannel("human", human.attach);
   const stop = hub.stop;
-  return Object.assign(hub, { ledger, mini, human, clock, settings, summaries, stop: async () => { human.close(); await stop(); } });
+  return Object.assign(hub, { ledger, mini, human, clock, settings, summaries, widgetState, stop: async () => { human.close(); await stop(); } });
 }
 
 export interface ChannelOptions {

@@ -3,6 +3,8 @@ import test from "node:test";
 import { eventually } from "../../../fixtures/wait";
 import { AGENT, Channel, GATE, quiet, startHumanHub } from "./helpers";
 
+const WIDGETS = { member: "service:widgets", via: "service" as const, local: true };
+
 const open = (body: Record<string, unknown>) => ({ to: "person:owner", kind: "request" as const, word: "open", body });
 
 test("open goes to the channel named, and only there; without one it goes to the channel being looked at", async (t) => {
@@ -66,7 +68,7 @@ test("the owner's words are stamped person:owner with the channel they came from
     origin: { channel: "app", client: phone.clientId, hand: `device:${phone.hand.identity.handId}`, label: "手机 · 对话" } });
   assert.equal(far!.caller.local, false);
   assert.equal(far!.caller.client, remote.clientId);
-  assert.equal((far!.caller as unknown as { origin: { channel: string } }).origin.channel, "web");
+  assert.equal(far!.caller.origin!.channel, "web");
 });
 
 test("a local_only word from a remote channel is forbidden, from the local channel it passes", async (t) => {
@@ -95,7 +97,8 @@ test("each surface goes only to the channels that declared it", async (t) => {
   await phone.present((f) => f.surface === "notification" && f.op === "show", "the notification");
   hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] });
   await eventually(() => island.presented("status").length === 2, "a status frame");
-  await hub.human.widgets.state({ revision: 1, cards: [], bindings: {} });
+  await hub.mini.send({ to: "person:owner", kind: "event", word: "widget.state", body: { revision: 1, cards: [], bindings: [] } }, WIDGETS);
+  await cards.present((f) => f.surface === "widget" && f.op === "state", "the widget state");
   await quiet();
 
   const surfaces = (c: Channel) => [...new Set(c.presents.map((f) => f.surface))].sort();
@@ -109,12 +112,12 @@ test("a card's present.result becomes widget.rendered for service:widgets; previ
   const cards = await Channel.open(hub, { surfaces: ["chat", "widget"], present: (f) => f.op === "state" ? { ok: true, data: { widgets: placed, rendered, previews: [] } } : { ok: true, data: { type: "image", data: "AAAA" } } });
   void cards;
 
-  const answered = await hub.human.widgets.state({ revision: 2, cards: [], bindings: {} });
+  await hub.mini.send({ to: "person:owner", kind: "event", word: "widget.state", body: { revision: 2, cards: [], bindings: [] } }, WIDGETS);
 
-  assert.equal(answered, 1);
-  await eventually(() => hub.mini.sent.length === 1, "the event");
-  assert.deepEqual(hub.mini.sent[0]!.msg, { to: "service:widgets", kind: "event", word: "widget.rendered", body: { widgets: placed, rendered } });
-  assert.equal(hub.mini.sent[0]!.caller.via, "service");
+  const rendering = () => hub.mini.sent.find((s) => s.msg.word === "widget.rendered");
+  await eventually(rendering, "the event");
+  assert.deepEqual(rendering()!.msg, { to: "service:widgets", kind: "event", word: "widget.rendered", body: { widgets: placed, rendered } });
+  assert.equal(rendering()!.caller.via, "service");
 
   const preview = await hub.human.widgets.preview({ id: "todo" }, "2x2");
   assert.deepEqual(preview, { ok: true, data: { type: "image", data: "AAAA" } });
@@ -134,4 +137,18 @@ test("react to a message that does not exist fails; the channel table remembers 
   assert.deepEqual(rows.map((r) => [r.sid, r.channel, r.label, r.local, r.surfaces]), [[phone.clientId, "app", "手机 · 对话", 1, '["chat","notification"]']]);
   assert.deepEqual(hub.human.clients().map((c) => [c.client, c.visible, c.surfaces]), [[phone.clientId, false, ["chat", "notification"]]]);
   void GATE;
+});
+
+test("a channel that connects with the widget surface is given the current state from service:widgets/widget.list", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const state = { revision: 7, cards: [], widgets: [{ id: "3", type: "ash", card: null }], bindings: [], previews: [] };
+  hub.widgetState.value = state;
+
+  const cards = await Channel.open(hub, { surfaces: ["chat", "widget"], present: () => ({ ok: true, data: { widgets: [], rendered: [{ card: "x", updated_at: 1 }] } }) });
+  const chatOnly = await Channel.open(hub, { surfaces: ["chat"] });
+
+  const frame = await cards.present((f) => f.surface === "widget" && f.op === "state", "the current state");
+  assert.deepEqual(frame.body, state);
+  await eventually(() => hub.mini.sent.some((s) => s.msg.word === "widget.rendered"), "what it drew goes on");
+  assert.equal(chatOnly.presents.length, 0);
 });

@@ -45,60 +45,76 @@ test("the task island being on screen counts as looking", async (t) => {
   await eventually(() => shown(p).length === 1, "now it rings");
 });
 
-test("quiet hours hold back what was unprompted, not a reminder, and are read from the settings", async (t) => {
+test("offers and heads-ups never ring, whatever the hour; they are only in the conversation", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const p = await phone(hub); p.follow();
+  hub.settings["delivery.quiet_hours"] = "";
+  hub.clock.now = at(12);
+
+  await tell(hub, { kind: "offer", text: "提议", dedupe_key: "k" });
+  await tell(hub, { kind: "heads_up", text: "说一声" });
+  await tell(hub, { kind: "due", text: "到点了" });
+
+  await eventually(() => shown(p).length === 1, "only the reminder");
+  await quiet();
+  assert.deepEqual(shown(p), ["due:到点了"]);
+  await p.seen((m) => m.kind === "request" && (m.body as { kind?: string }).kind === "offer", "the offer in the conversation");
+});
+
+test("quiet hours hold back replies and questions, not a reminder that is due; they are read from the settings", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const p = await phone(hub);
   hub.settings["delivery.quiet_hours"] = "22:00-07:00";
 
   hub.clock.now = at(23);
-  await tell(hub, { kind: "offer", text: "夜里的提议" });
-  await tell(hub, { kind: "heads_up", text: "夜里的提醒一下" });
+  await tell(hub, { text: "夜里的回复" });
+  void hub.mini.send({ to: "person:owner", kind: "request", word: "ask", body: { title: "夜里的问题", options: [{ id: "a", label: "A" }], expires_at: Date.now() + 60_000 } }, AGENT);
   await tell(hub, { kind: "due", text: "夜里的到点" });
   await eventually(() => shown(p).length === 1, "only the reminder");
   await quiet();
   assert.deepEqual(shown(p), ["due:夜里的到点"]);
 
   hub.clock.now = at(12);
-  await tell(hub, { kind: "offer", text: "白天的提议" });
-  await eventually(() => shown(p).length === 2, "by day the offer rings");
+  await tell(hub, { text: "白天的回复" });
+  await eventually(() => shown(p).length === 2, "by day the reply rings");
 
   hub.settings["delivery.quiet_hours"] = "";
   hub.clock.now = at(23);
-  await tell(hub, { kind: "offer", text: "没有安静时段" });
+  await tell(hub, { text: "没有安静时段" });
   await eventually(() => shown(p).length === 3, "no quiet hours, it rings at night");
 });
 
 test("the default quiet hours are 21:30 to 09:00, and the interval's ends are exact", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const p = await phone(hub);
-  const offer = async (when: number, text: string) => { hub.clock.now = when; await tell(hub, { kind: "offer", text }); };
+  const reply = async (when: number, text: string) => { hub.clock.now = when; await tell(hub, { text }); };
 
-  await offer(at(21, 29), "a"); await eventually(() => shown(p).length === 1, "before");
-  await offer(at(21, 30), "b"); await offer(at(8, 59, 11), "c");
-  await offer(at(9, 0, 11), "d"); await eventually(() => shown(p).length === 2, "from 09:00");
+  await reply(at(21, 29), "a"); await eventually(() => shown(p).length === 1, "before");
+  await reply(at(21, 30), "b"); await reply(at(8, 59, 11), "c");
+  await reply(at(9, 0, 11), "d"); await eventually(() => shown(p).length === 2, "from 09:00");
   await quiet();
-  assert.deepEqual(shown(p), ["offer:a", "offer:d"]);
+  assert.deepEqual(shown(p), ["reply:a", "reply:d"]);
 });
 
-test("a repeat of an offer with the same key inside the window is dropped; after the window, or with another key, it rings", async (t) => {
+test("a repeat of a reply with the same key inside the window is dropped; after the window, or with another key, it rings", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const p = await phone(hub);
   hub.clock.now = at(12);
 
-  await tell(hub, { kind: "offer", text: "一", dedupe_key: "walk" });
+  await tell(hub, { text: "一", dedupe_key: "walk" });
   await eventually(() => shown(p).length === 1, "first");
   hub.clock.now = at(12, 30);
-  await tell(hub, { kind: "offer", text: "二", dedupe_key: "walk" });
-  await tell(hub, { kind: "offer", text: "三", dedupe_key: "tea" });
+  await tell(hub, { text: "二", dedupe_key: "walk" });
+  await tell(hub, { text: "三", dedupe_key: "tea" });
   await eventually(() => shown(p).length === 2, "another key");
   hub.clock.now = at(13, 1);
-  await tell(hub, { kind: "offer", text: "四", dedupe_key: "walk" });
+  await tell(hub, { text: "四", dedupe_key: "walk" });
   await eventually(() => shown(p).length === 3, "after the hour");
-  assert.deepEqual(shown(p), ["offer:一", "offer:三", "offer:四"]);
+  assert.deepEqual(shown(p), ["reply:一", "reply:三", "reply:四"]);
 
   hub.settings["delivery.dedupe_minutes"] = 0;
-  await tell(hub, { kind: "offer", text: "五", dedupe_key: "walk" });
-  await tell(hub, { kind: "offer", text: "六", dedupe_key: "walk" });
+  await tell(hub, { text: "五", dedupe_key: "walk" });
+  await tell(hub, { text: "六", dedupe_key: "walk" });
   await eventually(() => shown(p).length === 5, "no dedupe when switched off");
 });
 
@@ -138,6 +154,20 @@ test("the end of a turn does not ring when the owner is looking by then", async 
   await quiet();
 
   assert.equal(p.presented("notification", "alert").length, 0);
+});
+
+test("with no agent at all there is nobody to reply to: no reply notification is sent", async (t) => {
+  let primary: string | null = null;
+  const hub = await startHumanHub({ primary: () => primary }); t.after(() => hub.stop());
+  const p = await phone(hub);
+
+  await tell(hub, { kind: "due", text: "没人可回" });
+  await quiet();
+  assert.deepEqual(shown(p), []);
+
+  primary = "agent:main";
+  await tell(hub, { kind: "due", text: "有人了" });
+  await eventually(() => shown(p).length === 1, "now it rings");
 });
 
 test("every notification says who a reply goes to: the agent it came from, else the primary", async (t) => {
