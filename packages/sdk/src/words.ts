@@ -8,10 +8,10 @@
  * own edges and services (the human module, the hands module, the agents module), never by an agent or an app.
  * An agent's name never appears here; `agent:*` stands for every declared agent.
  */
-import { AGENT_ID, AGENT_ID_PATTERN, APP_NAME_PATTERN, BODY_ID_PATTERN, CLIENT_ID_PATTERN, DEVICE_ID_PATTERN, HAND_ID_PATTERN } from "./ids";
+import { AGENT_ID, AGENT_ID_PATTERN, APP_NAME_PATTERN, BODY_ID_PATTERN, CLIENT_ID_PATTERN, DATE_PATTERN, DEDUPE_KEY_PATTERN, DEVICE_ID_PATTERN, HAND_ID_PATTERN, SURFACE_ID_PATTERN } from "./ids";
 import { ACTIVITY_STATES } from "./namespaces";
 import {
-  DEFAULT_CALLERS, secret, sensitive, wordEffect,
+  DEFAULT_CALLERS, RISKS, secret, sensitive, wordEffect,
   type CallerKind, type Effect, type JsonSchema, type Risk, type WordContract,
 } from "./word";
 
@@ -34,7 +34,7 @@ const nullable = (schema: JsonSchema): JsonSchema => ({ anyOf: [schema, { type: 
 const positiveSafe: JsonSchema = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 const nonnegativeSafe: JsonSchema = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const sha: JsonSchema = { type: "string", pattern: "^[0-9a-f]{64}$" };
-const deliveryDedupeKey: JsonSchema = { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" };
+const deliveryDedupeKey: JsonSchema = { type: "string", minLength: 1, maxLength: 128, pattern: DEDUPE_KEY_PATTERN };
 const attachmentInput = obj({ name: nonempty, mime_type: nonempty, data: nonempty }, ["name", "mime_type", "data"]);
 const agentRef: JsonSchema = { type: "string", pattern: AGENT_ID_PATTERN };
 const deviceRef: JsonSchema = { type: "string", pattern: DEVICE_ID_PATTERN };
@@ -92,7 +92,7 @@ function add(member: string, word: string, kind: "request" | "event", input: Jso
 // ===================================================================================================================
 const adminOwnerOnly = { callers: OWNER, local_only: true } as const;
 add("service:admin", "pause", "request", obj({ by: id }), obj({ paused: { const: true } }, ["paused"]),
-  { callers: ["owner", "kernel"], local_only: true, effect: "write", label: "在暂停", description: "Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine, or the hub's own reflex: `by` cites the one owner message that said stop." });
+  { ...adminOwnerOnly, effect: "write", label: "在暂停", description: "Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine: `by` cites the one owner message that said stop." });
 add("service:admin", "resume", "request", obj({ confirmed: { const: true } }, ["confirmed"]), obj({ paused: { const: false } }, ["paused"]),
   { ...adminOwnerOnly, effect: "write", label: "在恢复", description: "Resume after a pause. Only the owner can, from a channel on this machine, after an explicit confirmation." });
 add("service:admin", "settings.get", "request", obj({ keys: strings }), free,
@@ -119,7 +119,7 @@ add("service:admin", "settings.changed", "event", obj({ keys: strings, by: id },
 // ===================================================================================================================
 // service:gate: approval rules and pending requests
 // ===================================================================================================================
-const gateRisk = choice("none", "outward", "structure");
+const gateRisk = choice(...RISKS);
 const gateRule = obj({ id, subject: nonempty, device_id: id, capability_id: id, to: id, word: id, object_pattern: nonempty,
   risk: gateRisk, contract_fingerprint: sha, created_at: nonnegativeSafe, expires_at: nonnegativeSafe, revoked_at: nonnegativeSafe },
 ["id", "subject", "to", "word", "object_pattern", "risk", "contract_fingerprint", "created_at", "expires_at"]);
@@ -279,7 +279,7 @@ add("service:bodies", "unbind", "request", obj({ body: bodyRef }, ["body"]), obj
 // ===================================================================================================================
 // person:owner: the owner's words (what the hub says to the owner). The owner's own words are the other words.
 // ===================================================================================================================
-const TO_OWNER: CallerKind[] = ["agent", "app", "kernel"];
+const TO_OWNER: CallerKind[] = ["agent", "app"];
 const cardOption = obj({ id: nonempty, text: nonempty }, ["id", "text"]);
 /** The Android settings a permission card can send the owner to. */
 export const PHONE_PERMISSIONS = ["calendar", "notifications", "battery", "accessibility", "photos", "all_files", "usage", "write_settings", "overlay", "shizuku"] as const;
@@ -326,7 +326,7 @@ add("agent:*", "tell", "request", obj({ text: nonempty, attachments: array(attac
 add("agent:*", "ask", "request", obj({ text: nonempty }, ["text"]), obj({ answer: str }, ["answer"]),
   { effect: "act", timeout_ms: 600_000, label: "在问帮手", description: "Put a question to the agent; what it says in the turn that takes the question is the answer. A quick answer is returned directly, a slow one as a receipt." });
 add("agent:*", "wake", "request", obj({ lane: nonempty, reason: nonempty, context: free }, ["reason"]), accepted,
-  { callers: ["agent", "app", "kernel"], effect: "act", label: "在叫醒帮手", description: "Wake the agent for a reason, on a lane (default back), with the facts it needs in context. Its own turn runs; nothing is said to the owner by this. Harmless by itself, so organs (apps) may use it to alert an agent." });
+  { callers: ["agent", "app"], effect: "act", label: "在叫醒帮手", description: "Wake the agent for a reason, on a lane (default back), with the facts it needs in context. Its own turn runs; nothing is said to the owner by this. Harmless by itself, so organs (apps) may use it to alert an agent." });
 add("agent:*", "typing", "event", empty, undefined,
   { direction: "in", label: "在等你说完", description: "The owner is composing a message to this agent in some channel; the inbox waits for them to finish before opening a turn. Sent by the human module." });
 add("agent:*", "turn.started", "event", obj({ turn: id, lane: nonempty, ids: strings }, ["turn", "lane"]), undefined,
@@ -473,14 +473,14 @@ const SENSE_KIND = choice("location", "activity", "steps", "health", "geofence",
 add("service:senses", "query", "request", obj({ kind: SENSE_KIND, from: nonnegativeSafe, to: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 5000 } }, ["kind"]),
   obj({ rows: array(free), truncated: bool }, ["rows"]),
   { label: "在翻感知记录", description: "Archived sensor readings of one kind in a time range (Unix ms; default the last day), oldest first. Also what an organ uses to look back." });
-add("service:senses", "daily", "request", obj({ date: { type: "string", pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" } }), free,
+add("service:senses", "daily", "request", obj({ date: { type: "string", pattern: DATE_PATTERN } }), free,
   { label: "在看每日统计", description: "The day's statistics from the archive (places, activity minutes, steps, health numbers) for a date (default yesterday)." });
 add("service:senses", "now", "request", empty, free,
   { label: "在看最近读数", description: "The newest reading of each kind (location, activity, battery, ...) and how old each is. No phone call is made; it is what the archive holds." });
 const calendarEvent = obj({ id, title: str, start: num, end: num, important: bool }, ["id", "title", "start", "end"]);
 const senseText = (max: number, min = 1): JsonSchema => ({ type: "string", minLength: min, maxLength: max });
 const senseBatch = (item: JsonSchema): JsonSchema => obj({
-  batch_id: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+  batch_id: deliveryDedupeKey,
   items: { type: "array", items: item, minItems: 1, maxItems: 500 },
 }, ["batch_id", "items"]);
 const senseEvent = (word: string, body: JsonSchema, label: string, description: string) =>
@@ -705,7 +705,8 @@ add("service:apps", "apps.remove", "request", obj({ id: appId, keep_data: bool }
 const appProblem = obj({ level: choice("error", "warning"), where: str, problem: str, fix: str }, ["level", "where", "problem"]);
 const appTool = obj({ name: { type: "string", pattern: "^[a-z][a-z0-9_.-]{0,63}$" }, title: { type: "string", minLength: 1, maxLength: 60 },
   description: { type: "string", minLength: 1, maxLength: 2000 }, read_only: bool }, ["name"]);
-const appSurface = obj({ id: { type: "string", pattern: "^[a-z][a-z0-9-]{0,31}$" }, title: { type: "string", minLength: 1, maxLength: 20 } }, ["id", "title"]);
+const surfaceId: JsonSchema = { type: "string", pattern: SURFACE_ID_PATTERN };
+const appSurface = obj({ id: surfaceId, title: { type: "string", minLength: 1, maxLength: 20 } }, ["id", "title"]);
 add("service:apps", "apps.contract", "request", empty,
   obj({ contract: str, doc: str, doc_path: str, schema: obj({}, [], true), example: obj({ path: str, files: obj({}, [], true) }, ["path", "files"]) }, ["contract", "doc", "schema", "example"], true),
   { label: "在看应用契约", description: "The ash-app/1 contract for writing an app, in full (doc, markdown): app.json fields, how ash starts the server and talks to it, " +
@@ -730,7 +731,7 @@ add("service:apps", "apps.validate", "request", obj({ id: appId, path: { type: "
     "(each surface's ui:// resource must be served as HTML). Give id (the folder /root/apps/<id>) or path (/root/apps/<folder>). " +
     "ok is true when nothing would stop it from installing and opening; warnings are worth fixing but do not block. Nothing is installed or changed." });
 
-add("service:apps", "apps.surface", "request", obj({ id: appId, surface: { type: "string", pattern: "^[a-z][a-z0-9-]{0,31}$" } }, ["id", "surface"]),
+add("service:apps", "apps.surface", "request", obj({ id: appId, surface: surfaceId }, ["id", "surface"]),
   obj({ id: appId, surface: str, mime: nonempty, html: str }, ["id", "surface", "mime"]),
   { label: "在取应用页面", description: "The page resource of one of an app's surfaces (the ui:// resource its app.json lists), for a channel to show. Pages talk to the app through the bridge, not through this word." });
 add("service:apps", "apps.icon", "request", obj({ id: appId }, ["id"]), obj({ id: appId, mime: nonempty, data: str }, ["id", "mime", "data"]),

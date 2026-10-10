@@ -61,7 +61,7 @@ export function wordEffect(spec: { effect?: unknown; risk?: unknown }): Effect {
  *
  * `kernel` is the hub's own code (services, edges). The rule (`mayCall`): the kernel passes this layer for every word;
  * a word whose callers are exactly `["kernel"]` is for the kernel alone, and owner, agent and app are refused.
- * Writing `kernel` next to other kinds changes nothing (it is there to show the hub itself uses the word).
+ * `kernel` therefore only ever stands alone (lint: callers): next to other kinds it would be redundant and misleading.
  * Passing this layer says who may call, not that the call has no risk: effect, risk and the gate still apply.
  */
 export type CallerKind = "owner" | "agent" | "app" | "kernel";
@@ -235,6 +235,8 @@ export function lintWord(contract: WordContract): LintIssue[] {
 
   if (!Array.isArray(c.callers) || c.callers.length === 0 || c.callers.some((who: unknown) => !(CALLER_KINDS as readonly unknown[]).includes(who)) || new Set(c.callers).size !== c.callers.length) {
     add("callers", `callers must be a non-empty list without repeats from ${CALLER_KINDS.join(", ")}`);
+  } else if (c.callers.includes("kernel") && c.callers.length > 1) {
+    add("callers", "kernel stands alone: the kernel may call every word anyway, so list it only as [\"kernel\"] (a word for the kernel alone)");
   }
   if (c.local_only !== undefined && (c.local_only !== true || !Array.isArray(c.callers) || !c.callers.includes("owner"))) add("local-only", "local_only is true, and only for a word the owner can call");
   if (c.record !== undefined && (c.record !== true || c.kind !== "event")) add("record", "record is true, and only for events");

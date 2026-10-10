@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appToolContract, toolEffectRisk, wakeEvents, type AppJson } from "../src/app";
-import { effectRiskProblem } from "../src/word";
+import { fileURLToPath } from "node:url";
+import { APP_SCHEMA, appToolContract, toolEffectRisk, wakeEvents, type AppJson } from "../src/app";
+import { compileSchema, effectRiskProblem } from "../src/word";
 
 test("annotations -> effect and risk: the four rules of SPEC-02 §5.3", () => {
   assert.deepEqual(toolEffectRisk({ readOnlyHint: true }), { effect: "read", risk: "none" });
@@ -46,4 +48,44 @@ test("wake_events may name the agent to wake", () => {
   const app = { wake_events: ["notes.due", { event: "message.received", agent: "ash-chat" }, { event: "x.y" }] } as Pick<AppJson, "wake_events">;
   assert.deepEqual(wakeEvents(app), [{ event: "notes.due" }, { event: "message.received", agent: "ash-chat" }, { event: "x.y" }]);
   assert.deepEqual(wakeEvents({}), []);
+});
+
+// ---- docs/app.schema.json -----------------------------------------------------------------------------------------------
+
+// A key that is missing here, or not in AppJson, fails to compile: the field list and the type cannot drift apart.
+const APP_JSON_FIELDS: Record<keyof AppJson, true> = {
+  contract: true, id: true, name: true, version: true, icon: true, summary: true, role: true, publisher: true, server: true, surfaces: true,
+  events: true, wake_events: true, listens: true, data_dir: true, cards: true, needs: true, tools: true,
+};
+const validateApp = compileSchema({ ...APP_SCHEMA, $schema: undefined });
+const BASE = { contract: "ash-app/1", id: "demo", name: "Demo", version: "1.0.0", summary: "A demo app.", publisher: "ash", server: { command: "node", args: ["server.mjs"] } };
+
+test("the app schema has exactly the fields of AppJson, and the required ones", () => {
+  assert.deepEqual(Object.keys(APP_SCHEMA.properties).sort(), Object.keys(APP_JSON_FIELDS).sort());
+  assert.deepEqual([...APP_SCHEMA.required].sort(), ["contract", "id", "name", "publisher", "server", "summary", "version"]);
+});
+
+test("docs/app.schema.json is what APP_SCHEMA generates", () => {
+  const file = fileURLToPath(new URL("../../../docs/app.schema.json", import.meta.url));
+  assert.equal(readFileSync(file, "utf8"), `${JSON.stringify(APP_SCHEMA, null, 2)}\n`, "run npm run gen:app-schema");
+});
+
+test("listens and wake_events as the schema accepts them", () => {
+  const good: AppJson = {
+    ...BASE, contract: "ash-app/1", events: ["message.received", "digest.ready"],
+    wake_events: ["digest.ready", { event: "message.received", agent: "ash-feishu" }, { event: "digest.ready" }],
+    listens: ["sense.location", "sense.*", "calendar.event.created"],
+  };
+  assert.equal(validateApp(good), true, JSON.stringify(validateApp.errors));
+  assert.equal(validateApp(BASE), true);
+  const bad = (patch: Record<string, unknown>) => validateApp({ ...BASE, ...patch });
+  assert.equal(bad({ listens: ["sense"] }), false, "an event has at least two segments");
+  assert.equal(bad({ listens: ["*"] }), false);
+  assert.equal(bad({ listens: ["sense.*.x"] }), false, "the wildcard is the last segment only");
+  assert.equal(bad({ listens: ["Sense.Location"] }), false);
+  assert.equal(bad({ listens: "sense.location" }), false);
+  assert.equal(bad({ wake_events: [{ agent: "ash-feishu" }] }), false, "the object form needs the event");
+  assert.equal(bad({ wake_events: [{ event: "a.b", agent: "agent:x" }] }), false, "the agent is a name, not an id");
+  assert.equal(bad({ wake_events: [{ event: "a.b", extra: 1 }] }), false);
+  assert.equal(bad({ wake_events: [{ event: "nodot" }] }), false);
 });

@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "ed8a67581f604264d07647623ca55950c33a17122cb80f5360c47f6fd693f0e8",
+ "hash": "ec54292779c402500e14cde927ed159e98b63ebf4f2313e4daba6333d6d881bd",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -26,7 +26,7 @@
    "word": "pause",
    "kind": "request",
    "direction": "in",
-   "description": "Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine, or the hub's own reflex: `by` cites the one owner message that said stop.",
+   "description": "Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine: `by` cites the one owner message that said stop.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -53,8 +53,7 @@
    "effect": "write",
    "risk": "none",
    "callers": [
-    "owner",
-    "kernel"
+    "owner"
    ],
    "local_only": true,
    "label": {
@@ -12529,8 +12528,7 @@
    "risk": "none",
    "callers": [
     "agent",
-    "app",
-    "kernel"
+    "app"
    ],
    "label": {
     "doing": "在回你消息"
@@ -12576,8 +12574,7 @@
    "risk": "none",
    "callers": [
     "agent",
-    "app",
-    "kernel"
+    "app"
    ],
    "label": {
     "doing": "在给消息加表情"
@@ -12779,8 +12776,7 @@
    "risk": "none",
    "callers": [
     "agent",
-    "app",
-    "kernel"
+    "app"
    ],
    "label": {
     "doing": "在给你看卡片"
@@ -12972,8 +12968,7 @@
    "risk": "none",
    "callers": [
     "agent",
-    "app",
-    "kernel"
+    "app"
    ],
    "label": {
     "doing": "在打开页面"
@@ -13238,8 +13233,7 @@
    "risk": "none",
    "callers": [
     "agent",
-    "app",
-    "kernel"
+    "app"
    ],
    "label": {
     "doing": "在叫醒帮手"
