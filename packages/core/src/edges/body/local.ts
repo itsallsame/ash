@@ -6,7 +6,7 @@
  * - `native`: no container; a directory on this machine and its shell (development machines, the fake host).
  */
 import { spawn as spawnProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HostIsolation } from "../../../../sdk/src/host";
 import { MAIN_BODY_ID } from "../../../../sdk/src/ids";
@@ -15,11 +15,36 @@ import { standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member, Risk, WordContract } from "../../../../sdk/src/word";
 import { Workspace, type Executor, type StreamPublisher } from "../../../../workspace/src";
 import type { AppJson } from "../../../../sdk/src/app";
-import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot } from "./proot";
+import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot, type ProotConfig } from "./proot";
 
 /** Where DSH and its patch file are inside the container; the agent runtime only says `dsh --patch <that file>`. */
 const PROOT_DSH = "/opt/dsh/node_modules/.bin/dsh";
 const PROOT_PATCH = "/opt/ash/patch.yml";
+
+/**
+ * What DSH runs with inside the container: no telemetry, and its own sandbox and approval prompts off as a pair, because the
+ * container is the sandbox. The body is the one that knows how DSH is started, so it sets these (the driver's own env is added).
+ */
+const PROOT_DSH_ENV: Record<string, string> = { DSH_TELEMETRY_DISABLED: "1", DSH_PERMISSION_MODE: "danger-full-access", DSH_HOME: "/root/.dsh" };
+/** Used when the host names no DNS servers (or none that are addresses). */
+export const DEFAULT_DNS = ["223.5.5.5", "119.29.29.29"];
+
+/**
+ * The container's `etc/resolv.conf` from the host's DNS servers (`isolation.proot.dns`): the phone's own resolver is not
+ * reachable from inside. Written only when it differs; nothing happens while the image is not installed.
+ */
+export function writeResolvConf(proot: ProotConfig): void {
+  const etc = join(proot.rootfs, "etc");
+  if (!existsSync(etc)) return;
+  const servers = (proot.dns ?? []).filter((server) => /^[0-9a-fA-F:.]{2,45}$/.test(server));
+  const text = `${(servers.length ? servers : DEFAULT_DNS).map((server) => `nameserver ${server}`).join("\n")}\n`;
+  const file = join(etc, "resolv.conf");
+  try { if (!lstatSync(file).isSymbolicLink() && readFileSync(file, "utf8") === text) return; } catch { /* missing: write it */ }
+  const temp = `${file}.tmp-${process.pid}`;
+  writeFileSync(temp, text, { mode: 0o644 });
+  rmSync(file, { force: true });
+  renameSync(temp, file);
+}
 
 /** DSH's arguments on this machine: its `--patch` file is the host's own, or none. */
 function nativeRuntimeArgs(args: string[], patch: string | undefined): string[] {
@@ -86,6 +111,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     const proot = isolation.proot;
     if (!existsSync(proot.rootfs)) throw new WordError("unavailable", "The main body is not installed yet");
     mkdirSync(join(proot.rootfs, PROOT_WORKDIR), { recursive: true });
+    writeResolvConf(proot);
     return workspace = new Workspace({
       root: proot.rootfs, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", streams: o.streams, mounts: prootMounts(proot),
       exec: o.exec ?? ((command, place) => runInProot(proot, ["/bin/bash", "-c", command], { workdir: place.cwd, env: o.env, detached: true })),
@@ -101,7 +127,11 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     words: () => bodyWords(MAIN_BODY_ID),
     spawn(argv, opts = {}) {
       if (isolation.kind === "proot") {
-        return runInProot(isolation.proot, argv[0] === "dsh" ? [PROOT_DSH, ...argv.slice(1)] : argv, { ...(opts.cwd ? { workdir: opts.cwd } : {}), ...(opts.env ? { env: opts.env } : {}), stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
+        writeResolvConf(isolation.proot);
+        const runtime = argv[0] === "dsh";
+        return runInProot(isolation.proot, runtime ? [PROOT_DSH, ...argv.slice(1)] : argv, {
+          ...(opts.cwd ? { workdir: opts.cwd } : {}), env: { ...(runtime ? PROOT_DSH_ENV : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
+        }) as ChildProcessWithoutNullStreams;
       }
       if (isolation.kind === "native") {
         // The development form: the program runs straight on this machine, its place under the workspace. `dsh` is the
