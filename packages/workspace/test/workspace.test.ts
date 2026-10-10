@@ -364,3 +364,13 @@ withFixture("every result data matches the standard action's result_schema", asy
   const signalled = await ws.call("workspace.signal", { process: started.data.process as string, signal: "TERM" });
   assert.ok(compileSchema(standardAction("workspace.signal")!.result_schema)(signalled.data));
 });
+
+withFixture("busy: true while a command started by bash still runs, false once it has ended", async ({ ws }) => {
+  assert.equal(ws.busy, false);
+  const run = await ws.call("workspace.bash", { command: "sleep 30", yield_ms: 0 });
+  assert.equal(run.data.running, true);
+  assert.equal(ws.busy, true);
+  await ws.call("workspace.signal", { process: run.data.process as string, signal: "TERM" });
+  await ws.call("workspace.poll", { process: run.data.process as string, yield_ms: 5000 });
+  assert.equal(ws.busy, false);
+});

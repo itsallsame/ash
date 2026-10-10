@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { AgentStream } from "./host";
+// The OLD phone-side half of the duplex device stream. It stays only because the old core
+// (`core/src/agent-system/device-runtime.ts`, `core/src/gateway/link.ts`) imports it; it goes with them (T12).
+export interface AgentStream {
+  send(text: string): void;
+  close(code?: number, reason?: string): void;
+  onMessage(handler: (message: string | Uint8Array) => void): () => void;
+  onClose(handler: (result: { code: number; reason: string }) => void): () => void;
+}
 type Frame = Record<string, any>;
 
 /** Phone-side half of the device stream; authorization belongs to the caller. */

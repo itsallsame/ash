@@ -4,6 +4,8 @@ import { redactText } from "../redact";
 
 export type Frame = Record<string, any>;
 export interface Command { command: string; args: string[]; env?: NodeJS.ProcessEnv }
+/** The environment of a runtime process: this one's, plus [extra]. */
+export const childEnv = (extra?: Record<string, string>): NodeJS.ProcessEnv => (extra && Object.keys(extra).length ? { ...process.env, ...extra } : process.env);
 
 /** Small NDJSON transport. Only control calls time out; a running turn has no deadline here. */
 export class JsonProcess {

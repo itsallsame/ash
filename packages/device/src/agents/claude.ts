@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { JsonProcess, type Command, type Frame } from "./process";
+import { childEnv, JsonProcess, type Command, type Frame } from "./process";
 import type { AgentSession, OpenOptions } from "./types";
 import { AshTools } from "./mcp";
 import { redactText } from "../redact";
@@ -21,7 +21,7 @@ export class ClaudeSession implements AgentSession {
     if (options.model) args.push("--model", options.model);
     if (options.effort) args.push("--effort", options.effort);
     if (options.system) args.push("--append-system-prompt", options.system);
-    this.process = new JsonProcess(command ?? { command: "claude", args }, options.cwd);
+    this.process = new JsonProcess(command ?? { command: "claude", args, env: childEnv(options.env) }, options.cwd);
     this.process.onFrame = frame => this.receive(frame);
     this.process.onExit = reason => {
       this.unavailable = true;

@@ -5,11 +5,13 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
-import type { CapabilitySpec, CallResult } from "../../sdk/src/api";
+import type { CapabilitySpec } from "../../sdk/src/link";
+import { WordError } from "../../sdk/src/message";
+import type { CallOutcome } from "../../link/src/hand";
 import { redactText } from "./redact";
 const exec = promisify(execFile);
-export const EGO_CAPABILITY: CapabilitySpec & { effect: "act"; label: string } = {
-  name: "browser.script", label: "在电脑浏览器执行任务脚本", effect: "act", risk: "structure",
+export const EGO_CAPABILITY: CapabilitySpec = {
+  name: "x.ego.browser.script", label: "在电脑浏览器执行任务脚本", effect: "act", risk: "structure",
   description: "Run JavaScript with ego-browser. A persistent task space is supplied as `task`; use task.page('p1'), goto, snapshot, click, fill. Give a distinct task name per job, reuse it to continue. Only use this space's pages, never adopt user tabs. Log results with console.log. Set finish=true after the task to close its tabs. This runs local JavaScript with the computer account's authority, not a read-only browser query.",
   input_schema: { type: "object", additionalProperties: false, required: ["task", "script"], properties: {
     task: { type: "string", minLength: 1, maxLength: 120 }, script: { type: "string", maxLength: 100000 }, finish: { type: "boolean" },
@@ -44,12 +46,12 @@ export class Browser {
     const file = join(this.stateDir, "browser-spaces.json"), temp = file + "." + randomUUID();
     await writeFile(temp, JSON.stringify(this.spaces), { mode: 0o600 }); await rename(temp, file);
   }
-  async call(args: Record<string, unknown>, caller: string, signal?: AbortSignal): Promise<CallResult> {
+  async call(args: Record<string, unknown>, caller: string, signal?: AbortSignal): Promise<CallOutcome> {
     if (typeof args.task !== "string" || !args.task || args.task.length > 120 || typeof args.script !== "string" || args.script.length > 100000 ||
       Object.keys(args).some(key => !["task", "script", "finish"].includes(key)) || (args.finish !== undefined && typeof args.finish !== "boolean"))
-      return { ok: false, error: "Invalid browser script arguments", content: [] };
+      throw new WordError("bad_request", "Invalid browser script arguments");
     const key = JSON.stringify([caller, args.task]);
-    if (this.busy.size) return { ok: false, error: "A browser script is already running; wait for its result", content: [] };
+    if (this.busy.size) throw new WordError("unavailable", "A browser script is already running; wait for its result", { recovery_hint: "retry" });
     this.busy.add(key);
     try {
       signal?.throwIfAborted(); await this.load();
@@ -71,7 +73,8 @@ export class Browser {
       return { ok: true, data, content: [{ type: "text", text: JSON.stringify(data) }] };
     } catch (error) {
       // exec errors include the source script and can contain credentials: do not echo them.
-      return { ok: false, content: [], error: signal?.aborted ? "Browser task cancelled; inspect its space before continuing" : "Browser script failed; inspect the task space before retrying actions" };
+      if (signal?.aborted) throw new WordError("cancelled", "Browser task cancelled; inspect its space before continuing");
+      throw new WordError("result_unknown", "Browser script failed; inspect the task space before retrying actions");
     } finally { this.busy.delete(key); }
   }
   get running(): boolean { return this.busy.size > 0; }

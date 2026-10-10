@@ -19,10 +19,10 @@ export async function deviceCli(start: typeof startDevice, args = process.argv.s
     if (!gateway || !pair) throw new Error("setup requires --gateway URL --pair CODE");
     const url = new URL(gateway); if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Use HTTPS for the gateway");
     await mkdir(root, { recursive: true, mode: 0o700 });
-    const config: DeviceConfig = { gateway, name: option("--name") ?? hostname(), kind: option("--kind") === "server" ? "server" : "laptop",
+    const config: DeviceConfig = { gateway, name: option("--name") ?? hostname(),
       stateDir: join(root, "state"), workdir: resolve(option("--workdir") ?? join(homedir(), "ash-shared")), installRoot: root };
     await writeFile(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-    console.log("Open Ash and approve this computer's pairing request.");
+    console.log("Open Ash and approve this computer's pairing request. Choose what it may do: lend its abilities, be a body, run local agents, web access.");
     const running = await start(config, pair); await running.close();
     if (args.includes("--no-service")) { console.log(`Paired. Start with: ash-device run --config ${configPath}`); return; }
     await mkdir(dirname(serviceFile), { recursive: true });
@@ -58,4 +58,9 @@ export async function deviceCli(start: typeof startDevice, args = process.argv.s
   const running = await start(config, option("--pair"), { restart: () => { void running.close().then(() => process.exit(0)); } });
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void running.close().then(() => process.exit(0)); });
   await running.run;
+  // The connection is over for good (revoked, or the hub speaks another protocol): leave the service stopped, not retrying.
+  const paired = JSON.parse(await readFile(join(config.stateDir, "paired.json"), "utf8").catch(() => "{}"));
+  console.log(paired.revoked ? "This computer was revoked by its owner; pair it again to reconnect." : "The connection to Ash ended and will not be retried.");
+  await running.close();
+  process.exit(paired.revoked ? 0 : 1);
 }
