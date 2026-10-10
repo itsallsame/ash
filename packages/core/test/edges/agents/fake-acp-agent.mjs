@@ -1,6 +1,6 @@
 // A stand-in agent for the DSH driver tests: standard ACP over stdio, and (FAKE_EXT=1) the `_ash/*` extensions.
 // Everything it is told is appended to the file FAKE_LOG as JSON lines, so a test can see what the agent saw.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const ext = process.env.FAKE_EXT === "1";
@@ -19,6 +19,8 @@ async function prompt(id, params) {
   log({ prompt: id, text, images: (params.prompt ?? []).filter((b) => b.type === "image").length });
   s.busy = true;
   s.cancelled = false;
+  // kill -9: no reply, stdout just closes. Only the first time (FAKE_KILLED is the marker), so a retry gets through.
+  if (text.includes("KILL9") && process.env.FAKE_KILLED && !existsSync(process.env.FAKE_KILLED)) { writeFileSync(process.env.FAKE_KILLED, "1"); process.kill(process.pid, "SIGKILL"); }
   if (text.includes("DIE") && !text.includes("上一轮中断了")) process.exit(1); // the hub's cut-off notice quotes what was cut off
   update(id, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "hmm" } });
   if (text.includes("TOOL")) {

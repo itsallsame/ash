@@ -5,6 +5,7 @@ export const RETRY_OPTION = "retry";
 
 export function failureCause(error: string | null | undefined): string {
   const text = String(error ?? "");
+  if (/agent process ended|process exited|process failed|stdin failed/i.test(text)) return "负责思考的进程中途退出了";
   if (/invalid JSON|tool input/i.test(text)) return "模型这次给出的操作指令格式坏了";
   if (/no model key/i.test(text)) return "还没有填模型的 Key（设置 → 密钥）";
   if (/\b(401|403)\b|auth|api.?key|unauthori[sz]ed|forbidden/i.test(text)) return "模型那边没认我的 Key";

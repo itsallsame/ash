@@ -364,9 +364,23 @@ export class AgentManager {
     slot.live = undefined;
     this.deps.revokeTools?.(slot.id);
     if (!live) { slot.phase = "stopped"; return Promise.resolve(); }
+    this.cutTurns(live, reason, dead);
     slot.phase = "stopping";
     const gone = dead ? Promise.resolve() : live.driver.stop(slot.id, reason).catch((error) => this.log(`agents: stopping ${slot.id}: ${errorText(error)}`));
     return slot.stopped = gone.then(() => { slot.phase = "stopped"; slot.stopped = undefined; });
+  }
+  /**
+   * The one place where a turn that was running when its process went away is ended: whatever discards a `Live` (the process
+   * died, a stop, a restart) ends the turns still open in it, once, and the `Live` is gone, so nothing can end them again. The
+   * driver does not report the end of a turn its process took with it. A process that died ends them as `error` (an owner's
+   * turn gets the failure notice and the retry card); one that was stopped on purpose ends them as `interrupted`.
+   */
+  private cutTurns(live: Live, reason: string, died: boolean): void {
+    const ended = died ? { outcome: "error" as const, error: `the agent process ended (${live.ended ?? reason})` } : { outcome: "interrupted" as const };
+    for (const lane of live.lanes.values()) {
+      if (!lane.busy || !lane.turn) continue;
+      this.finishTurn(live, lane, { event: "turn.ended", agent: live.id, key: lane.key, turn: lane.turn, ...ended }, reason);
+    }
   }
   private endWait(slot: Slot): void { slot.cancelWait?.(); slot.cancelWait = undefined; }
   private endStable(slot: Slot): void { slot.cancelStable?.(); slot.cancelStable = undefined; }
@@ -775,7 +789,10 @@ export class AgentManager {
         this.emit(ev.agent, "agent.tool", { turn: ev.turn, name: ev.name, phase: ev.phase, ...(ev.summary ? { summary: ev.summary } : {}), ...(ev.ok === undefined ? {} : { ok: ev.ok }) }, ev.turn);
         if (ev.phase === "start") this.trigger(live, ev.key, `${ev.key}:tool`, `Lane ${ev.key} called the tool ${ev.name}${ev.summary ? ` (${ev.summary})` : ""}.`, ev.turn);
         return;
-      case "turn.ended": this.finishTurn(live, lane, ev); return;
+      case "turn.ended":
+        if (lane.turn !== ev.turn) return; // a turn that was already ended (the process was cut off) or is not this attempt's: ended once
+        this.finishTurn(live, lane, ev);
+        return;
     }
   }
 
@@ -800,7 +817,12 @@ export class AgentManager {
     return lane?.speak ?? !!lane?.from?.includes(OWNER_ID);
   }
 
-  private finishTurn(live: Live, lane: Lane, ev: Extract<AgentEvent, { event: "turn.ended" }>): void {
+  /**
+   * `cut`: the turn ends because its process went away (see `cutTurns`), not because the driver said so. Nothing is handed to
+   * that driver any more; what was not failed stays `sent`, so the next process hears of it (`interruptedNotice`); the ask that
+   * was in it is told result_unknown, nobody knows whether it was done. The string is the reason named in that message.
+   */
+  private finishTurn(live: Live, lane: Lane, ev: Extract<AgentEvent, { event: "turn.ended" }>, cut?: string): void {
     const slot = this.slots.get(live.id);
     if (ev.outcome === "completed" && slot) this.stable(slot); // a round done: earlier failures no longer count, and a troubled agent is back
     lane.busy = false;
@@ -808,22 +830,24 @@ export class AgentManager {
     const rows = this.inbox.byTurn(ev.turn);
     // A turn that was answering the owner and failed is kept as failed, so 「重试」 can deliver the same batch again.
     const failed = ev.outcome === "error" && this.speaks(live.id, ev.key) && rows.some((r) => r.from === OWNER_ID);
-    this.inbox.finish(ev.turn, ev.outcome === "interrupted" ? "interrupted" : failed ? "failed" : "done");
+    if (!cut || failed) this.inbox.finish(ev.turn, ev.outcome === "interrupted" ? "interrupted" : failed ? "failed" : "done");
     const said = (this.outputs.get(ev.turn) ?? []).join("\n\n");
     this.outputs.delete(ev.turn);
     for (const row of rows) {
       const waiter = this.waiters.get(row.id);
       if (!waiter) continue;
       this.waiters.delete(row.id);
-      if (ev.outcome === "completed") waiter.resolve(said);
+      if (cut !== undefined) waiter.reject(new WordError("result_unknown", `${live.id} went away in the middle of the turn that took this question (${cut}); it is not known whether it was done`));
+      else if (ev.outcome === "completed") waiter.resolve(said);
       else waiter.reject(new WordError(ev.outcome === "cancelled" ? "cancelled" : "failed", ev.error ?? `the turn ended: ${ev.outcome}`));
     }
     if (failed) this.failureNotice(live.id, ev.turn, ev.error);
-    this.usageSoon(live.id);
+    if (cut === undefined) this.usageSoon(live.id);
     this.emit(live.id, "turn.ended", { turn: ev.turn, lane: ev.key, outcome: ev.outcome, ...(ev.error ? { error: ev.error } : {}) }, ev.turn);
     if (lane.screenPlanned) { lane.screenPlanned = false; this.bg(this.screenReconcile(live, ev), "screen reconcile"); }
     // A turn that another lane's `on` started does not start further lanes: that would loop.
     if (!(rows.length && rows.every((r) => r.word === "lane"))) this.trigger(live, ev.key, `${ev.key}:turn.ended`, `Lane ${ev.key} finished a turn (${ev.outcome}). Its turn id is ${ev.turn}; service:history/turn shows what happened in it.`, ev.turn);
+    if (cut !== undefined) return; // this process is gone: no reload, compact or drain on it
     if (lane.reloadPending) { lane.reloadPending = false; this.bg(this.reloadLane(live, lane), "reload"); }
     if (lane.compactPending) { lane.compactPending = false; this.bg(live.driver.session.compact(live.id, lane.key), "compact"); }
     this.bg(this.drain(live, lane), `drain ${live.id}/${lane.key}`);
@@ -842,7 +866,8 @@ export class AgentManager {
     const slot = this.slots.get(id);
     const live = slot?.live;
     if (!slot || !live) return;
-    if (slot.phase === "starting") { live.ended = reason ?? "the process ended"; return; } // the attempt takes it from here
+    live.ended = reason ?? "the process ended";
+    if (slot.phase === "starting") return; // the attempt takes it from here
     if (slot.phase !== "running") return;
     // A process that stayed up for a while has not been dying "in a row".
     if (this.now() - live.startedAt >= STABLE_RUN_MS) this.stable(slot);
