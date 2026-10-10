@@ -1,0 +1,376 @@
+/**
+ * The tool surface (HUB-MODULES §2.4, SPEC-02 §3): the one door for an agent, an MCP server on `/mcp`. A tool call
+ * becomes `router.send` as the agent whose bearer token it carries; nothing in the call can change who that is.
+ *
+ *   transport   Streamable HTTP (stateless), `Authorization: Bearer <token>`, no `Origin` header, calls only inside a turn
+ *               (receipt tools excepted). The link server mounts `handler` at `/mcp`.
+ *   tools       fixed tools = one word each; capability_list/describe/call; await_result/list_pending/cancel (tools.ts)
+ *   receipts    a call that takes over 15 s answers `accepted` + `request_id`; a call the gate parks for the owner answers
+ *               `waiting_owner` + `pending_id` (+ a `request_id`); both can be asked about later (jobs.ts)
+ *   results     one envelope for success and failure (result.ts)
+ *
+ * Wiring: `agentPolicy` and `currentTurn` come from the agents module (the agent's declaration; the turn it is running);
+ * the agents module calls `issueToken` every time it starts an agent process and hands the token to the agent's driver.
+ */
+import { createHash, randomBytes } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema, ListResourcesRequestSchema, ListResourceTemplatesRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from "../../../../sdk/src/versions";
+import { errorBody, type Caller, type Outgoing, type Reply } from "../../../../sdk/src/message";
+import type { Ledger } from "../../kernel/ledger";
+import { capabilityDescribe, capabilityList, toolAllowed, type AgentPolicy, type CatalogRegistry } from "./catalog";
+import { JobTable } from "./jobs";
+import { failure, plain, shapeError, shapeSuccess, type KeepAttachment, type Shaped } from "./result";
+import { ENVELOPE_APPROVAL, ENVELOPE_WAIT, fixedTool, RECEIPT_TOOLS, toolDefinitions, TOOL_NAMES, type WaitMode } from "./tools";
+
+export { TOOL_NAMES, toolWords, toolDefinitions, FIXED_TOOLS, fixedTool } from "./tools";
+export type { AgentPolicy } from "./catalog";
+export type { Shaped } from "./result";
+
+/** What `router.send` accepts from here; the kernel `Router` fits (its options may be narrower: a method parameter is bivariant). */
+export interface ToolsRouter {
+  send(msg: Outgoing, caller: Caller, opts?: { signal?: AbortSignal; approval?: { ttl_minutes?: number; purpose?: string } }): Promise<Reply>;
+}
+
+export interface ToolsEdgeOptions {
+  router: ToolsRouter;
+  registry: CatalogRegistry;
+  ledger: Pick<Ledger, "db" | "append">;
+  /** The agent's declaration (its `tools` and `words`), or null when there is no such agent. Asked on every call. */
+  agentPolicy(agentId: string): AgentPolicy | null;
+  /** The turn the agent is running now, or null. Asked on every call. */
+  currentTurn(agentId: string): string | null;
+  now?: () => number;
+  /** How long a call is waited for before a receipt (default 15 s). */
+  fastPathMs?: number;
+  /** The longest wait of `wait: true`, a sync tool and `await_result` (default 50 s: the agent runtime gives a tool call 60 s). */
+  maxWaitMs?: number;
+  /** How long a question to the owner, or `wait: false`, still waits for an answer that comes at once (an error, mostly). */
+  settleMs?: number;
+  log?: (...args: unknown[]) => void;
+}
+
+export interface ToolsEdge {
+  /** For the link server to mount at `/mcp`. */
+  handler(req: IncomingMessage, res: ServerResponse): void;
+  /** A new token for the agent; the one before stops working. Call on every start of the agent's process. The token lives in memory only. */
+  issueToken(agentId: string): string;
+  /** The agent's token stops working. */
+  revoke(agentId: string): void;
+  /** Stop every running call and forget all tokens. */
+  close(): void;
+}
+
+export const FAST_PATH_MS = 15_000;
+export const MAX_WAIT_MS = 50_000;
+const SETTLE_MS = 300;
+const DEFAULT_APPROVAL_MINUTES = 10;
+const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+const KEEP_SETTLED = 100;
+
+interface Job {
+  id: string;
+  agent: string;
+  member: string;
+  word: string;
+  label: string;
+  at: number;
+  mode: WaitMode;
+  expires_at?: number;
+  controller: AbortController;
+  /** Set when the call has its answer. Images are still in it. */
+  shaped: Shaped | null;
+  done: Promise<Shaped>;
+  /** In the table (a receipt was given, or the gate parked the call). */
+  persisted: boolean;
+}
+
+interface Dispatch {
+  agent: string;
+  turn: string;
+  to: string;
+  word: string;
+  body: Record<string, unknown>;
+  label: string;
+  mode: WaitMode;
+  wait?: boolean;
+  waitByDefault?: boolean;
+  approval?: { ttl_minutes?: number; purpose?: string };
+}
+
+const text = (value: unknown): value is string => typeof value === "string";
+const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** The promise's value, or undefined after `ms`. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), Math.max(0, ms));
+    timer.unref?.();
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(undefined); });
+  });
+}
+
+export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
+  const { router, registry, ledger } = options;
+  const now = options.now ?? Date.now;
+  const fastPathMs = options.fastPathMs ?? FAST_PATH_MS;
+  const maxWaitMs = options.maxWaitMs ?? MAX_WAIT_MS;
+  const settleMs = options.settleMs ?? SETTLE_MS;
+  const table = new JobTable(ledger.db(), now);
+
+  // ---- identity: a token per agent, in memory only. The key is the hash, so nothing compares the token itself.
+  const agentOfToken = new Map<string, string>();
+  const tokenOfAgent = new Map<string, string>();
+  const hash = (token: string) => createHash("sha256").update(token).digest("hex");
+
+  function revoke(agent: string): void {
+    const old = tokenOfAgent.get(agent);
+    if (old) agentOfToken.delete(old);
+    tokenOfAgent.delete(agent);
+  }
+  function issueToken(agent: string): string {
+    revoke(agent);
+    const token = randomBytes(24).toString("base64url");
+    agentOfToken.set(hash(token), agent);
+    tokenOfAgent.set(agent, hash(token));
+    return token;
+  }
+  const authenticate = (req: IncomingMessage): string | null => {
+    const header = req.headers.authorization ?? "";
+    const match = /^Bearer (\S+)$/.exec(header);
+    return match ? agentOfToken.get(hash(match[1]!)) ?? null : null;
+  };
+
+  // ---- calls in flight, and the receipts of the process's life
+  const live = new Map<string, Job>();
+  const trim = () => {
+    if (live.size <= KEEP_SETTLED * 2) return;
+    for (const [id, job] of live) { if (job.shaped) live.delete(id); if (live.size <= KEEP_SETTLED) break; }
+  };
+
+  /** The text goes into a message the agent itself is party to, so the ledger keeps it as an attachment the agent may read with service:blobs/read. */
+  const keeper = (agent: string, turn: string | undefined, request: string): KeepAttachment => (full) => {
+    const message = ledger.append({ from: agent, to: null, kind: "event", word: "tool.result", body: { request, text: full }, ...(turn ? { turn } : {}) });
+    const ref = (message.body as { text?: { $blob?: string; size?: number; mime?: string } }).text;
+    if (!ref || typeof ref !== "object" || !ref.$blob) throw new Error("the ledger did not keep the result as an attachment");
+    return { hash: ref.$blob, size: Number(ref.size), mime: String(ref.mime) };
+  };
+
+  function receiptData(job: Job): Record<string, unknown> {
+    return job.mode === "ask"
+      ? { status: "waiting_owner", request_id: job.id, member: job.member, word: job.word, ...(job.expires_at ? { expires_at: job.expires_at } : {}),
+          guidance: "The owner's answer is not here yet. Do other work or end the turn; collect the answer with await_result and this request_id when you need it, and do not ask the same thing again." }
+      : { status: "accepted", request_id: job.id, member: job.member, word: job.word,
+          guidance: "It is still running. Call await_result with this request_id; do not call it again. Cancel it with cancel." };
+  }
+
+  function persist(job: Job, turn: string | null): void {
+    if (job.persisted) return;
+    table.insert({ id: job.id, agent: job.agent, turn, member: job.member, word: job.word, label: job.label, at: job.at });
+    job.persisted = true;
+  }
+
+  function shapeReply(job: Job, turn: string, reply: Reply): Shaped {
+    const keep = keeper(job.agent, turn, job.id);
+    if (!reply.ok) return shapeError(reply.error, keep);
+    const data = reply.result?.data;
+    if (isObject(data) && data.status === "waiting_owner") {
+      // The gate parked the call for the owner: the same receipt, with the id of this call next to the pending_id.
+      return plain({ ...data, request_id: job.id, member: job.member, word: job.word,
+        guidance: "The owner has been asked; do not poll. The answer arrives as a message. Then reassess whether the action is still wanted and redeem it with human_pending_redeem {id: pending_id}." });
+    }
+    return shapeSuccess(reply.result, keep);
+  }
+
+  function start(d: Dispatch): Job {
+    const id = `r_${randomBytes(9).toString("base64url")}`;
+    const controller = new AbortController();
+    const job: Job = { id, agent: d.agent, member: d.to, word: d.word, label: d.label, at: now(), mode: d.mode, controller, shaped: null, done: undefined as unknown as Promise<Shaped>, persisted: false,
+      ...(d.mode === "ask" ? { expires_at: now() + (d.approval?.ttl_minutes ?? DEFAULT_APPROVAL_MINUTES) * 60_000 } : {}) };
+    const caller: Caller = { member: d.agent, via: "agent", local: true, turn: d.turn };
+    const opts = { signal: controller.signal, ...(d.approval ? { approval: d.approval } : {}) };
+    job.done = Promise.resolve()
+      .then(() => router.send({ to: d.to, kind: "request", word: d.word, body: d.body }, caller, opts))
+      .then((reply) => shapeReply(job, d.turn, reply), (error) => { options.log?.("tool call failed", d.to, d.word, error); return failure("internal", "Ash failed while handling this call"); })
+      .then((shaped) => {
+        job.shaped = shaped;
+        // A call the gate parked is final for this call: keep the receipt so it can be found again.
+        if (!job.persisted && !shaped.isError && shaped.structuredContent?.status === "waiting_owner") { table.insert({ id, agent: job.agent, turn: d.turn, member: job.member, word: job.word, label: job.label, at: job.at, outcome: shaped }); job.persisted = true; }
+        else if (job.persisted) table.settle(id, shaped);
+        return shaped;
+      });
+    live.set(id, job);
+    trim();
+    return job;
+  }
+
+  /** One call to a word, answered inline or with a receipt. */
+  async function dispatch(d: Dispatch, signal: AbortSignal): Promise<Shaped> {
+    const job = start(d);
+    const abort = () => job.controller.abort();
+    if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+    try {
+      const waitMs = d.mode === "sync" ? maxWaitMs
+        : d.mode === "ask" || d.wait === false ? settleMs
+        : d.wait === true || (d.wait === undefined && d.waitByDefault) ? maxWaitMs : fastPathMs;
+      const settled = await within(job.done, waitMs);
+      if (settled || job.shaped) { if (!job.persisted) live.delete(job.id); return settled ?? job.shaped!; }
+      persist(job, d.turn);
+      return plain(receiptData(job));
+    } finally { signal.removeEventListener("abort", abort); }
+  }
+
+  async function awaitResult(agent: string, id: string, timeoutMs: number, signal: AbortSignal): Promise<Shaped> {
+    const job = live.get(id);
+    if (job && job.agent === agent) {
+      if (!job.shaped) {
+        await within(Promise.race([job.done, new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))]), timeoutMs);
+        if (!job.shaped) return plain(receiptData(job));
+      }
+      return job.shaped;
+    }
+    const row = table.find(agent, id);
+    if (!row) return failure("not_found", `no receipt ${id} of yours`, { recovery_hint: "Use the request_id exactly as a receipt gave it; list_pending shows your calls that are still running." });
+    return row.outcome ?? failure("result_unknown", "Ash restarted while this call was running; whether it was done is not known.");
+  }
+
+  // ---- one tool call
+  const num = (value: unknown, name: string, min: number, max: number): string | null =>
+    value === undefined || (Number.isInteger(value) && (value as number) >= min && (value as number) <= max) ? null : `${name} must be an integer from ${min} to ${max}`;
+
+  /** The call envelope (SPEC-02 §3.3) is taken out of the arguments first; what is left is the word's body. */
+  function envelope(args: Record<string, unknown>, approval: boolean, wait: boolean): { rest: Record<string, unknown>; approval?: Dispatch["approval"]; wait?: boolean } | Shaped {
+    const rest = { ...args };
+    const out: { rest: Record<string, unknown>; approval?: Dispatch["approval"]; wait?: boolean } = { rest };
+    if (approval) {
+      const ttl = args.approval_ttl_minutes, purpose = args.purpose;
+      const problem = num(ttl, "approval_ttl_minutes", 1, 10080) ?? (purpose !== undefined && (!text(purpose) || purpose.length > 500) ? "purpose must be text of at most 500 characters" : null);
+      if (problem) return failure("bad_request", problem);
+      for (const name of ENVELOPE_APPROVAL) delete rest[name];
+      if (ttl !== undefined || purpose !== undefined) out.approval = { ...(ttl !== undefined ? { ttl_minutes: ttl as number } : {}), ...(purpose !== undefined ? { purpose: purpose as string } : {}) };
+    }
+    if (wait) {
+      if (args[ENVELOPE_WAIT] !== undefined && typeof args[ENVELOPE_WAIT] !== "boolean") return failure("bad_request", "wait must be true or false");
+      if (args[ENVELOPE_WAIT] !== undefined) out.wait = args[ENVELOPE_WAIT] as boolean;
+      delete rest[ENVELOPE_WAIT];
+    }
+    return out;
+  }
+  const refused = (value: object): value is Shaped => !("rest" in value);
+
+  async function callTool(agent: string, name: string, rawArgs: unknown, signal: AbortSignal): Promise<Shaped> {
+    const args = rawArgs === undefined || rawArgs === null ? {} : rawArgs;
+    if (!isObject(args)) return failure("bad_request", "the arguments must be an object");
+    if (!TOOL_NAMES.includes(name)) return failure("not_found", `no tool ${name}`, { recovery_hint: "Use one of the tools you were given." });
+    const policy = options.agentPolicy(agent);
+    if (!policy) return failure("forbidden", `${agent} is not a declared agent`);
+
+    // The receipt tools answer for the agent's own calls whether or not a turn is running.
+    if ((RECEIPT_TOOLS as readonly string[]).includes(name)) {
+      if (name === "list_pending") {
+        const pending = [...live.values()].filter((job) => job.agent === agent && !job.shaped).sort((a, b) => a.at - b.at)
+          .map((job) => ({ request_id: job.id, member: job.member, word: job.word, label: job.label, since: job.at }));
+        return plain({ pending });
+      }
+      if (!text(args.request_id) || !args.request_id) return failure("bad_request", "request_id is required");
+      if (name === "cancel") {
+        const job = live.get(args.request_id);
+        if (job && job.agent === agent) { const running = !job.shaped; if (running) job.controller.abort(); return plain({ request_id: job.id, cancelled: running }); }
+        const row = table.find(agent, args.request_id);
+        return row ? plain({ request_id: row.id, cancelled: false }) : failure("not_found", `no receipt ${args.request_id} of yours`);
+      }
+      const problem = num(args.timeout_ms, "timeout_ms", 0, maxWaitMs);
+      if (problem) return failure("bad_request", problem);
+      return awaitResult(agent, args.request_id, (args.timeout_ms as number | undefined) ?? maxWaitMs, signal);
+    }
+
+    if (!toolAllowed(policy, name)) return failure("forbidden", `${name} is not one of your tools`, { recovery_hint: "Your declaration does not include this tool; use another way or ask the owner." });
+    const turn = options.currentTurn(agent);
+    if (!turn) return failure("forbidden", "no turn is running for you; Ash tools work only while you are handling a message or a wake", { recovery_hint: "Do this inside a turn." });
+
+    try {
+      if (name === "capability_list") return text(args.member) || args.member === undefined ? capabilityList(registry, policy, args.member as string | undefined) : failure("bad_request", "member must be text");
+      if (name === "capability_describe") {
+        if (!text(args.member) || !args.member) return failure("bad_request", "member is required");
+        if (args.word !== undefined && !text(args.word)) return failure("bad_request", "word must be text");
+        return capabilityDescribe(registry, policy, args.member, args.word as string | undefined);
+      }
+      if (name === "capability_call") {
+        if (!text(args.member) || !text(args.word) || !args.member || !args.word) return failure("bad_request", "member and word are required");
+        if (args.body !== undefined && !isObject(args.body)) return failure("bad_request", "body must be an object");
+        const { member, word, body, ...top } = args;
+        const taken = envelope(top, true, true);
+        if (refused(taken)) return taken;
+        if (Object.keys(taken.rest).length) return failure("bad_request", `unknown arguments: ${Object.keys(taken.rest).join(", ")}; the word's input goes in body`);
+        return await dispatch({ agent, turn, to: member, word, body: (body ?? {}) as Record<string, unknown>, label: word, mode: "receipt", wait: taken.wait, approval: taken.approval }, signal);
+      }
+      const tool = fixedTool(name)!;
+      const taken = envelope(args, tool.approval, tool.wait);
+      if (refused(taken)) return taken;
+      const body = tool.adapt ? tool.adapt(taken.rest) : taken.rest;
+      return await dispatch({ agent, turn, to: tool.member, word: tool.word, body, label: tool.contract.label.doing, mode: tool.mode, wait: taken.wait,
+        waitByDefault: tool.waitByDefault, approval: taken.approval }, signal);
+    } catch (error) {
+      options.log?.("tool failed", name, error);
+      return failure("internal", "Ash failed while handling this call");
+    }
+  }
+
+  // ---- transport
+  function reply(res: ServerResponse, status: number, code: Parameters<typeof errorBody>[0], message: string, headers: Record<string, string> = {}): void {
+    if (res.headersSent) return;
+    res.writeHead(status, { "content-type": "application/json", ...headers }).end(JSON.stringify({ error: errorBody(code, message) }));
+  }
+
+  async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // A web page on the phone could reach a loopback port; only the agent runtime (no Origin) may talk here.
+    if (req.headers.origin !== undefined) return reply(res, 403, "forbidden", "requests with an Origin header are refused");
+    const agent = authenticate(req);
+    if (!agent) return reply(res, 401, "unauthorized", "a valid bearer token is required", { "www-authenticate": "Bearer" });
+    if (req.method !== "POST") return reply(res, 405, "bad_request", "POST only", { allow: "POST" });
+    if (!options.agentPolicy(agent)) return reply(res, 403, "forbidden", `${agent} is not a declared agent`);
+
+    let raw = "";
+    let size = 0;
+    for await (const chunk of req) {
+      size += (chunk as Buffer).length;
+      if (size > MAX_REQUEST_BYTES) return reply(res, 413, "too_large", "request too large");
+      raw += chunk;
+    }
+    let body: unknown;
+    try { body = raw ? JSON.parse(raw) : undefined; } catch { return reply(res, 400, "bad_request", "the body is not JSON"); }
+
+    // Stateless: one MCP server per request, so nothing of an agent survives in the transport.
+    const server = new Server({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION }, { capabilities: { tools: {}, resources: {} } });
+    // No resources, said explicitly: the agent runtime asks, and otherwise prints a warning on its protocol stream.
+    server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+    server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const policy = options.agentPolicy(agent);
+      return { tools: policy ? toolDefinitions().filter((tool) => toolAllowed(policy, tool.name)).map((tool) => ({ ...tool })) : [] };
+    });
+    server.setRequestHandler(CallToolRequestSchema, async (call, extra) => await callTool(agent, call.params.name, call.params.arguments, extra.signal) as never);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => { void transport.close(); void server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body);
+  }
+
+  return {
+    handler(req, res) {
+      serve(req, res).catch((error) => {
+        options.log?.("tool surface request failed", error);
+        reply(res, 500, "internal", "the tool surface failed");
+      });
+    },
+    issueToken,
+    revoke,
+    close() {
+      for (const job of live.values()) if (!job.shaped) job.controller.abort();
+      agentOfToken.clear();
+      tokenOfAgent.clear();
+    },
+  };
+}
