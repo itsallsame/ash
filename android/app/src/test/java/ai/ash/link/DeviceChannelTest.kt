@@ -180,6 +180,50 @@ class DeviceChannelTest {
         assertEquals("cancelled", conn.awaitFrame("result").getJSONObject("error").getString("code"))
     }
 
+    @Test fun aCancelRightAfterTheCallIsAnsweredOnceAndLeavesNoSlotBusy() {
+        link.handlers.onCall = { _, _ -> Thread.sleep(1); CallOutcome.Ok(listOf(Part.Text("done"))) }
+        val conn = link.connect()
+        val rounds = 80
+        for (i in 1..rounds) {
+            conn.call("r$i")
+            conn.send(JSONObject().put("t", "cancel").put("id", "r$i").put("reason", "cancelled"))
+            awaitTrue("r$i answered") { results(conn).any { it.getString("id") == "r$i" } } // one in flight at a time
+        }
+        Thread.sleep(150)
+        val byId = results(conn).groupBy { it.getString("id") }
+        assertEquals("exactly one result each", (1..rounds).map { "r$it" }.toSet(), byId.keys)
+        assertTrue(byId.values.all { it.size == 1 })
+        for (r in results(conn)) assertTrue(r.getBoolean("ok") || r.getJSONObject("error").getString("code") == "cancelled")
+
+        // All sixteen slots are free: sixteen calls run at once.
+        val release = CountDownLatch(1)
+        val started = CountDownLatch(16)
+        link.handlers.onCall = { _, _ -> started.countDown(); release.await(10, TimeUnit.SECONDS); CallOutcome.Ok(listOf(Part.Text("x"))) }
+        for (i in 1..16) conn.call("s$i")
+        assertTrue("sixteen at once", started.await(5, TimeUnit.SECONDS))
+        release.countDown()
+        awaitTrue("sixteen answered ok") { results(conn).count { it.getString("id").startsWith("s") && it.getBoolean("ok") } == 16 }
+    }
+
+    @Test fun aBigResultIsStreamedEvenWhenTheCancelInterruptCameLate() {
+        val image = ByteArray(600_000) { 7 }
+        val running = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        link.handlers.onCall = { _, _ ->
+            running.countDown()
+            while (true) { try { release.await(); break } catch (_: InterruptedException) {} }
+            Thread.currentThread().interrupt() // an interrupt left over when the result is sent
+            CallOutcome.Ok(listOf(Part.Image("image/png", Base64.getEncoder().encodeToString(image))))
+        }
+        val conn = link.connect()
+        conn.call("c1")
+        assertTrue(running.await(5, TimeUnit.SECONDS))
+        release.countDown()
+        val result = conn.awaitFrame("result")
+        assertTrue(result.getBoolean("ok"))
+        assertEquals("resource", result.getJSONArray("content").getJSONObject(0).getString("type"))
+    }
+
     @Test fun cancelOfAnUnknownCallIsIgnored() {
         val conn = link.connect()
         conn.send(JSONObject().put("t", "cancel").put("id", "nope").put("reason", "cancelled"))

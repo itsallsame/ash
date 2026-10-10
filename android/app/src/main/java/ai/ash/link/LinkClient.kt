@@ -503,11 +503,14 @@ class LinkClient(private val o: LinkOptions) {
 
     /** A call in flight. Whoever claims it first (the worker, `cancel`, or the connection dropping) answers it; the others stay silent. */
     private class Running(val id: String) : CallContext {
+        /** Guarded by `synchronized(this)` together with [started]: a cancel and the worker's start never miss each other. */
         @Volatile var cancelled = false
+        var started = false
         @Volatile var future: Future<*>? = null
         @Volatile var conn: Conn? = null
         private val answered = AtomicBoolean(false)
         fun claim(): Boolean = answered.compareAndSet(false, true)
+        fun isAnswered(): Boolean = answered.get()
         override fun isCancelled() = cancelled
         override fun progress(text: String) {
             if (!answered.get()) conn?.let { c -> runCatching { c.send(JSONObject().put("t", "progress").put("id", id).put("text", text)) } }
@@ -540,7 +543,9 @@ class LinkClient(private val o: LinkOptions) {
 
     /** Worker thread: runs the call and answers it. */
     private fun execute(c: Conn, entry: Running, request: CallRequest) {
-        val outcome = try {
+        // A cancel that came before this worker began is not an interrupt (there was nothing to interrupt): the call is not run.
+        val cancelledFirst = synchronized(entry) { entry.started = true; entry.cancelled }
+        val outcome = if (cancelledFirst) CallOutcome.Err("cancelled", "the call was cancelled") else try {
             handlers.call(request, entry)
         } catch (e: Throwable) {
             if (entry.cancelled) CallOutcome.Err("cancelled", "the call was cancelled")
@@ -548,7 +553,9 @@ class LinkClient(private val o: LinkOptions) {
         }
         // The slot is freed before the answer goes out, so a call the kernel sends after seeing it finds the slot free.
         post { if (running[request.id] === entry) running.remove(request.id) }
-        if (!entry.claim()) return // cancelled or dropped meanwhile: it was answered, or nobody is listening
+        if (!entry.claim()) return // dropped with the connection: nobody is listening
+        // A late interrupt (or one the handler ignored) must not make sending the result, e.g. a stream, fail.
+        Thread.interrupted()
         reply(c, request.id, outcome)
     }
 
@@ -610,10 +617,13 @@ class LinkClient(private val o: LinkOptions) {
 
     private fun cancelCall(c: Conn, id: String) {
         val entry = running[id] ?: return
-        entry.cancelled = true
         // Best effort only: raise the flag and interrupt the worker. The worker answers: `cancelled` if the interrupt made
         // the handler throw, the real result if the work finished anyway (an action that happened must not be reported as cancelled).
-        entry.future?.cancel(true)
+        // A worker that has not begun yet sees the flag when it does, and answers `cancelled` without running the call.
+        synchronized(entry) {
+            entry.cancelled = true
+            if (entry.started && !entry.isAnswered()) entry.future?.cancel(true)
+        }
     }
 
     private fun runAssess(c: Conn, frame: JSONObject) {
