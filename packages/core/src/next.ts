@@ -180,7 +180,8 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   link.onChannel("agent", remote.attach);
 
   let url = "";
-  const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id) => late.agents?.currentTurn(id) ?? null });
+  const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id) => late.agents?.currentTurn(id) ?? null,
+    turnActive: (id, turn) => late.agents?.turnActive(id, turn) ?? false });
   const drivers: Record<string, AgentDriverFactory> = {
     dsh: (report) => createDshDriver({ report, spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), readBlob: (ref) => ledger.blob.get(ref) }),
     ...remote.factories,
@@ -240,6 +241,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     url = `http://127.0.0.1:${port}`;
     await agents.startAll();
     router.recover();
+    tools.recover();
     gateService.start();
     clock.start();
     widgets.start();

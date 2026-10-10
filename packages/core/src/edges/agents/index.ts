@@ -22,6 +22,8 @@ export interface Agents {
   policyOf(id: string): AgentPolicy | null;
   /** The turn the agent is in now (on any of its lanes), or null. */
   currentTurn(id: string): string | null;
+  /** Whether that turn of the agent is still running (on any of its lanes). */
+  turnActive(id: string, turn: string): boolean;
   /** Put changed files and environment into a running agent now (e.g. after MEMORY.md was written). */
   refreshModules(agent: string, lane?: string): Promise<void>;
 }
@@ -38,6 +40,10 @@ export function createAgents(deps: AgentsDeps): Agents {
     currentTurn(id) {
       for (const lane of manager.liveOf(id)?.lanes.values() ?? []) if (lane.turn) return lane.turn;
       return null;
+    },
+    turnActive(id, turn) {
+      for (const lane of manager.liveOf(id)?.lanes.values() ?? []) if (lane.turn === turn) return true;
+      return false;
     } };
 }
 

@@ -8,6 +8,10 @@
  *   receipts    a call that takes over 15 s answers `accepted` + `request_id`; a call the gate parks for the owner answers
  *               `waiting_owner` + `pending_id` (+ a `request_id`); both can be asked about later (jobs.ts)
  *   results     one envelope for success and failure (result.ts)
+ *   come back   a receipt's answer that is still not fetched (await_result) when its turn is over is told to the agent once,
+ *               as a `wake` {lane: "back", reason: "result", context: {request_id, member, word, label, outcome}}: at once if
+ *               the turn is over when the answer comes, else when `turn.ended` is heard. `waiting_owner` is not told (its
+ *               answer comes from service:gate). Calls a restart interrupted are told by `recover()` (result_unknown).
  *
  * Wiring: `agentPolicy` and `currentTurn` come from the agents module (the agent's declaration; the turn it is running);
  * the agents module calls `issueToken` every time it starts an agent process and hands the token to the agent's driver.
@@ -22,7 +26,7 @@ import { errorBody, type Caller, type Reply } from "../../../../sdk/src/message"
 import type { Ledger } from "../../kernel/ledger";
 import type { Router } from "../../kernel/types";
 import { capabilityDescribe, capabilityList, toolAllowed, type AgentPolicy, type CatalogRegistry } from "./catalog";
-import { JobTable } from "./jobs";
+import { isWaitingOwner, JobTable, wakeOutcome, type JobRow } from "./jobs";
 import { failure, plain, shapeError, shapeSuccess, type Attachment, type Shaped } from "./result";
 import { ENVELOPE_APPROVAL, ENVELOPE_WAIT, fixedTool, RECEIPT_TOOLS, toolDefinitions, TOOL_NAMES, type WaitMode } from "./tools";
 
@@ -30,8 +34,11 @@ export { TOOL_NAMES, toolWords, toolDefinitions, FIXED_TOOLS, fixedTool } from "
 export type { AgentPolicy } from "./catalog";
 export type { Shaped } from "./result";
 
-/** All the tool surface needs of the router. Its options also carry `approval` ({ttl_minutes, purpose}, SPEC-02 §3.3) once the router takes it. */
-export type ToolsRouter = Pick<Router, "send">;
+/**
+ * All the tool surface needs of the router. `subscribe` is for `turn.ended` (a result that came while its turn was still
+ * running is told to the agent when the turn ends); without it only results that arrive after the turn are told.
+ */
+export type ToolsRouter = Pick<Router, "send"> & Partial<Pick<Router, "subscribe">>;
 
 export interface ToolsEdgeOptions {
   router: ToolsRouter;
@@ -41,6 +48,8 @@ export interface ToolsEdgeOptions {
   agentPolicy(agentId: string): AgentPolicy | null;
   /** The turn the agent is running now, or null. Asked on every call. */
   currentTurn(agentId: string): string | null;
+  /** Whether that turn of the agent is still running, on any of its lanes. Default: it is the turn `currentTurn` names. */
+  turnActive?(agentId: string, turn: string): boolean;
   now?: () => number;
   /** How long a call is waited for before a receipt (default 15 s). */
   fastPathMs?: number;
@@ -58,6 +67,11 @@ export interface ToolsEdge {
   issueToken(agentId: string): string;
   /** The agent's token stops working. */
   revoke(agentId: string): void;
+  /**
+   * Once at start, after `router.recover()`: the calls the last process left running answer `result_unknown`; tell their
+   * agents once (a wake, reason `result`).
+   */
+  recover(): void;
   /** Stop every running call and forget all tokens. */
   close(): void;
 }
@@ -68,6 +82,8 @@ const SETTLE_MS = 300;
 const DEFAULT_APPROVAL_MINUTES = 10;
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const KEEP_SETTLED = 100;
+/** Who the tool surface is when it wakes an agent for a result (SPEC-02 §3.4). */
+const TOOLS_CALLER: Caller = { member: "service:tools", via: "service", local: true };
 
 interface Job {
   id: string;
@@ -118,6 +134,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
   const maxWaitMs = options.maxWaitMs ?? MAX_WAIT_MS;
   const settleMs = options.settleMs ?? SETTLE_MS;
   const table = new JobTable(ledger.db(), now);
+  let closed = false;
 
   // ---- identity: a token per agent, in memory only. The key is the hash, so nothing compares the token itself.
   const agentOfToken = new Map<string, string>();
@@ -176,6 +193,33 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     job.persisted = true;
   }
 
+  // ---- the result comes back by itself (SPEC-02 §3.4): a receipt's answer is told to its agent in a wake, once, when the
+  // turn that made the call is over and the agent has not fetched the answer.
+  const turnActive = (agent: string, turn: string | null): boolean =>
+    turn !== null && (options.turnActive ? options.turnActive(agent, turn) : options.currentTurn(agent) === turn);
+
+  function wakeAgent(row: JobRow): void {
+    const outcome = row.outcome ?? failure("result_unknown", "Ash restarted while this call was running; whether it was done is not known.");
+    if (!options.agentPolicy(row.agent)) { options.log?.("tool surface: no agent to wake for the result", row.agent, row.id); return; }
+    const body = { lane: "back", reason: "result", context: { request_id: row.id, member: row.member, word: row.word, label: row.label, outcome: wakeOutcome(outcome, row.id) } };
+    router.send({ to: row.agent, kind: "request", word: "wake", body }, TOOLS_CALLER)
+      .then((reply) => { if (!reply.ok) options.log?.("tool surface: could not wake", row.agent, "for", row.id, reply.error.code); },
+        (error) => options.log?.("tool surface: could not wake", row.agent, "for", row.id, error));
+  }
+
+  /** Wake the agent for this call if it is owed: settled, not fetched, not told yet, and its turn is over. */
+  function wakeIfDue(id: string): void {
+    if (closed) return;
+    const row = table.get(id);
+    if (!row || row.state === "running" || row.taken || row.woken || turnActive(row.agent, row.turn)) return;
+    if (table.claimWake(id)) wakeAgent(table.get(id)!);
+  }
+
+  const stopListening = router.subscribe?.({ word: "turn.ended" }, (m) => {
+    const turn = (m.body as { turn?: unknown } | null)?.turn;
+    if (typeof turn === "string") for (const id of table.owing(m.from, turn)) wakeIfDue(id);
+  });
+
   function shapeReply(job: Job, reply: Reply & { ref?: string }): Shaped {
     if (!reply.ok) return shapeError(reply.error);
     const data = reply.result?.data;
@@ -199,9 +243,11 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       .then((reply) => shapeReply(job, reply), (error) => { options.log?.("tool call failed", d.to, d.word, error); return failure("internal", "Ash failed while handling this call"); })
       .then((shaped) => {
         job.shaped = shaped;
-        // A call the gate parked is final for this call: keep the receipt so it can be found again.
-        if (!job.persisted && !shaped.isError && shaped.structuredContent?.status === "waiting_owner") { table.insert({ id, agent: job.agent, turn: d.turn, member: job.member, word: job.word, label: job.label, at: job.at, outcome: shaped }); job.persisted = true; }
-        else if (job.persisted) table.settle(id, shaped);
+        // Shutting down aborts the calls: they stay as they were, so the next process finds them interrupted and tells their agents.
+        if (closed) return shaped;
+        // A call the gate parked is final for this call: keep the receipt so it can be found again. Its answer comes from service:gate, so no wake.
+        if (!job.persisted && isWaitingOwner(shaped)) { table.insert({ id, agent: job.agent, turn: d.turn, member: job.member, word: job.word, label: job.label, at: job.at, outcome: shaped, woken: true }); job.persisted = true; }
+        else if (job.persisted) { table.settle(id, shaped, !isWaitingOwner(shaped)); wakeIfDue(id); }
         return shaped;
       });
     live.set(id, job);
@@ -232,10 +278,12 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
         await within(Promise.race([job.done, new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))]), timeoutMs);
         if (!job.shaped) return plain(receiptData(job));
       }
+      table.take(id);
       return job.shaped;
     }
     const row = table.find(agent, id);
     if (!row) return failure("not_found", `no receipt ${id} of yours`, { recovery_hint: "Use the request_id exactly as a receipt gave it; list_pending shows your calls that are still running." });
+    table.take(id);
     return row.outcome ?? failure("result_unknown", "Ash restarted while this call was running; whether it was done is not known.");
   }
 
@@ -280,7 +328,11 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       if (!text(args.request_id) || !args.request_id) return failure("bad_request", "request_id is required");
       if (name === "cancel") {
         const job = live.get(args.request_id);
-        if (job && job.agent === agent) { const running = !job.shaped; if (running) job.controller.abort(); return plain({ request_id: job.id, cancelled: running }); }
+        if (job && job.agent === agent) {
+          const running = !job.shaped;
+          if (running) { job.controller.abort(); table.take(job.id); } // the agent knows how this ended: no wake for it
+          return plain({ request_id: job.id, cancelled: running });
+        }
         const row = table.find(agent, args.request_id);
         return row ? plain({ request_id: row.id, cancelled: false }) : failure("not_found", `no receipt ${args.request_id} of yours`);
       }
@@ -370,7 +422,12 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     },
     issueToken,
     revoke,
+    recover() {
+      for (const id of table.unknown()) wakeIfDue(id);
+    },
     close() {
+      closed = true;
+      stopListening?.();
       for (const job of live.values()) if (!job.shaped) job.controller.abort();
       agentOfToken.clear();
       tokenOfAgent.clear();
