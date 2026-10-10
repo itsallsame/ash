@@ -446,10 +446,11 @@ add("service:cost", "balance.get", "request", empty, free,
   { callers: OWNER, label: "在看余额", description: "The provider account balance for the configured API key; fails rather than reporting zero when it cannot be read." });
 add("service:cost", "quota.check", "request", obj({ agent: agentRef }, ["agent"]), obj({ allowed: bool, reason: str, used: num, limit: num }, ["allowed"]),
   { callers: KERNEL, label: "在查额度", description: "Whether an agent may open another turn under its daily quota, by the latest usage numbers. A soft limit: the numbers are only as fresh as the last poll." });
-add("service:cost", "usage.recorded", "event", obj({
+const USAGE_RECORDED = obj({
   caller: id, provider: nonempty, model: nonempty, input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe,
   cost: { type: "number", minimum: 0 }, ok: bool, at: nonnegativeSafe,
-}, ["caller", "provider", "model", "input_tokens", "output_tokens", "ok", "at"]), undefined,
+}, ["caller", "provider", "model", "input_tokens", "output_tokens", "ok", "at"]);
+add("service:cost", "usage.recorded", "event", USAGE_RECORDED, undefined,
   { direction: "in", label: "在记下用量", description: "One model call, as the llm edge reports it for the hub's small models or an agent driver reports it for an agent: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table." });
 
 // ===================================================================================================================
@@ -618,10 +619,18 @@ add("service:widgets", "widget.placed", "event", obj({ widgets: { type: "array",
   { direction: "in", label: "在记下放好的小组件", description: "The phone reports which Ash widgets are on its home screen. Sent by the hands module from the hand's event; not recorded." });
 add("service:widgets", "widget.bind", "event", obj({ widget: widgetId, card: widgetCardId }, ["widget", "card"]), undefined,
   { direction: "in", label: "在记下小组件选的卡片", description: "The owner picked which card one placed 'Ash 卡片' widget shows. Sent by the hands module from the hand's event; not recorded." });
-add("service:widgets", "widget.rendered", "event", obj({
+const WIDGET_RENDERED = obj({
   widgets: { type: "array", items: placedWidget, maxItems: 64 }, rendered: { type: "array", items: widgetRendered, maxItems: 200 },
-}, ["rendered"]), undefined,
+}, ["rendered"]);
+add("service:widgets", "widget.rendered", "event", WIDGET_RENDERED, undefined,
   { direction: "in", label: "在记下卡片画出来没有", description: "What a channel reports after being asked to show widget state: which widgets are placed and which cards it drew, with the problem or a preview picture. Turned from the channel's present result by the human module; not recorded." });
+// Events declared by their senders too (the router lets a member send the events its own words() declare, HUB-MODULES §1.4).
+add("person:owner", "typing", "event", empty, undefined,
+  { callers: KERNEL, direction: "out", label: "在等你说完", description: "The human module tells an agent the owner is composing a message to it." });
+add("person:owner", "widget.rendered", "event", WIDGET_RENDERED, undefined,
+  { callers: KERNEL, direction: "out", label: "在记下卡片画出来没有", description: "The human module passes on what a channel reported after showing widget state, for service:widgets." });
+add("service:agents", "usage.recorded", "event", USAGE_RECORDED, undefined,
+  { callers: KERNEL, direction: "out", label: "在记下用量", description: "An agent driver's model usage, passed to service:cost." });
 add("service:widgets", "widget.action", "event", obj({ card: widgetCardId, action: nonempty, owner: id, title: str, component: str, item: str, checked: bool, value: strings,
   context: obj({}, [], true) }, ["card", "action", "owner"]), undefined,
   { direction: "out", label: "在转达小组件上的点击", description: "The owner tapped, toggled or chose something on a home-screen card. owner is the card's creator, who decides what it means; component is the element, item the list item's key, checked / value the new state. " +

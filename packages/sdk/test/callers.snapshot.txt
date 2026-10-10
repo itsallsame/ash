@@ -157,6 +157,9 @@
 * service:widgets/widget.placed  kernel  event-in
 * service:widgets/widget.bind  kernel  event-in
 * service:widgets/widget.rendered  kernel  event-in
+* person:owner/typing  kernel  event-out
+* person:owner/widget.rendered  kernel  event-out
+* service:agents/usage.recorded  kernel  event-out
 * service:widgets/widget.action  kernel  event-out
 * person:owner/widget.preview  kernel
 * person:owner/widget.state  kernel  event-out
