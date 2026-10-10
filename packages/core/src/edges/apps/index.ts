@@ -6,7 +6,7 @@
 //   // on lifecycle.stop:  await apps.stopAll(event.deadline);
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { syncBuiltinApps, type BuiltinKept } from "./builtin";
+import { syncBuiltinApps, type BuiltinHooks, type BuiltinReport } from "./builtin";
 import type { Member } from "../../../../sdk/src/word";
 import { AppRuntime, type AppRuntimeOptions } from "./runtime";
 import { createAppsService } from "./words";
@@ -14,7 +14,7 @@ import { createAppsService } from "./words";
 export { AppRuntime, hostLauncher, type AppInfo, type AppLauncher, type AppOrigin, type AppReport, type AppRuntimeOptions, type AppSpawn } from "./runtime";
 export { AppBridge, APP_BRIDGE_TOOLS, ownerText, type BridgeResult, type RecentFacts } from "./bridge";
 export { AppGrants, needKey, type AppGrant } from "./store";
-export { BUILTIN_MARKER, RELEASE_DIR, type BuiltinKept, type BuiltinMarker } from "./builtin";
+export { BUILTIN_MARKER, newBuiltinReport, RELEASE_DIR, type BuiltinHooks, type BuiltinKept, type BuiltinMarker, type BuiltinReport } from "./builtin";
 export { createAppsService, APPS_ID } from "./words";
 
 export interface Apps {
@@ -35,11 +35,11 @@ export function createApps(options: AppRuntimeOptions): Apps {
  * The hub's own apps, built in with the release: the organs (ash-skills/organs/<id>) and the first-party apps (packages/apps,
  * bundled into the payload). Each is copied into the apps folder the first time, with a `.builtin.json` recording what the
  * release brought. A newer release replaces a folder the agent never changed; one it did change is kept, and appended to
- * `kept` (the runtime tells the main agent). Returns their ids, for `builtinApps` (installed without a card: the release
+ * `report.kept` (the runtime tells the main agent); `report.exact` names the folders that are exactly the release. Returns their ids, for `builtinApps` (installed without a card: the release
  * decides, not a card). See ./builtin.ts.
  */
-export function installBuiltinOrgans(source: string, root: string, kept: BuiltinKept[] = [], log?: (...args: unknown[]) => void): string[] {
-  return syncBuiltinApps(source, root, kept, log);
+export function installBuiltinOrgans(source: string, root: string, report?: BuiltinReport, log?: (...args: unknown[]) => void, hooks?: BuiltinHooks): string[] {
+  return syncBuiltinApps(source, root, report, log, hooks);
 }
 
 /** The app contract as a file in the apps folder (`apps.contract` returns the same text and names this path). Rewritten only when it differs. */

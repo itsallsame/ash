@@ -51,6 +51,8 @@ export interface AppRuntimeOptions {
   builtinApps?: string[];
   /** Built-in apps whose newer release was not applied because the agent changed them (see ./builtin.ts): the main agent is told once. */
   builtinKept?: BuiltinKept[];
+  /** The built-in apps whose folder is exactly the release: only these are granted again from their app.json. None when not given. */
+  builtinExact?: ReadonlySet<string>;
   contract?: { doc: string; docPath?: string };
   log?: (...args: unknown[]) => void;
   clock?: { now(): number };
@@ -160,7 +162,7 @@ export class AppRuntime {
     const agent = this.options.primaryAgent();
     for (const item of this.options.builtinKept ?? []) {
       const text = `Ash 自带的应用 ${item.id} 发了新版 ${item.shipped}，但你改过它（现在是 ${item.current}），所以没有覆盖，你的版本继续用。` +
-        `新版的文件放在 ${this.agentPath(`${RELEASE_DIR}/${item.id}`)}/ ；需要的话你自己决定要不要把新版的改动合进 ${this.agentPath(item.id)}/（合完改 app.json 的 version，再 apps.restart）。这条只提醒一次。`;
+        `新版的文件放在 ${this.agentPath(`${RELEASE_DIR}/${item.id}`)}/ ；需要的话你自己决定要不要把新版的改动合进 ${this.agentPath(item.id)}/（合完改 app.json 的 version，再 apps.restart）。${this.agentPath(RELEASE_DIR)}/ 每次启动都会被覆盖，是只读的，别在里面改。这条只提醒一次。`;
       this.log("builtin app kept", item.id, item.shipped);
       if (!agent) { this.log("builtin app kept: no main agent to tell", item.id); continue; }
       const dir = this.dir(item.id);
@@ -205,6 +207,7 @@ export class AppRuntime {
     const root = this.root;
     if (!root || !existsSync(root)) return found;
     for (const id of readdirSync(root).sort()) {
+      if (!ID.test(id)) continue; // not an app name (.new-x, _release, ...): never an app
       const item = this.readFolder(root, id);
       if (!item) continue;
       found.set(id, item);
@@ -469,9 +472,11 @@ export class AppRuntime {
   // ---- install and the other words ----------------------------------------------------------------------------------
 
   /**
-   * The hub's own organs are installed without a card: the owner's hub is installing its own parts. The release decides, so
-   * at every start the grants follow the app.json in the folder (version, needs, listens); only whether the app is switched
-   * on stays the owner's. An app the owner installed by hand under the same id is left alone.
+   * The hub's own organs are installed without a card: the owner's hub is installing its own parts. The release decides, but
+   * only while the folder is exactly the release (`builtinExact`): then the grants follow its app.json (version, needs,
+   * listens). What the agent wrote into a built-in app never widens anything: a folder it changed keeps the grants it has (and
+   * gets a first grant only when it has none). Whether the app is switched on stays the owner's. An app the owner installed
+   * by hand under the same id is left alone.
    */
   seedBuiltin(id: string): void {
     const manifest = this.manifest(id);
@@ -479,7 +484,8 @@ export class AppRuntime {
     const had = this.grants.get(id);
     if (had) {
       const same = (items: readonly unknown[]) => JSON.stringify(items.map((item) => JSON.stringify(item)).sort());
-      if (!had.builtin || (had.version === manifest.version && same(had.needs) === same(manifest.needs ?? []) && same(had.listens) === same(manifest.listens ?? []))) return;
+      if (!had.builtin || !this.options.builtinExact?.has(id)) return;
+      if (had.version === manifest.version && same(had.needs) === same(manifest.needs ?? []) && same(had.listens) === same(manifest.listens ?? [])) return;
       this.log("builtin app granted again", id, `${had.version} -> ${manifest.version}`);
     }
     this.grants.grant(id, manifest.version, manifest.needs ?? [], manifest.listens ?? [], { builtin: true });

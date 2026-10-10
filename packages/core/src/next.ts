@@ -16,7 +16,7 @@ import { WordError, type Caller } from "../../sdk/src/message";
 import { createAgents, bodyFileWriter } from "./edges/agents";
 import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
 import { createRemoteDrivers } from "./edges/agents/remote";
-import { createApps, installBuiltinOrgans, installContractDoc, type BuiltinKept } from "./edges/apps";
+import { createApps, installBuiltinOrgans, installContractDoc, newBuiltinReport } from "./edges/apps";
 import { createLocalBody, mainBodyKind } from "./edges/body/local";
 import { createHostService, HostClient, loadHostBoot } from "./edges/host";
 import { createLlm } from "./edges/llm";
@@ -224,11 +224,11 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   });
   const launcher = body.appLauncher();
   if (launcher) installContractDoc(launcher.root, APP_CONTRACT_DOC);
-  const builtinKept: BuiltinKept[] = [];
+  const builtin = newBuiltinReport();
   const apps = late.apps = createApps({
     router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log, contract: { doc: APP_CONTRACT_DOC },
-    ...(launcher ? { builtinKept,
-      builtinApps: [...installBuiltinOrgans(join(SKILLS, "organs"), launcher.root, builtinKept, log), ...installBuiltinOrgans(FIRST_PARTY_APPS, launcher.root, builtinKept, log)] } : {}),
+    ...(launcher ? { builtinKept: builtin.kept, builtinExact: builtin.exact,
+      builtinApps: [...installBuiltinOrgans(join(SKILLS, "organs"), launcher.root, builtin, log), ...installBuiltinOrgans(FIRST_PARTY_APPS, launcher.root, builtin, log)] } : {}),
   });
   const human = createHuman({
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
