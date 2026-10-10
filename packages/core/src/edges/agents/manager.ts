@@ -17,7 +17,7 @@ import type { Registry, Router, Vault } from "../../kernel/types";
 import { proxyEnv } from "../../../../sdk/src/proxy";
 import { failureText, RETRY_OPTION } from "./failure";
 import { Inbox, toDriverMessage, type InboxRow } from "./inbox";
-import { Modules, SERVICE_CALLER } from "./modules";
+import { Modules, SERVICE_CALLER, type OwnerChannel } from "./modules";
 import { lanesOf, Runs, type AgentDecl, type LaneDecl, type Run, type Templates } from "./runs";
 
 export interface Timers {
@@ -46,7 +46,8 @@ export interface AgentsDeps {
   /** The agent's process is up and the agent is registered (after every start, also after a crash): the tool surface tells it what it owes. */
   started?(agent: string): void;
   rules?(decl: AgentDecl): string | Promise<string>;
-  channels?(): string[];
+  /** The owner's open channels, for the environment's 「主人在哪」 line. */
+  channels?(): OwnerChannel[];
   now?(): number;
   timers?: Timers;
   newId?(): string;

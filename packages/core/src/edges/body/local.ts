@@ -3,11 +3,15 @@
  * The host's `isolation.kind` picks the implementation (SPEC-07 §2.2):
  * - `proot`: the Ubuntu root is read and written from the host side with `packages/workspace`; commands run inside the
  *   container through proot.
- * - `native`: no container; a directory on this machine and its shell (development machines, the fake host).
+ * - `native`: no container; a directory on this machine and its shell (development machines, the fake host). The directory
+ *   stands for the container's root: a path on this body means the same thing in both forms (`/root/work`, `/root/agents/x`
+ *   are `<workspace>/root/work`, ...), and a relative one starts at `/root/work`. Only the body knows this translation.
+ *   There is no real chroot here: `workspace.bash` and the runtime's own tools (DSH's shell) run on the machine and see the
+ *   machine's paths, so a program is given `runtimePath(cwd)`, the machine path of a body path.
  */
 import { spawn as spawnProcess, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import type { HostIsolation, HostNetwork } from "../../../../sdk/src/host";
 import { MAIN_BODY_ID } from "../../../../sdk/src/ids";
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
@@ -57,6 +61,9 @@ function nativeRuntimeArgs(args: string[], patch: string | undefined): string[] 
   return out;
 }
 
+/** The machine path of a body path in a native workspace: absolute from the body's root, relative from `/root/work`, `..` stops at the root. */
+const nativePath = (workspace: string, cwd: string): string => join(workspace, posix.resolve(PROOT_WORKDIR, cwd));
+
 export interface LocalBodyOptions {
   /** How the host isolates the main body (host.json `isolation`). */
   isolation: HostIsolation;
@@ -90,6 +97,12 @@ export interface LocalBody extends Member {
    * The program named `dsh` is the agent runtime: only the body knows where it is (and its `--patch` file) in either form.
    */
   spawn(argv: string[], opts?: { env?: Record<string, string>; cwd?: string }): ChildProcessWithoutNullStreams;
+  /**
+   * The path a program started on this body should be told for a body path (`cwd`): the same path in the container, the
+   * machine's own path under the workspace for `native`. For what the runtime is told about its place (the session's cwd),
+   * not for the hub's own file calls, which take body paths.
+   */
+  runtimePath(cwd: string): string;
   /** Where the apps live on this body and how their servers are started; null when this body cannot run them. */
   appLauncher(): BodyAppLauncher | null;
   /** The risk of one call (SPEC-01 §6.3): a write inside the work directory is none. For the gate's `assess`. */
@@ -123,8 +136,11 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     if (workspace) return workspace;
     const isolation = o.isolation;
     if (isolation.kind === "native") {
-      mkdirSync(isolation.native.workspace, { recursive: true });
-      return workspace = new Workspace({ root: isolation.native.workspace, ownership: "own", exec: o.exec, streams: o.streams });
+      mkdirSync(join(isolation.native.workspace, PROOT_WORKDIR), { recursive: true });
+      return workspace = new Workspace({
+        root: isolation.native.workspace, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", exec: o.exec, streams: o.streams,
+        spillDir: join(isolation.native.workspace, "var", "tmp", "ash-workspace"),
+      });
     }
     if (isolation.kind !== "proot") throw new WordError("unavailable", `The ${isolation.kind} main body is not supported yet`);
     const proot = isolation.proot;
@@ -153,9 +169,10 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
         }) as ChildProcessWithoutNullStreams;
       }
       if (isolation.kind === "native") {
-        // The development form: the program runs straight on this machine, its place under the workspace. `dsh` is the
-        // runtime the host names (its binary, home and patch file); any other program runs as written.
-        const cwd = join(isolation.native.workspace, opts.cwd ?? "");
+        // The development form: the program runs straight on this machine, its place under the workspace (the path on the
+        // body, as in the container: absolute from the root, relative from the work directory). `dsh` is the runtime the
+        // host names (its binary, home and patch file); any other program runs as written.
+        const cwd = nativePath(isolation.native.workspace, opts.cwd ?? "");
         mkdirSync(cwd, { recursive: true });
         const runtime = argv[0] === "dsh";
         const { dsh_bin, dsh_home, dsh_patch } = isolation.native;
@@ -165,10 +182,11 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
       }
       throw new WordError("unavailable", `The ${isolation.kind} main body cannot run a program yet`);
     },
+    runtimePath: (cwd) => (isolation.kind === "native" ? nativePath(isolation.native.workspace, cwd) : cwd),
     appLauncher() {
       if (isolation.kind === "native") {
         return {
-          root: join(isolation.native.workspace, "apps"),
+          root: join(isolation.native.workspace, "root", "apps"), agentRoot: "/root/apps",
           spawn: (app, dir, env) => ({
             command: app.server.command, args: app.server.args ?? [], cwd: dir,
             env: { HOME: process.env.HOME ?? "/root", PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: process.env.TMPDIR ?? "/tmp", LANG: "C.UTF-8", TERM: "dumb", ...(app.server.env ?? {}), ...env },

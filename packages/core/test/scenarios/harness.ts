@@ -214,6 +214,8 @@ export class ScriptedDriver {
   readonly stops: { agent: string; reason: string }[] = [];
   /** Everything handed to `send`, `followup` and `steer`, in order. */
   readonly deliveries: Delivery[] = [];
+  /** The prompt modules the hub injected into a lane (the content of each). */
+  readonly injections: { agent: string; key: string; modules: { id: string; content: string }[] }[] = [];
   readonly interrupts: { agent: string; key: string }[] = [];
   private fallback: TurnScript = () => {};
   private readonly scripts = new Map<string, TurnScript>();
@@ -254,7 +256,7 @@ export class ScriptedDriver {
 
   /** Empties what was recorded about turns, deliveries and tool calls. */
   forget(): void {
-    for (const list of [this.turns, this.calls, this.deliveries]) list.length = 0;
+    for (const list of [this.turns, this.calls, this.deliveries, this.injections]) list.length = 0;
   }
 
   private async closeLines(agent: string): Promise<void> {
@@ -286,7 +288,7 @@ export class ScriptedDriver {
         reload: async (agent, key) => ({ handle: open(agent, key) }),
         compact: async () => ({ compacted: false }),
       },
-      inject: async () => {},
+      inject: async (agent, key, content) => { this.injections.push({ agent, key, modules: (content.modules ?? []).map((m) => ({ id: m.id, content: m.content })) }); },
       configure: async () => ({}),
       plugins: async () => ({}),
       start: async (agent, spec) => {

@@ -4,6 +4,7 @@ import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, Drive
 import type { HostNetwork } from "../../../../sdk/src/host";
 import type { Member } from "../../../../sdk/src/word";
 import { createAgents, type Agents } from "../../../src/edges/agents";
+import type { OwnerChannel } from "../../../src/edges/agents/modules";
 import type { Ledger } from "../../../src/kernel/ledger";
 import type { Registry, Router } from "../../../src/kernel/types";
 import { scratchDir, writeFiles } from "../../fixtures/scratch";
@@ -156,6 +157,8 @@ export interface Options {
   drivers?: Record<string, AgentDriverFactory>;
   /** The host's network when the module starts. */
   network?: HostNetwork;
+  /** The owner's open channels, as the human edge reports them (read each time the environment is made). */
+  channels?: () => OwnerChannel[];
   /** Keep the ledger and the clock of an earlier fixture (a kernel restart). */
   from?: { ledger: Ledger; clock: { t: number } };
 }
@@ -191,7 +194,7 @@ export function fixture(opts: Options = {}) {
     drivers: opts.drivers ?? { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
     templatesDir,
     tools: (agent, lanes, allowed) => ({ mcp_url: "http://hub/mcp", tokens: Object.fromEntries(lanes.map((lane) => [lane, `tok-${agent}-${lane}`])), allowed: allowed ?? ["*"] }),
-    ...(opts.network ? { network: opts.network } : {}), rules: () => "rules v1", now: () => clock.t, newId: () => `n${++ids}-${randomBytes(2).toString("hex")}`, log: (...a) => logs.push(a),
+    ...(opts.network ? { network: opts.network } : {}), ...(opts.channels ? { channels: opts.channels } : {}), rules: () => "rules v1", now: () => clock.t, newId: () => `n${++ids}-${randomBytes(2).toString("hex")}`, log: (...a) => logs.push(a),
     timers: {
       every: (ms, fn) => { const e = { ms, fn }; timers.everies.push(e); return () => { timers.everies.splice(timers.everies.indexOf(e), 1); }; },
       after: (ms, fn) => { const a = { ms, fn, cancelled: false }; timers.afters.push(a); return () => { a.cancelled = true; }; },

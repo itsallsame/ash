@@ -28,8 +28,20 @@ export interface ModulesDeps {
   now(): number;
   /** The rules text for an agent (ash's rules, the first layer of the two-layer guidance). */
   rules?(decl: AgentDecl): string | Promise<string>;
-  /** Where the owner is, one short line per channel (「手机 App（本机，正在看）」). */
-  channels?(): string[];
+  /** The channels the owner has open now (the human edge's `channels()`); shown as 「主人在哪」 in the environment. */
+  channels?(): OwnerChannel[];
+}
+
+/**
+ * One channel of the owner: which kind it is, what it is called, whether it is on this machine. Whether the owner is looking
+ * at it is not here: that flips all the time and is only for delivery, not for what an agent is told (SPEC-08 §2.3).
+ */
+export interface OwnerChannel { client: string; kind: "app" | "web" | "im"; label: string; local: boolean }
+
+/** 「手机 App（本机）」「网页 Mac Chrome（远程）」 */
+function channelLine(c: OwnerChannel): string {
+  const name = c.kind === "app" ? "手机 App" : c.kind === "web" ? (c.label.startsWith("网页") ? c.label : `网页 ${c.label}`) : c.label;
+  return `${name}（${c.local ? "本机" : "远程"}）`;
 }
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -141,7 +153,7 @@ export class Modules {
     const lines: string[] = [];
     const canSpawn = decl.depth < MAX_DEPTH && may("service:agents/spawn");
     lines.push(`你：${decl.id}${decl.primary ? "（primary）" : ""} · 这一路：${lane} · 委托深度 ${decl.depth}/${MAX_DEPTH} · ${canSpawn ? "可以派子 agent" : "不能派子 agent"}`);
-    const channels = this.deps.channels?.() ?? [];
+    const channels = (this.deps.channels?.() ?? []).map(channelLine).sort();
     if (channels.length) lines.push(`主人在哪：${channels.join("；")}`);
     const hands = visible("device");
     if (hands.length) lines.push(`手：${hands.map((m) => `${m.id} ${m.name}${namespaces(m).length ? ` · ${namespaces(m).join("、")}` : ""}`).join("\n    ")}`);

@@ -33,6 +33,8 @@ export interface DshDriverDeps {
   /** An attachment's bytes (`ledger.blob.get`); without it attachments are only named in the message. */
   readBlob?(ref: string): { bytes: Uint8Array; mime: string } | null;
   argv?: string[];
+  /** The place a body path is for the runtime itself (the session's cwd). Absent: the path as it is (the container). */
+  runtimePath?(cwd: string): string;
   /** The owner's time zone (IANA), asked at every message; absent: the zone this process runs in. */
   timeZone?(): string;
   log?(...args: unknown[]): void;
@@ -202,7 +204,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
     let created = false;
     if (handle) {
       try {
-        const resumed = await p.client.request<{ configOptions?: unknown[] }>("session/resume", { sessionId: handle, cwd: p.cwd, mcpServers: servers(p.spec, key) });
+        const resumed = await p.client.request<{ configOptions?: unknown[] }>("session/resume", { sessionId: handle, cwd: deps.runtimePath?.(p.cwd) ?? p.cwd, mcpServers: servers(p.spec, key) });
         id = handle;
         options = resumed?.configOptions ?? [];
       } catch (error) {
@@ -211,7 +213,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
       }
     }
     if (!id) {
-      const made = await p.client.request<{ sessionId: string; configOptions?: unknown[] }>("session/new", { cwd: p.cwd, mcpServers: servers(p.spec, key) });
+      const made = await p.client.request<{ sessionId: string; configOptions?: unknown[] }>("session/new", { cwd: deps.runtimePath?.(p.cwd) ?? p.cwd, mcpServers: servers(p.spec, key) });
       if (typeof made?.sessionId !== "string") throw new Error("the runtime gave no session id");
       id = made.sessionId;
       options = made.configOptions ?? [];
