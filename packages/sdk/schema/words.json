@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "a05bf83c203853d3aa8a9e2a42d5d2202d931a24383799b2ab3d7d5bf7adc190",
+ "hash": "1ce31d673f15443ebfb9389d899ac936929da18ae1c8cbecd357688b30e7471b",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8621,6 +8621,11 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
      "cards": {
       "type": "array",
       "items": {
@@ -8695,7 +8700,7 @@
         "expired",
         "actions"
        ],
-       "additionalProperties": false
+       "additionalProperties": true
       }
      },
      "widgets": {
@@ -8736,6 +8741,12 @@
        ],
        "additionalProperties": false
       }
+     },
+     "bindings": {
+      "type": "array"
+     },
+     "previews": {
+      "type": "array"
      }
     },
     "required": [

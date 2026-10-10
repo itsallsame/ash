@@ -556,7 +556,9 @@ const widgetCardInfo = obj({ id: widgetCardId, title: nonempty, size: widgetSize
   expires_at: { anyOf: [nonnegativeSafe, { type: "null" }] }, expired: bool, actions: strings, problem: { anyOf: [str, { type: "null" }] } },
   ["id", "title", "size", "owner", "updated_at", "expires_at", "expired", "actions"]);
 const placedWidget = obj({ id: widgetId, type: choice("ash", "card") }, ["id", "type"]);
-const widgetListResult = obj({ cards: array(widgetCardInfo), widgets: array(obj({ id: widgetId, type: choice("ash", "card"), card: { anyOf: [widgetCardId, { type: "null" }] } }, ["id", "type", "card"])) }, ["cards", "widgets"]);
+/** The whole widget state, the same shape as the person:owner/widget.state event: cards (with their parsed a2ui), placed widgets, bindings, revision, preview requests. */
+const widgetListResult = obj({ revision: nonnegativeSafe, cards: array({ ...widgetCardInfo, additionalProperties: true }), widgets: array(obj({ id: widgetId, type: choice("ash", "card"), card: { anyOf: [widgetCardId, { type: "null" }] } }, ["id", "type", "card"])),
+  bindings: { type: "array" }, previews: { type: "array" } }, ["cards", "widgets"]);
 const previewTheme = choice("dark", "light");
 const previewSide: JsonSchema = { type: "integer", minimum: 1, maximum: 1200 };
 const previewDp = obj({ width: num, height: num }, ["width", "height"]);
