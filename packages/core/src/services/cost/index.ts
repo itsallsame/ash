@@ -25,34 +25,27 @@ export interface CostOptions {
    * `null` or `undefined` means this one cannot be asked (no key, no balance endpoint): it is skipped. A throw is a failed lookup.
    */
   fetchBalance?: (provider: BalanceProvider) => Promise<unknown>;
-  /** Which providers `balance.get` asks. Default both. */
-  providers?: readonly BalanceProvider[];
   /** The agent's daily limit in tokens (in plus out, all its lanes), or nothing for no limit. Read on every check, so a changed setting applies at once. */
   dailyTokenLimit?: (agent: string) => number | null | undefined;
-  /** Gives up on a provider's balance lookup after this long. Default 10 s. */
-  balanceTimeoutMs?: number;
   timeZone?: string;
   now?: () => number;
 }
 
-export interface CostService extends Member {
-  /** What `balance.get` does, for code that calls it directly. */
-  balances(): Promise<{ balances: { provider: BalanceProvider; at: number; balance: unknown }[]; errors: Record<string, string> }>;
-}
+const PROVIDERS: readonly BalanceProvider[] = ["deepseek", "openrouter"];
+/** A provider that takes longer than this to report its balance counts as failed. */
+const BALANCE_TIMEOUT_MS = 10_000;
 
 const count = (value: unknown): number | null => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
-export function createCostService(options: CostOptions): CostService {
+export function createCostService(options: CostOptions): Member {
   const db = options.ledger.db();
   createTables(db);
   const now = options.now ?? Date.now;
   const timeZone = () => options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const providers = options.providers ?? ["deepseek", "openrouter"];
-  const timeoutMs = options.balanceTimeoutMs ?? 10_000;
 
   function record(body: Record<string, unknown>): void {
     const input = count(body.input_tokens), output = count(body.output_tokens), at = count(body.at);
-    if (typeof body.caller !== "string" || !body.caller || typeof body.provider !== "string" || typeof body.model !== "string" || input === null || output === null || at === null || typeof body.ok !== "boolean")
+    if (typeof body.caller !== "string" || !body.caller || typeof body.provider !== "string" || !body.provider || typeof body.model !== "string" || input === null || output === null || at === null || typeof body.ok !== "boolean")
       throw new WordError("bad_request", "usage.recorded needs caller, provider, model, input_tokens, output_tokens, ok and at");
     // A price that is not a number is a price that is not known; it is left out, never written as 0.
     const cost = typeof body.cost === "number" && Number.isFinite(body.cost) && body.cost >= 0 ? body.cost : undefined;
@@ -61,7 +54,7 @@ export function createCostService(options: CostOptions): CostService {
 
   async function lookup(provider: BalanceProvider): Promise<unknown> {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), timeoutMs); });
+    const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), BALANCE_TIMEOUT_MS); });
     const work = Promise.resolve(options.fetchBalance!(provider));
     work.catch(() => {});
     try { return await Promise.race([work, expired]); } finally { if (timer) clearTimeout(timer); }
@@ -70,7 +63,7 @@ export function createCostService(options: CostOptions): CostService {
   async function balances() {
     const found: { provider: BalanceProvider; at: number; balance: unknown }[] = [];
     const errors: Record<string, string> = {};
-    for (const provider of providers) {
+    for (const provider of PROVIDERS) {
       if (!options.fetchBalance) break;
       try {
         const balance = await lookup(provider);
@@ -95,7 +88,6 @@ export function createCostService(options: CostOptions): CostService {
     kind: "service",
     name: "cost",
     words: (): WordContract[] => wordsOf(COST_ID),
-    balances,
     async handle(msg: Message, _ctx: HandleContext): Promise<WordResult | void> {
       const body = msg.body && typeof msg.body === "object" && !Array.isArray(msg.body) ? msg.body as Record<string, unknown> : {};
       switch (msg.word) {
@@ -118,7 +110,7 @@ export function createCostService(options: CostOptions): CostService {
           if (typeof agent !== "string" || !agent) throw new WordError("bad_request", "agent is required");
           const used = tokensToday(db, agent, now(), timeZone());
           const limit = options.dailyTokenLimit?.(agent);
-          if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) return { data: { allowed: true, used } };
+          if (typeof limit !== "number" || !Number.isFinite(limit)) return { data: { allowed: true, used } };
           return used < limit
             ? { data: { allowed: true, used, limit } }
             : { data: { allowed: false, used, limit, reason: `${agent} has used ${used} tokens today, over its daily limit of ${limit}` } };

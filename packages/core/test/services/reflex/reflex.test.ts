@@ -9,7 +9,7 @@ const ctx = (signal = new AbortController().signal): HandleContext => ({ signal,
 const request = (word: string, body: unknown): Message => ({ seq: 0, id: "m_req", ts: 0, from: "person:owner", to: "service:reflex", kind: "request", word, body });
 
 type Answer = unknown | (() => Promise<unknown>);
-function setup(jevAnswer?: Answer, replies: Record<string, Reply> = {}) {
+function setup(jevAnswer?: Answer, replies: Record<string, Reply> = {}, log: (line: string) => void = () => {}) {
   const { ledger } = openLedger();
   const sent: { msg: Outgoing; caller: Caller }[] = [];
   const router = { send: async (msg: Outgoing, caller: Caller): Promise<Reply> => { sent.push({ msg, caller }); return replies[`${msg.to}/${msg.word}`] ?? { ok: true, result: { data: {} } }; } };
@@ -18,7 +18,7 @@ function setup(jevAnswer?: Answer, replies: Record<string, Reply> = {}) {
     asked.push({ state, questions });
     return typeof jevAnswer === "function" ? (jevAnswer as () => Promise<unknown>)() : jevAnswer;
   } };
-  const service = createReflexService({ ledger, router, ...(jev ? { jev } : {}) });
+  const service = createReflexService({ ledger, router, log, ...(jev ? { jev } : {}) });
   const call = async (word: string, body: unknown, c = ctx()): Promise<WordResult> => (await service.handle(request(word, body), c)) as WordResult;
   const owner = (text: string) => ledger.append({ from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text } });
   const event = (from: string, word: string, body: unknown, turn?: string) => ledger.append({ from, to: null, kind: "event", word, body, ...(turn ? { turn } : {}) });
@@ -154,18 +154,24 @@ test("task.end withdraws the displayed requests, then interrupts the running tur
   assert.deepEqual(f.sent[1]!.msg.body, { id: "p2" });
 });
 
-test("task.end on a finished turn only takes the cards down; a request that is not the turn's is refused before anything stops", async () => {
+test("task.end on a finished turn only takes the cards down; one that cannot come down is logged and the turn is still stopped", async () => {
   const done = setup();
   done.event("agent:main", "turn.started", { turn: "t1", lane: "front", ids: [] });
   done.event("agent:main", "turn.ended", { turn: "t1", lane: "front", outcome: "completed" });
   assert.deepEqual((await done.call("task.end", { turn: "t1", pending_ids: ["p1"] })).data, { ended: true });
   assert.deepEqual(done.sent.map((s) => s.msg.word), ["pending.withdraw"]);
 
-  const foreign = setup(undefined, { "service:gate/pending.withdraw": { ok: false, error: { code: "forbidden", message: "not yours" } } });
-  foreign.event("agent:main", "turn.started", { turn: "t1", lane: "front", ids: [] });
-  assert.equal(await code(foreign.call("task.end", { turn: "t1", pending_ids: ["px"] })), "forbidden");
-  assert.ok(!foreign.sent.some((s) => s.msg.word === "session.interrupt"));
-  assert.deepEqual((await foreign.call("task.end", { turn: "nope", pending_ids: [] })).data, { ended: false });
+  const lines: string[] = [];
+  const stuck = setup(undefined, {
+    "service:gate/pending.withdraw": { ok: false, error: { code: "conflict", message: "not waiting any more" } },
+    "service:agents/session.interrupt": { ok: true, result: { data: { interrupted: true } } },
+  }, (line) => lines.push(line));
+  stuck.event("agent:main", "turn.started", { turn: "t1", lane: "front", ids: [] });
+  assert.deepEqual((await stuck.call("task.end", { turn: "t1", pending_ids: ["px", "py"] })).data, { ended: true });
+  assert.deepEqual(stuck.sent.map((s) => s.msg.word), ["pending.withdraw", "pending.withdraw", "session.interrupt"]);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0]!, /px/);
+  assert.deepEqual((await stuck.call("task.end", { turn: "nope", pending_ids: [] })).data, { ended: false });
 });
 
 // ---- task.outcome --------------------------------------------------------------------------------------------
@@ -190,7 +196,7 @@ test("task.outcome labels a finished turn from what the owner asked and what the
   assert.ok("outcome" in questions);
 });
 
-test("task.outcome: no label for a turn that did not end normally, said nothing, or when JEV cannot answer", async () => {
+test("task.outcome: no label for a turn that did not end normally, said nothing, or when JEV cannot answer or is not sure (below 0.6)", async () => {
   const cancelled = setup({ answers: { outcome: { choice: "delivered", confidence: 1 } } });
   finishedTurn(cancelled, "cancelled");
   assert.equal(await code(cancelled.call("task.outcome", { turn: "t1" })), "conflict");
@@ -207,6 +213,10 @@ test("task.outcome: no label for a turn that did not end normally, said nothing,
   const broken = setup({ answers: { outcome: { choice: "fine", confidence: 1 } } });
   finishedTurn(broken);
   assert.equal(await code(broken.call("task.outcome", { turn: "t1" })), "unavailable");
+
+  const unsure = setup({ answers: { outcome: { choice: "delivered", confidence: 0.4 } } });
+  finishedTurn(unsure);
+  assert.equal(await code(unsure.call("task.outcome", { turn: "t1" })), "unavailable");
 
   const noJev = setup();
   finishedTurn(noJev);

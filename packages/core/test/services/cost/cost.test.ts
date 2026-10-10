@@ -94,6 +94,19 @@ test("quota.check without a limit function allows everything", async () => {
   assert.equal(((await f.call("quota.check", { agent: "agent:main" })).data as any).allowed, true);
 });
 
+test("a limit of 0 is a limit (nothing may be used); only no setting at all means no limit", async () => {
+  const f = setup({ dailyTokenLimit: (agent) => (agent === "agent:main" ? 0 : undefined) });
+  assert.equal(((await f.call("quota.check", { agent: "agent:main" })).data as any).allowed, false);
+  assert.equal(((await f.call("quota.check", { agent: "agent:other" })).data as any).allowed, true);
+});
+
+test("any non-empty provider name is recorded, an empty one is refused", async () => {
+  const f = setup();
+  await f.record({ provider: "anthropic" });
+  assert.equal(await code(f.record({ provider: "" })), "bad_request");
+  assert.equal(f.ledger.db().prepare("SELECT provider FROM cost_usage").all().length, 1);
+});
+
 test("balance.get: what the providers report, skipping those that cannot be asked, and remembered for usage.get", async () => {
   const asked: BalanceProvider[] = [];
   const f = setup({ fetchBalance: async (p) => { asked.push(p); return p === "deepseek" ? { available: true, balances: [{ currency: "CNY", total: "12.30" }] } : null; } });
@@ -116,17 +129,4 @@ test("balance.get: one provider failing is reported next to the other; all faili
   const nothing = setup({ fetchBalance: async () => null });
   assert.equal(await code(nothing.call("balance.get")), "unavailable");
   assert.equal(await code(setup().call("balance.get")), "unavailable");
-
-  const slow = setup({ fetchBalance: () => new Promise(() => {}), balanceTimeoutMs: 20 });
-  await assert.rejects(slow.call("balance.get"), (e: WordError) => e.code === "failed" && (e.detail as any).deepseek === "timed out");
-  assert.deepEqual(((await slow.call("usage.get")).data as any).balances, []);
-});
-
-test("balances() is what a timer calls: it refreshes the stored numbers", async () => {
-  let total = "1";
-  const f = setup({ fetchBalance: async (p) => (p === "deepseek" ? { total } : null) });
-  await f.service.balances();
-  total = "2";
-  await f.service.balances();
-  assert.deepEqual(((await f.call("usage.get")).data as any).balances.map((b: any) => b.balance), [{ total: "2" }]);
 });

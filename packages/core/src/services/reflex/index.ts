@@ -27,8 +27,8 @@ export const REFLEX_ID = "service:reflex";
 const AGENTS = "service:agents";
 const GATE = "service:gate";
 const OWNER = "person:owner";
-/** Below this a JEV answer is not acted on (conversation.control) and a label should not be shown (task.outcome). */
-export const DEFAULT_THRESHOLD = 0.6;
+/** Below this a JEV answer is not acted on (conversation.control) and no label is given (task.outcome). */
+const DEFAULT_THRESHOLD = 0.6;
 
 export type ControlAction = "interrupt" | "pause" | "steer" | "followup";
 
@@ -38,8 +38,8 @@ export interface ReflexOptions {
   /** The JEV judge. Without it only the keywords judge and everything unclear is followup. */
   jev?: Pick<Jev, "evaluate">;
   threshold?: number;
-  /** Replaces how the state shown to JEV is made from the ledger. */
-  context?: (message: LedgerMessage, turn: { agent: string; lane: string; ids: string[] } | null) => ConversationState;
+  /** One line for something that went wrong and was passed over (default: console.warn). */
+  log?: (line: string) => void;
 }
 
 const SELF: Caller = { member: REFLEX_ID, via: "service", local: true };
@@ -65,6 +65,7 @@ export function createReflexService(options: ReflexOptions): Member {
   const { ledger, router } = options;
   const threshold = options.threshold ?? DEFAULT_THRESHOLD;
   const db = () => ledger.db();
+  const log = options.log ?? ((line: string) => console.warn(`[service:reflex] ${line}`));
 
   const rowInfo = (row: Row): Omit<TurnInfo, "running" | "outcome"> => {
     const body = parse(row.body);
@@ -91,7 +92,6 @@ export function createReflexService(options: ReflexOptions): Member {
   const textOf = (id: string): LedgerMessage | null => ledger.get(id);
 
   function conversationState(message: LedgerMessage, turn: ReturnType<typeof runningTurn>): ConversationState {
-    if (options.context) return options.context(message, turn ? { agent: turn.agent, lane: turn.lane, ids: turn.ids } : null);
     const first = turn?.ids.map(textOf).find((item) => item?.word === "say");
     const recent = ledger.page({ before: message.seq, limit: 50 })
       .filter((item) => item.word === "say" && (item.from === OWNER || item.from === turn?.agent) && typeof (item.body as { text?: unknown })?.text === "string")
@@ -145,6 +145,8 @@ export function createReflexService(options: ReflexOptions): Member {
     };
     try {
       const answer = choiceAnswer(await until(options.jev.evaluate(state, taskOutcomeQuestions), ctx.signal), "outcome", TASK_OUTCOMES);
+      // Not sure enough counts as the judge not being able to say: the capsule keeps its neutral label.
+      if (answer.confidence < threshold) throw new WordError("unavailable", "the judge was not sure enough to give a label");
       return { data: { outcome: answer.choice, confidence: answer.confidence } };
     } catch (error) {
       if (error instanceof WordError) throw error;
@@ -178,10 +180,10 @@ export function createReflexService(options: ReflexOptions): Member {
     if (!ids.every((id) => typeof id === "string" && id)) throw new WordError("bad_request", "pending_ids must be ids");
     const info = turnInfo(body.turn);
     if (!info) return { data: { ended: false } };
-    // Only the requests the owner saw and selected come down; the gate holds who made them and refuses the rest.
+    // The owner picked these cards, so the owner's say is enough. One that cannot come down is logged and the rest go on.
     for (const id of ids as string[]) {
       const reply = await send(GATE, "pending.withdraw", { id });
-      if (!reply.ok && reply.error.code === "forbidden") throw fail(reply);
+      if (!reply.ok) log(`task.end: pending ${id} was not withdrawn (${reply.error.code}: ${reply.error.message})`);
     }
     return { data: { ended: info.running ? await interrupt(info) : true } };
   }
