@@ -121,8 +121,10 @@ class HumanChannelTest {
         for (id in listOf("p3", "p4", "p5", "p6")) assertTrue(conn.presentResult(id).getBoolean("ok"))
 
         val notification = surfaces.getValue("notification")
-        assertEquals(listOf("show", "hide", "alert"), notification.asked.map { it.first })
-        assertEquals("n1", notification.asked[0].second.getString("id"))
+        // Each present runs on a worker of its own and SPEC-03 §5.4 promises no order between them (every one is answered by id).
+        assertEquals(setOf("show", "hide", "alert"), notification.asked.map { it.first }.toSet())
+        assertEquals(3, notification.asked.size)
+        assertTrue(notification.asked.all { it.second.getString("id") == "n1" })
         assertEquals("working", surfaces.getValue("status").asked.single().second.getString("state"))
         assertEquals(2, surfaces.getValue("widget").asked.single().second.getInt("revision"))
         assertEquals("query", surfaces.getValue("island").asked.single().first)
