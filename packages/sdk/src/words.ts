@@ -405,7 +405,7 @@ add("service:agents", "configure", "request", obj({ agent: agentRef, key: sessio
 add("service:agents", "plugins", "request", obj({ agent: agentRef, key: sessionKey, op: choice("list", "enable", "disable"), name: nonempty }, ["agent", "op"]), free,
   { effect: "write", risk: "structure", label: "在调整帮手的插件", description: "List, enable or disable the plugins of one agent's runtime. Plugins change what the agent can do, so an agent asking for this is asked about by the owner." });
 add("service:agents", "env.changed", "event", ENV_CHANGED, undefined,
-  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); the agents module restarts what needs it. Sent by the host module; not recorded." });
+  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); when the proxy is a different one, the agents module restarts at once the agents running on this phone (they are told the turn was cut off; their waiting messages go to the new process). Sent by the host module; not recorded." });
 // ===================================================================================================================
 // service:clock: durable timers
 // ===================================================================================================================

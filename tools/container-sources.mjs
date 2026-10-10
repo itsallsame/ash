@@ -30,6 +30,10 @@ export const CONTAINER_PATCH = [
   "",
 ].join("\n");
 
+/** apt/dpkg wait for a lock another apt holds (ash's own installation, or DSH's) instead of failing at once. */
+export const CONTAINER_APT_LOCK_PATH = "etc/apt/apt.conf.d/99ash-lock";
+export const CONTAINER_APT_LOCK = 'DPkg::Lock::Timeout "300";\n';
+
 /** What the finished container must hold, relative to the build's work directory (proot/ and ubuntu/). */
 export const CONTAINER_REQUIRED_FILES = [
   "proot/bin/proot",
@@ -50,6 +54,7 @@ export const CONTAINER_REQUIRED_FILES = [
   "ubuntu/opt/ash/ash-skills/skills",
   "ubuntu/opt/ash/ash-skills/persona",
   "ubuntu/etc/apt/sources.list.d/ubuntu.sources",
+  `ubuntu/${CONTAINER_APT_LOCK_PATH}`,
   "ubuntu/root/.config/pip/pip.conf",
   "ubuntu/root/.npmrc",
   "ubuntu/root/work",
@@ -62,6 +67,8 @@ export function missingContainerFiles(work) {
   const missing = CONTAINER_REQUIRED_FILES.filter((p) => {
     try { fs.lstatSync(path.join(work, p)); return false; } catch { return true; }
   });
+  const lock = path.join(work, "ubuntu", CONTAINER_APT_LOCK_PATH);
+  if (!missing.includes(`ubuntu/${CONTAINER_APT_LOCK_PATH}`) && fs.readFileSync(lock, "utf8") !== CONTAINER_APT_LOCK) missing.push(`ubuntu/${CONTAINER_APT_LOCK_PATH} (not the one of this build)`);
   const patch = path.join(work, "ubuntu/opt/ash/patch.yml");
   if (!missing.includes("ubuntu/opt/ash/patch.yml") && fs.readFileSync(patch, "utf8") !== CONTAINER_PATCH) missing.push("ubuntu/opt/ash/patch.yml (not the patch of this build)");
   return missing;
@@ -81,6 +88,7 @@ export function containerSourcesDigest(root) {
   };
   for (const pkg of CONTAINER_PACKAGES) walk(path.join(root, "packages", pkg), pkg);
   h.update("patch.yml\0"); h.update(CONTAINER_PATCH); h.update("\0");
+  h.update(`${CONTAINER_APT_LOCK_PATH}\0`); h.update(CONTAINER_APT_LOCK); h.update("\0");
   return h.digest("hex");
 }
 

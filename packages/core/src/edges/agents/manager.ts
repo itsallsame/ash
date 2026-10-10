@@ -8,11 +8,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { WordError, type Caller, type Message } from "../../../../sdk/src/message";
 import type { AgentDriver, AgentDriverFactory, AgentEvent, DriverAttachment, ModuleId, PromptModule } from "../../../../sdk/src/driver";
+import type { HostNetwork } from "../../../../sdk/src/host";
 import { OWNER_ID } from "../../../../sdk/src/ids";
 import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger } from "../../kernel/ledger";
 import type { Registry, Router, Vault } from "../../kernel/types";
+import { proxyEnv } from "../../../../sdk/src/proxy";
 import { failureText, RETRY_OPTION } from "./failure";
 import { Inbox, toDriverMessage, type InboxRow } from "./inbox";
 import { Modules, SERVICE_CALLER } from "./modules";
@@ -51,7 +53,14 @@ export interface AgentsDeps {
   log?(...args: unknown[]): void;
   /** Vault refs the runtime may hold for itself. */
   credentialRefs?: string[];
+  /** The host's network when the module starts: what the running agents were given, to tell later whether the proxy changed. */
+  network?: HostNetwork;
+  /** The runtime kinds whose processes run on the main body, so a new proxy needs a new process (default `dsh`). Those on a computer are not the hub's to restart. */
+  localKinds?: string[];
 }
+
+/** The proxy as the body gives it to a process: the same environment is the same proxy. */
+const proxyKey = (network: HostNetwork | null | undefined): string => JSON.stringify(proxyEnv(network));
 
 export const DEFAULT_CREDENTIAL_REFS = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 export const USAGE_POLL_MS = 10 * 60_000;
@@ -109,6 +118,7 @@ export class AgentManager {
   private readonly outputs = new Map<string, string[]>();
   private readonly typingUntil = new Map<string, number>();
   private paused = false;
+  private proxy: string;
   private readonly stoppers: (() => void)[] = [];
   private readonly timers: Timers;
   readonly now: () => number;
@@ -118,6 +128,7 @@ export class AgentManager {
     this.now = deps.now ?? Date.now;
     this.timers = deps.timers ?? realTimers;
     this.log = deps.log ?? (() => {});
+    this.proxy = proxyKey(deps.network);
     this.runs = new Runs(deps.ledger, this.now);
     this.inbox = new Inbox(deps.ledger.db());
     this.modules = new Modules({ router: deps.router, registry: deps.registry, now: this.now, rules: deps.rules, channels: deps.channels });
@@ -223,25 +234,46 @@ export class AgentManager {
     this.live.set(id, live);
     this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
+    this.rejectWaiters(id, new WordError("failed", `${id} could not be started: ${reason}`));
     this.tellOwner(`${id} 起不来了：连着失败了三次（${reason}）。我先停下它，不再自动重试；你可以在设置里让它重启。`);
   }
 
-  async stopAgent(id: string, reason: string, off = false): Promise<void> {
+  async stopAgent(id: string, reason: string, off = false, keepWaiters = false): Promise<void> {
     const live = this.live.get(id);
     if (off) this.runs.setDesired(id, "off");
     this.deps.revokeTools?.(id);
     if (!live) return;
     live.stopping = true;
     this.deps.registry.remove(id);
-    this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
+    if (!keepWaiters) this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
     this.live.delete(id);
     if (live.state !== "failed") await live.driver.stop(id, reason).catch((error) => this.log(`agents: stopping ${id}: ${errorText(error)}`));
   }
 
-  async restartAgent(id: string): Promise<void> {
-    await this.stopAgent(id, "restart");
+  /**
+   * The host's network changed. When the proxy is not the one the agents were started with, the agents that run on the main
+   * body are restarted at once, the way a process that ended is: a turn it was in is told as cut off, what waits in the inbox
+   * goes to the new process, which answers those who asked and wait. Whoever asked in the turn that was cut is told result_unknown (as after a crash). Temporary workers, agents that are off, and
+   * agents on a computer are left as they are.
+   */
+  onNetwork(network: HostNetwork): void {
+    const next = proxyKey(network);
+    if (next === this.proxy) return;
+    this.proxy = next;
+    const local = this.deps.localKinds ?? ["dsh"];
+    for (const live of [...this.live.values()]) {
+      const run = this.runs.get(live.id);
+      if (!run || run.desired !== "on" || run.spec.decl.ephemeral || !local.includes(run.spec.decl.runtime.kind) || live.state !== "running" || live.stopping) continue;
+      this.log(`agents: ${live.id}: the proxy changed, restarting its process`);
+      this.bg(this.restartAgent(live.id, "代理换了", true), `restart ${live.id} for the new proxy`);
+    }
+  }
+
+  /** `keepWaiters`: the new process answers those who ask and wait, not the old one's end (a planned restart). */
+  async restartAgent(id: string, why = "重启", keepWaiters = false): Promise<void> {
+    await this.stopAgent(id, "restart", false, keepWaiters);
     this.runs.setDesired(id, "on");
-    await this.startAgent(id, "重启");
+    await this.startAgent(id, why);
   }
 
   /** What was in flight when the agent went away is not sent again; the agent hears that it was cut off and decides. */
@@ -251,6 +283,8 @@ export class AgentManager {
     const cut = rows.filter((r) => r.turn);
     this.inbox.mark(rows.filter((r) => !r.turn).map((r) => r.id), "pending");
     this.inbox.mark(cut.map((r) => r.id), "interrupted");
+    // Whoever asked in the turn that was cut is told so now: nobody knows whether it was done. What still waits in the inbox is answered by the new process.
+    for (const r of cut) this.rejectWaiter(r.id, new WordError("result_unknown", `${id} was restarted in the middle of the turn that took this question (${why}); it is not known whether it was done`));
     if (!cut.length) return;
     const doing = cut.slice(0, 3).map((r) => r.text.replace(/\s+/g, " ").slice(0, 80)).join("；");
     this.enqueue(id, { id: this.newId(), from: SERVICE_CALLER.member, word: "wake", text: `${why}，上一轮中断了（当时在处理：${doing}）。要不要接着做，你自己决定。`, attachments: [], at: this.now() });
@@ -585,7 +619,6 @@ export class AgentManager {
     this.live.delete(id);
     this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
-    this.rejectWaiters(id, new WordError("failed", `${id} stopped unexpectedly`));
     this.log(`agents: ${id} ended: ${reason ?? "?"}`);
     const failures = this.now() - live.startedAt >= STABLE_RUN_MS ? 1 : live.failures + 1;
     if (failures >= MAX_FAILURES) { this.giveUp(id, reason ?? "the process ended", live); return; }

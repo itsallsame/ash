@@ -220,6 +220,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     tools: (agent, lanes, allowed) => ({ mcp_url: `${url}/mcp`, tokens: tools.issueTokens(agent, lanes), allowed: allowed ?? [...TOOL_NAMES] }),
     revokeTools: (agent) => tools.revoke(agent),
     started: (agent) => tools.catchUp(agent),
+    ...(spec.network ? { network: spec.network } : {}),
   });
   const launcher = body.appLauncher();
   if (launcher) installContractDoc(launcher.root, APP_CONTRACT_DOC);
@@ -270,6 +271,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     const { port } = await link.start();
     url = `http://127.0.0.1:${port}`;
     await agents.startAll();
+    body.provisionLater(); // the main agent is up: now the container may spend its time on python3
     router.recover();
     tools.recover();
     gateService.start();

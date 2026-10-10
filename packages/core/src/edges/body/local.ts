@@ -15,9 +15,9 @@ import { standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member, Risk, WordContract } from "../../../../sdk/src/word";
 import { Workspace, type Executor, type StreamPublisher } from "../../../../workspace/src";
 import type { AppJson } from "../../../../sdk/src/app";
-import { proxyEnv } from "./network";
+import { proxyEnv } from "../../../../sdk/src/proxy";
 import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot, type ProotConfig, type ProotSpawnOptions } from "./proot";
-import { startProvision } from "./provision";
+import { startProvision, type ProvisionState } from "./provision";
 
 /** Where DSH and its patch file are inside the container; the agent runtime only says `dsh --patch <that file>`. */
 const PROOT_DSH = "/opt/dsh/node_modules/.bin/dsh";
@@ -96,6 +96,12 @@ export interface LocalBody extends Member {
   assess(msg: Pick<Message, "word" | "body">): Promise<Risk | null>;
   /** The host's network changed: programs started from now on get the new proxy (those already running keep theirs). */
   setNetwork(network: HostNetwork): void;
+  /**
+   * Installs python3 in the container in the background, if the image lacks it: never waited for, once in this run, its
+   * output in `container-provision.log` of the state directory. Called once the main agent is up, so the first meeting is
+   * not slowed by it. Does nothing for a body that is not a proot container or has no state directory.
+   */
+  provisionLater(): void;
   /** Stops commands still running (kernel shutdown). */
   close(): Promise<void>;
 }
@@ -111,14 +117,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
   let workspace: Workspace | null = null;
   let network: HostNetwork | null = o.network ?? null;
   const runProot = o.runProot ?? runInProot;
-  const provisioning = { current: false };
-  let provisionTried = false;
-  // python3 is installed in the background the first time the container is used; never waited for, never retried in this run.
-  const provision = (proot: ProotConfig): void => {
-    if (provisionTried || !o.stateDir) return;
-    provisionTried = true;
-    startProvision(proot, o.stateDir, (argv) => runProot(proot, argv, { env: { ...proxyEnv(network), ...o.env } }), provisioning);
-  };
+  const provisioning: ProvisionState = { phase: "idle" };
   // The container may not be installed yet when the kernel starts; the body appears when its files do.
   const open = (): Workspace => {
     if (workspace) return workspace;
@@ -132,7 +131,6 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     if (!existsSync(proot.rootfs)) throw new WordError("unavailable", "The main body is not installed yet");
     mkdirSync(join(proot.rootfs, PROOT_WORKDIR), { recursive: true });
     writeResolvConf(proot);
-    provision(proot);
     return workspace = new Workspace({
       root: proot.rootfs, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", streams: o.streams, mounts: prootMounts(proot),
       exec: o.exec ?? ((command, place) => runProot(proot, ["/bin/bash", "-c", command], { workdir: place.cwd, env: { ...proxyEnv(network), ...o.env }, detached: true })),
@@ -150,7 +148,6 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
       if (isolation.kind === "proot") {
         writeResolvConf(isolation.proot);
         const runtime = argv[0] === "dsh";
-        provision(isolation.proot);
         return runProot(isolation.proot, runtime ? [PROOT_DSH, ...argv.slice(1)] : argv, {
           ...(opts.cwd ? { workdir: opts.cwd } : {}), env: { ...proxyEnv(network), ...(runtime ? PROOT_DSH_ENV : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
         }) as ChildProcessWithoutNullStreams;
@@ -197,6 +194,11 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
       try { return await open().assess(msg.word, (msg.body ?? {}) as Record<string, unknown>); } catch { return null; }
     },
     setNetwork(next) { network = next; },
+    provisionLater() {
+      if (isolation.kind !== "proot" || !o.stateDir || !existsSync(isolation.proot.rootfs)) return;
+      const proot = isolation.proot;
+      startProvision(proot, o.stateDir, (argv) => runProot(proot, argv, { env: { ...proxyEnv(network), ...o.env } }), provisioning);
+    },
     async close() { await workspace?.close(); },
   };
 }

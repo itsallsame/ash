@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { WordError, type Caller, type Message, type Outgoing, type Reply } from "../../../../sdk/src/message";
 import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage, DriverUsage, PromptModule } from "../../../../sdk/src/driver";
+import type { HostNetwork } from "../../../../sdk/src/host";
 import type { Member } from "../../../../sdk/src/word";
 import { createAgents, type Agents } from "../../../src/edges/agents";
 import type { Ledger } from "../../../src/kernel/ledger";
@@ -147,6 +148,8 @@ export interface Options {
   persona?: { file: string; content: string }[];
   /** Real drivers instead of the fake one. */
   drivers?: Record<string, AgentDriverFactory>;
+  /** The host's network when the module starts. */
+  network?: HostNetwork;
   /** Keep the ledger and the clock of an earlier fixture (a kernel restart). */
   from?: { ledger: Ledger; clock: { t: number } };
 }
@@ -180,7 +183,7 @@ export function fixture(opts: Options = {}) {
     drivers: opts.drivers ?? { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
     templates: { read: (name) => templates[name] ?? null },
     tools: (agent, lanes, allowed) => ({ mcp_url: "http://hub/mcp", tokens: Object.fromEntries(lanes.map((lane) => [lane, `tok-${agent}-${lane}`])), allowed: allowed ?? ["*"] }),
-    rules: () => "rules v1", now: () => clock.t, newId: () => `n${++ids}-${randomBytes(2).toString("hex")}`, log: (...a) => logs.push(a),
+    ...(opts.network ? { network: opts.network } : {}), rules: () => "rules v1", now: () => clock.t, newId: () => `n${++ids}-${randomBytes(2).toString("hex")}`, log: (...a) => logs.push(a),
     timers: {
       every: (ms, fn) => { const e = { ms, fn }; timers.everies.push(e); return () => { timers.everies.splice(timers.everies.indexOf(e), 1); }; },
       after: (ms, fn) => { const a = { ms, fn, cancelled: false }; timers.afters.push(a); return () => { a.cancelled = true; }; },

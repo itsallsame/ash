@@ -21,6 +21,7 @@
 //     opt/ash/ash-skills/            ash's skills plugin and persona templates (packages/ash-skills)
 //     opt/ash/patch.yml              the DSH patch that loads the three (tools/container-sources.mjs)
 //     etc/apt/sources.list.d/ubuntu.sources, root/.config/pip/pip.conf, root/.npmrc   mirrors
+//     etc/apt/apt.conf.d/99ash-lock  apt/dpkg wait for a held lock
 //     etc/resolv.conf                placeholder; the main body rewrites it with the host's DNS servers
 //     root/work/                     the agent workspace
 //     root/.dsh/                     DSH_HOME
@@ -37,7 +38,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CONTAINER_PACKAGES, CONTAINER_PATCH, containerSourcesDigest, missingContainerFiles } from "./container-sources.mjs";
+import { CONTAINER_APT_LOCK, CONTAINER_APT_LOCK_PATH, CONTAINER_PACKAGES, CONTAINER_PATCH, containerSourcesDigest, missingContainerFiles } from "./container-sources.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -91,6 +92,8 @@ Suites: noble-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 `,
+  // apt and dpkg wait up to five minutes for a lock, so DSH's own apt does not fail while ash installs python3.
+  [CONTAINER_APT_LOCK_PATH]: CONTAINER_APT_LOCK,
   "root/.config/pip/pip.conf": `[global]
 index-url = https://pypi.tuna.tsinghua.edu.cn/simple
 `,
