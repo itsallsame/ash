@@ -10,14 +10,14 @@ whenToUse: 要往某个应用里记东西或查东西；应用打不开、工具
 
 每一轮的上下文里列着已装应用：`app:<id>`、`role`、工具名。事情属于某个应用的职责，就记进那个应用，不另记在别处；记完用一句话告诉主人记在哪。
 
-1. `capability_call {member: "app:<id>", word: "<工具名>", body}`：应用自己的工具，读和改都直接执行，不弹卡，也不要跟主人说要他批。
+1. `capability_call {member: "app:<id>", word: "<工具名>", body}`：应用自己的工具：声明为只读或无风险的直接执行，其余和别的改动一样过审核，拿不准才问主人（等答复，别另绕）。
 2. 参数拿不准先 `capability_describe`，不要凭记忆猜。
 3. 主人在页面或桌面卡片上改了什么，会出现在上下文的「应用里最近的变化」。那是已经发生的事：以它为准接着做（他勾掉了一条待办，就别再提醒那件事），不用复述给他。
 4. 没有合适的应用就照常做；一类事反复出现，再提议写一个（技能 `build-app`）。
 
 ## 出了问题：先看，再改，再重启
 
-1. `apps.list` / `apps.describe`：`running` 是不是 `true`，`error` 写了什么，`cards[].problem` 有没有。
+1. `service:apps` 的 `apps.list` / `apps.describe`（手机上也有个同名的 `apps.list`，那是列手机上装的软件）：`running` 是不是 `true`，`error` 写了什么，`cards[].problem` 有没有。
 2. `apps.logs {id, lines?}`（默认 100 行，最多 400）：服务写到 stderr 的内容、协议错误、Ash 记的启动退出；`last_exit` 说上次怎么结束的（退出码或信号）。崩溃后 Ash 会自己按 1 秒、2 秒……最长 1 分钟的间隔重启，所以日志里常常是一串启动和退出。
 3. 改 `/root/apps/<id>/` 里的文件，然后 `apps.restart {id}`。它会先像 `apps.validate` 一样检查：不通过就不重启，旧的继续跑，问题在 `error.detail.problems`；改页面文件不用重启。
 4. 改了 `app.json` 的 `needs`：用 `apps.install {id}`，要主人重新批准。`needs` 没变的修改用 `apps.restart` 就够，不用打扰他。
@@ -43,7 +43,7 @@ whenToUse: 要往某个应用里记东西或查东西；应用打不开、工具
 
 ## 好的样子
 
-主人说「今天读完了《三体》，给五星」。你查上下文，有 `app:reading`，`role` 说管书单：`capability_call {member: "app:reading", word: "reading.finish", body: {book: "<id>", rating: 5}}`（id 不确定先 `reading.list`）。结果的 `activity` 是「读完了《三体》」，回主人：「记在阅读记录里了，五星。」不弹卡、不另存。
+主人说「今天读完了《三体》，给五星」。你查上下文，有 `app:reading`，`role` 说管书单：`capability_call {member: "app:reading", word: "reading.finish", body: {book: "<id>", rating: 5}}`（id 不确定先 `reading.list`）。结果的 `activity` 是「读完了《三体》」，回主人：「记在阅读记录里了，五星。」直接执行，不另存。
 
 后来主人说卡片没更新。你 `apps.describe` 发现 `running: false`，`apps.logs` 末尾是 `SyntaxError`，是你上次改 `server.mjs` 漏了括号：改好，`apps.restart` 通过检查，`running: true`，一句话告诉他。
 

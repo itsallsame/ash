@@ -6,7 +6,7 @@ whenToUse: 主人提到照片、截图、视频、相册，或要你看图、找
 
 # 照片、视频和相机
 
-这些能力在 `device:phone` 上。照片是主人的私人文件：用得有目的、说清看了什么、不外传。
+这些能力在主人的手机上（`device:<手机的 id>`，id 从上下文的设备列表拿）。照片是主人的私人文件：用得有目的、说清看了什么、不外传。
 
 ## 五个能力
 
@@ -18,7 +18,7 @@ whenToUse: 主人提到照片、截图、视频、相册，或要你看图、找
 | `media.save {path 或 data, name?, mime_type?, album?}` | 把图片或视频存进相册 | `path` 是你环境里的文件（如 `/root/work/out.jpg`）或 `/sdcard/...`；`data` 是 base64，约 10 MB 以内；默认存到 `Pictures/Ash`；只收图片和视频 |
 | `camera.capture {reason?, timeout_s?, max_size?}` | **请主人拍一张** | 手机的系统相机会打开，主人按快门；返回照片（图和工作区里的路径），**不会进相册**，要进相册再 `media.save`。`reason` 写一句短中文说明拍什么，Ash 在后台时它会出现在通知里。`timeout_s` 15–150，默认 120 |
 
-没有移动、改名、删除照片的能力。需要主人先在手机的「照片、视频和文件」权限里打开；没开时结果是 `permission_denied`，用 `human_show` 发一张 `type: "permission"`、`permission: "photos"` 的权限卡，让他自己去开，不要反复重试。
+没有移动、改名、删除照片的能力。需要主人先在手机的「照片、视频和文件」权限里打开；没开时结果是 `permission_denied`，用 `config.permission.request {name: "photos"}` 打开授权页，让他自己去开，不要反复重试。
 
 ## 场景一：看一张照片、找一张照片
 
@@ -61,7 +61,7 @@ whenToUse: 主人提到照片、截图、视频、相册，或要你看图、找
 - 没问就整理、移动或删除。
 - 以为 `camera.capture` 的照片已经在相册里。
 - 超时或取消后连续再请主人拍。
-- 权限没开时反复调用而不是发权限卡。
+- 权限没开时反复调用，而不是 `config.permission.request`。
 
 ## 怎么核对
 
