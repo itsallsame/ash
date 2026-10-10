@@ -141,7 +141,7 @@ class KernelSupervisor(
             if (clock.now() >= provisionRetryAt && provisioner.needsWork()) {
                 stopNode("install")
                 state = KernelState.INSTALLING
-                show("正在安装运行环境…")
+                show(KernelText.INSTALLING)
                 try {
                     provisioner.run { show(it) }
                 } catch (e: Exception) {
@@ -154,7 +154,7 @@ class KernelSupervisor(
             if (stopped()) {
                 if (n != null) { note("stopping ash core (stop requested)"); stopNode("stop_requested") }
                 state = KernelState.STOPPED
-                show("已停止")
+                show(KernelText.STOPPED)
                 return
             }
             if (n != null && !n.isRunning()) { onExit(); return tickStart() }
@@ -167,7 +167,7 @@ class KernelSupervisor(
             if (restartRequested) {
                 restartRequested = false
                 state = KernelState.RESTARTING
-                show("重启中")
+                show(KernelText.RESTARTING)
                 stopNode("restart")
                 failures = 0
                 nextStartAt = 0
@@ -188,7 +188,7 @@ class KernelSupervisor(
             state = KernelState.ERROR
             note("supervisor: ${e.javaClass.simpleName}: ${e.message}")
             lastError = e.message ?: e.javaClass.simpleName
-            show("出错：$lastError")
+            show(KernelText.error(lastError))
         }
     }
 
@@ -210,11 +210,11 @@ class KernelSupervisor(
         if (node != null) return
         if (clock.now() < nextStartAt) {
             state = KernelState.STARTING
-            show(lastError?.let { "出错：$it" } ?: if (failures > 2) "Ash 反复退出，正在重试" else "重启中")
+            show(lastError?.let { KernelText.error(it) } ?: if (failures > 2) KernelText.RETRYING else KernelText.RESTARTING)
             return
         }
         state = KernelState.STARTING
-        show("启动中…")
+        show(KernelText.STARTING)
         restartRequested = false
         if (everStarted) note(if (failures > 0) "ash core is down; restarting (attempt ${failures + 1})" else "ash core is down; starting it")
         startedAt = clock.now()
@@ -265,14 +265,14 @@ class KernelSupervisor(
         watch.ready(clock.now())
         state = KernelState.RUNNING
         note("ash core $version is ready")
-        show(statusText ?: "运行中")
+        show(statusText ?: KernelText.RUNNING)
     }
 
     override fun onRestart(reason: String) = requestRestart("asked by the core: $reason")
 
     override fun onStatus(text: String, state: String) {
-        statusText = text.ifBlank { null }
-        if (this.state == KernelState.RUNNING || this.state == KernelState.STARTING) show(statusText ?: "运行中")
+        statusText = KernelText.fromCore(text, state)
+        if (this.state == KernelState.RUNNING || this.state == KernelState.STARTING) show(statusText ?: KernelText.RUNNING)
     }
 
     private companion object {

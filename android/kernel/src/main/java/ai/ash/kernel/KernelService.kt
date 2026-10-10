@@ -39,7 +39,7 @@ class KernelService : Service() {
     override fun onCreate() {
         super.onCreate()
         Notifications.createChannel(this)
-        startForeground(Notifications.ID, Notifications.build(this, "启动中…"))
+        startForeground(Notifications.ID, Notifications.build(this, KernelText.STARTING))
         val paths = Paths(this)
         log = RotatingLog(paths.logs)
         secrets = Secrets(this)

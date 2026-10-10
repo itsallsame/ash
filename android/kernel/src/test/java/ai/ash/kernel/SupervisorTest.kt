@@ -83,7 +83,7 @@ class SupervisorTest {
         launcher.failNext = 2
         sup.tick() // fails
         assertEquals(0, launcher.launched.size)
-        assertTrue(shown.last().startsWith("出错"))
+        assertTrue(shown.last().startsWith("出错了"))
         clock.advance(4_000); sup.tick()
         assertEquals(0, launcher.launched.size) // still inside the 5 s wait
         clock.advance(1_500); sup.tick() // fails again, 10 s wait
@@ -277,7 +277,7 @@ class SupervisorTest {
         clock.advance(60_000); sup.tick()
         assertEquals(2, provisioner.runs)
         assertEquals(2, launcher.launched.size)
-        assertTrue(shown.contains("正在安装运行环境…"))
+        assertTrue(shown.contains(KernelText.INSTALLING))
     }
 
     // ---- status text
@@ -285,7 +285,7 @@ class SupervisorTest {
     @Test fun readyAndStatusSetShapeTheNotification() {
         sup.tick()
         sup.onReady("0.4.0", 1)
-        assertEquals("运行中", shown.last())
+        assertEquals("正在运行", shown.last())
         sup.onStatus("2 个任务在跑", "running")
         assertEquals("2 个任务在跑", shown.last())
     }
