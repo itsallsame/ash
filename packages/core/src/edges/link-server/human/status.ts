@@ -26,6 +26,7 @@ export interface TaskFrame {
 /** What the summarizer is asked: the recent steps, oldest first. The assembly builds it with `createSummarizer` (edges/llm/summary). */
 export type Summarize = (steps: string[]) => Promise<string | null>;
 
+/** A completed turn is "本轮回复" only when the agent said something to the owner in it; otherwise it just ended (frame `reply` is empty). */
 const OUTCOME_TEXT: Record<string, string> = { completed: "本轮回复", cancelled: "已停止" };
 const MAX_STEPS = 5;
 
@@ -104,7 +105,7 @@ export class TaskStatus {
     const state = waiting ? "waiting_you" : this.state;
     const text = waiting ? "等待你回应"
       : this.state === "idle" ? "在线"
-      : this.ended ? OUTCOME_TEXT[this.outcome] ?? "本轮已结束"
+      : this.ended ? (this.outcome === "completed" && this.replies.length === 0 ? "本轮已结束" : OUTCOME_TEXT[this.outcome] ?? "本轮已结束")
       : running?.label ?? (this.summary || "等待模型响应");
     const agent = this.agent || this.o.primary();
     const visible = this.steps.slice(-MAX_STEPS).map((s) => `${s.state === "ok" ? "✓ " : s.state === "failed" ? "失败 · " : ""}${s.label}`);

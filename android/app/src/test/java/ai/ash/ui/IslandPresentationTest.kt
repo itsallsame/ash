@@ -15,6 +15,13 @@ class IslandPresentationTest {
         assertEquals("reply", value.getString("kind")); assertEquals(frame.reply, value.getString("reply"))
         assertTrue(value.getBoolean("mayClose"))
     }
+    @Test fun aCompletedTurnWithNothingSaidProjectsAnEmptyReplyTheIslandDoesNotOpenFor() {
+        val value = IslandPresentation.project(frame.copy(reply = "", text = "本轮已结束"), 5, false, true, false, null, emptyMap(), 2000)
+        assertEquals("reply", value.getString("kind")); assertEquals("", value.getString("reply"))
+        assertFalse(ai.ash.screen.island.IslandRules.opensCard(value.getString("kind"), waitingOnOwner = false))
+        assertTrue(ai.ash.screen.island.IslandRules.settles(value.getString("kind")))
+        assertTrue(value.getBoolean("mayClose"))
+    }
     @Test fun closeCannotDismissPendingApprovalOrCancelAnything() {
         val value = IslandPresentation.project(frame.copy(cards = listOf(card)), 5, false, true, false, null, emptyMap(), 2000)
         assertFalse(value.getBoolean("mayClose"))

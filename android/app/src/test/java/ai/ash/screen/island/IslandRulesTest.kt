@@ -44,4 +44,27 @@ class IslandRulesTest {
         assertTrue(e is OwnerTypingException)
         assertFalse(IllegalStateException("other") is OwnerTypingException)
     }
+
+    @Test fun aCardTheIslandOpenedGoesBackOnceAnswered() {
+        // An approval answered: nothing waits on the owner, no answer in flight; the turn's end (reply or not) does not hold it open.
+        for (kind in listOf("working", "thinking", "reply", "result", "incomplete", "stopped"))
+            assertTrue(kind, IslandRules.closesWhenAnswered(openedByItself = true, formIsCard = true, kind = kind, waitingOnOwner = false, answerSending = false, editing = false))
+    }
+
+    @Test fun anEmptyReplyAfterTheAnswerDoesNotKeepAnEmptyPanelOpen() {
+        // Same rule for the "reply" kind a finished turn without reply text gets.
+        assertTrue(IslandRules.closesWhenAnswered(true, true, "reply", waitingOnOwner = false, answerSending = false, editing = false))
+    }
+
+    @Test fun aCardStaysWhileItIsStillWaitingBeingAnsweredOrTypedInto() {
+        assertFalse(IslandRules.closesWhenAnswered(true, true, "working", waitingOnOwner = true, answerSending = false, editing = false))
+        assertFalse(IslandRules.closesWhenAnswered(true, true, "working", waitingOnOwner = false, answerSending = true, editing = false))
+        assertFalse(IslandRules.closesWhenAnswered(true, true, "ask", waitingOnOwner = false, answerSending = false, editing = true))
+        assertFalse("a step in Ash still waits", IslandRules.closesWhenAnswered(true, true, "in_app", waitingOnOwner = false, answerSending = false, editing = false))
+    }
+
+    @Test fun aCardTheOwnerOpenedIsLeftToTheOwner() {
+        assertFalse(IslandRules.closesWhenAnswered(openedByItself = false, formIsCard = true, kind = "reply", waitingOnOwner = false, answerSending = false, editing = false))
+        assertFalse(IslandRules.closesWhenAnswered(openedByItself = true, formIsCard = false, kind = "reply", waitingOnOwner = false, answerSending = false, editing = false))
+    }
 }

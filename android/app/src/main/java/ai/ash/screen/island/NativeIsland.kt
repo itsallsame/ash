@@ -76,6 +76,8 @@ internal object NativeIsland : IslandView.Actions {
     private var snapshot: JSONObject? = null
     private var restore: (() -> Unit)? = null
     private var form = "compact"
+    /** The card is open because the island opened it (a question or approval), not because the owner did; only that kind goes back by itself. */
+    private var openedByItself = false
     private var episode = ""
     /** Settles a finished turn's mark back to the plain pill when the owner never looked ([IslandRules.SETTLE_MS]). */
     private var settleTimer: Runnable? = null
@@ -325,7 +327,10 @@ internal object NativeIsland : IslandView.Actions {
         else if (incoming == null && ((reply.isNotEmpty() && ended) || (model.optBoolean("canStop") && cards.none { pending(it) }))) selected = null
         else if (current == null) selected = (incoming ?: cards.lastOrNull())?.optString("id")
         // Only what needs the owner opens the card by itself; a reply or an ended turn marks the pill and settles later.
-        if (next != episode && IslandRules.opensCard(model.optString("kind"), incoming != null)) form = "card"
+        if (next != episode && IslandRules.opensCard(model.optString("kind"), incoming != null)) { if (form != "card") openedByItself = true; form = "card" }
+        // What it opened for has been answered (or is gone): back to the pill, whatever the turn's end then shows.
+        else if (IslandRules.closesWhenAnswered(openedByItself, form == "card", model.optString("kind"), incoming != null,
+                cards.any { pending(it) && it.optString("localState") == "sending" }, editing)) { form = "compact"; openedByItself = false }
         settleTimer?.let { main.removeCallbacks(it) }; settleTimer = null
         if (incoming == null && IslandRules.settles(model.optString("kind")) && form == "compact") {
             val turn = model.optString("turn")
@@ -477,7 +482,7 @@ internal object NativeIsland : IslandView.Actions {
     } }
     fun release() { main.post {
         visible = false; setEditing(false); detach(); root = null; island = null; params = null; padParams = null; snapshot = null; restore = null
-        episode = ""; form = "compact"; selected = null; submitted.clear(); showOriginal = false; notice = ""; maxCard = 0
+        episode = ""; form = "compact"; openedByItself = false; selected = null; submitted.clear(); showOriginal = false; notice = ""; maxCard = 0
     } }
 
     private fun setEditing(value: Boolean) {
@@ -519,11 +524,12 @@ internal object NativeIsland : IslandView.Actions {
 
     // ---- owner actions ----
     override fun tap() {
+        openedByItself = false
         if (form != "card") { form = "card"; render() }
         // The resident entry opens straight into talking to Ash.
         if (resident()) setEditing(true)
     }
-    override fun collapse() { setEditing(false); if (form != "compact") { form = "compact"; render() } }
+    override fun collapse() { setEditing(false); openedByItself = false; if (form != "compact") { form = "compact"; render() } }
     /** Closes the island for this turn, whatever it shows; something new waiting on the owner brings it back. */
     override fun close() {
         val model = snapshot ?: return
