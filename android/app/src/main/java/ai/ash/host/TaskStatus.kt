@@ -1,6 +1,6 @@
 package ai.ash.host
 
-import ai.ash.link.HumanSend
+import ai.ash.human.HumanSend
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -125,13 +125,10 @@ object TaskStatus {
         val ids = frame.cards.filter { it.state == "waiting" || it.kind == "approval" && it.state == "answered" }.map { it.pendingId }.distinct()
         Thread({
             val accepted = runCatching {
-                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
-                val out = HumanSend.send(JSONObject().put("to", "service:reflex").put("kind", "request")
+                val out = HumanSend.send(ctx, JSONObject().put("to", "service:reflex").put("kind", "request")
                     .put("word", "task.end").put("body", JSONObject().put("turn", turn).put("pending_ids", org.json.JSONArray(ids)))
                     .put("wait", true).put("client_id", "capsule-end:${frame.session}:$turn"))
-                val reply = out.optJSONObject("reply")
-                reply?.optString("reply_to") == out.optString("id") && reply?.optJSONObject("body")?.optBoolean("ok") == true &&
-                    reply.optJSONObject("body")?.optJSONObject("result")?.optBoolean("ended") == true
+                HumanSend.data(out)?.optBoolean("ended") == true
             }.getOrDefault(false)
             main.post {
                 stopping = null
@@ -163,10 +160,10 @@ object TaskStatus {
         if (!prefs.edit().putString(id, value).commit()) { done(false, "无法保存答复，请重试"); return@post }
         Thread({
             val ok = runCatching {
-                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
-                HumanSend.send(JSONObject().put("to", route.to).put("kind", "response").put("word", "ask")
-                    .put("reply_to", id).put("body", JSONObject().put("ok", true).put("result", result))
-                    .put("client_id", "capsule-answer:$id")).optString("id").isNotBlank()
+                // The answer is the response to the kernel's `ask`: a reply whose result data is the choice.
+                HumanSend.send(ctx, JSONObject().put("to", route.to).put("kind", "response").put("word", "ask")
+                    .put("reply_to", id).put("body", JSONObject().put("ok", true).put("result", JSONObject().put("data", result)))
+                    .put("client_id", "capsule-answer:$id")).getJSONObject("message").optString("id").isNotBlank()
             }.getOrDefault(false)
             main.post { done(ok, if (ok) { if (choice == "deny") "已拒绝" else if (card.kind == "question") "已回答" else "已批准，等待继续" } else "答复未确认，可原样重试") }
         }, "ash-capsule-answer").start()
@@ -180,10 +177,9 @@ object TaskStatus {
         }
         Thread({
             val accepted = runCatching {
-                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
-                val response = HumanSend.send(JSONObject().put("to", target).put("kind", "request")
+                HumanSend.send(ctx, JSONObject().put("to", target).put("kind", "request")
                     .put("word", "say").put("body", JSONObject().put("text", text)).put("wait", false).put("client_id", clientId))
-                response.optString("id").isNotBlank()
+                    .getJSONObject("message").optString("id").isNotBlank()
             }.getOrDefault(false)
             main.post { done(accepted, if (accepted) "已发送给 Ash" else "发送未确认，点发送可重试") }
         }, "ash-capsule-input").start()
@@ -194,13 +190,10 @@ object TaskStatus {
         stopping = turn; notice = "正在停止…"; render()
         Thread({
             val accepted = runCatching {
-                // TODO(T11b-2): a human channel `send`; until then HumanSend fails.
-                val out = HumanSend.send(JSONObject().put("to", "service:reflex").put("kind", "request")
+                val out = HumanSend.send(ctx, JSONObject().put("to", "service:reflex").put("kind", "request")
                     .put("word", "task.stop").put("body", JSONObject().put("turn", turn)).put("wait", true)
                     .put("client_id", UUID.randomUUID().toString()))
-                val id = out.optString("id"); val reply = out.optJSONObject("reply")
-                id.isNotBlank() && reply?.optString("reply_to") == id && reply.optString("from") == "service:reflex" &&
-                    reply.optJSONObject("body")?.optBoolean("ok") == true && reply.optJSONObject("body")?.optJSONObject("result")?.optBoolean("cancelled") == true
+                HumanSend.data(out)?.optBoolean("cancelled") == true
             }.getOrDefault(false)
             main.post {
                 if (model.frame?.turn == turn && model.frame?.canStop == true) {

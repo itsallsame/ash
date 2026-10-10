@@ -174,7 +174,14 @@ class TestHandlers : HandHandlers {
 }
 
 /** A client wired to a [FakeKernel] with a fake clock. */
-class TestLink(val kernel: FakeKernel = FakeKernel(), val store: FakeEventStore = FakeEventStore()) : AutoCloseable {
+class TestLink(
+    val kernel: FakeKernel = FakeKernel(),
+    val store: FakeEventStore = FakeEventStore(),
+    /** What the client is given as its handlers, made from [handlers] (the human channel's tests add `present`). */
+    wrap: (TestHandlers) -> HandHandlers = { it },
+    val surfaces: List<String> = listOf("chat"),
+    humanFrames: ((JSONObject) -> Unit)? = null,
+) : AutoCloseable {
     val clock = FakeClock()
     val handlers = TestHandlers()
     val backend = SoftKeyBackend()
@@ -188,12 +195,13 @@ class TestLink(val kernel: FakeKernel = FakeKernel(), val store: FakeEventStore 
             headers = { mapOf("Authorization" to "Bearer $token") },
             hand = HandInfo("phone", "Test phone", "0.4.0", "android-35", identity.publicKey),
             humanLabel = "Test phone chat",
-            surfaces = listOf("chat"),
+            surfaces = surfaces,
             sign = identity::sign,
             connector = OkHttpConnector(),
             codec = Repo.codec,
             outbox = outbox,
-            handlers = handlers,
+            handlers = wrap(handlers),
+            humanFrames = humanFrames,
             clock = clock,
             random = { 0.5 },
             inlineLimit = 1000,

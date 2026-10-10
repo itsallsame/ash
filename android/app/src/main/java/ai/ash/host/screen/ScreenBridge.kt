@@ -1,7 +1,7 @@
 package ai.ash.host.screen
 
+import ai.ash.caps.config.ScreenRecovery
 import ai.ash.host.TaskStatus
-import ai.ash.screen.ScreenLink
 import ai.ash.screen.island.NativeIsland
 import ai.ash.ui.HomeActivity
 import android.content.Context
@@ -9,20 +9,30 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
-import ai.ash.caps.config.ScreenRecovery
 
 /**
- * Ash's face to the task island, which the accessibility service draws: the island is told what to show, and the owner's
- * actions on it come back here. The screen tools are capabilities ([ai.ash.caps.screen.ScreenCapabilities]), not part of this.
+ * Ash's side of the task island, which the accessibility service draws: one layer. What the island shows comes from the
+ * task status the kernel presents (`present` on the `island` / `status` surfaces, see [ai.ash.human.HumanChannel]); what the
+ * owner does on it comes back through [NativeIsland.Ash] to [TaskStatus]. The screen tools are capabilities
+ * ([ai.ash.caps.screen.ScreenCapabilities]), not part of this.
+ *
+ * [attach] must have run before anything is presented: it gives this layer the app context (the island cannot be drawn
+ * or asked about without it). [ai.ash.host.HandRuntime.start] does it, and a `present` handler calls that first.
  */
-object ScreenBridge {
+object ScreenBridge : NativeIsland.Ash {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var app: Context? = null
     private var lastIsland = ""
+    /** The frame the island shows now, kept to draw it again when it may be shown again (main thread). */
+    private var model: JSONObject? = null
+
+    init { NativeIsland.ash = this }
+
+    /** Gives the island the app context; idempotent and cheap, safe from any thread. */
+    fun attach(ctx: Context) { app = ctx.applicationContext }
 
     fun start(ctx: Context) {
-        app = ctx.applicationContext
-        ScreenLink.app = app
+        attach(ctx)
         main.post { lastIsland = ""; TaskStatus.refresh() }
         ScreenRecovery.start(ctx)
     }
@@ -34,38 +44,47 @@ object ScreenBridge {
         ai.ash.link.Link.manifestChanged()
     }
 
+    /**
+     * The accessibility service connected, went away, or was reconnected (the system does so, e.g. while a testing tool
+     * holds the screen): the island's windows went with the old one, so it is drawn again here, from the last frame.
+     */
+    fun serviceChanged() {
+        changed()
+        main.post { app?.let { apply(it) } }
+    }
+
     // ---- the island ----
 
     /** The island can be drawn (the accessibility service, or the overlay permission). */
     fun islandReady() = app?.let { NativeIsland.ready(it) } ?: false
     fun islandShown() = NativeIsland.showing()
 
-    /** What the island shows. Sent when it changes, and once more after a restart of the screen service. */
-    fun island(model: JSONObject?, ashInFront: Boolean) {
+    /** What the island shows (null = nothing). Drawn when it changes, and once more after a restart of the screen service. */
+    fun island(shown: JSONObject?, ashInFront: Boolean) {
         val ctx = app ?: return
-        val state = JSONObject().put("show", model != null).put("ash_in_front", ashInFront).apply { if (model != null) put("model", model) }.toString()
-        if (state == lastIsland) return
-        lastIsland = state
-        ScreenLink.island(ctx, state)
+        val key = "${shown ?: "-"}|$ashInFront"
+        if (key == lastIsland) return
+        lastIsland = key
+        val frame = shown?.let { JSONObject(it.toString()) }
+        main.post {
+            NativeIsland.ashInFront = ashInFront
+            model = frame
+            if (frame == null) NativeIsland.hide() else apply(ctx)
+        }
+    }
+
+    /** The latest frame again (the island re-applies it when it may be shown again, or after a local answer). */
+    private fun apply(ctx: Context) {
+        val m = model ?: return
+        NativeIsland.update(ctx, JSONObject(m.toString())) { main.post { apply(ctx) } }
     }
 
     // ---- what the owner did on the island ----
 
-    /** One action from the island: {action, turn?, request?, ...}; a request id asks for a result. */
-    fun islandAction(a: JSONObject) { main.post { act(a) } }
-
-    private fun act(a: JSONObject) {
-        val request = a.optString("request")
-        val reply: (Boolean, String) -> Unit = { ok, message ->
-            if (request.isNotEmpty()) ScreenLink.result(JSONObject().put("request", request).put("ok", ok).put("message", message).toString())
-        }
-        when (a.optString("action")) {
-            "dismiss" -> TaskStatus.dismiss(a.optString("turn"))
-            "stop" -> TaskStatus.stop(a.optString("turn"))
-            "open" -> app?.let { it.startActivity(Intent(it, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
-            "answer" -> TaskStatus.answerCard(a.optString("id"), a.optString("choice"), if (a.has("text")) a.optString("text") else null, reply)
-            "send" -> TaskStatus.sendInput(a.optString("text"), a.optString("client_id"), reply)
-            else -> reply(false, "未知操作")
-        }
-    }
+    override fun dismiss(turn: String) { main.post { TaskStatus.dismiss(turn) } }
+    override fun stop(turn: String) { main.post { TaskStatus.stop(turn) } }
+    override fun open() { main.post { app?.let { it.startActivity(Intent(it, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) } } }
+    override fun answer(id: String, choice: String, text: String?, done: (Boolean, String) -> Unit) { main.post { TaskStatus.answerCard(id, choice, text, done) } }
+    override fun send(text: String, clientId: String, done: (Boolean, String) -> Unit) { main.post { TaskStatus.sendInput(text, clientId, done) } }
+    override fun shown(value: Boolean) = changed()
 }

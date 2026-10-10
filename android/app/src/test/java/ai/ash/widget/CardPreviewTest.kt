@@ -69,4 +69,20 @@ class CardPreviewTest {
         assertEquals(mapOf("w" to 3L), asked.previews)
         assertEquals("w", asked.cards.keys.single())
     }
+
+    @Test fun thePreviewResultIsOneImagePartThatAlsoSaysHowItWasDrawn() {
+        val part = PreviewPlan.imagePart(byteArrayOf(1, 2, 3), 720, 385, false, 363.2f, 192.6f) { "AQID" }
+        assertEquals("image", part.getString("type")); assertEquals("image/png", part.getString("mime")); assertEquals("AQID", part.getString("b64"))
+        assertEquals(720, part.getInt("width")); assertEquals(385, part.getInt("height")); assertEquals("light", part.getString("theme"))
+        assertEquals(363, part.getJSONObject("dp").getInt("width"))
+    }
+
+    @Test fun theStateResultListsWhatIsPlacedWhatWasDrawnAndThatPreviewsAreServed() {
+        val placed = org.json.JSONArray().put(JSONObject().put("id", "7").put("type", "ash"))
+        val rendered = org.json.JSONArray().put(JSONObject().put("card", "w").put("updated_at", 5).put("problem", "x"))
+        val result = WidgetPlan.stateResult(placed, rendered)
+        assertEquals(setOf("widgets", "rendered", "previews"), result.keys().asSequence().toSet())
+        assertSame(placed, result.getJSONArray("widgets")); assertSame(rendered, result.getJSONArray("rendered"))
+        assertTrue(result.getBoolean("previews"))
+    }
 }

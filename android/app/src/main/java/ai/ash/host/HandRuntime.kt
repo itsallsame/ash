@@ -19,6 +19,8 @@ object HandRuntime {
         if (calendar != null) return
         val app = ctx.applicationContext
         Notifications.clearLegacy(app)
+        // The island layer has its context before anything is presented (a `present` handler starts this first).
+        ai.ash.host.screen.ScreenBridge.attach(app)
         Present.restore(app)
         TaskStatus.start(app)
         calendar = CalendarSense(app, BuildConfig.SENSE_RESCAN_MS).also { it.start() }
