@@ -84,11 +84,11 @@ export class Net {
       this.client = info.client;
       this.local = info.local === true;
       this.generation++;
-        this.visible = null; // the kernel forgets what a connection said about itself when it ends
+      this.visible = null; // the kernel forgets what a connection said about itself when it ends
       this.setStatus("online");
+      void this.refreshPrimary(); // before onOpen: whoever reacts to the opening may wait for `primaryLoad`
       this.onOpen(info);
       this.openHistory();
-      void this.refreshPrimary();
       void this.restorePending().then(() => this.flush());
       return;
     }

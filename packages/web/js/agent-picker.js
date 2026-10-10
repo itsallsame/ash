@@ -36,6 +36,7 @@ export function agentPicker(form, input, net, changed = () => {}) {
   return { target: () => selected?.id ?? net.primary, name: nameOf,
     async refresh() {
       try {
+        await net.primaryLoad;
         const agents = await list();
         // An agent that is gone cannot stay the recipient: back to the primary one.
         if (selected && !agents.some((agent) => agent.id === selected.id)) { selected = null; input.placeholder = basePlaceholder; }

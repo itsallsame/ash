@@ -1,6 +1,7 @@
 // The settings drawer. Every setting is a word called on a member of the hub as the owner, over the page's one
-// connection (net.js); the page keeps no secrets and no copy of the hub's state. Management is shown only while the page
-// is connected to a hub on this same machine (`net.local`), exactly as before.
+// connection (net.js); the page keeps no secrets and no copy of the hub's state. The drawer is drawn whenever the page is
+// connected; whether a word may be done from this page is the hub's call (it answers `forbidden`, and the page says so).
+// `net.local` only adds a hint beside the few words that can only be done on the hub's own machine.
 import { retryable, unwrap } from "./link.js";
 import { ProactivePreferences } from "./settings-preferences.js";
 import { AppsSettings, appsSummary } from "./settings-apps.js";
@@ -191,7 +192,7 @@ export class SettingsControls {
     this.render();
   }
 
-  /** The connection just opened; whether it is local is `net.local`. */
+  /** The connection just opened; the drawer is drawn for it. */
   connected() {
     this.render();
   }
@@ -221,7 +222,7 @@ export class SettingsControls {
 
   render() {
     const binding = this.net.binding();
-    const usable = this.online && this.net.local === true && Boolean(binding.session);
+    const usable = this.online && Boolean(binding.session);
     const context = usable ? `${binding.session}\0${binding.generation}` : null;
     if (this.section && context && context === this.sectionContext) return;
     this.preferences?.dispose();
@@ -279,9 +280,9 @@ export class SettingsControls {
     const stale = () => ({ ok: false, error: { code: "stale", message: "连接已经换了" } });
     const callReply = async (to, word, body = {}, options) => {
       const binding = this.net.binding();
-      if (!live() || !this.online || this.net.local !== true || !this.net.same(binding)) return stale();
+      if (!live() || !this.online || !this.net.same(binding)) return stale();
       const reply = await this.net.call(to, word, body, options);
-      if (!live() || this.net.local !== true || !this.net.same(binding)) return stale();
+      if (!live() || !this.net.same(binding)) return stale();
       return reply;
     };
     const ask = async (to, word, body = {}) => unwrap(await callReply(to, word, body));
@@ -347,7 +348,7 @@ export class SettingsControls {
       return { ok: true, paused };
     };
     const run = async (word) => {
-      if (!live() || !this.online || this.net.local !== true) return;
+      if (!live() || !this.online) return;
       pause.disabled = true;
       resume.disabled = true;
       yes.disabled = true;
@@ -368,6 +369,8 @@ export class SettingsControls {
     pauseCard.append(pauseTitle, pauseText, pause, resume, confirmation, feedback);
 
     const devRow = navRow("settingsDevRow", "code", "开发者选项", "主模型、DSH 插件", () => devPage.open());
+    // A few words can only be done on the machine the hub runs on; the hub refuses them elsewhere, and says so here beforehand.
+    if (!this.net.local) home.append(node("p", "暂停和恢复、保存和删除密钥、查看配对码，这几项只能在 Ash 所在的手机上操作。", "set-intro"));
     home.append(usageCard, group(`${name} 能用的`, ...capability), group("相处方式", quietRow, proactiveRow, approvalRow), pauseCard, group("其他", devRow));
     usageCard.addEventListener("click", () => usagePage.open());
 

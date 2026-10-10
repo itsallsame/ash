@@ -201,7 +201,6 @@ export function boot({ bridge } = {}) {
   const openUiTarget = async (target, request = {}) => {
     if (!net.session) return false;
     if (target === "settings") {
-      if (!net.local) return false;
       if (!agentSheet.close()) return false;
       document.querySelector("#drawer").classList.add("open");
       settings.opened();

@@ -92,3 +92,19 @@ test("a list that cannot be read says so and keeps the recipient", async () => {
     assert.equal(picker.target(), "agent:main");
   } finally { t.stop(); }
 });
+
+test("a picker made on the first connection waits for the primary agent and then names it, not '…'", async () => {
+  const kernel = startKernel();
+  kernel.on("service:agents", "list", { agents: [{ id: "agent:ash", name: "小舟", summary: "", state: "idle", primary: true }] });
+  const { net } = netFor(kernel);
+  globalThis.document = { createElement: (tag) => new Element(tag) };
+  try {
+    const form = new Element("form");
+    const picker = agentPicker(form, new Element("input"), net);
+    assert.match(form.children[0].text, /…/, "nothing is known yet");
+    net.start();
+    await until(() => net.status === "online", 2000, "online");
+    await picker.refresh();
+    assert.equal(form.children[0].text, "@ 小舟");
+  } finally { delete globalThis.document; net.stop(); kernel.close(); }
+});

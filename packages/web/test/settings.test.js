@@ -31,12 +31,15 @@ function stubNet({ local = true } = {}) {
     call: async () => fail("not_found", "stub"), state };
 }
 
-test("management is shown only while connected to a hub on this machine", async () => {
+test("the drawer is drawn whenever connected; from a page away from the hub the hub refuses the local-only words and the page says so", async () => {
   const remote = await drawer({ local: false });
   try {
     assert.equal(remote.net.local, false);
-    assert.equal(remote.panel.find("settingsAdmin"), undefined);
-    assert.match(remote.panel.text, /连上 Ash 所在的这台手机后/);
+    assert.ok(remote.panel.find("settingsAdmin"), "the page does not hide the drawer by itself");
+    assert.match(remote.panel.text, /只能在 Ash 所在的手机上操作/);
+    remote.panel.find("settingsPause").click();
+    await until(() => /未确认/.test(remote.panel.find("settingsFeedback").textContent));
+    assert.equal(remote.sent("service:admin", "pause").length, 1, "the word was sent; the hub said no");
   } finally { remote.close(); }
   const local = await drawer();
   try {

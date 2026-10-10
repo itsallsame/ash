@@ -218,11 +218,15 @@ test(...withBrowser("the identity page saves SOUL through persona/propose", asyn
   assert.deepEqual([proposal.to, proposal.body.file, proposal.body.content], ["service:persona", "SOUL.md", "# 新的灵魂\n温柔一点"]);
 }));
 
-test(...withBrowser("a page that is not on the hub's machine can chat but gets no management", async ({ kernel, browser }) => {
+test(...withBrowser("a page that is not on the hub's machine gets the drawer, a hint, and the hub's refusal of the local-only words", async ({ kernel, browser }) => {
   settingsHub(kernel);
   const { page } = await openPage(browser, kernel);
-  await page.locator("#menu").click();
-  await page.locator("#settingsHome").waitFor({ state: "detached", timeout: 1500 }).catch(() => {});
-  assert.equal(await page.locator("#settingsPause").count(), 0);
-  assert.match(await page.locator("#panel").textContent(), /才能在这里调整设置/);
+  await openSettings(page);
+  assert.match(await page.locator("#settingsHome").textContent(), /只能在 Ash 所在的手机上操作/);
+  await page.locator("#settingsQuietRow").click();
+  await page.locator("#settingsQuietSave").click();
+  await page.locator("#settingsQuietStatus", { hasText: "已保存" }).waitFor();
+  await page.locator("#settingsQuietBack").click();
+  await page.locator("#settingsPause").click();
+  await page.locator("#settingsFeedback", { hasText: "未确认" }).waitFor();
 }, { local: false }));
