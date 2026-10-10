@@ -89,6 +89,12 @@ class LinkOptions(
     val codec: FrameCodec,
     val outbox: EventOutbox,
     val handlers: HandHandlers = HandHandlers.NONE,
+    /**
+     * Where the human channel's frames go that the client does not answer itself: a `send.result`, `sync.page`, `sync.msg`
+     * or human `stream` frame nobody on this side asked for by [LinkClient.send] / [LinkClient.openSync]. The chat page asked
+     * for them through [LinkClient.sendHumanFrame], so they are handed over unchanged (SPEC-05 §4.1). Runs on the link's thread.
+     */
+    val humanFrames: ((JSONObject) -> Unit)? = null,
     val clock: Clock = SystemClock,
     val random: () -> Double = Math::random,
     /** A text or image part longer than this many characters travels as a stream instead of inside the result. */
@@ -202,7 +208,7 @@ class LinkClient(private val o: LinkOptions) {
         return true
     }
 
-    // --- human channel (used by the human channel of the app, T11b-2) ---
+    // --- human channel ---
 
     /** Sends a word as the person (SPEC-03 §5.1); completes with the `send.result` frame, fails with [LinkException] when there is no connection. */
     fun send(request: JSONObject): CompletableFuture<JSONObject> {
@@ -212,7 +218,12 @@ class LinkClient(private val o: LinkOptions) {
             if (c == null || !humanOpen()) { future.completeExceptionally(LinkException("closed", "not connected")); return@post }
             val id = newId("s_")
             requests[id] = future
-            c.send(JSONObject().put("t", "send").put("ch", "human").put("id", id).put("request", request))
+            try {
+                c.send(JSONObject().put("t", "send").put("ch", "human").put("id", id).put("request", request))
+            } catch (e: IllegalArgumentException) {
+                requests.remove(id)
+                future.completeExceptionally(LinkException("bad_request", e.message ?: "the request breaks the protocol"))
+            }
         }
         return future
     }
@@ -233,8 +244,35 @@ class LinkClient(private val o: LinkOptions) {
 
     fun closeSync(sid: String) = post { if (syncs.remove(sid) != null) liveConn()?.send(JSONObject().put("t", "sync.close").put("sid", sid)) }
 
+    /** Why a frame was not sent: an error code of SPEC-02 §7 (`offline`, `bad_request`, `too_large`) and the reason. */
+    class Refusal(val code: String, val message: String)
+
+    /**
+     * Sends one human-channel frame as it is (the chat page's `send`, `sync`, `sync.close`, `presence` and `stream`, SPEC-05 §4.1),
+     * after checking it against the protocol like every frame. Null when it was handed to the link; otherwise the reason it was
+     * not: the human channel is not open now, or the frame breaks the protocol. The page is then told with an `error` frame.
+     */
+    fun sendHumanFrame(frame: JSONObject): Refusal? {
+        val type = codec.typeOf(frame)
+        val text = try {
+            when {
+                type == null || type !in HUMAN_FRAMES -> throw IllegalArgumentException("not a human channel frame")
+                type == "stream" && frame.optString("op") == "open" && frame.optString("ch") != "human" ->
+                    throw IllegalArgumentException("a stream from the chat page must be on the human channel")
+                state != State.READY || !humanOpen() -> return Refusal("offline", "the human channel is not open")
+            }
+            codec.encode(frame)
+        } catch (e: IllegalArgumentException) {
+            return Refusal("bad_request", e.message.orEmpty())
+        } catch (e: FrameCodec.FrameTooLarge) {
+            return Refusal("too_large", e.message.orEmpty())
+        }
+        post { liveConn()?.sendText(text) }
+        return null
+    }
+
     /** `{visible?, typing?, agent?}` (SPEC-03 §5.3). */
-    fun presence(state: JSONObject) = post { liveConn()?.send(JSONObject(state.toString()).put("t", "presence").put("ch", "human")) }
+    fun presence(state: JSONObject) = post { if (humanOpen()) liveConn()?.send(JSONObject(state.toString()).put("t", "presence").put("ch", "human")) }
 
     /** Whether the kernel accepted the channel in `welcome` (false while not connected). */
     fun channelOpen(channel: String): Boolean = channelOpen(welcome, channel)
@@ -294,6 +332,7 @@ class LinkClient(private val o: LinkOptions) {
         requests.clear()
         requestsLeft.forEach { it.completeExceptionally(LinkException("closed", "connection closed")) }
         syncs.clear()
+        humanStreams.clear()
         val final = state == State.STOPPED || code in CloseCodes.NO_RECONNECT
         if (final && state != State.STOPPED) { stoppedBy = code; state = State.STOPPED }
         val info = CloseInfo(code, reason, !final)
@@ -371,6 +410,9 @@ class LinkClient(private val o: LinkOptions) {
             if (closed) return false
             return socket.send(codec.encode(frame))
         }
+
+        /** Sends a frame already encoded by [FrameCodec.encode]. */
+        fun sendText(text: String): Boolean = !closed && socket.send(text)
 
         fun queued(): Long = socket.queueSize()
 
@@ -477,11 +519,7 @@ class LinkClient(private val o: LinkOptions) {
 
     private fun dispatch(c: Conn, type: String, frame: JSONObject) {
         when (type) {
-            "stream" -> {
-                // This hand takes no inbound streams yet. TODO(T11b-2): the human channel's blobs arrive as streams.
-                if (frame.getString("op") == "open") c.send(JSONObject().put("t", "stream").put("sid", frame.getString("sid")).put("op", "error")
-                    .put("code", "unavailable").put("message", "this hand takes no inbound streams"))
-            }
+            "stream" -> onStream(c, frame)
             "manifest.ack" -> handlers.manifestAck(frame)
             "event.ack" -> {
                 val id = frame.getString("id")
@@ -491,13 +529,29 @@ class LinkClient(private val o: LinkOptions) {
             "call" -> runCall(c, frame)
             "cancel" -> cancelCall(c, frame.getString("id"))
             "assess" -> runAssess(c, frame)
-            "send.result" -> requests.remove(frame.getString("id"))?.complete(frame)
-            "sync.page" -> syncs[frame.getString("sid")]?.page(frame)
-            "sync.msg" -> syncs[frame.getString("sid")]?.message(frame)
+            "send.result" -> requests.remove(frame.getString("id"))?.complete(frame) ?: toHuman(frame)
+            "sync.page" -> syncs[frame.getString("sid")]?.page(frame) ?: toHuman(frame)
+            "sync.msg" -> syncs[frame.getString("sid")]?.message(frame) ?: toHuman(frame)
             "present" -> runPresent(c, frame)
             "agent" -> handlers.log("ignored an agent frame: this hand has no agent channel")
             "error" -> handlers.log("kernel reports ${frame.getString("code")}: ${frame.getString("message").take(200)}")
             else -> c.close(CloseCodes.BAD_FRAME, "unexpected $type")
+        }
+    }
+
+    /** What the kernel streams to the human channel (the chat page's attachments and images): the sids being passed on. Loop thread. */
+    private val humanStreams = HashSet<String>()
+
+    private fun toHuman(frame: JSONObject) { o.humanFrames?.let { sink -> try { sink(frame) } catch (e: Throwable) { handlers.log("human frame sink failed", e) } } }
+
+    /** A stream of the human channel goes to the page unchanged; this hand takes no other inbound stream. */
+    private fun onStream(c: Conn, frame: JSONObject) {
+        val sid = frame.getString("sid")
+        when (frame.getString("op")) {
+            "open" -> if (frame.getString("ch") == "human" && o.humanFrames != null) { humanStreams.add(sid); toHuman(frame) }
+                else c.send(JSONObject().put("t", "stream").put("sid", sid).put("op", "error").put("code", "unavailable").put("message", "this hand takes no inbound streams"))
+            "data" -> if (sid in humanStreams) toHuman(frame)
+            else -> if (humanStreams.remove(sid)) toHuman(frame)
         }
     }
 
@@ -661,6 +715,8 @@ class LinkClient(private val o: LinkOptions) {
     companion object {
         /** A stream sender waits while more than this many bytes sit in the socket's queue (OkHttp closes the socket at 16 MiB). */
         private const val QUEUE_HIGH_WATER = 1L shl 20
+        /** What the chat page may send up (SPEC-03 §5, §3.4). */
+        private val HUMAN_FRAMES = setOf("send", "sync", "sync.close", "presence", "stream")
 
         fun newId(prefix: String): String = prefix + UUID.randomUUID()
     }

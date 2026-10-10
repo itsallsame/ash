@@ -43,6 +43,10 @@ object WidgetPlan {
         return WState(b.optLong("revision"), cards, bindings, previews)
     }
 
+    /** What a `widget` `state` present answers: the Ash widgets on the home screen, what each card drew, and that previews are served. */
+    fun stateResult(widgets: JSONArray, rendered: JSONArray): JSONObject =
+        JSONObject().put("widgets", widgets).put("rendered", rendered).put("previews", true)
+
     /** The bound card wins over the one picked on the phone only when the core knows a binding for this widget. */
     fun view(state: WState?, widgetId: Int, localCard: String?, now: Long): CardView {
         val cardId = state?.bindings?.get(widgetId.toString()) ?: localCard ?: return CardView.Unbound

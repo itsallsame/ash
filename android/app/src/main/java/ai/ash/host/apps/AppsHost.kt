@@ -5,8 +5,9 @@ import android.util.Log
 import org.json.JSONObject
 
 /**
- * Where the apps shell reaches the core: it forwards the owner's apps routes ([AppsRoutes]) to the core, as the owner,
- * and nothing else. The shell's pages never see the token. Every call blocks: never on the main thread.
+ * Where the apps shell reaches the kernel: it is to forward the owner's apps routes ([AppsRoutes]) as the owner, and nothing
+ * else; the shell's pages never see a credential. Every call blocks: never on the main thread. See [forward] for why it
+ * answers nothing yet.
  */
 object AppsHost {
     private const val TAG = "ash.apps"
@@ -23,10 +24,11 @@ object AppsHost {
     }
 
     /**
-     * TODO(T11b-2): the apps routes go to the kernel over the link. The old way (the owner's token read from the core's
-     * private record, then HTTP to a port on this phone) is gone with the old core, so until then no apps route is answered.
+     * Not wired: the specification does not say how the apps shell reaches the kernel now (SPEC-02 §8.2 names the words,
+     * `service:apps/apps.list|surface|icon` and `app:<id>/<tool>`, but not how the shell's own process reaches the app's one
+     * connection, where an app page's network domains come from now that `apps.surface` no longer returns them, or how a
+     * tool result becomes the MCP result the page expects). So every apps route stays unanswered (503) until that is decided.
      */
-    @Suppress("UNUSED_PARAMETER")
     private fun forward(ctx: Context, method: String, path: String, body: String): JSONObject {
         if (body.length > MAX_BODY) return reply(413, "request too large")
         return reply(503, "ash core is not running")

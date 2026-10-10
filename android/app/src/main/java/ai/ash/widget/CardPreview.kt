@@ -63,6 +63,11 @@ object PreviewPlan {
     fun shot(png: ByteArray, width: Int, height: Int, night: Boolean, wDp: Float, hDp: Float, encode: (ByteArray) -> String): JSONObject =
         JSONObject().put("png", encode(png)).put("width", width).put("height", height).put("theme", if (night) "dark" else "light")
             .put("dp", JSONObject().put("width", Math.round(wDp)).put("height", Math.round(hDp)))
+
+    /** The picture as the `preview` result of the `widget` surface: an image part (SPEC-03 §3, §4.4) that also says how it was drawn. */
+    fun imagePart(png: ByteArray, width: Int, height: Int, night: Boolean, wDp: Float, hDp: Float, encode: (ByteArray) -> String): JSONObject =
+        JSONObject().put("type", "image").put("mime", "image/png").put("b64", encode(png)).put("width", width).put("height", height)
+            .put("theme", if (night) "dark" else "light").put("dp", JSONObject().put("width", Math.round(wDp)).put("height", Math.round(hDp)))
 }
 
 /** What came of drawing a card as a picture. */

@@ -107,8 +107,8 @@ class A11yService : AccessibilityService() {
         timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "ash-a11y-timer").apply { isDaemon = true } }
         connection++
         instance = this
-        ai.ash.screen.ScreenLink.app = applicationContext
-        ai.ash.screen.ScreenLink.serviceChanged()
+        ai.ash.host.screen.ScreenBridge.attach(applicationContext)
+        ai.ash.host.screen.ScreenBridge.serviceChanged()
         ai.ash.caps.config.ConfigWatch.check(applicationContext)
         Log.i(TAG, "accessibility service connected")
     }
@@ -182,13 +182,13 @@ class A11yService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         shadeOpen = false; ai.ash.screen.island.NativeIsland.yieldToShade(false)
         statusBarHidden = false; ai.ash.screen.island.NativeIsland.statusBarHidden(false)
-        if (instance === this) { instance = null; ai.ash.screen.ScreenLink.serviceChanged(); ai.ash.caps.config.ConfigWatch.check(applicationContext) }
+        if (instance === this) { instance = null; ai.ash.host.screen.ScreenBridge.serviceChanged(); ai.ash.caps.config.ConfigWatch.check(applicationContext) }
         releaseAllFingersFromLifecycle()
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
-        if (instance === this) { instance = null; ai.ash.screen.ScreenLink.serviceChanged(); ai.ash.caps.config.ConfigWatch.check(applicationContext) }
+        if (instance === this) { instance = null; ai.ash.host.screen.ScreenBridge.serviceChanged(); ai.ash.caps.config.ConfigWatch.check(applicationContext) }
         try { timer?.shutdownNow() } catch (_: Throwable) {}
         timer = null
         try { cbThread?.quitSafely() } catch (_: Throwable) {}

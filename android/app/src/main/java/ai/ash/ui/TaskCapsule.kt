@@ -30,6 +30,6 @@ object TaskCapsule {
         ScreenBridge.island(IslandPresentation.project(frame, elapsed, stale, interactive, canStop, notice, emptyMap(), System.currentTimeMillis()), AppState.homeVisible)
     }
     /** The resident entry: no task, only the way to talk to Ash. */
-    fun resident() = ScreenBridge.island(IslandPresentation.resident(), AppState.homeVisible)
+    fun resident(canSend: Boolean) = ScreenBridge.island(IslandPresentation.resident(canSend), AppState.homeVisible)
     fun hide() = ScreenBridge.island(null, AppState.homeVisible)
 }

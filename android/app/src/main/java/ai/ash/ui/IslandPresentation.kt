@@ -36,11 +36,11 @@ internal object IslandPresentation {
         return JSONObject().put("session", frame.session).put("turn", frame.turn).put("kind", kind).put("reply", frame.reply)
             .put("activity", frame.text.substringBefore(" · ")).put("elapsed", elapsed).put("cards", cards)
             .put("stale", stale).put("interactive", interactive && !stale).put("canStop", canStop)
-            .put("mayClose", mayClose).put("notice", notice ?: "")
+            .put("mayClose", mayClose).put("notice", notice ?: "").put("canSend", frame.agent.isNotEmpty())
     }
 
     /** The resident entry (island v2): nothing under way and nothing new; it carries no task content at all. */
-    fun resident(): JSONObject = JSONObject().put("session", "").put("turn", "").put("kind", "resident").put("reply", "")
+    fun resident(canSend: Boolean): JSONObject = JSONObject().put("canSend", canSend).put("session", "").put("turn", "").put("kind", "resident").put("reply", "")
         .put("activity", "").put("elapsed", 0).put("cards", JSONArray()).put("stale", false).put("interactive", true)
         .put("canStop", false).put("mayClose", true).put("notice", "")
 }

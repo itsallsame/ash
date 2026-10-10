@@ -1,7 +1,8 @@
 package ai.ash.widget
 
 import ai.ash.caps.Events
-import ai.ash.link.HumanSend
+import ai.ash.human.HumanSend
+import ai.ash.link.PresentOutcome
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
@@ -13,6 +14,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Shader
 import android.net.Uri
+import android.util.Base64
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -26,9 +28,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * The phone side of service:widgets: keeps the state the core pushes (POST /widgets), the card picked on the phone for
- * each "Ash 卡片" widget and what the owner toggled since; passes taps, toggles and picks back to the core as the owner,
- * and tells the core which cards it could not draw and why.
+ * The phone side of service:widgets: keeps the state the kernel presents (`present` on the `widget` surface), the card
+ * picked on the phone for each "Ash 卡片" widget and what the owner toggled since; passes taps, toggles and picks back to
+ * the kernel as the owner, and tells it which cards it could not draw and why (in the `present.result`, which the kernel
+ * turns into the event `widget.rendered`).
  */
 object WidgetHost {
     private const val TAG = "ash.widgets"
@@ -66,34 +69,57 @@ object WidgetHost {
     private fun changeLocal(card: WCard, change: (Local) -> Local) = synchronized(locals) { locals[card.id] = card.updatedAt to change(local(card)) }
 
     /**
-     * The core's full state. Every widget redraws (checked in Ash's own process first), and so does a check of each card
-     * not placed yet; the answer lists the Ash widgets on the home screen and, per card, whether it could be drawn.
+     * The kernel's full state (`widget` `state`). Every widget redraws (checked in Ash's own process first), and so does a check
+     * of each card not placed yet; the result lists the Ash widgets on the home screen and, per card, whether it could be drawn
+     * and, for the cards a preview was asked for, the picture. Call off the main thread.
      */
-    fun accept(ctx: Context, body: JSONObject): Pair<Int, JSONObject> {
-        val parsed = runCatching { WidgetPlan.parseState(body) }.getOrNull() ?: return 400 to JSONObject().put("error", "invalid_widgets")
+    fun accept(ctx: Context, body: JSONObject): PresentOutcome {
+        val parsed = runCatching { WidgetPlan.parseState(body) }.getOrNull() ?: return PresentOutcome(false, null, "bad_request", "invalid_widgets")
         val app = ctx.applicationContext
         val stored = runCatching {
             val tmp = File(file(app).path + ".tmp")
             tmp.writeText(body.toString())
             tmp.renameTo(file(app))
         }.getOrDefault(false)
-        if (!stored) return 500 to JSONObject().put("error", "store_failed")
+        if (!stored) return PresentOutcome(false, null, "internal", "store_failed")
         prefs(app).edit().remove(STATE).apply()
         cached = parsed
         val done = CountDownLatch(1)
         main.post {
-            // Drawing and checking finish asynchronously (as on the launcher); the answer waits for both.
+            // Drawing and checking finish asynchronously (as on the launcher); the result waits for both.
             val left = java.util.concurrent.atomic.AtomicInteger(3)
             val one = { if (left.decrementAndGet() == 0) done.countDown() }
             try { CardWidgetProvider.updateAll(app, one) } catch (e: Exception) { Log.w(TAG, "drawing widgets failed", e); one() }
             try { checkUnplaced(app, parsed, one) } catch (e: Exception) { Log.w(TAG, "checking cards failed", e); one() }
             try { takePreviews(app, parsed, one) } catch (e: Exception) { Log.w(TAG, "drawing previews failed", e); one() }
         }
-        // The core waits about three seconds for this answer; what is not checked by then is reported later.
+        // The kernel waits about three seconds for this answer. What is not drawn by then (an image still loading) is kept
+        // and goes out with the next state, as a late result cannot go on its own: only a present has a result.
         if (Looper.myLooper() != Looper.getMainLooper()) done.await(2, TimeUnit.SECONDS)
-        return 200 to JSONObject().put("ok", true).put("widgets", placed(app)).put("rendered", drain())
-            // Tells the core that cards it asks for come back as pictures (older apps never say so, and are never waited on).
-            .put("previews", true)
+        return PresentOutcome(true, WidgetPlan.stateResult(placed(app), drain()))
+    }
+
+    /**
+     * One card drawn as a picture now (`widget` `preview`, body `{card, size?}`): `card` is the id of a card in the last state, `size`
+     * a widget size name (`2x2`, `4x2`, `4x4`; the card's own by default). The result is one image part. Call off the main thread.
+     */
+    fun preview(ctx: Context, body: JSONObject): PresentOutcome {
+        val app = ctx.applicationContext
+        val card = (body.opt("card") as? String)?.let { state(app)?.cards?.get(it) }
+            ?: return PresentOutcome(false, null, "not_found", "the phone does not have that card")
+        val size = body.opt("size") as? String ?: card.size
+        val drawn = CountDownLatch(1)
+        var result: PreviewResult? = null
+        main.post {
+            try { CardPreview.take(app, card.copy(size = size), card.render) { result = it; drawn.countDown() } }
+            catch (e: Exception) { result = PreviewResult.Failed(e.message ?: e.javaClass.simpleName); drawn.countDown() }
+        }
+        if (!drawn.await(PreviewPlan.TIMEOUT_MS + 2000, TimeUnit.MILLISECONDS)) return PresentOutcome(false, null, "timeout", "the preview was not drawn in time")
+        return when (val r = result) {
+            is PreviewResult.Shot -> PresentOutcome(true, PreviewPlan.imagePart(r.png, r.width, r.height, r.night, r.wDp, r.hDp) { Base64.encodeToString(it, Base64.NO_WRAP) })
+            is PreviewResult.Failed -> PresentOutcome(false, null, "failed", r.why.take(500))
+            null -> PresentOutcome(false, null, "failed", "the preview was not drawn")
+        }
     }
 
     /** Draw a picture of each card the core asked for (once per request), one after the other; each goes out with the next report. */
@@ -125,10 +151,6 @@ object WidgetHost {
             entry.put(key, value).put("preview_ask", ask)
             unsent[card.id] = entry
         }
-        // Within an accept() the answer carries it; later (the lists were slow) it goes by itself.
-        flushContext = ctx.applicationContext
-        main.removeCallbacks(flush)
-        main.postDelayed(flush, 300)
     }
 
     /** Cards no widget shows yet are checked at their nominal size, so their creator learns about a problem before placing. */
@@ -150,7 +172,7 @@ object WidgetHost {
         one()
     }
 
-    /** Note what drawing [card] came to; changes go to the core with the next answer, or on their own shortly. */
+    /** Note what drawing [card] came to; it goes to the kernel in the result of the next `state` (see [accept]). */
     fun report(ctx: Context, card: WCard, problem: String?) {
         synchronized(reported) {
             if (reported[card.id] == card.updatedAt to problem) return
@@ -164,19 +186,6 @@ object WidgetHost {
                 for (name in listOf("preview", "preview_problem", "preview_ask")) kept?.opt(name)?.let { put(name, it) }
             }
         }
-        val app = ctx.applicationContext
-        // Within an accept() the answer carries it; otherwise (an image arrived or failed later) it goes by itself.
-        main.removeCallbacks(flush)
-        flushContext = app
-        main.postDelayed(flush, 2500)
-    }
-
-    @Volatile private var flushContext: Context? = null
-    private val flush = Runnable {
-        val app = flushContext ?: return@Runnable
-        val rendered = drain()
-        if (rendered.length() == 0) return@Runnable
-        Thread({ send(app, "widget.placed", JSONObject().put("widgets", placed(app)).put("rendered", rendered)) { ok, why -> if (!ok) Log.w(TAG, "report not sent: $why") } }, "ash-widgets-report").start()
     }
 
     private fun drain(): JSONArray = synchronized(unsent) { JSONArray(unsent.values.toList()).also { unsent.clear() } }
@@ -270,15 +279,12 @@ object WidgetHost {
         }, "ash-widget-tap").start()
     }
 
-    /** Same authenticated owner path as notification replies; waits for the core's answer. Call off the main thread. */
+    /** The owner's tap, as the owner: a human-channel `send` to service:widgets; waits for the kernel's answer. Call off the main thread. */
     private fun send(ctx: Context, word: String, body: JSONObject, done: (Boolean, String) -> Unit) {
         val result = runCatching {
-            // TODO(T11b-2): widget.tap is a human channel `send`; until then HumanSend fails.
-            // widget.placed and widget.bind are device events (Events.emit). What still comes here as widget.placed, the report of
-            // what a card drew, is a human-channel present result and goes with the rest of T11b-2.
-            val out = HumanSend.send(JSONObject().put("to", "service:widgets").put("kind", "request").put("word", word)
+            val out = HumanSend.send(ctx, JSONObject().put("to", "service:widgets").put("kind", "request").put("word", word)
                 .put("body", body).put("wait", true).put("client_id", "widget:${UUID.randomUUID()}"))
-            val reply = out.optJSONObject("reply")?.optJSONObject("body")
+            val reply = HumanSend.reply(out)
             (reply?.optBoolean("ok") == true) to (reply?.optJSONObject("error")?.optString("message") ?: "")
         }.getOrElse { false to (it.message ?: "") }
         done(result.first, result.second)

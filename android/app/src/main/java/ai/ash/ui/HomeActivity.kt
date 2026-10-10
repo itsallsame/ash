@@ -6,7 +6,6 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -15,21 +14,14 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
 import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
 import android.webkit.MimeTypeMap
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import ai.ash.R
 import ai.ash.BuildConfig
@@ -38,36 +30,30 @@ import ai.ash.host.KernelLauncher
 import ai.ash.caps.config.Permissions
 import ai.ash.link.Link
 import ai.ash.caps.camera.CaptureProvider
-import ai.ash.ui.transport.CoreCancellation
-import ai.ash.ui.transport.CoreUiRequest
-import ai.ash.ui.transport.FixedCoreClient
-import ai.ash.ui.transport.workspaceContentRoute
-import ai.ash.ui.transport.workspaceReadRoute
-import ai.ash.ui.transport.FILE_CSP
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 /**
- * Opening the app opens Ash: the packaged UI in a WebView; native code talks to core. While
- * the core is installing or starting, a native status screen shows what is happening.
+ * Opening the app opens Ash: the packaged UI in a WebView. The page has no connection of its own: the frames it sends and
+ * receives on the human channel are handed to and from the app's one connection by [ai.ash.human.ChatBridge], unchanged
+ * (SPEC-05 §4.1). Native code only does what a page cannot: saving a file, clearing the browser's logins, the camera.
  */
 class HomeActivity : Activity() {
     private lateinit var web: WebView
-    private lateinit var cover: LinearLayout
-    private lateinit var status: TextView
-    private lateinit var action: Button
     private val ui = Handler(Looper.getMainLooper())
-    private var loaded = false
-    private var pageEpoch = 0L
-    private var coreUi: FixedCoreClient? = null
-    private val requests = ConcurrentHashMap<String, CoreCancellation>()
+    private val chat get() = Link.get(this).chat
+    /** Frames from the page, one at a time and in order, off the main thread (checking a big one takes a moment). */
+    private val bridgeWork = Executors.newSingleThreadExecutor { r -> Thread(r, "ash-chat-bridge").apply { isDaemon = true } }
+    private var pageCount = 0L
+    /** Which page load is live: 0 while no verified page of the app is loaded. A message from an older page is ignored. */
+    @Volatile private var pageEpoch = 0L
     /** The web page's pending <input type=file> request; answered exactly once (null = cancelled). */
     private var fileCallback: ValueCallback<Array<Uri>>? = null
-    private data class SaveFile(val id: String, val path: String, val epoch: Long, val reply: androidx.webkit.JavaScriptReplyProxy)
+    private class SaveFile(val id: String, val name: String, val bytes: ByteArray, val epoch: Long, val reply: androidx.webkit.JavaScriptReplyProxy)
     private var saveFile: SaveFile? = null
     /** Where the system camera is writing the photo or video the chat asked for. */
     private var captureFile: java.io.File? = null
@@ -80,10 +66,14 @@ class HomeActivity : Activity() {
         // night mode — so the theme is chosen here to make the ash UI follow the system.
         setTheme(if (night) R.style.Ash_Dark else R.style.Ash_Light)
         super.onCreate(savedInstanceState)
-        // Browser cookies are not port-scoped. This WebView never receives the core owner token.
+        // The page holds no session of its own: everything it says goes over the app's connection.
         CookieManager.getInstance().setAcceptCookie(false)
         if (BuildConfig.ISOLATED_PROBE) WebView.setWebContentsDebuggingEnabled(true)
         web = WebView(this)
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            setContentView(TextView(this).apply { text = "当前 WebView 不支持 Ash 安全通信"; textSize = 15f; gravity = Gravity.CENTER })
+            return
+        }
         web.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -97,8 +87,8 @@ class HomeActivity : Activity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
                 val u = req.url
-                // Files are sandboxed child documents, never replacement main pages or native deep links.
-                if (!req.isForMainFrame) return workspaceContentRoute(u.toString()) == null
+                // Child documents are never replacement main pages or native deep links.
+                if (!req.isForMainFrame) return true
                 if (u.scheme == "ash" && u.host == "console") {
                     startActivity(Intent(this@HomeActivity, ConsoleActivity::class.java))
                     return true
@@ -115,18 +105,6 @@ class HomeActivity : Activity() {
 
             override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
                 val u = req.url
-                val fileRoute = workspaceContentRoute(u.toString())
-                if (!req.isForMainFrame && req.method == "GET" && fileRoute != null) {
-                    val epoch = pageEpoch
-                    return runCatching {
-                        val result = coreUi?.execute(epoch, CoreUiRequest("GET", fileRoute)) ?: return@runCatching forbidden()
-                        val mime = result.contentType.substringBefore(';')
-                        WebResourceResponse(mime, if (mime.startsWith("text/")) "UTF-8" else null,
-                            result.status, if (result.status == 200) "OK" else "Unavailable",
-                            mapOf("Content-Security-Policy" to FILE_CSP, "X-Content-Type-Options" to "nosniff", "Cache-Control" to "no-store", "Referrer-Policy" to "no-referrer"),
-                            ByteArrayInputStream(result.body))
-                    }.getOrElse { forbidden() }
-                }
                 if (u.scheme == "https" && u.host == "appassets.androidplatform.net" && u.port == -1 &&
                     u.encodedPath?.startsWith("/assets/ash-ui/") == true && u.encodedPath?.contains("..") != true &&
                     u.query == null && u.fragment == null) {
@@ -138,11 +116,10 @@ class HomeActivity : Activity() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 ai.ash.host.AppState.homePageLive = false
                 super.onPageStarted(view, url, favicon)
-                requests.values.forEach { it.cancel() }
-                requests.clear()
-                coreUi?.invalidate()
-                pageEpoch = if (url == UI_ASSET_URL) coreUi?.beginPage(true) ?: 0L else 0L
-                if (pageEpoch == 0L) { loaded = false; cover.visibility = View.VISIBLE; view.stopLoading() }
+                // The old page's syncs end with it; a message of it that is still on its way is dropped by the epoch.
+                chat.detach()
+                pageEpoch = if (url == UI_ASSET_URL) ++pageCount else 0L
+                if (pageEpoch == 0L) view.stopLoading()
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -150,27 +127,21 @@ class HomeActivity : Activity() {
                 ai.ash.host.AppState.homePageLive = url == UI_ASSET_URL && pageEpoch != 0L
                 if (ai.ash.host.AppState.homePageLive && focusInput) focusComposer()
             }
-
-            override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
-                if (req.isForMainFrame) {
-                    loaded = false
-                    cover.visibility = View.VISIBLE
-                }
-            }
         }
 
-        val bridgeSupported = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
-        if (bridgeSupported) {
-            WebViewCompat.addWebMessageListener(web, "AshNative", setOf(UI_ASSET_ORIGIN)) { _, message, origin, mainFrame, reply ->
-                if (!mainFrame || origin.toString() != UI_ASSET_ORIGIN || pageEpoch == 0L) return@addWebMessageListener
-                val input = runCatching { JSONObject(message.data ?: "") }.getOrNull() ?: return@addWebMessageListener
-                when (input.optString("type")) {
-                    "hello" -> reply.postMessage(JSONObject().put("type", "ready").toString())
-                    "cancel" -> requests.remove(input.optString("id"))?.cancel()
-                    "request" -> handleNativeRequest(input, reply)
-                    "file_save" -> handleFileSave(input, reply)
-                    "browser_logins" -> handleBrowserLogins(input, reply)
+        WebViewCompat.addWebMessageListener(web, "AshNative", setOf(UI_ASSET_ORIGIN)) { _, message, origin, mainFrame, reply ->
+            if (!mainFrame || origin.toString() != UI_ASSET_ORIGIN || pageEpoch == 0L) return@addWebMessageListener
+            val input = runCatching { JSONObject(message.data ?: "") }.getOrNull() ?: return@addWebMessageListener
+            val epoch = pageEpoch
+            when (input.optString("type")) {
+                "hello" -> {
+                    reply.postMessage(JSONObject().put("type", "ready").toString())
+                    // From here on the page is given the human channel's frames and the state of the link.
+                    chat.attach { text -> ui.post { if (pageEpoch == epoch) runCatching { reply.postMessage(text) } } }
                 }
+                "frame" -> input.optJSONObject("frame")?.let { frame -> bridgeWork.execute { if (pageEpoch == epoch) chat.fromPage(frame) } }
+                "file_save" -> handleFileSave(input, reply)
+                "browser_logins" -> handleBrowserLogins(input, reply)
             }
         }
 
@@ -179,38 +150,12 @@ class HomeActivity : Activity() {
                 chooseFiles(cb, params)
         }
 
-        val fg = if (night) Color.rgb(236, 236, 238) else Color.rgb(28, 28, 30)
-        status = TextView(this).apply { textSize = 15f; setTextColor(fg); gravity = Gravity.CENTER; setPadding(48, 24, 48, 24) }
-        action = Button(this).apply { text = "诊断"; setOnClickListener { startActivity(Intent(this@HomeActivity, ConsoleActivity::class.java)) } }
-        cover = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(if (night) 0xFF141415.toInt() else 0xFFF7F7F5.toInt())
-            addView(TextView(context).apply { text = "Ash"; textSize = 28f; setTextColor(fg); gravity = Gravity.CENTER })
-            addView(ProgressBar(context).apply { isIndeterminate = true })
-            addView(status)
-            addView(action, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        setContentView(FrameLayout(this).apply {
-            addView(web, FrameLayout.LayoutParams(-1, -1))
-            addView(cover, FrameLayout.LayoutParams(-1, -1))
-        })
-        if (!bridgeSupported) { status.text = "当前 WebView 不支持 Ash 安全通信"; return }
+        setContentView(web)
         focusInput = intent?.getBooleanExtra(EXTRA_FOCUS_INPUT, false) == true
-        poll()
+        web.loadUrl(UI_ASSET_URL)
         val firstStart = OnboardingActivity.showOnce(this)
         // After an upgrade the phone may have put Ash's auto-start back off: look again once the helper has connected.
         ui.postDelayed({ if (!isFinishing && !isDestroyed) Permissions.recheckAfterUpgrade(this, firstStart) }, 5_000)
-    }
-
-    // TODO(T11b-2): the chat page runs over the human channel; until then it is not loaded (the old route, HTTP to a core
-    // on this phone with a token read from the core's own record, is gone with the old core), and the cover says why.
-    private fun poll() {
-        if (isFinishing || isDestroyed) return
-        status.text = if (KernelLauncher.installedVersion(this) == null) "没有安装 Ash 内核包"
-            else "内核：${Link.describe()}\n（对话页等待人的通道接入）"
-        action.visibility = View.VISIBLE
-        ui.postDelayed({ poll() }, 1000)
     }
 
     /** Set by the widget's "跟 Ash 说"; honoured once the page is live. */
@@ -241,6 +186,7 @@ class HomeActivity : Activity() {
         super.onResume()
         ai.ash.host.AppState.homeVisible = true
         HandRuntime.appOpened(this)
+        Link.get(this).presence.tell()
         // In front, the app may start the kernel service; do it when the kernel has not handed over a connection.
         if (!KernelLauncher.connected(this)) KernelLauncher.start(this)
     }
@@ -248,42 +194,8 @@ class HomeActivity : Activity() {
     override fun onPause() {
         ai.ash.host.AppState.homeVisible = false
         HandRuntime.appLeft()
+        Link.get(this).presence.tell()
         super.onPause()
-    }
-
-    private fun handleNativeRequest(input: JSONObject, reply: androidx.webkit.JavaScriptReplyProxy) {
-        val client = coreUi ?: return
-        val epoch = pageEpoch
-        val id = input.optString("id")
-        if (!Regex("[1-9][0-9]{0,11}").matches(id) || requests.containsKey(id)) return
-        val path = input.optString("path")
-        val method = input.optString("method")
-        // Which requests are allowed is the core's decision; the page can only reach the core's own address.
-        if (path.length > 1024 || method !in setOf("GET", "POST", "PUT", "DELETE")) return
-        val headersJson = input.optJSONObject("headers") ?: JSONObject()
-        val headers = headersJson.keys().asSequence().associateWith { headersJson.optString(it) }
-        val rawBody = input.opt("body")
-        if (rawBody != JSONObject.NULL && rawBody != null && rawBody !is String) return
-        if (rawBody is String && rawBody.length > 28 * 1024 * 1024) return
-        val request = CoreUiRequest(method, path, headers, (rawBody as? String)?.toByteArray(Charsets.UTF_8))
-        val cancellation = CoreCancellation()
-        requests[id] = cancellation
-        val live = path.startsWith("/api/stream?") && path.contains("follow=true")
-        fun respond(message: JSONObject) {
-            ui.post { if (pageEpoch == epoch && !cancellation.cancelled) runCatching { reply.postMessage(message.put("id", id).toString()) } }
-        }
-        if (live) respond(JSONObject().put("type", "started"))
-        Thread {
-            try {
-                val result = client.execute(epoch, request, cancellation) { chunk ->
-                    respond(JSONObject().put("type", "chunk").put("body", Base64.encodeToString(chunk, Base64.NO_WRAP)))
-                }
-                respond(JSONObject().put("type", "done").put("status", result.status)
-                    .put("content_type", result.contentType)
-                    .put("body", Base64.encodeToString(result.body, Base64.NO_WRAP)))
-            } catch (_: Exception) { respond(JSONObject().put("type", "error")) }
-            finally { requests.remove(id, cancellation) }
-        }.start()
     }
 
     private fun handleBrowserLogins(input: JSONObject, reply: androidx.webkit.JavaScriptReplyProxy) {
@@ -296,20 +208,31 @@ class HomeActivity : Activity() {
         }.start()
     }
 
+    /**
+     * The page has the file's bytes (it read them through the human channel) and asks for a place to put them:
+     * `{type:"file_save", id, name, mime?, b64}`; the system file picker chooses it. Answered with `file_save_result`.
+     */
     private fun handleFileSave(input: JSONObject, reply: androidx.webkit.JavaScriptReplyProxy) {
         val id = input.optString("id")
         if (!Regex("[1-9][0-9]{0,11}").matches(id)) return
-        fun rejected() { reply.postMessage(JSONObject().put("type", "file_save_result").put("id", id).put("ok", false).toString()) }
-        if (saveFile != null) { rejected(); return }
-        val path = input.optString("path")
-        val route = runCatching { workspaceReadRoute(input.optString("workspace"), path) }.getOrNull() ?: run { rejected(); return }
-        saveFile = SaveFile(id, route, pageEpoch, reply)
-        val name = path.substringAfterLast('/')
-        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
-        try {
-            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-                .setType(mime).putExtra(Intent.EXTRA_TITLE, name), REQ_SAVE_FILE)
-        } catch (_: Exception) { saveFile = null; rejected() }
+        fun rejected() { ui.post { runCatching { reply.postMessage(JSONObject().put("type", "file_save_result").put("id", id).put("ok", false).toString()) } } }
+        val epoch = pageEpoch
+        val name = input.optString("name").substringAfterLast('/').filter { it.code >= 32 && it.code != 127 }.take(200)
+        val b64 = input.optString("b64")
+        if (saveFile != null || name.isEmpty() || b64.length > MAX_SAVE_B64) { rejected(); return }
+        bridgeWork.execute {
+            val bytes = runCatching { Base64.decode(b64, Base64.DEFAULT) }.getOrNull()
+            ui.post {
+                if (bytes == null || bytes.size > MAX_SAVE_BYTES || saveFile != null || pageEpoch != epoch) return@post rejected()
+                saveFile = SaveFile(id, name, bytes, epoch, reply)
+                val mime = input.optString("mime").takeIf { it.matches(Regex("[a-z0-9.+-]+/[a-z0-9.+*-]+")) }
+                    ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
+                try {
+                    startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                        .setType(mime).putExtra(Intent.EXTRA_TITLE, name), REQ_SAVE_FILE)
+                } catch (_: Exception) { saveFile = null; rejected() }
+            }
+        }
     }
 
     private fun finishFileSave(resultCode: Int, uri: Uri?) {
@@ -320,14 +243,10 @@ class HomeActivity : Activity() {
                 .put("id", pending.id).put("ok", ok).put("cancelled", cancelled).toString()) }
         } }
         if (resultCode != RESULT_OK || uri == null) { respond(false, true); return }
-        Thread {
-            val ok = runCatching {
-                val result = coreUi?.execute(pending.epoch, CoreUiRequest("GET", pending.path)) ?: error("core unavailable")
-                check(result.status == 200)
-                contentResolver.openOutputStream(uri, "w")?.use { it.write(result.body) } ?: error("destination unavailable")
-            }.isSuccess
+        bridgeWork.execute {
+            val ok = runCatching { contentResolver.openOutputStream(uri, "w")?.use { it.write(pending.bytes) } ?: error("destination unavailable") }.isSuccess
             respond(ok)
-        }.start()
+        }
     }
 
     private fun forbidden() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))
@@ -440,9 +359,8 @@ class HomeActivity : Activity() {
     override fun onDestroy() {
         ai.ash.host.AppState.homePageLive = false
         ui.removeCallbacksAndMessages(null)
-        requests.values.forEach { it.cancel() }
-        requests.clear()
-        coreUi?.invalidate()
+        chat.detach()
+        bridgeWork.shutdown()
         answerFiles(null)
         web.destroy()
         super.onDestroy()
@@ -459,5 +377,8 @@ class HomeActivity : Activity() {
         private const val REQ_FILES = 7101
         private const val REQ_SAVE_FILE = 7102
         private const val REQ_CAPTURE = 7104
+        /** The chat sends files up to 20 MiB; a saved file is held to the same. */
+        private const val MAX_SAVE_BYTES = 20 * 1024 * 1024
+        private const val MAX_SAVE_B64 = MAX_SAVE_BYTES / 3 * 4 + 8
     }
 }

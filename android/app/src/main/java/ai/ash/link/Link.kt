@@ -2,6 +2,14 @@ package ai.ash.link
 
 import ai.ash.BuildConfig
 import ai.ash.caps.Capabilities
+import ai.ash.host.AppState
+import ai.ash.host.Present
+import ai.ash.host.TaskStatus
+import ai.ash.human.ChatBridge
+import ai.ash.human.HomeLauncher
+import ai.ash.human.HumanHandlers
+import ai.ash.human.Presence
+import ai.ash.human.Surfaces
 import android.content.Context
 import android.os.Build
 import android.util.Log
@@ -49,21 +57,36 @@ object Link {
         private val refresher = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "ash-link-manifest").apply { isDaemon = true } }
         private val calls = DeviceCalls(ctx)
 
+        /** The chat page's way to the human channel of this connection (SPEC-05 §4.1). */
+        val chat = ChatBridge(ChatBridge.LinkUplink { client }, HomeLauncher(ctx)) { Log.w(TAG, it) }
+        private val human = Surfaces.android(ctx, chat)
+
         val client: LinkClient = LinkClient(
             LinkOptions(
                 url = { "ws://127.0.0.1:${requireNotNull(endpoint) { "the kernel host has not attached yet" }.port}/link" },
                 headers = { mapOf("Authorization" to "Bearer ${requireNotNull(endpoint).token}") },
                 hand = HandInfo("phone", Capabilities.deviceName(), BuildConfig.VERSION_NAME, "android-${Build.VERSION.SDK_INT}", identity.publicKey),
                 humanLabel = "手机 · 对话",
-                // TODO(T11b-2): list "chat", "notification", "island", "widget", "status" once the human channel shows them.
-                surfaces = emptyList(),
+                surfaces = human.surfaces,
                 sign = identity::sign,
                 connector = OkHttpConnector(),
                 codec = FrameCodec { name -> ctx.assets.open("link-schema/$name").use { it.readBytes().toString(Charsets.UTF_8) } },
                 outbox = EventOutbox(SqliteEventStore(ctx)),
-                handlers = calls,
+                handlers = HumanHandlers(calls, human) { open, welcome -> humanChannelChanged(open, welcome) },
+                humanFrames = chat::fromKernel,
             ),
         )
+
+        /** Where the owner is: told to the kernel as `presence`. */
+        val presence = Presence(client) { AppState.homeVisible }
+
+        /** The human channel opened or closed: the page is told, the kernel is told where the owner is, and what waited is sent. */
+        private fun humanChannelChanged(open: Boolean, welcome: JSONObject?) {
+            val grant = welcome?.optJSONObject("channels")?.optJSONObject("human")
+            chat.linkChanged(open, grant?.optString("client"), grant?.optBoolean("local") ?: false)
+            if (open) { presence.tell(); Present.flushAsync(ctx) }
+            TaskStatus.refresh()
+        }
 
         init { refresher.scheduleWithFixedDelay({ runCatching { refresh() } }, 60, 60, TimeUnit.SECONDS) }
 
