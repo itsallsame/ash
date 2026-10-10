@@ -11,6 +11,7 @@ import ai.ash.caps.senses.SenseCapabilities
 import ai.ash.caps.senses.SenseError
 import ai.ash.caps.shell.ShellCapabilities
 import ai.ash.caps.system.SystemCapabilities
+import ai.ash.screen.island.OwnerTypingException
 import ai.ash.caps.vscreen.VScreenCapabilities
 import android.content.Context
 import android.util.Log
@@ -64,8 +65,10 @@ object Capabilities {
                 Overlay.PASSTHROUGH -> Screen.withTouchPassthrough(run)
                 Overlay.HIDDEN -> if (args.optInt("display", 0) != 0) run() else Screen.withoutOverlay(run)
             }
+        } catch (e: OwnerTypingException) {
+            CapResult.error("unavailable", e.message ?: "owner_input_busy: owner is entering a message")
         } catch (e: IllegalStateException) {
-            CapResult.error("unavailable", e.message ?: "owner_input_busy")
+            CapResult.error("unavailable", "screen overlay error: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 

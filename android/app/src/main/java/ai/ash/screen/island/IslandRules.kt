@@ -16,4 +16,23 @@ object IslandRules {
     fun settles(kind: String): Boolean = kind in SETTLING
 
     private val SETTLING = setOf("result", "reply", "incomplete", "stopped")
+
+    /** What the agent's own screen work does about the island before it starts. */
+    enum class Step { OWNER_TYPING, NOTHING_TO_MOVE, WAIT_FOR_FRAMES }
+
+    /** Only an open input box makes the agent wait on the owner; an island that is not on screen has nothing to move aside. */
+    fun stepFor(editing: Boolean, attached: Boolean): Step = when {
+        editing -> Step.OWNER_TYPING
+        !attached -> Step.NOTHING_TO_MOVE
+        else -> Step.WAIT_FOR_FRAMES
+    }
+
+    /**
+     * Whether the action runs once the wait is over. A main thread that was too slow to confirm the island stepped aside is
+     * not the owner typing: the action runs anyway (at worst one tap lands on the island). Only typing refuses it.
+     */
+    fun mayRunAfterWait(editing: Boolean): Boolean = !editing
 }
+
+/** The owner is typing into the island, so the agent must not take input focus. Any other failure is an ordinary state error. */
+class OwnerTypingException(message: String) : IllegalStateException(message)

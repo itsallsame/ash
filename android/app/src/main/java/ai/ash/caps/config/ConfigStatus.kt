@@ -88,7 +88,7 @@ object ConfigStatus {
  */
 object KeepAliveStatus {
     /** The entry of [Permissions] each item is. */
-    private val ITEMS = listOf("battery_optimization" to "battery", "autostart" to "autostart", "recents_lock" to "lock")
+    private val ITEMS = listOf("battery_optimization" to "battery", "autostart" to "autostart", "kernel_autostart" to "kernel_autostart", "recents_lock" to "lock")
 
     /** The phone maker has switches of its own that this app cannot read. */
     fun supported(): Boolean = PhoneMaker.current.ownSwitches

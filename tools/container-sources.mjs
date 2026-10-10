@@ -17,7 +17,7 @@ export const CONTAINER_DEFAULT_MODEL = { provider: "deepseek-official", model: "
  * body starts). DSH refuses a `--patch` file that does not exist, so the image must have it. The official ACP row is replaced by
  * ash's control plugin (ACP plus steer and inject, and the `_ash/*` methods); ash-cost taps every model call for `_ash/usage`;
  * ash-skills is the skills provider. ash-control's `config` is only the DEFAULT model: ACP uses it as the selection of a new session
- * (and for one that has no recorded choice); once a session's model is changed (`model.set`), DSH's own record of that session wins.
+ * (and for one that has no recorded choice); after `model.set`, the choice is only remembered once the next model request writes its `request/header`; if the process restarts before that, the session goes back to this default.
  * Without it a fresh install has no model at all and every turn fails. DSH's sandbox is off by environment
  * (DSH_PERMISSION_MODE, set by the body): the container is the sandbox.
  */

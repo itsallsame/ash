@@ -608,27 +608,43 @@ internal object NativeIsland : IslandView.Actions {
 
     // ---- shared with the agent's own screen work ----
     fun <T> withTouchPassthrough(action: () -> T): T {
-        val latch = CountDownLatch(1); var applied = false; var entered = false
+        val latch = CountDownLatch(1); var entered = false; var typing = false
         main.post {
-            if (editing) { latch.countDown(); return@post }
-            entered = true; passingTouches++
-            runCatching { applyTouchMode(); applied = true }
-            Choreographer.getInstance().postFrameCallback { Choreographer.getInstance().postFrameCallback { main.postDelayed({ latch.countDown() }, 100) } }
+            when (IslandRules.stepFor(editing, attached)) {
+                IslandRules.Step.OWNER_TYPING -> { typing = true; latch.countDown() }
+                IslandRules.Step.NOTHING_TO_MOVE -> {
+                    // Counted anyway: an island that appears during the action comes up already letting touches through.
+                    entered = true; passingTouches++; latch.countDown()
+                }
+                IslandRules.Step.WAIT_FOR_FRAMES -> {
+                    entered = true; passingTouches++
+                    runCatching { applyTouchMode() }
+                    Choreographer.getInstance().postFrameCallback { Choreographer.getInstance().postFrameCallback { main.postDelayed({ latch.countDown() }, 100) } }
+                }
+            }
         }
         try {
-            if (!latch.await(1000, TimeUnit.MILLISECONDS) || !applied) throw IllegalStateException("owner_input_busy: owner is entering a message; do not take input focus")
+            // A late answer is a busy main thread, not the owner typing: only the input box refuses the action.
+            latch.await(1000, TimeUnit.MILLISECONDS)
+            if (typing || !IslandRules.mayRunAfterWait(editing)) throw OwnerTypingException("owner_input_busy: owner is entering a message; do not take input focus")
             return action()
         } finally { main.postDelayed({ if (entered) passingTouches = (passingTouches - 1).coerceAtLeast(0); applyTouchMode() }, 120) }
     }
     fun <T> withoutOverlay(action: () -> T): T {
-        val latch = CountDownLatch(1); var entered = false
+        val latch = CountDownLatch(1); var entered = false; var typing = false
         main.post {
-            if (editing) { latch.countDown(); return@post }
-            entered = true; suppressed++; if (attached) capturedAway = true; detach()
-            Choreographer.getInstance().postFrameCallback { Choreographer.getInstance().postFrameCallback { latch.countDown() } }
+            when (IslandRules.stepFor(editing, attached)) {
+                IslandRules.Step.OWNER_TYPING -> { typing = true; latch.countDown() }
+                IslandRules.Step.NOTHING_TO_MOVE -> { entered = true; suppressed++; latch.countDown() }
+                IslandRules.Step.WAIT_FOR_FRAMES -> {
+                    entered = true; suppressed++; capturedAway = true; detach()
+                    Choreographer.getInstance().postFrameCallback { Choreographer.getInstance().postFrameCallback { latch.countDown() } }
+                }
+            }
         }
         try {
-            if (!latch.await(1000, TimeUnit.MILLISECONDS) || !entered) throw IllegalStateException("owner_input_busy: owner is entering a message; defer screen capture")
+            latch.await(1000, TimeUnit.MILLISECONDS)
+            if (typing || !IslandRules.mayRunAfterWait(editing)) throw OwnerTypingException("owner_input_busy: owner is entering a message; defer screen capture")
             return action()
         } finally { main.postDelayed({ if (entered) suppressed = (suppressed - 1).coerceAtLeast(0); restore?.invoke() }, 120) }
     }
