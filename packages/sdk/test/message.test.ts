@@ -55,7 +55,7 @@ test("the shared types fit together", () => {
   const caller: Caller = { member: "agent:main", via: "agent", local: true, turn: "t1" };
   const ctx: HandleContext = { signal: new AbortController().signal, caller, raw: {} };
   const message: Message = { seq: 1, id: "m1", ts: 0, from: caller.member, to: "service:clock", kind: "request", word: "list", body: {} };
-  const ok: Reply = { ok: true, result: { timers: [] } };
+  const ok: Reply = { ok: true, result: { data: { timers: [] } } };
   const failed: Reply = { ok: false, error: errorBody("offline", "gone") };
   assert.ok(ctx.signal && message.word === "list" && ok.ok && !failed.ok);
 });

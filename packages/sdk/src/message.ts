@@ -3,6 +3,7 @@
  * when a word is delivered: who is calling (`Caller`), what comes back (`Reply`), what a handler is given (`HandleContext`).
  */
 
+import type { ContentPart } from "./link";
 // ---------------------------------------------------------------------------------------------------------------------
 // error codes (SPEC-02 §7)
 // ---------------------------------------------------------------------------------------------------------------------
@@ -138,8 +139,35 @@ export interface Outgoing {
   thread?: string;
 }
 
+/**
+ * What a member's `handle` returns for a request: the same two parts as a link `result` frame, so a result keeps
+ * one shape from a hand through the router to the tool surface. `data` follows the word's output schema; `content`
+ * is what a model or a person reads (text, images, resources). Events return nothing.
+ */
+export interface WordResult {
+  data?: unknown;
+  content?: ContentPart[];
+}
+
+/**
+ * Thrown by a handler to refuse with a contract code; the router turns it into `Reply.error`. Anything else a
+ * handler throws becomes `internal`.
+ */
+export class WordError extends Error {
+  readonly code: ErrorCode;
+  readonly detail?: unknown;
+  readonly recovery_hint?: string;
+  constructor(code: ErrorCode, message: string, extra: { detail?: unknown; recovery_hint?: string } = {}) {
+    super(message);
+    this.name = "WordError";
+    this.code = code;
+    this.detail = extra.detail;
+    this.recovery_hint = extra.recovery_hint;
+  }
+}
+
 /** What `router.send` returns and the body of a `response` message (SPEC-01 §3): one shape. */
-export type Reply = { ok: true; result?: unknown } | { ok: false; error: ErrorBody };
+export type Reply = { ok: true; result?: WordResult } | { ok: false; error: ErrorBody };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // shared by the modules (HUB-MODULES §1.1, §1.4)

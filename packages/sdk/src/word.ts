@@ -7,7 +7,7 @@
  */
 import Ajv2020 from "ajv/dist/2020";
 import { idKind, type MemberKind } from "./ids";
-import type { HandleContext, Message, Reply } from "./message";
+import type { HandleContext, Message, Reply, WordResult } from "./message";
 
 /** A JSON Schema (draft 2020-12) document. Kept loose on purpose: the validator is Ajv, not this type. */
 export type JsonSchema = Record<string, any>;
@@ -123,8 +123,11 @@ export interface Member {
   words(): WordContract[];
   /** Events it wants to hear besides those addressed to it, e.g. "sense.location" or "sense.*". */
   listens?: string[];
-  /** Handles a request or event addressed to it (or an event it listens to). */
-  handle(msg: Message, ctx: HandleContext): Promise<unknown>;
+  /**
+   * Handles a request or event addressed to it (or an event it listens to). A request returns a `WordResult` or
+   * throws a `WordError`; an event returns nothing.
+   */
+  handle(msg: Message, ctx: HandleContext): Promise<WordResult | void>;
   cancel?(requestId: string): void;
   /** Runs before the gate: a Reply that is not null refuses the request without asking anyone. */
   precheck?(msg: Message): Reply | null;
