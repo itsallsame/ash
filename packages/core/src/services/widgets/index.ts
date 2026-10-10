@@ -9,6 +9,7 @@
  *   events out: widget.state to person:owner whenever a card or a binding changes (the human edge pushes it to the
  *               channels that declared the `widget` surface); widget.action and widget.problem for the card's creator.
  *
+ * `widget.list` returns the same whole state as `widget.state` carries, so a channel that just connected can fetch it.
  * The cards, bindings, placed widgets and the owner's feedback are tables in the ledger database. Preview pictures
  * are kept in memory only; the hand draws them again when asked.
  */
@@ -117,13 +118,22 @@ export class WidgetsService implements Member {
   }
 
   // ---- telling the owner's channels ----
-  snapshot() {
+  /**
+   * The whole state, the same object for `widget.state` and `widget.list`: the cards (as listed, plus the drawable form
+   * `a2ui`), the placed widgets with the card each shows, the bindings, and the previews the hand is asked for.
+   */
+  state() {
+    const bindings = this.bindings();
+    const placed = new Map(this.placedList().map((p) => [p.id, p.type]));
+    for (const key of Object.keys(bindings)) if (!placed.has(key)) placed.set(key, "card");
     const previews = Object.fromEntries([...this.wanted]);
-    return { revision: ++this.revision, bindings: this.bindings(), ...(Object.keys(previews).length ? { previews } : {}),
-      cards: this.cards().map((c) => ({ id: c.id, title: c.title, size: c.size, owner: c.owner, updated_at: c.updated_at, expires_at: c.expires_at, a2ui: c.render })) };
+    return { revision: this.revision, bindings, ...(Object.keys(previews).length ? { previews } : {}),
+      cards: this.cards().map((c) => ({ ...this.info(c), a2ui: c.render })),
+      widgets: [...placed].map(([id, type]) => ({ id, type, card: type === "card" ? bindings[id] ?? null : null })) };
   }
   private notify(): void {
-    this.options.router.send({ to: OWNER_ID, kind: "event", word: STATE_WORD, body: this.snapshot() }, SELF)
+    this.revision++;
+    this.options.router.send({ to: OWNER_ID, kind: "event", word: STATE_WORD, body: this.state() }, SELF)
       .then((reply) => { if (!reply.ok) this.log(`${STATE_WORD}: ${reply.error.code}: ${reply.error.message}`); }, (error) => this.log(`${STATE_WORD} failed`, error));
   }
   private emit(to: string | null, word: string, body: unknown): void {
@@ -158,7 +168,7 @@ export class WidgetsService implements Member {
     }
     try {
       switch (msg.word) {
-        case "widget.list": return { data: this.list() };
+        case "widget.list": return { data: this.state() };
         case "widget.card.validate": return { data: this.validate(body.a2ui) };
         case "widget.card.put": return await this.put(msg.from, body);
         case "widget.card.get": return await this.get(body.id);
@@ -171,13 +181,6 @@ export class WidgetsService implements Member {
       if (error instanceof CardError) throw new WordError("bad_request", error.message);
       throw error;
     }
-  }
-
-  private list() {
-    const placed = new Map(this.placedList().map((p) => [p.id, p.type]));
-    const bindings = this.bindings();
-    for (const key of Object.keys(bindings)) if (!placed.has(key)) placed.set(key, "card");
-    return { cards: this.cards().map((c) => this.info(c)), widgets: [...placed].map(([id, type]) => ({ id, type, card: type === "card" ? bindings[id] ?? null : null })) };
   }
 
   private validate(a2ui: unknown) {

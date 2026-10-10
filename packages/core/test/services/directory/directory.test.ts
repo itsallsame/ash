@@ -18,7 +18,7 @@ const service = createDirectoryService({
   toolWords: (t) => (t === "timer_set" ? ["service:clock/set"] : []),
   appGranted: (app, to, word) => app === "app:notes" && to === "service:clock" && word === "list",
 });
-const words = (data: any, id: string): string[] => data.members.find((m: any) => m.id === id)?.words ?? [];
+const words = (data: any, id: string): string[] => (data.members.find((m: any) => m.id === id)?.words ?? []).map((w: any) => w.name);
 const remoteOwner: Caller = { ...owner, local: false };
 
 test("the owner on this machine sees what its kind may call, local_only words included", async () => {
@@ -47,13 +47,13 @@ test("an agent is cut down to its own declaration: words, and the words of its t
   assert.deepEqual(words(narrow, "service:vault"), ["list"]);
   assert.deepEqual(words(narrow, "service:clock").sort(), ["cancel", "list", "set"]);
   const tooled = await call(service, agent("tooled"), "list");
-  assert.deepEqual(tooled.members.map((m: any) => [m.id, m.words]), [["service:clock", ["set"]]]);
+  assert.deepEqual(tooled.members.map((m: any) => [m.id, m.words.map((w: any) => w.name)]), [["service:clock", ["set"]]]);
   assert.deepEqual((await call(service, agent("ghost"), "list")).members, [], "an undeclared agent sees nothing");
 });
 
 test("an app sees only what it was granted; a hand nothing", async () => {
   const app: Caller = { member: "app:notes", via: "app", local: false };
-  assert.deepEqual((await call(service, app, "list")).members.map((m: any) => [m.id, m.words]), [["service:clock", ["list"]]]);
+  assert.deepEqual((await call(service, app, "list")).members.map((m: any) => [m.id, m.words.map((w: any) => w.name)]), [["service:clock", ["list"]]]);
   assert.deepEqual((await call(service, { member: "device:phone", via: "hand", local: true }, "list")).members, []);
 });
 
@@ -79,4 +79,16 @@ test("describe gives the full contract and marks words that need approval", asyn
     agentPolicy: () => ({}) });
   assert.equal((await call(withRisk, agent(), "describe", { member: "service:vault", word: "list" })).words[0].needs_approval, true);
   assert.equal((await call(withRisk, owner, "describe", { member: "service:vault", word: "list" })).words[0].needs_approval, undefined);
+});
+
+test("list carries each word's label, and flags words that need approval for agents but not for the owner", async () => {
+  const risky = createDirectoryService({
+    registry: { ...registry, describe: (id) => id === "service:vault" ? { info: { id, kind: "service", name: id }, words: wordsOf(id).map((w) => w.word === "list" ? { ...w, risk: "outward", effect: "act" } : w.word === "describe" ? { ...w, per_call_risk: true, risk: "structure", effect: "write" } : w) } : registry.describe(id) },
+    agentPolicy: () => ({}),
+  });
+  const vaultWords = (data: any) => data.members.find((m: any) => m.id === "service:vault").words;
+  const forAgent = vaultWords(await call(risky, agent(), "list"));
+  assert.deepEqual(forAgent.find((w: any) => w.name === "list"), { name: "list", label: "在看保存的密钥", needs_approval: true });
+  assert.equal(forAgent.find((w: any) => w.name === "describe").needs_approval, "per_call");
+  assert.ok(vaultWords(await call(risky, owner, "list")).every((w: any) => w.needs_approval === undefined && w.label));
 });

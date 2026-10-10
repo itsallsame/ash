@@ -2,7 +2,7 @@
  * `service:directory`: which words the caller can use (HUB-MODULES §3). The one place this filter lives; the tool
  * surface's `capability_list` / `capability_describe` call these words and only reshape the answer.
  *
- *   list {member?}              the members that have words the caller may call, with those words' names
+ *   list {member?}              the members that have words the caller may call, each word as {name, label, needs_approval?}
  *   describe {member, word?}    the full contracts (description, schemas, effect, risk) of those words
  *
  * A word is visible when it is a request someone can call, the caller's kind passes the contract's `callers`
@@ -71,8 +71,10 @@ export function createDirectoryService(options: DirectoryOptions): Member {
       const body = (msg.body ?? {}) as { member?: string; word?: string };
       const caller = ctx.caller;
       if (msg.word === "list") {
+        const flagged = caller.via === "agent" || caller.via === "app";
         const members = registry.list().map((info) => ({ info, words: visible(info.id, caller) })).filter((m) => m.words.length)
-          .map(({ info, words }) => ({ id: info.id, kind: info.kind, name: info.name, online: true, words: words.map((c) => c.word) }));
+          .map(({ info, words }) => ({ id: info.id, kind: info.kind, name: info.name, online: true,
+            words: words.map((c) => ({ name: c.word, label: c.label.doing, ...(flagged && needsApproval(c) ? { needs_approval: needsApproval(c) } : {}) })) }));
         if (body.member === undefined) return { data: { members } };
         const chosen = members.filter((m) => m.id === body.member);
         if (!chosen.length) throw new WordError("not_found", `no member ${body.member} with words you may call; members are ${members.map((m) => m.id).join(", ") || "none"}`);

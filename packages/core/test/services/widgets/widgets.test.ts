@@ -42,6 +42,8 @@ test("put, list, get, remove: a card is stored in a table and the owner's channe
   assert.equal(r.card.owner, "agent:main");
   assert.equal(r.phone, "unknown");
   const list = await call(s.svc, owner, "widget.list");
+  // list is the same whole state as the last widget.state, so a channel that just connected can fetch it
+  assert.deepEqual(structuredClone(list), s.router.sent.filter((x) => x.msg.word === STATE_WORD).at(-1)!.msg.body);
   assert.deepEqual(list.cards.map((c: any) => [c.id, c.expired, c.problem]), [["water", false, null]]);
   const got = await call(s.svc, agent(), "widget.card.get", { id: "water" });
   assert.deepEqual(got.a2ui, text("hi"));
