@@ -253,7 +253,7 @@ export class AgentManager {
   /**
    * The host's network changed. When the proxy is not the one the agents were started with, the agents that run on the main
    * body are restarted at once, the way a process that ended is: a turn it was in is told as cut off, what waits in the inbox
-   * goes to the new process, and whoever asked and waits is answered by it. Temporary workers, agents that are off, and
+   * goes to the new process, which answers those who asked and wait. Whoever asked in the turn that was cut is told result_unknown (as after a crash). Temporary workers, agents that are off, and
    * agents on a computer are left as they are.
    */
   onNetwork(network: HostNetwork): void {
@@ -283,6 +283,8 @@ export class AgentManager {
     const cut = rows.filter((r) => r.turn);
     this.inbox.mark(rows.filter((r) => !r.turn).map((r) => r.id), "pending");
     this.inbox.mark(cut.map((r) => r.id), "interrupted");
+    // Whoever asked in the turn that was cut is told so now: nobody knows whether it was done. What still waits in the inbox is answered by the new process.
+    for (const r of cut) this.rejectWaiter(r.id, new WordError("result_unknown", `${id} was restarted in the middle of the turn that took this question (${why}); it is not known whether it was done`));
     if (!cut.length) return;
     const doing = cut.slice(0, 3).map((r) => r.text.replace(/\s+/g, " ").slice(0, 80)).join("；");
     this.enqueue(id, { id: this.newId(), from: SERVICE_CALLER.member, word: "wake", text: `${why}，上一轮中断了（当时在处理：${doing}）。要不要接着做，你自己决定。`, attachments: [], at: this.now() });

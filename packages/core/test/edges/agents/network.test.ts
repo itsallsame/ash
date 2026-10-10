@@ -86,6 +86,22 @@ test("an ask queued behind a running turn is not refused by the restart: the new
   assert.deepEqual(await asked, { data: { answer: "the answer" } });
 });
 
+test("an ask that was in the turn that got cut is answered result_unknown at once, by a proxy restart and by a crash alike", async () => {
+  for (const cut of ["proxy", "crash"] as const) {
+    const f = fixture({ network: OLD });
+    await f.start();
+    const d = f.driver();
+    // the ask is handed to the idle back lane, so it is in the running turn
+    const asked = (f.call(M, "ask", { text: "q" }, OTHER) as Promise<any>).then((v) => ({ v }), (e) => ({ e }));
+    await waitFor(() => sends(d, "back").length === 1);
+    if (cut === "proxy") await changed(f, { proxy: null }); else d.die(M);
+    const r: any = await asked;
+    assert.equal(r.e?.code, "result_unknown", cut);
+    assert.match(r.e.message, /not known whether it was done/);
+    await waitFor(() => starts(f) === 2);
+  }
+});
+
 test("a temporary worker is not restarted, and an agent that is off is not started by the change", async () => {
   const f = fixture({ network: OLD });
   await f.start();
