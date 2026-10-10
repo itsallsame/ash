@@ -71,7 +71,7 @@ class SetupActivity : Activity() {
             Row("不受电池优化限制", "后台记录不被系统停掉；也让 Ash 能在后台开始记录", "去开启", {
                 if (Senses.batteryUnrestricted(this)) true to "已放行" else false to "未放行"
             }) {
-                if (!Senses.batteryUnrestricted(this)) startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                if (!Senses.batteryUnrestricted(this)) ai.ash.caps.config.BatteryExemption.open(this)
                 else { Toast.makeText(this, "在应用信息里把自启动、后台运行也打开", Toast.LENGTH_LONG).show(); appDetails() }
             },
             Row("Health Connect", "只读：步数、心率、睡眠、体重、体脂、活动热量、距离、锻炼", "授权", {
