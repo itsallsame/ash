@@ -191,7 +191,7 @@ test("quota: over the limit no turn opens and the owner hears once; offline cost
   await waitFor(() => g.driver().of("send").length === 1);
 });
 
-test("a process that dies is started again and its sessions resumed; the third failure in a row stops it and tells the owner", async () => {
+test("a process that dies is started again and its sessions resumed; the second quick crash in a row waits, and the primary agent is not given up on", async () => {
   const f = fixture();
   await f.start();
   const d = f.driver();
@@ -201,14 +201,18 @@ test("a process that dies is started again and its sessions resumed; the third f
   assert.deepEqual((d.of("start")[1]![2] as any).sessions, handles);
   assert.ok(f.registry.members.has(M));
   d.die(M);
+  await settle();
+  assert.equal(d.of("start").length, 2, "the second quick crash waits before the new start");
+  assert.ok(f.registry.members.has(M));
+  assert.ok(f.fire(2000));
   await waitFor(() => d.of("start").length === 3);
   d.die(M);
   await settle();
-  assert.equal(d.of("start").length, 3);
-  assert.ok(!f.registry.members.has(M));
-  assert.equal(f.agents.manager.stateOf(M), "error");
-  assert.match(f.router.says().at(-1)!.text, /起不来了/);
-  // a process that ran for a good while before it died does not count against the three
+  assert.ok(f.fire(5000));
+  await waitFor(() => d.of("start").length === 4);
+  assert.ok(f.registry.members.has(M));
+  assert.notEqual(f.agents.manager.stateOf(M), "error");
+  // a process that ran for a good while before it died does not count against the tries
   const g = fixture();
   await g.start();
   g.clock.t += 5 * 60_000;
@@ -217,11 +221,12 @@ test("a process that dies is started again and its sessions resumed; the third f
   g.clock.t += 5 * 60_000;
   g.driver().die(M);
   await waitFor(() => g.driver().of("start").length === 3);
+  g.clock.t += 5 * 60_000;
   g.driver().die(M);
   await waitFor(() => g.driver().of("start").length === 4);
 });
 
-test("a start that fails is tried again; three failures give up", async () => {
+test("a start that fails is tried again later; a failure of the first one does not stop the hub from starting", async () => {
   const f = fixture();
   f.drivers; // created on first use
   await f.agents.startAll().catch(() => {});
@@ -233,13 +238,20 @@ test("a start that fails is tried again; three failures give up", async () => {
   h.agents.manager.driver("dsh");
   (h.drivers[0] as FakeDriver).startFailures = 3;
   await h.agents.startAll();
-  assert.equal(h.drivers[0]!.of("start").length, 3);
-  assert.equal(h.agents.manager.stateOf(M), "error");
-  assert.match(h.router.says().at(-1)!.text, /起不来了/);
+  assert.equal(h.drivers[0]!.of("start").length, 1, "one try, then it waits");
+  assert.equal(h.agents.manager.stateOf(M), "starting");
+  assert.ok(h.registry.members.has(M));
+  for (const ms of [2000, 5000, 15_000]) { assert.ok(h.fire(ms)); await settle(); }
+  assert.equal(h.drivers[0]!.of("start").length, 4);
+  assert.equal(h.agents.manager.stateOf(M), "idle");
   const i = fixture({ from: f });
   i.agents.manager.driver("dsh");
   (i.drivers[0] as FakeDriver).startFailures = 2;
   await i.agents.startAll();
+  assert.ok(i.fire(2000));
+  await settle();
+  assert.ok(i.fire(5000));
+  await settle();
   assert.equal(i.agents.manager.stateOf(M), "idle");
 });
 
