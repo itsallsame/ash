@@ -39,6 +39,7 @@ internal class AppsBridge(
     }
 
     companion object {
-        const val MAX_BODY = 1 shl 20
+        /** Characters: the request crosses Binder as a string, which is capped at about 1 MB shared by the process's transactions. */
+        const val MAX_BODY = 256 * 1024
     }
 }

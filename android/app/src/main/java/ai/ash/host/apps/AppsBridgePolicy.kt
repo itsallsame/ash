@@ -5,8 +5,10 @@ import org.json.JSONObject
 
 /**
  * What the apps shell may ask of Ash through the bridge: three words of `service:apps` (the list, a page, an icon), and the
- * tools of the one app the page belongs to. [app] is that app (fixed when the shell binds, one binding per open app), or null
- * for the shell's list screen, which has no app. Everything else is refused, whatever the shell says.
+ * tools of the one app the page belongs to. [app] is that app (given by the shell when it binds, one binding per open app), or
+ * null for the shell's list screen, which has no app. The shell's process reports the id itself and Ash cannot check it (every
+ * process of the app has one uid), so this keeps the shell's own mistakes from reaching another app; it is not a boundary
+ * against the shell. Everything else is refused, whatever the shell says.
  */
 internal object AppsBridgePolicy {
     const val SERVICE = "service:apps"

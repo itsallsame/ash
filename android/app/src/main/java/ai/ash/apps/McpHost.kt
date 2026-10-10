@@ -26,8 +26,9 @@ interface HostUi {
 
 /**
  * The MCP Apps host for one view (JSON-RPC 2.0, spec 2026-01-26). The view can: initialize, call its own app's tools,
- * ask to open a link (the owner confirms), report its size and log. Anything else is "method not found" (`ui/message`
- * too: the bridge has no word for a page to speak to an agent yet). The app is fixed when the router is made: nothing in a message can point it elsewhere.
+ * ask to open a link (the owner confirms), report its size and log. Anything else is "method not found", `ui/message`
+ * too: this version does not let a page speak to an agent for the owner (an app's server that wants an agent uses
+ * `wake_events`). The app is fixed when the router is made: nothing in a message can point it elsewhere.
  */
 class McpHost(
     private val app: String,

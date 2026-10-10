@@ -1,7 +1,6 @@
 // 页面和 Ash 之间（MCP Apps，JSON-RPC 2.0）。每一页都会带上这个文件，页面里用 window.app：
 //   await app.call("工具名", {参数})  调用本应用自己的工具，返回它的 structuredContent；失败时抛出错误，message 是工具给的说明
 //   app.show("视图名")               在一页里切换 <section data-view="…">（页面内跳转）
-//   await app.tell("文字")            替主人给 Ash 发一句话（主人先确认）
 //   await app.openLink("https://…")   在浏览器里打开链接（主人先确认）
 //   app.el("div", {class: "card"}, "文字", 子元素…)  造一个元素
 // 深浅色跟着 Ash：<html data-theme="light|dark">，配色用 app.css 里的变量。
@@ -47,7 +46,6 @@
       return result.structuredContent || {};
     },
     show(view) { for (const node of document.querySelectorAll("[data-view]")) node.hidden = node.dataset.view !== view; },
-    async tell(text) { await ready; await request("ui/message", { role: "user", content: [{ type: "text", text }] }, 300000); },
     async openLink(url) { await ready; await request("ui/open-link", { url }, 300000); },
   };
 })();

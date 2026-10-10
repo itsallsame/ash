@@ -188,7 +188,6 @@
 | `ui/initialize {protocolVersion: "2026-01-26", appInfo, appCapabilities}`（请求） | 第一件事。回答里 `hostContext` 有 `theme`、`locale`（`zh-CN`）、`timeZone`、`containerDimensions {width, height}`、`displayMode`、`platform` |
 | `ui/notifications/initialized`（通知） | 初始化完成后发一次 |
 | `tools/call {name, arguments}`（请求） | **只能调用本应用自己的工具**；以主人身份执行、记账；回答是工具的 `CallToolResult` |
-| `ui/message {role: "user", content: [{type: "text", text}]}`（请求） | 替主人给 Ash 发一句话。**本版壳 App 还不支持**（§8），会回 `Method not found` |
 | `ui/open-link {url}`（请求） | 用浏览器打开 http(s) 链接；主人先确认 |
 | `ui/notifications/size-changed {width, height}`（通知） | 可选 |
 | `ping` | `{}` |
@@ -200,7 +199,7 @@
 
 页面调不到别的应用和 Ash 的能力；应用要用 Ash 的东西，只能由它的服务在授权范围内去调（§5、§7）。应用没有审批：服务去调的词需要主人批准时，一律被拒绝（§7）。
 
-脚手架和 hello 例子里的 `ui/app.js` 把这些包成了 `window.app`：`await app.call("工具名", 参数)`（返回 `structuredContent`，失败抛出带原因的错误）、`app.show("视图")`、`await app.tell("文字")`、`await app.openLink(url)`、`app.el(tag, attrs, ...children)`。
+脚手架和 hello 例子里的 `ui/app.js` 把这些包成了 `window.app`：`await app.call("工具名", 参数)`（返回 `structuredContent`，失败抛出带原因的错误）、`app.show("视图")`、`await app.openLink(url)`、`app.el(tag, attrs, ...children)`。
 
 ## 5. `needs` 与安装审批
 
@@ -275,7 +274,7 @@
 
 ## 8. 壳 App 的接口（主人身份，经 Ash 自己的桥）
 
-壳 App 的页面跑在 `:app` 进程里，那里没有中枢的连接；它经一座 AIDL 桥（`IAppsBridge.call(to, word, bodyJson) → replyJson`）请 Ash 主进程，以主人身份在 Ash 唯一的那条连接上发词（`send {wait: true}`），把响应（`Reply`：`{ok, result: {data, content}} | {ok: false, error}`）原样带回。桥只放行：
+壳 App 的页面跑在 `:app` 进程里，那里没有中枢的连接；它经一座 AIDL 桥（`IAppsBridge.call(to, word, bodyJson) → replyJson`）请 Ash 主进程，以主人身份在 Ash 唯一的那条连接上发词（`send {wait: true}`），把响应（`Reply`：`{ok, result: {data, content}} | {ok: false, error}`）原样带回（响应经管道传回，因为一次 Binder 事务只有约 1 MB，装不下页面或图标；请求体最多 25.6 万字符）。调用发出之后若没拿到响应，错误是 `result_unknown`（可能已经做了），不会重发；调用发出之前就失败才是 `offline`。桥只放行：
 
 | 调用 | 作用 |
 |---|---|
@@ -286,7 +285,7 @@
 
 别的成员、别的应用、`service:apps` 的其他词一律被拒（`forbidden`）。页面拿到的工具结果是 MCP 信封：成功 `{content, structuredContent: data}`（`content` 取 `result.content`，没有就是 `data` 的 JSON 文本）；失败 `{isError: true, content: [{type: "text", text: 给主人看的原因}], structuredContent: {error}}`。
 
-本版壳 App 还不支持 `ui/message`（`app.tell`）：桥里没有让页面对 agent 说话的词，页面发它会得到 `Method not found`。
+这一版不做页面替主人对 agent 说话：没有 `ui/message`，页面发它会得到 `Method not found`。应用的服务要叫醒 agent，用 `wake_events`（§6）。
 
 ## 9. 最小例子 hello（一个页面，一个工具）
 

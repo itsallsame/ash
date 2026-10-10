@@ -25,8 +25,9 @@ internal object HumanSend {
 
     /**
      * `{to, kind, word, body, reply_to?, client_id?, wait?}` as in SPEC-02 §8. Returns the `send.result` frame once the
-     * kernel took the message; throws [Refused] when it did not, or an [IOException] when there was no answer (no
-     * connection, or none in time). A retry with the same `client_id` is counted once.
+     * kernel took the message; throws [Refused] when it did not (or, with `wait`, when its answer did not come in time:
+     * `result_unknown`, the word may have been done), or an [IOException] when there was no answer (no connection, or
+     * no acknowledgement in time). A retry with the same `client_id` is counted once.
      */
     fun send(client: LinkClient, request: JSONObject): JSONObject {
         val waitsForResponse = request.optBoolean("wait")
@@ -36,7 +37,8 @@ internal object HumanSend {
             val cause = e.cause
             throw if (cause is LinkException && cause.kind == "bad_request") Refused("bad_request", cause.message.orEmpty()) else IOException(cause?.message ?: "no connection")
         } catch (_: TimeoutException) {
-            throw IOException("the kernel did not answer in time")
+            // The frame went out (a closed link fails the future at once), so the word may well have been done: not "offline".
+            throw if (waitsForResponse) Refused("result_unknown", "the kernel did not answer in time") else IOException("the kernel did not answer in time")
         }
         if (!frame.getBoolean("ok")) frame.getJSONObject("error").let { throw Refused(it.getString("code"), it.getString("message")) }
         return frame

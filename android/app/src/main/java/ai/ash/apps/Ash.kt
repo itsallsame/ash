@@ -10,9 +10,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.DeadObjectException
 import android.os.IBinder
-import android.os.RemoteException
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
-import android.os.TransactionTooLargeException
 import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
@@ -64,6 +63,7 @@ class Ash(ctx: Context, private val app: String?) {
     private val lock = Object()
     private var bridge: IAppsBridge? = null
     private var bound = false
+    private var closed = false
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) { synchronized(lock) { bridge = IAppsBridge.Stub.asInterface(service); lock.notifyAll() } }
@@ -80,10 +80,15 @@ class Ash(ctx: Context, private val app: String?) {
         }
     }
 
-    fun close() = reset()
+    /** The screen is gone: unbinds, and calls still running do not bind again. */
+    fun close() {
+        synchronized(lock) { closed = true }
+        reset()
+    }
 
     private fun connect(): IAppsBridge? {
         synchronized(lock) {
+            if (closed) return null
             if (!bound) bound = ctx.bindService(AppsBridgeService.intent(ctx, app), connection, Context.BIND_AUTO_CREATE)
             if (!bound) return null
             val deadline = SystemClock.elapsedRealtime() + CONNECT_MS
@@ -96,25 +101,39 @@ class Ash(ctx: Context, private val app: String?) {
         }
     }
 
-    /** One word to one member, as the owner: the `Reply` ([Replies]). Never throws; Ash being out of reach is an `offline` error. */
+    /**
+     * One word to one member, as the owner: the `Reply` ([Replies]). Never throws. Ash out of reach before the word went out is
+     * `offline` (certainly not done); from the moment it went out, anything that goes wrong is `result_unknown` (it may have
+     * been done), and it is never sent again.
+     */
     fun call(to: String, word: String, body: JSONObject): JSONObject {
+        val text = body.toString()
+        if (text.length > MAX_BODY) return Replies.error("too_large", "请求太大")
         repeat(2) {
             val b = connect() ?: return Replies.error("offline", OFFLINE)
-            try {
-                return JSONObject(b.call(to, word, body.toString()))
-            } catch (_: DeadObjectException) {
-                reset()
-            } catch (_: TransactionTooLargeException) {
-                return Replies.error("too_large", "太大了，传不过来")
-            } catch (e: RemoteException) {
-                Log.w(TAG, "the bridge failed: ${e.javaClass.simpleName}")
-                return Replies.error("failed", "Ash 没能传回结果")
+            if (!b.asBinder().isBinderAlive) { reset(); return@repeat } // not sent: bind again
+            return try {
+                val pipe = b.call(to, word, text) ?: return Replies.error("result_unknown", UNKNOWN)
+                val answer = ParcelFileDescriptor.AutoCloseInputStream(pipe).use { readUpTo(it, MAX_REPLY + 1) }
+                if (answer.size > MAX_REPLY) Replies.error("result_unknown", UNKNOWN) else JSONObject(String(answer, Charsets.UTF_8))
             } catch (e: Exception) {
-                Log.w(TAG, "the bridge answered nonsense: ${e.javaClass.simpleName}")
-                return Replies.error("internal", "Ash 的回答看不懂")
+                Log.w(TAG, "the bridge failed after the word went out: ${e.javaClass.simpleName}")
+                if (e is DeadObjectException) reset()
+                Replies.error("result_unknown", UNKNOWN)
             }
         }
         return Replies.error("offline", OFFLINE)
+    }
+
+    private fun readUpTo(input: java.io.InputStream, limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (out.size() < limit) {
+            val n = input.read(buffer, 0, minOf(buffer.size, limit - out.size()))
+            if (n < 0) break
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
     }
 
     private fun data(reply: JSONObject, what: String): JSONObject {
@@ -149,6 +168,10 @@ class Ash(ctx: Context, private val app: String?) {
         private const val TAG = "ash.apps"
         private const val CONNECT_MS = 10_000L
         private const val OFFLINE = "连不上 Ash：打开 Ash 后再试"
+        private const val UNKNOWN = "Ash 没有回复，不确定有没有做成"
+        /** The same cap as the request's, in characters; a reply is bytes (UTF-8), and a page or icon is far under it. */
+        private const val MAX_BODY = 256 * 1024
+        private const val MAX_REPLY = 16 shl 20
 
         /** Ash's own screen: where the owner approves an app. */
         fun open(ctx: Context) {
