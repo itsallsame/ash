@@ -18,6 +18,7 @@ class FakeGateway implements PairingGateway {
   async reject(id: string) { this.calls.push(`reject ${id}`); }
   async revoke(id: string) { this.calls.push(`revoke ${id}`); }
   async setWebUi(id: string, allow: boolean) { this.calls.push(`web_ui ${id} ${allow}`); }
+  async setExpose(id: string, allow: boolean) { this.calls.push(`expose ${id} ${allow}`); }
 }
 
 async function setup(t: test.TestContext, gateway: PairingGateway | null = new FakeGateway()) {

@@ -179,6 +179,9 @@ export class HandRegistry {
     return msg.to ? (this.members.get(msg.to)?.assess(msg) ?? Promise.resolve(null)) : Promise.resolve(null);
   }
 
+  /** Whether the computer is bound as a body (the link server opens its device channel for that too). */
+  isBound(id: string): boolean { return this.d.bodies.isBound(id); }
+
   /** `service:bodies` bound or unbound this computer: register the new split of its last manifest. */
   rebind(id: string): void { if (this.live.has(id)) this.registerMembers(id); }
 
@@ -222,7 +225,9 @@ export class HandRegistry {
       this.members.set(memberId, member);
       this.d.registry.add(member);
     };
-    make(deviceId(id), "device", split.hand);
+    // A hand the owner has not let lend capabilities (only serving as a body, say) is not a `device:` member.
+    if (hand.lend) make(deviceId(id), "device", split.hand);
+    else this.dropMember(deviceId(id));
     if (split.bodyId && split.body.length) make(split.bodyId, "body", split.body);
     else this.dropMember(bodyId(id));
   }
