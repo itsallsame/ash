@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "70eda74b9c1730071d3c5ed957788fd5040053b1e378e81ec5eed4662d33be21",
+ "hash": "4d9480ef2eaf84609a6aaf49af84cd960d45d58d09c6919dcfaf37032dc39c26",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -4997,7 +4997,7 @@
    "word": "stop",
    "kind": "request",
    "direction": "in",
-   "description": "Stop an agent: its current turn is cancelled and it takes no new ones; messages wait for it.",
+   "description": "Stop an agent: its current turn is cancelled and it leaves the registry, so words sent to it answer offline until it starts again. Only the owner can stop the primary agent.",
    "input_schema": {
     "type": "object",
     "properties": {

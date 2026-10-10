@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `70eda74b9c173007`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `4d9480ef2eaf8460`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -149,7 +149,7 @@
 | `declare` | owner, agent, app | write / none | - | id*, name*, summary*, brief*, runtime, native, tools, words, lanes, modules, primary | 在新建帮手 | Declare a new agent: who it is, its role (brief), its tools and word policy, its lanes, which prompt modules it loads, and where it runs (native). It starts at once in its own session. Delegation rule: when the caller is not the owner, the tools and words you give the agent must be a subset of the tools and words you have yourself; anything beyond that is refused with forbidden. This is not a question to the owner. Delegation goes at most three levels deep. |
 | `update` | owner, agent, app | write / none | - | agent*, name, summary, brief, runtime, native, tools, words, lanes, modules, primary | 在调整帮手 | Change an agent's declaration; it applies from its next turn. `primary` can be handed to another agent only through primary.set. Delegation rule: when the caller is not the owner, the tools and words you give the agent must be a subset of the tools and words you have yourself; anything beyond that is refused with forbidden. This is not a question to the owner. Delegation goes at most three levels deep. |
 | `start` | owner, agent, app | act / none | - | agent* | 在启动帮手 | Let a stopped agent take turns again. |
-| `stop` | owner, agent, app | act / none | - | agent* | 在停下帮手 | Stop an agent: its current turn is cancelled and it takes no new ones; messages wait for it. |
+| `stop` | owner, agent, app | act / none | - | agent* | 在停下帮手 | Stop an agent: its current turn is cancelled and it leaves the registry, so words sent to it answer offline until it starts again. Only the owner can stop the primary agent. |
 | `restart` | owner, agent, app | act / none | - | agent* | 在重启帮手 | Cancel an agent's current turn and restart its process; its sessions are resumed. |
 | `remove` | owner, agent, app | write / none | - | agent* | 在删除帮手 | Remove a declared agent. The primary agent cannot be removed; hand `primary` to another one first. |
 | `primary.set` | owner | write / structure | - | agent* | 在换主 agent | Make another agent the primary one: the owner's words, the notification and island replies, and the semantic layer's wake-ups go to it. Only the owner. |

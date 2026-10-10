@@ -353,7 +353,7 @@ const agentInfo = obj({ id: agentRef, name: str, summary: str, state: choice("id
 const sessionKey = nonempty;
 const sessionTarget = { agent: agentRef, key: sessionKey };
 const sessionResult = obj({ key: sessionKey, handle: nullable(str) }, ["key"], true);
-/** One rule for every word that gives a new or changed agent its powers (declare, update, spawn); the check itself is one function in the router's authorization. */
+/** One rule for every word that gives a new or changed agent its powers (declare, update, spawn); service:agents checks it, with one function for the three words. */
 export const DELEGATION_RULE = "Delegation rule: when the caller is not the owner, the tools and words you give the agent must be a subset of the tools and words you have yourself; anything beyond that is refused with forbidden. This is not a question to the owner. Delegation goes at most three levels deep.";
 const session = (word: string, label: string, description: string, input: Record<string, JsonSchema>, required: string[], result: JsonSchema, effect: Effect = "act") =>
   add("service:agents", word, "request", obj(input, required), result, { effect, label, description });
@@ -379,7 +379,7 @@ add("service:agents", "declare", "request", obj({ id: agentRef, ...agentFields }
 add("service:agents", "update", "request", obj({ agent: agentRef, ...agentFields }, ["agent"]), agentInfo,
   { effect: "write", label: "在调整帮手", description: "Change an agent's declaration; it applies from its next turn. `primary` can be handed to another agent only through primary.set. " + DELEGATION_RULE });
 add("service:agents", "start", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在启动帮手", description: "Let a stopped agent take turns again." });
-add("service:agents", "stop", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在停下帮手", description: "Stop an agent: its current turn is cancelled and it takes no new ones; messages wait for it." });
+add("service:agents", "stop", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在停下帮手", description: "Stop an agent: its current turn is cancelled and it leaves the registry, so words sent to it answer offline until it starts again. Only the owner can stop the primary agent." });
 add("service:agents", "restart", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在重启帮手", description: "Cancel an agent's current turn and restart its process; its sessions are resumed." });
 add("service:agents", "remove", "request", obj({ agent: agentRef }, ["agent"]), obj({ removed: bool }, ["removed"]),
   { effect: "write", label: "在删除帮手", description: "Remove a declared agent. The primary agent cannot be removed; hand `primary` to another one first." });
