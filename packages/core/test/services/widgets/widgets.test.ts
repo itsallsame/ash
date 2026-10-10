@@ -168,7 +168,7 @@ test("a tap with an event goes to the creator agent as a message; the tap word i
   assert.deepEqual(s.svc.words().find((w) => w.word === "widget.tap")!.callers, ["owner"]);
 });
 
-test("ttl marks a card expired; cards are capped and long-expired ones make room", async () => {
+test("ttl marks a card expired; at most 50 cards", async () => {
   const s = setup("silent");
   await call(s.svc, agent(), "widget.card.put", put("short", text("a"), { ttl_min: 1 }));
   let now = 5_000_000;
@@ -176,8 +176,7 @@ test("ttl marks a card expired; cards are capped and long-expired ones make room
   assert.equal((await call(svc, owner, "widget.list")).cards[0].expired, false);
   now += 120_000;
   assert.equal((await call(svc, owner, "widget.list")).cards[0].expired, true);
-  now += 8 * 86_400_000;
   for (let i = 0; i < 49; i++) await call(svc, agent(), "widget.card.put", put(`c${i}`, text("a")));
-  await call(svc, agent(), "widget.card.put", put("last", text("a")));
-  assert.equal((await call(svc, owner, "widget.list")).cards.some((c: any) => c.id === "short"), false);
+  assert.equal(await code(call(svc, agent(), "widget.card.put", put("last", text("a")))), "bad_request");
+  await call(svc, agent(), "widget.card.put", put("c0", text("b")));
 });

@@ -7,16 +7,14 @@
  *   turn {turn}                 one turn of an agent: what it was given, what it said, its tool calls
  *   activity {id, offset}       the detail of one tool call (request and answer), paged by characters
  *
- * The ledger holds only masked versions (SPEC-01 §10.0), so a row is safe for every caller as stored. As a second
- * line, each answer's data is passed through `redact.forCaller` with the contract of the word it answers, so a
- * sensitive field that got in unmasked still reaches nobody but the owner.
+ * The ledger holds only masked versions (SPEC-01 §10.0), so a row is safe for every caller as stored; nothing is
+ * masked again here.
  */
 import { activityDetail } from "../../../../sdk/src/activity";
-import { WordError, type Caller, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
+import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import type { Member, WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger, LedgerMessage } from "../../kernel/ledger";
-import type { Registry, Redact } from "../../kernel/types";
 
 export const HISTORY_ID = "service:history";
 export const DEFAULT_QUERY_LIMIT = 30;
@@ -28,9 +26,6 @@ const LANE_TURNS = 500;
 
 export interface HistoryOptions {
   ledger: Pick<Ledger, "page" | "get" | "db">;
-  /** With both, the data of answers is masked for the caller by the contract of the word that was answered. */
-  redact?: Pick<Redact, "forCaller">;
-  registry?: Pick<Registry, "find">;
 }
 
 const MAX_SEQ = Number.MAX_SAFE_INTEGER;
@@ -40,17 +35,6 @@ const MAX_BATCHES = 20;
 export function createHistoryService(options: HistoryOptions): Member {
   const { ledger } = options;
   const db = ledger.db();
-
-  /** Pass an answer's data through the caller's masking, by the contract of the word it answers. */
-  function forCaller(m: LedgerMessage, caller: Caller): LedgerMessage {
-    if (!options.redact || !options.registry || m.kind !== "response") return m;
-    const reply = m.body as { ok?: boolean; result?: { data?: unknown } } | null;
-    if (!reply?.ok || reply.result?.data === undefined) return m;
-    const contract = options.registry.find(m.from, m.word)?.contract;
-    if (!contract) return m;
-    const data = options.redact.forCaller(reply.result.data, contract, caller);
-    return data === reply.result.data ? m : { ...m, body: { ...reply, result: { ...reply.result, data } } };
-  }
 
   /** The turns and the messages delivered in them, for the turns that ran on a lane. */
   function laneScope(lane: string): { turns: Set<string>; ids: Set<string> } {
@@ -64,7 +48,7 @@ export function createHistoryService(options: HistoryOptions): Member {
     return { turns, ids };
   }
 
-  function query(body: Record<string, unknown>, caller: Caller) {
+  function query(body: Record<string, unknown>) {
     const limit = (body.limit as number | undefined) ?? DEFAULT_QUERY_LIMIT;
     const base = {
       ...(body.text !== undefined ? { text: body.text as string } : {}), ...(body.speaker !== undefined ? { from: body.speaker as string } : {}),
@@ -86,18 +70,18 @@ export function createHistoryService(options: HistoryOptions): Member {
       before = window[0]!.seq;
     }
     const last = found[found.length - 1];
-    return { messages: found.map((m) => forCaller(m, caller)), ...(found.length >= limit && last ? { next_before: last.seq } : {}) };
+    return { messages: found, ...(found.length >= limit && last ? { next_before: last.seq } : {}) };
   }
 
-  function read(body: Record<string, unknown>, caller: Caller) {
+  function read(body: Record<string, unknown>) {
     const from = body.from_seq as number, to = body.to_seq as number;
     if (to < from) throw new WordError("bad_request", "to_seq must not be smaller than from_seq");
     if (to - from + 1 > MAX_READ_MESSAGES) throw new WordError("too_large", `a range holds at most ${MAX_READ_MESSAGES} messages; read it in pieces`);
     const messages = ledger.page({ after: from - 1, limit: MAX_READ_MESSAGES }).filter((m) => m.seq <= to);
-    return { messages: messages.map((m) => forCaller(m, caller)) };
+    return { messages: messages };
   }
 
-  function turn(body: Record<string, unknown>, caller: Caller) {
+  function turn(body: Record<string, unknown>) {
     const turnId = body.turn as string;
     const ids = (sql: string, ...args: string[]) => (db.prepare(sql).all(...args) as { id: string }[]).map((r) => r.id);
     const started = ids("SELECT id FROM messages WHERE word='turn.started' AND json_extract(body,'$.turn')=? ORDER BY seq", turnId);
@@ -116,14 +100,14 @@ export function createHistoryService(options: HistoryOptions): Member {
       }),
       ...native.map((m) => { const b = m.body as { name?: string; phase?: string; summary?: string; ok?: boolean }; return { seq: m.seq, native: true, name: b.name, phase: b.phase, summary: b.summary ?? m.summary, ...(b.ok !== undefined ? { ok: b.ok } : {}) }; }),
     ].sort((a, b) => a.seq - b.seq);
-    return { turn: turnId, messages: [...given, ...spoken].map((m) => forCaller(m, caller)), tools };
+    return { turn: turnId, messages: [...given, ...spoken], tools };
   }
 
-  function activity(body: Record<string, unknown>, caller: Caller) {
+  function activity(body: Record<string, unknown>) {
     const request = ledger.get(body.id as string);
     if (!request || request.kind !== "request" || !request.from.startsWith("agent:") || !request.turn || request.to === "person:owner") throw new WordError("not_found", "no such activity");
     const answer = db.prepare("SELECT id FROM messages WHERE reply_to=? AND kind='response' LIMIT 1").get(request.id) as { id: string } | undefined;
-    const response = answer ? forCaller(ledger.get(answer.id)!, caller) : null;
+    const response = answer ? ledger.get(answer.id)! : null;
     const full = activityDetail({ tool: request.word, member: request.to, input: request.body, result: response?.body ?? { status: "pending", note: "尚无返回记录" } });
     const offset = (body.offset as number | undefined) ?? 0;
     const next = Math.min(full.length, offset + ACTIVITY_PAGE_CHARS);
@@ -133,13 +117,13 @@ export function createHistoryService(options: HistoryOptions): Member {
   return {
     id: HISTORY_ID, kind: "service", name: "History",
     words: (): WordContract[] => wordsOf(HISTORY_ID),
-    async handle(msg: Message, ctx: HandleContext): Promise<WordResult | void> {
+    async handle(msg: Message, _ctx: HandleContext): Promise<WordResult | void> {
       const body = (msg.body ?? {}) as Record<string, unknown>;
       switch (msg.word) {
-        case "query": return { data: query(body, ctx.caller) };
-        case "read": return { data: read(body, ctx.caller) };
-        case "turn": return { data: turn(body, ctx.caller) };
-        case "activity": return { data: activity(body, ctx.caller) };
+        case "query": return { data: query(body) };
+        case "read": return { data: read(body) };
+        case "turn": return { data: turn(body) };
+        case "activity": return { data: activity(body) };
         default: throw new WordError("not_found", `service:history has no word ${msg.word}`);
       }
     },

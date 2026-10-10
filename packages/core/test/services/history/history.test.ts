@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Message } from "../../../../sdk/src/message";
-import { SENSITIVE_KEYWORD } from "../../../../sdk/src/word";
 import { createHistoryService } from "../../../src/services/history";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { agent, call, code, owner } from "../support";
@@ -12,25 +10,17 @@ function scene() {
   const say = ledger.append({ from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "查一下电量" }, thread: "th_1" });
   ledger.append({ from: "agent:main", to: null, kind: "event", word: "turn.started", body: { turn: "t_1", lane: "front", ids: [say.id] } });
   const call1 = ledger.append({ from: "agent:main", to: "device:phone", kind: "request", word: "device.status", body: { purpose: "电量" }, turn: "t_1" });
-  // The answer holds a pairing code the contract marks sensitive; this row was (wrongly) written unmasked.
   const answer = ledger.append({ from: "device:phone", to: "agent:main", kind: "response", word: "device.status", reply_to: call1.id, turn: "t_1",
-    body: { ok: true, result: { data: { battery: 80, pair_code: "123456" } } } });
+    body: { ok: true, result: { data: { battery: 80, code_hint: "****56" } } } });
   ledger.append({ from: "agent:main", to: null, kind: "event", word: "agent.tool", body: { turn: "t_1", name: "bash", phase: "end", summary: "ls", ok: true } });
   const reply = ledger.append({ from: "agent:main", to: "person:owner", kind: "request", word: "say", body: { text: "电量 80%" }, turn: "t_1" });
   ledger.append({ from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "谢谢" } });
   return { ledger, say, call1, answer, reply };
 }
 
-const contract = { member: "device:phone", word: "device.status", kind: "request", result_schema: { type: "object", properties: { pair_code: { [SENSITIVE_KEYWORD]: { mask: "hidden" } } } } };
-const redact = {
-  forCaller: (result: any, _c: unknown, caller: { member: string }) =>
-    caller.member === "person:owner" ? result : { ...result, pair_code: "[仅主人可见]" },
-};
-const registry = { find: (to: string, word: string) => (to === "device:phone" && word === "device.status" ? { member: {} as never, contract: contract as never } : null) };
-
 function setup() {
   const s = scene();
-  return { ...s, service: createHistoryService({ ledger: s.ledger, redact, registry }) };
+  return { ...s, service: createHistoryService({ ledger: s.ledger }) };
 }
 
 test("query: newest first, by text, speaker, thread; pages with before", async () => {
@@ -92,15 +82,10 @@ test("activity pages a long detail with offset and next_offset", async () => {
   assert.equal(second.next_offset, first.items[0].total > 32_000 ? 32_000 : null);
 });
 
-test("an agent gets answers masked, the owner gets the original", async () => {
-  const { service, answer, call1 } = setup();
-  const find = (data: any) => data.messages.find((m: Message) => m.id === answer.id);
-  const asAgent = find(await call(service, agent(), "read", { from_seq: 4, to_seq: 4 }));
-  const asOwner = find(await call(service, owner, "read", { from_seq: 4, to_seq: 4 }));
-  assert.equal(asAgent.body.result.data.pair_code, "[仅主人可见]");
-  assert.equal(asAgent.body.result.data.battery, 80);
-  assert.equal(asOwner.body.result.data.pair_code, "123456");
-  // the detail of the call is masked the same way
-  assert.ok(!JSON.stringify(await call(service, agent(), "activity", { id: call1.id })).includes("123456"));
-  assert.ok(JSON.stringify(await call(service, owner, "activity", { id: call1.id })).includes("123456"));
+test("rows are returned as the ledger holds them (already masked), the same to every caller", async () => {
+  const { service } = setup();
+  const asAgent = await call(service, agent(), "read", { from_seq: 4, to_seq: 4 });
+  const asOwner = await call(service, owner, "read", { from_seq: 4, to_seq: 4 });
+  assert.deepEqual(asAgent, asOwner);
+  assert.equal(asAgent.messages[0].body.result.data.code_hint, "****56");
 });

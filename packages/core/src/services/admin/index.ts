@@ -14,7 +14,7 @@
  *   status                               time, pause, version, uptime, how many agents and hands are here.
  *   logs {lines?, level?, since?}        owner, this machine; the lines come from an injected reader.
  *
- * Who must stop while paused asks `isPaused()` or `service:admin/status`.
+ * Who must stop while paused listens for `settings.changed` and asks `status`.
  */
 import { WordError, type Caller, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import type { Member, WordContract } from "../../../../sdk/src/word";
@@ -38,8 +38,6 @@ export interface AdminOptions {
   startedAt?: number;
   /** The recent log lines, oldest first. Without it `logs` answers `unavailable`. */
   readLogs?: (query: { lines: number; level?: string; since?: number }) => string[] | Promise<string[]>;
-  /** Called after the pause state changed, for the modules that act on it at once. */
-  onPauseChanged?: (paused: boolean) => void;
   log?: (message: string, error?: unknown) => void;
 }
 
@@ -61,7 +59,7 @@ export class AdminService implements Member {
 
   words(): WordContract[] { return wordsOf(ADMIN_ID); }
 
-  isPaused(): boolean { return this.read(PAUSED_KEY, { paused: false }).paused; }
+  private isPaused(): boolean { return this.read(PAUSED_KEY, { paused: false }).paused; }
 
   // ---- kv ----
   private read<T>(key: string, fallback: T): T {
@@ -89,7 +87,6 @@ export class AdminService implements Member {
   // ---- pause ----
   private async setPaused(paused: boolean, by: string) {
     this.write(PAUSED_KEY, { paused, by, at: this.now() });
-    this.options.onPauseChanged?.(paused);
     this.announce(["paused"], by);
     return { paused };
   }
@@ -140,8 +137,9 @@ export class AdminService implements Member {
 
   private async modelSet(provider: string, model: string) {
     const agent = await this.primary();
-    const result = await this.ask("configure", { agent, config: { provider, model } });
-    return { provider, model, restart_required: result.restart_required === true };
+    // The runtime's own way of writing it: DSH takes its model option as a JSON pair [provider, model].
+    await this.ask("configure", { agent, config: { model: JSON.stringify([provider, model]) } });
+    return { provider, model, restart_required: false };
   }
 
   private async plugins(body: Record<string, unknown>) {

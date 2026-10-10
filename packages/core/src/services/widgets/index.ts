@@ -31,7 +31,6 @@ export const STATE_WORD = "widget.state";
 const CARD_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const WIDGET_ID = /^[0-9]{1,12}$/;
 const MAX_CARDS = 50;
-const KEEP_EXPIRED_MS = 7 * 86_400_000;
 const MAX_FEEDBACK_PER_CARD = 50;
 const MAX_FEEDBACK_TEXT = 200;
 const MAX_PREVIEW_B64 = 360_000;
@@ -205,7 +204,6 @@ export class WidgetsService implements Member {
     const render = validateCard(body.a2ui);
     const existing = this.card(id);
     if (existing && !this.mayChange(existing, from)) throw new WordError("forbidden", `card "${id}" belongs to ${existing.owner}; only it or the owner may change it`);
-    if (!existing && this.cards().length >= MAX_CARDS) this.purge();
     if (!existing && this.cards().length >= MAX_CARDS) throw new CardError(`there are already ${MAX_CARDS} cards; remove one first`);
     // A replaced card is a new version even within the same millisecond, so the hand's answer matches this one.
     const now = Math.max(this.now(), (existing?.updated_at ?? 0) + 1);
@@ -395,12 +393,6 @@ export class WidgetsService implements Member {
     if (!side(raw.width) || !side(raw.height) || (raw.theme !== "dark" && raw.theme !== "light")) return null;
     const dp = plain(raw.dp) && typeof raw.dp.width === "number" && typeof raw.dp.height === "number" ? { width: Math.round(raw.dp.width), height: Math.round(raw.dp.height) } : undefined;
     return { png: data.toString("base64"), width: raw.width, height: raw.height, theme: raw.theme, ...(dp ? { dp } : {}) };
-  }
-
-  /** Long-expired cards that no widget shows go first when space runs out. */
-  private purge(): void {
-    const bound = new Set(Object.values(this.bindings()));
-    for (const c of this.cards()) if (!bound.has(c.id) && c.expires_at !== null && c.expires_at + KEEP_EXPIRED_MS <= this.now()) this.drop(c.id);
   }
 }
 

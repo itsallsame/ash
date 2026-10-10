@@ -8,17 +8,16 @@ function setup(options: { logs?: string[] } = {}) {
   const { ledger } = openLedger();
   const router = fakeRouter((m) => {
     if (m.word === "list") return { ok: true, result: { data: { agents: [{ id: "agent:helper", primary: false }, { id: "agent:main", primary: true }] } } };
-    if (m.word === "configure") return { ok: true, result: { data: { config: { model: "x" }, restart_required: true } } };
+    if (m.word === "configure") return { ok: true, result: { data: { config: { model: "x" } } } };
     if (m.word === "plugins") return { ok: true, result: { data: { plugins: [{ name: "p", enabled: true }] } } };
     return { ok: true };
   });
-  const changed: boolean[] = [];
   const service = createAdminService({
-    ledger, router, version: "4.0.0", now: () => 10_000, startedAt: 4_000, onPauseChanged: (p) => changed.push(p),
+    ledger, router, version: "4.0.0", now: () => 10_000, startedAt: 4_000,
     registry: { list: (f) => (f?.kind === "agent" ? [{ id: "agent:main", kind: "agent", name: "main" }] : f?.kind === "device" ? [{ id: "device:phone", kind: "device", name: "p" }, { id: "device:pc", kind: "device", name: "c" }] : []) },
     readLogs: options.logs ? ({ lines }) => options.logs!.slice(-lines) : undefined, log: () => {},
   });
-  return { ledger, router, service, changed };
+  return { ledger, router, service };
 }
 const settle = () => new Promise((r) => setImmediate(r));
 const events = (s: ReturnType<typeof setup>) => s.router.sent.filter((x) => x.msg.kind === "event").map((x) => x.msg);
@@ -32,26 +31,24 @@ test("contracts: pause, resume and logs are for the owner on this machine; the r
 
 test("pause and resume keep the state, say so with settings.changed, and do not interrupt anyone themselves", async () => {
   const s = setup();
-  assert.equal(s.service.isPaused(), false);
+  assert.equal((await call(s.service, agent(), "status")).paused, false);
   assert.deepEqual(await call(s.service, owner, "pause", { by: "m_42" }), { paused: true });
-  assert.equal(s.service.isPaused(), true);
   assert.equal((await call(s.service, agent(), "status")).paused, true);
   await settle();
   assert.deepEqual(events(s), [{ to: null, kind: "event", word: "settings.changed", body: { keys: ["paused"], by: "m_42" } }]);
   assert.deepEqual(s.router.sent.filter((x) => x.msg.kind === "request"), [], "no session.interrupt from admin");
 
   assert.deepEqual(await call(s.service, owner, "resume", { confirmed: true }), { paused: false });
-  assert.equal(s.service.isPaused(), false);
+  assert.equal((await call(s.service, agent(), "status")).paused, false);
   await settle();
   assert.deepEqual(events(s).at(-1)!.body, { keys: ["paused"], by: "person:owner" });
-  assert.deepEqual(s.changed, [true, false]);
 });
 
 test("the pause survives a restart (it is in kv)", async () => {
   const s = setup();
   await call(s.service, owner, "pause");
   const again = createAdminService({ ledger: s.ledger, router: s.router, registry: { list: () => [] } });
-  assert.equal(again.isPaused(), true);
+  assert.equal((await call(again, agent(), "status")).paused, true);
 });
 
 test("settings are plain key-value; set announces the keys, never the values; null removes", async () => {
@@ -76,9 +73,9 @@ test("settings are plain key-value; set announces the keys, never the values; nu
 test("model.set goes to the primary agent's configure and is stored nowhere in the hub", async () => {
   const s = setup();
   const result = await call(s.service, owner, "model.set", { provider: "deepseek", model: "deepseek-chat" });
-  assert.deepEqual(result, { provider: "deepseek", model: "deepseek-chat", restart_required: true });
+  assert.deepEqual(result, { provider: "deepseek", model: "deepseek-chat", restart_required: false });
   const configure = s.router.sent.find((x) => x.msg.word === "configure")!;
-  assert.deepEqual(configure.msg, { to: "service:agents", kind: "request", word: "configure", body: { agent: "agent:main", config: { provider: "deepseek", model: "deepseek-chat" } } });
+  assert.deepEqual(configure.msg, { to: "service:agents", kind: "request", word: "configure", body: { agent: "agent:main", config: { model: JSON.stringify(["deepseek", "deepseek-chat"]) } } });
   assert.deepEqual(s.ledger.db().prepare("SELECT key FROM kv WHERE key NOT IN ('schema')").all(), []);
   assert.deepEqual((await call(s.service, owner, "settings.get")).settings, {});
 });
