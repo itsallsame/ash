@@ -1,4 +1,7 @@
-import { SCREEN_TOKEN_HEADER } from "../../sdk/src/api.ts";
+// The proactive-contact preferences: the text of PROACTIVE.md in the main body's work directory, read and written with
+// the body's own file words (`workspace.read` / `workspace.write`), like any other file.
+import { BODY_MAIN, readText, writeText } from "./body.js";
+import { retryable } from "./link.js";
 
 const PATH = "PROACTIVE.md";
 const MAX_CHARS = 65_536;
@@ -9,13 +12,13 @@ function element(tag, text = "") {
   return item;
 }
 
-/** A screen-bound editor. Drafts and uncertain writes live only in this instance. */
+/** An editor bound to one connection. Drafts and uncertain writes live only in this instance. */
 export class ProactivePreferences {
   constructor(root, net, valid) {
     this.root = root;
     this.net = net;
     this.valid = valid;
-    this.identity = { token: net.token, screen: net.screen, scope: net.currentScope };
+    this.identity = net.binding();
     this.active = true;
     this.baseline = null;
     this.loaded = false;
@@ -45,9 +48,7 @@ export class ProactivePreferences {
   }
 
   current() {
-    return this.active && this.valid() && this.net.localManagement === true &&
-      this.net.token === this.identity.token && this.net.screen === this.identity.screen &&
-      this.net.currentScope === this.identity.scope && Boolean(this.identity.token && this.identity.screen && this.identity.scope);
+    return this.active && this.valid() && this.net.same(this.identity);
   }
 
   dispose() {
@@ -58,19 +59,16 @@ export class ProactivePreferences {
     this.editor.value = "";
   }
 
-  paired(accepted, word) {
-    const reply = accepted?.reply;
-    return typeof accepted?.id === "string" && reply?.kind === "response" && reply.reply_to === accepted.id &&
-      reply.from === "service:self" && reply.to === "person:owner" && reply.word === word ? reply.body : null;
-  }
-
-  async request(word, body, client_id) {
-    const response = await this.net.request("/api/send", { method: "POST", credentials: "same-origin",
-      headers: { "content-type": "application/json", [SCREEN_TOKEN_HEADER]: this.identity.token },
-      body: JSON.stringify({ to: "service:self", kind: "request", word, body, client_id, wait: true }) });
-    if (!response.ok) return { http: response.status };
-    const accepted = await response.json();
-    return { body: this.paired(accepted, word) };
+  /** The text of the file now, or null when it does not exist yet. A file read only in part cannot be edited here. */
+  async fileText() {
+    try {
+      const { text, truncated } = await readText(this.net, BODY_MAIN, PATH);
+      if (truncated) throw Object.assign(new Error("too large"), { code: "too_large" });
+      return text;
+    } catch (error) {
+      if (error?.code === "not_found") return null;
+      throw error;
+    }
   }
 
   async load() {
@@ -80,27 +78,19 @@ export class ProactivePreferences {
     this.saveButton.disabled = true;
     this.status.textContent = "正在读取…";
     try {
-      const result = await this.request("read", { path: PATH }, crypto.randomUUID());
+      const text = await this.fileText();
       if (!this.current()) return;
-      if (result.body?.ok === true && typeof result.body.result?.content === "string" &&
-        /^[0-9a-f]{64}$/.test(result.body.result?.hash)) {
-        this.baseline = result.body.result.hash;
-        this.editor.value = result.body.result.content;
-        this.loaded = true;
-        this.pending = null;
-        this.status.textContent = "已读取当前偏好。";
-      } else if (result.body?.ok === false && result.body.error?.code === "not_found") {
-        this.baseline = null;
-        this.editor.value = "";
-        this.loaded = true;
-        this.pending = null;
-        this.status.textContent = "还没有写过，写下来保存就行。";
-      } else {
+      this.baseline = text;
+      this.editor.value = text ?? "";
+      this.loaded = true;
+      this.pending = null;
+      this.status.textContent = text === null ? "还没有写过，写下来保存就行。" : "已读取当前偏好。";
+    } catch (error) {
+      if (this.current()) {
         this.loaded = false;
-        this.status.textContent = "没读到偏好，请点「重新读取」。";
+        this.status.textContent = error?.code === "too_large" ? "这个文件太长了，不能在这里改。"
+          : retryable(error) ? "连接断了，没读到偏好。" : "没读到偏好，请点「重新读取」。";
       }
-    } catch {
-      if (this.current()) { this.loaded = false; this.status.textContent = "连接断了，没读到偏好。"; }
     } finally {
       this.busy = false;
       if (this.current()) {
@@ -117,7 +107,8 @@ export class ProactivePreferences {
       this.status.textContent = "内容太长了，没有保存。";
       return;
     }
-    const pending = this.pending ?? { content: this.editor.value, expected_hash: this.baseline, client_id: crypto.randomUUID() };
+    // [expected] is the text this edit started from; [sent] says a write was tried, so the file may already hold [content].
+    const pending = this.pending ?? { content: this.editor.value, expected: this.baseline, sent: false, client_id: crypto.randomUUID() };
     this.pending = pending;
     this.busy = true;
     this.editor.disabled = true;
@@ -125,29 +116,40 @@ export class ProactivePreferences {
     this.loadButton.disabled = true;
     this.status.textContent = "正在保存…";
     try {
-      const result = await this.request("write", { path: PATH, content: pending.content,
-        expected_hash: pending.expected_hash, why: "Owner updated proactive preferences" }, pending.client_id);
-      if (!this.current()) return;
-      if (result.body?.ok === false) {
-        this.pending = null;
-        this.status.textContent = result.body.error?.code === "bad_request"
-          ? "这段偏好刚在别处改过，未覆盖；请点「重新读取」后再改。" : "保存被拒绝了。";
+      // Words have no hash to check: read again and compare with what this edit started from before writing over it.
+      let now;
+      try { now = await this.fileText(); } catch {
+        if (this.current()) {
+          if (!pending.sent) this.pending = null;
+          this.status.textContent = pending.sent ? "保存结果未确认，请再点一次保存。" : "没能确认文件现在的内容，没有保存，请再点一次保存。";
+        }
         return;
       }
-      if (result.body?.ok !== true || !/^[0-9a-f]{64}$/.test(result.body.result?.hash)) {
-        this.status.textContent = "保存结果未确认，请再点一次保存。";
-        return;
-      }
-      const verification = await this.request("read", { path: PATH }, crypto.randomUUID());
       if (!this.current()) return;
-      if (verification.body?.ok === true && verification.body.result?.hash === result.body.result.hash &&
-        verification.body.result?.content === pending.content) {
-        this.baseline = result.body.result.hash;
+      if (now !== pending.content) {
+        if (now !== pending.expected) {
+          this.pending = null;
+          this.status.textContent = "这段偏好刚在别处改过，未覆盖；请点「重新读取」后再改。";
+          return;
+        }
+        pending.sent = true;
+        try { await writeText(this.net, BODY_MAIN, PATH, pending.content, { clientId: pending.client_id }); }
+        catch (error) {
+          if (!this.current()) return;
+          if (retryable(error)) this.status.textContent = "保存结果未确认，请再点一次保存。";
+          else { this.pending = null; this.status.textContent = "保存被拒绝了。"; }
+          return;
+        }
+        if (!this.current()) return;
+      }
+      let after;
+      try { after = await this.fileText(); } catch { after = undefined; }
+      if (!this.current()) return;
+      if (after === pending.content) {
+        this.baseline = pending.content;
         this.pending = null;
         this.status.textContent = "已保存。";
       } else this.status.textContent = "保存结果未确认，请再点一次保存。";
-    } catch {
-      if (this.current()) this.status.textContent = "保存结果未确认，请再点一次保存。";
     } finally {
       this.busy = false;
       if (this.current()) {

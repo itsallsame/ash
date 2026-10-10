@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fold, initialView } from "../js/project.js";
-import { answerGateAsk, approvalSections, gatePageRequest, renderApprovalsSheet } from "../js/sheet-approvals.js";
+import { answerGateAsk, approvalSections, gateRequest, renderApprovalsSheet, renderEvidence } from "../js/sheet-approvals.js";
+import { startKernel } from "./kernel.js";
+import { netFor, until } from "./support.js";
 
 class Node {
   constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.className = ""; this.value = ""; this.listeners = {}; }
@@ -37,26 +39,29 @@ test("the approvals sheet retains the entire original beside its bounded summary
   assert.equal(disclosure.children[1].children.length, 0);
 });
 
-test("gate page accepts only paired current-screen replies", async () => {
-  const net = { token: "screen-token", screen: "screen:local", currentScope: "scope-a", generation: 1,
-    request: async (_path, options) => {
-      const wire = JSON.parse(options.body);
-      assert.equal(options.headers["Ash-Screen"], "screen-token");
-      assert.equal(wire.to, "service:gate");
-      return { ok: true, json: async () => ({ id: "request-a", reply: { kind: "response", reply_to: "request-a",
-        from: "service:gate", to: "person:owner", word: wire.word, body: { ok: true, result: { rules: [] } } } }) };
-    } };
-  assert.deepEqual(await gatePageRequest(net, () => true, "rules.list", {}), { rules: [] });
-  net.request = async () => ({ ok: true, json: async () => ({ id: "request-a", reply: { kind: "response",
-    reply_to: "different", from: "service:gate", to: "person:owner", word: "rules.list", body: { ok: true, result: { rules: [] } } } }) });
-  await assert.rejects(gatePageRequest(net, () => true, "rules.list", {}), /未配对/);
-  let release;
-  net.request = async () => new Promise((resolve) => { release = resolve; });
-  const pending = gatePageRequest(net, () => true, "history", {});
-  net.currentScope = "scope-b";
-  release({ ok: true, json: async () => ({ id: "request-a", reply: { kind: "response", reply_to: "request-a",
-    from: "service:gate", to: "person:owner", word: "history", body: { ok: true, result: { items: [] } } } }) });
-  await assert.rejects(pending, /屏幕身份已变化/);
+const online = async () => {
+  const kernel = startKernel();
+  const handle = netFor(kernel);
+  handle.net.start();
+  await until(() => handle.net.status === "online", 2000, "online");
+  return { kernel, ...handle, stop: () => { handle.net.stop(); kernel.close(); } };
+};
+
+test("a gate word returns its data, and an answer that arrives on another connection is dropped", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    kernel.on("service:gate", "rules.list", { rules: [], mode: "auto" });
+    kernel.on("service:gate", "history", async () => { await new Promise((resolve) => setTimeout(resolve, 30)); return { items: [] }; });
+    const binding = net.binding();
+    assert.deepEqual(await gateRequest(net, binding, "rules.list", { limit: 100 }), { rules: [], mode: "auto" });
+    const pending = gateRequest(net, binding, "history", { limit: 100 });
+    kernel.drop();
+    await assert.rejects(pending, /连接已经换过|没有收到确认|没有成功|连接/);
+    await assert.rejects(gateRequest(net, binding, "rules.list", {}), /连接已经换过/, "an old binding is never used again");
+    await until(() => net.status === "online" && net.same(net.binding()), 2000, "reconnected");
+    await assert.rejects(gateRequest(net, net.binding(), "pending.list", {}), (error) => error.code === "forbidden",
+      "a word that is not for the owner fails in the kernel and the failure surfaces");
+  } finally { stop(); }
 });
 
 test("only a live gate ask from trusted ledger origin appears; other asks and old answers do not", () => {
@@ -119,57 +124,72 @@ test("the read-only sheet limits text, rejects malformed option sets and never r
   assert.match(nodes.find((node) => node.tag === "article").textContent, /<script>/);
 });
 
-test("answer sends only an original gate option from the current screen and waits for its exact ledger response", async () => {
-  const ask = approvalSections(fold(initialView(), gateAsk("gate-live", 7)), 5000).pending[0];
-  const sent = [];
-  const ledger = new Map();
-  const net = { token: "token-r", screen: "screen:remote", currentScope: "scope-r", generation: 2,
-    request: async (_path, options) => {
-      sent.push({ ...options, wire: JSON.parse(options.body) });
-      ledger.set("response-1", { id: "response-1", seq: 8, from: "person:owner", to: "service:gate",
-        kind: "response", word: "ask", reply_to: ask.id, origin: { screen: net.screen, label: "Remote" },
-        body_summary: { ok: true, result: { choice: "once" } } });
-      return { ok: true, json: async () => ({ id: "response-1", seq: 8 }) };
-    } };
-  const result = await answerGateAsk(net, () => true, ask, "once", "stable-1", (id) => ledger.get(id), { now: () => 5000 });
-  assert.deepEqual(result, { id: "response-1", seq: 8 });
-  assert.equal(sent[0].headers["Ash-Screen"], "token-r");
-  assert.deepEqual(sent[0].wire, { to: "service:gate", kind: "response", word: "ask", reply_to: "gate-live",
-    body: { ok: true, result: { choice: "once" } }, client_id: "stable-1" });
-  assert.equal(Object.hasOwn(sent[0].wire, "local_management"), false);
-  await assert.rejects(answerGateAsk(net, () => true, ask, "always", "stable-2", () => null, { now: () => 5000 }), /选项不可用/);
-  assert.equal(sent.length, 1, "unoffered choice has zero network calls");
+const askFor = (kernel, id = "gate-live", extra = {}) => {
+  const message = kernel.append({ id, ts: Date.now(), from: "service:gate", to: "person:owner", kind: "request", word: "ask",
+    body: { title: "Allow sending?", detail: "Send one synthetic note", expires_at: Date.now() + 60_000,
+      options: [{ id: "once", label: "Only once" }, { id: "deny", label: "No" }], ...extra } });
+  return approvalSections(fold(initialView(), message)).pending[0];
+};
+
+test("answer sends only an offered gate option, and the kernel's result is the confirmation", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    const ask = askFor(kernel);
+    const result = await answerGateAsk(net, ask, "once", "stable-1");
+    const recorded = kernel.ledger.find((m) => m.kind === "response" && m.reply_to === ask.id);
+    assert.deepEqual(result, { id: recorded.id, seq: recorded.seq });
+    const sent = kernel.requests.find((r) => r.kind === "response");
+    assert.deepEqual(sent, { to: "service:gate", kind: "response", word: "ask", reply_to: ask.id,
+      body: { ok: true, result: { data: { choice: "once" } } }, client_id: "stable-1" });
+    await assert.rejects(answerGateAsk(net, ask, "always", "stable-2"), /选项不可用/);
+    assert.equal(kernel.requests.filter((r) => r.kind === "response").length, 1, "an unoffered choice sends nothing");
+  } finally { stop(); }
 });
 
-test("expired, forged, stale or mismatched ledger answers cannot be marked confirmed", async () => {
+test("a second answer is refused as already answered: the first answer counts", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    const ask = askFor(kernel);
+    await answerGateAsk(net, ask, "once", "first-id");
+    await assert.rejects(answerGateAsk(net, ask, "deny", "other-id"), /被拒绝/);
+    assert.equal(kernel.ledger.filter((m) => m.kind === "response" && m.reply_to === ask.id).length, 1);
+  } finally { stop(); }
+});
+
+test("expired, forged or mismatched asks are refused before anything is sent", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    const ask = askFor(kernel);
+    await assert.rejects(answerGateAsk(net, ask, "once", "stable", { now: () => ask.expires_at }), /已失效/);
+    await assert.rejects(answerGateAsk(net, { ...ask, from: "agent:main" }, "once", "stable"), /已失效/);
+    await assert.rejects(answerGateAsk(net, ask, "once", ""), /已失效|不可用/);
+    assert.equal(kernel.requests.filter((r) => r.kind === "response").length, 0);
+  } finally { stop(); }
+});
+
+test("a custom answer to a question carries its text", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    const ask = askFor(kernel, "gate-custom", { allow_custom: true });
+    await answerGateAsk(net, ask, "custom", "stable", { answerText: "晚点再说" });
+    assert.deepEqual(kernel.requests.at(-1).body, { ok: true, result: { data: { choice: "custom", text: "晚点再说" } } });
+    await assert.rejects(answerGateAsk(net, askFor(kernel, "gate-plain"), "custom", "stable-b", { answerText: "x" }), /选项不可用/);
+  } finally { stop(); }
+});
+
+test("a definite refusal and a lost answer are told apart; a connection that changed discards the result", async () => {
   const ask = approvalSections(fold(initialView(), gateAsk("gate-live", 7)), 5000).pending[0];
+  const fake = (answer, same = () => true) => ({ binding: () => ({ session: "s", generation: 1 }), same, answerAsk: answer });
+  for (const code of ["conflict", "not_found", "bad_request", "denied"])
+    await assert.rejects(answerGateAsk(fake(async () => ({ ok: false, error: { code, message: code } })), ask, "once", "c", { now: () => 5000 }), /被拒绝/);
+  await assert.rejects(answerGateAsk(fake(async () => ({ ok: false, error: { code: "forbidden", message: "" } })), ask, "once", "c", { now: () => 5000 }), /无权回答/);
+  for (const code of ["offline", "timeout", "result_unknown", "unavailable", "internal"])
+    await assert.rejects(answerGateAsk(fake(async () => ({ ok: false, error: { code, message: code } })), ask, "once", "c", { now: () => 5000 }), /回执未知.*原样重试/);
+  await assert.rejects(answerGateAsk(fake(async () => ({ ok: true, message: { id: "x", seq: 1 } })), ask, "once", "c", { now: () => 5000 }), /无法配对/, "an answer recorded before the question is not its answer");
   let calls = 0;
-  const net = { token: "token-r", screen: "screen:remote", currentScope: "scope-r", generation: 2,
-    request: async () => { calls++; return { ok: true, json: async () => ({ id: "response-1", seq: 8 }) }; } };
-  await assert.rejects(answerGateAsk(net, () => true, ask, "once", "stable", () => null, { now: () => 9000 }), /已失效/);
-  await assert.rejects(answerGateAsk(net, () => true, { ...ask, from: "agent:main" }, "once", "stable", () => null, { now: () => 5000 }), /已失效/);
-  assert.equal(calls, 0);
-  const fake = { id: "response-1", seq: 8, from: "person:owner", to: "service:gate", kind: "response",
-    word: "ask", reply_to: ask.id, origin: { screen: "screen:other" }, body_summary: { ok: true, result: { choice: "once" } } };
-  await assert.rejects(answerGateAsk(net, () => true, ask, "once", "stable", () => fake,
-    { now: () => 5000, maxWaitMs: 0 }), /权威记录/);
-  assert.equal(calls, 1);
-  net.request = async () => { calls++; net.currentScope = "scope-other"; return { ok: true, json: async () => ({ id: "response-1", seq: 8 }) }; };
-  await assert.rejects(answerGateAsk(net, () => true, ask, "once", "stable", () => fake,
-    { now: () => 5000, maxWaitMs: 0 }), /屏幕身份/);
-  assert.equal(calls, 2);
-});
-
-test("5xx, timeout and rate limiting are unknown ACKs, not definitive rejection", async () => {
-  const ask = approvalSections(fold(initialView(), gateAsk("gate-live", 7)), 5000).pending[0];
-  const net = { token: "token-r", screen: "screen:remote", currentScope: "scope-r", generation: 2,
-    request: async () => ({ ok: false, status: 503 }) };
-  for (const status of [503, 408, 429]) {
-    net.request = async () => ({ ok: false, status });
-    await assert.rejects(answerGateAsk(net, () => true, ask, "once", "stable", () => null, { now: () => 5000 }), /回执未知.*原样重试/);
-  }
-  net.request = async () => ({ ok: false, status: 403 });
-  await assert.rejects(answerGateAsk(net, () => true, ask, "once", "stable", () => null, { now: () => 5000 }), /无权回答/);
+  const changing = fake(async () => ({ ok: true, message: { id: "r", seq: 8 } }), () => ++calls < 2);
+  await assert.rejects(answerGateAsk(changing, ask, "once", "c", { now: () => 5000 }), /连接已经换过/);
+  await assert.rejects(answerGateAsk(fake(async () => assert.fail("not sent"), () => false), ask, "once", "c", { now: () => 5000 }), /还没连上/);
 });
 
 test("history says when she judged an action herself and why; a capability-wide rule names no object", () => {
@@ -179,11 +199,11 @@ test("history says when she judged an action herself and why; a capability-wide 
     renderApprovalsSheet(root, initialView(), { now: 5000, rules: [
       { id: "rule-star", to: "device:phone", word: "file.delete", object_pattern: "*", risk: "outward", expires_at: 90_000 },
     ], history: [
-      { id: "h-review", source: "current", request_id: "m_1", to: "device:phone", word: "browser.click", risk: "outward",
+      { id: "h-review", request_id: "m_1", to: "device:phone", word: "browser.click", risk: "outward",
         decision: "review", reason: "你让她打开推特，你来登录", at: 4000 },
-      { id: "h-carry", source: "current", request_id: "m_2", to: "device:phone", word: "browser.click", risk: "outward",
+      { id: "h-carry", request_id: "m_2", to: "device:phone", word: "browser.click", risk: "outward",
         decision: "carry", reason: "你几分钟前刚允许过同样的操作", at: 4500 },
-      { id: "h-once", source: "current", request_id: "m_3", to: "device:phone", word: "shell.run", risk: "structure", decision: "once", at: 4800 },
+      { id: "h-once", request_id: "m_3", to: "device:phone", word: "shell.run", risk: "structure", decision: "once", at: 4800 },
     ] });
     const text = root.textContent;
     assert.match(text, /在网页上点击由她判断后放行 · .*你让她打开推特，你来登录/);
@@ -196,8 +216,8 @@ test("history says when she judged an action herself and why; a capability-wide 
 test("a history record opens to its evidence: what was done, what the reviewer saw and said, the card, the answer, and whether it ran", () => {
   globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment") };
   try {
-    const history = [{ id: "h1", request_id: "r1", source: "current", word: "clipboard.set", risk: "outward", label: "改剪贴板", decision: "review", reason: "你要的", at: 4000 },
-      { id: "h2", request_id: "r2", source: "current", word: "rules.set", risk: "structure", decision: "deny", at: 4100 }];
+    const history = [{ id: "h1", request_id: "r1", word: "clipboard.set", risk: "outward", label: "改剪贴板", decision: "review", reason: "你要的", at: 4000 },
+      { id: "h2", request_id: "r2", word: "rules.set", risk: "structure", decision: "deny", at: 4100 }];
     const opened = [];
     const evidence = new Map([["r1", { status: "ready", entry: { request_id: "r1", requester: "agent:main", word: "clipboard.set", label: "改剪贴板", effect: "act",
       content: "开会", facts: { owner_said: ["把开会复制一下"], context: ["read 日历"] }, review: { decision: "allow", reason: "主人明确要求", ms: 1200 },
@@ -214,5 +234,37 @@ test("a history record opens to its evidence: what was done, what the reviewer s
     renderApprovalsSheet(closed, { asks: [] }, { now: 5000, history, rules: [], evidence: new Map(), onEvidence: () => {} });
     assert.ok(closed.children[0].textContent.includes("查看依据"));
     assert.ok(!closed.children[0].textContent.includes("裁判结论"));
+  } finally { delete globalThis.document; }
+});
+
+test("the last line of the evidence says what happened without any answer-progress section", () => {
+  globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment") };
+  try {
+    const last = (entry) => { const root = new Node("root"); renderEvidence(root, { request_id: "r", requester: "agent:main", member: "device:phone", word: "x", ...entry }, { now: 5000 });
+      return root.textContent; };
+    assert.match(last({ decision: "once", decided_by: "owner", executed: { ok: true } }), /最后做成了/);
+    assert.match(last({ decision: "once", executed: { ok: false, message: "超时" } }), /没做成（超时）/);
+    assert.match(last({ decision: "deny", executed: { ok: false } }), /最后没有做/);
+    assert.match(last({ decision: "timeout" }), /最后没有做/);
+    assert.match(last({ decision: "once" }), /最后还没有结果/);
+    assert.match(last({ decision: "rule", decided_by: "hand_full" }), /设备完全放开/);
+    const root = new Node("root");
+    renderApprovalsSheet(root, { asks: [{ id: "a", seq: 1, from: "service:gate", state: "answered", choice: "once", title: "旧问题" }] }, { now: 5000, rules: [], history: [] });
+    assert.doesNotMatch(root.textContent, /回答后的进展|旧问题/);
+  } finally { delete globalThis.document; }
+});
+
+test("history names every decision the gate can record and opens evidence for each record", () => {
+  globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment") };
+  try {
+    const decisions = ["once", "always", "deny", "timeout", "cancelled", "rule", "review", "carry", "hand_full", "declared_none", "assessed_none"];
+    const history = decisions.map((decision, n) => ({ id: `h${n}`, request_id: `r${n}`, word: "shell.run", risk: "structure", decision, at: 4000 + n }));
+    const root = new Node("root");
+    renderApprovalsSheet(root, { asks: [] }, { now: 5000, history, rules: [], onEvidence: () => {} });
+    const text = root.textContent;
+    assert.doesNotMatch(text, /已记录/, "no decision falls back to the generic word");
+    assert.match(text, /设备完全放开放行/);
+    assert.equal((text.match(/查看依据/g) ?? []).length, decisions.length);
+    assert.doesNotMatch(text, /较早的审批/);
   } finally { delete globalThis.document; }
 });

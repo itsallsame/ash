@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-// The same UI source produces the core-served page and the Android packaged page.
+// The same UI source produces the page the kernel serves to browsers and the Android packaged page. They differ in one
+// thing only, the transport (SPEC-05 §4.1): a browser opens its own WebSocket with the browser client of packages/link;
+// the app's page passes frames through AshNative and may not compile code at run time (CSP without 'unsafe-eval'), which
+// the client's frame checks need. So the app's page is built without the browser client (js/link-browser.js left empty).
 import { mkdirSync, readdirSync, readFileSync, writeFileSync as writeFile, renameSync } from "node:fs";
 // Readers (tests/builds) may run while another build refreshes the generated module.
 function writeFileSync(path, content) { const temp = `${path}.${process.pid}.tmp`; writeFile(temp, content); renameSync(temp, path); }
@@ -10,14 +13,20 @@ import "./gen-island.mjs";
 
 const ui = join(dirname(fileURLToPath(import.meta.url)), "../packages/web");
 const read = (f) => JSON.stringify(readFileSync(join(ui, f), "utf8"));
-const bundled = await build({ entryPoints: [join(ui, "js/app.js")], bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent" });
-const app = bundled.outputFiles[0].text.replaceAll("</script", "<\\/script");
+const noBrowserClient = { name: "no-browser-client", setup(b) {
+  b.onResolve({ filter: /link-browser\.js$/ }, () => ({ path: "link-browser", namespace: "app-page" }));
+  b.onLoad({ filter: /.*/, namespace: "app-page" }, () => ({ contents: "export const HandClient = undefined; export const browserConnector = undefined;", loader: "js" }));
+} };
+const bundle = async (plugins) => (await build({ entryPoints: [join(ui, "js/app.js")], bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent", plugins })).outputFiles[0].text.replaceAll("</script", "<\\/script");
+const app = await bundle([]);
+const appInApp = await bundle([noBrowserClient]);
 const html = readFileSync(join(ui, "index.html"), "utf8");
 if (!html.includes("<!-- ui-app -->")) throw new Error("UI app marker missing");
 const generatedHtml = html.replace("<!-- ui-app -->", () => `<script>${app}</script>`);
 const assetRoot = join(ui, "../../android/app/src/main/assets/ash-ui");
 const nativeBootstrap = readFileSync(join(ui, "js/native-bootstrap.js"), "utf8").replaceAll("</script", "<\\/script");
-const assetHtml = generatedHtml.replace("<head>", `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; form-action 'none'; frame-src https://ash-files.invalid; worker-src 'none'; base-uri 'none'">`)
+// A file is shown from its bytes (a blob for an image, srcdoc for a page): the page loads nothing from anywhere.
+const assetHtml = html.replace("<!-- ui-app -->", () => `<script>${appInApp}</script>`).replace("<head>", `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'; base-uri 'none'">`)
   .replace("</body>", `<script>${nativeBootstrap}</script>\n</body>`);
 mkdirSync(join(assetRoot, "avatars"), { recursive: true });
 writeFileSync(join(assetRoot, "index.html"), assetHtml);

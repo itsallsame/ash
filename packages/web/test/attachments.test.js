@@ -49,11 +49,12 @@ test("upload keeps original file and animated media bytes, with attachment-only 
   assert.equal(Buffer.from(attachments[1].data, "base64").toString(), "GIF89aoriginal");
 });
 
-test("upload rejects oversized original files and UTF-8 JSON/base64 request overflow", async () => {
-  const tooLarge = new File([new Uint8Array(20 * 1024 * 1024 + 1)], "too-large.bin", { type: "application/octet-stream" });
-  await assert.rejects(() => prepareUploads([tooLarge], ""), /20 MiB/);
-  const file = new File([new Uint8Array(11 * 1024 * 1024)], "bounded.bin", { type: "application/octet-stream" });
-  await assert.rejects(() => prepareUploads([file, file], ""), /request limit/);
+test("upload rejects a file that cannot travel in one frame, and several that together cannot", async () => {
+  const tooLarge = new File([new Uint8Array(3 * 1024 * 1024 + 1)], "too-large.bin", { type: "application/octet-stream" });
+  await assert.rejects(() => prepareUploads([tooLarge], ""), /附件太大/);
+  const file = new File([new Uint8Array(2 * 1024 * 1024)], "bounded.bin", { type: "application/octet-stream" });
+  assert.equal((await prepareUploads([file], "")).length, 1);
+  await assert.rejects(() => prepareUploads([file, file], ""), /附件太大/);
 });
 
 test("decodable static PNG shrinks to a bounded JPEG without changing a GIF or document", async () => {

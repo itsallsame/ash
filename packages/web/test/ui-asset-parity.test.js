@@ -3,6 +3,9 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { coreUiBytes, staticManifest, verifyStaticUi } from "../../../tools/spikes/v2-604-ui-asset.mjs";
 
+const appAsset = () => readFileSync(new URL("../../../android/app/src/main/assets/ash-ui/index.html", import.meta.url), "utf8");
+const scripts = (html) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+
 test("test-only static UI uses exactly the generated core bytes", () => {
   const bytes = coreUiBytes();
   const manifest = staticManifest(bytes);
@@ -32,12 +35,20 @@ test("test-only static parity refuses altered bytes, digest and length", () => {
   assert.throws(() => verifyStaticUi(bytes, { ...manifest, bytes: manifest.bytes + 1 }), /differs/);
 });
 
-test("APK asset contains the generated shell and native-only bootstrap", () => {
-  const asset = readFileSync(new URL("../../../android/app/src/main/assets/ash-ui/index.html", import.meta.url), "utf8");
+test("the app's page is the same shell and page code as the browser's, with the app's transport and no run-time code compilation", () => {
+  const asset = appAsset();
   const generated = coreUiBytes().toString("utf8");
   const native = readFileSync(new URL("../js/native-bootstrap.js", import.meta.url), "utf8");
-  assert.equal(asset.replace(/<meta http-equiv="Content-Security-Policy"[^>]+>\n/, "")
-    .replace(`<script>${native}</script>\n`, ""), generated);
-  assert.match(asset, /connect-src 'none'; form-action 'none'; frame-src https:\/\/ash-files\.invalid; worker-src 'none'/);
+  const [appScript, bootstrap] = scripts(asset);
+  assert.equal(bootstrap, native);
+  // Everything outside the page script and the bootstrap is the browser's page exactly.
+  const shell = (html, script) => html.replace(`<script>${script}</script>`, "<!-- ui-app -->");
+  assert.equal(shell(asset.replace(/<meta http-equiv="Content-Security-Policy"[^>]+>\n/, "").replace(`<script>${native}</script>\n`, ""), appScript),
+    shell(generated, scripts(generated)[0]));
+  assert.match(asset, /connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'/);
+  assert.doesNotMatch(asset, /script-src[^;]*unsafe-eval/);
   assert.ok(!asset.includes("/?token="));
+  // The browser client checks frames with a compiled schema validator; the app's page must not carry it.
+  assert.ok(scripts(generated)[0].includes("new Function") && !appScript.includes("new Function"));
+  assert.ok(scripts(generated)[0].length > appScript.length);
 });

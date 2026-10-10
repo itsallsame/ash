@@ -1,10 +1,10 @@
-import { createSelfScreenSender, FILE_LABELS, named, when } from "./editor.js";
-import { IdentitySheet } from "./sheet-identity.js";
-import { MemorySheet } from "./sheet-memory.js";
+import { named } from "./editor.js";
+import { retryable } from "./link.js";
+import { IdentitySheet, personaStore } from "./sheet-identity.js";
+import { MemorySheet, workspaceStore } from "./sheet-memory.js";
 import { renderActivitySheet } from "./sheet-activity.js";
 import { normalizeClockList, renderUpcomingSheet } from "./sheet-upcoming.js";
-import { answerGateAsk, approvalSections, gatePageRequest, renderApprovalsSheet } from "./sheet-approvals.js";
-import { SCREEN_TOKEN_HEADER } from "../../sdk/src/api.ts";
+import { answerGateAsk, approvalSections, gateRequest, renderApprovalsSheet } from "./sheet-approvals.js";
 
 const TABS = Object.freeze([
   ["identity", "身份"], ["memory", "记忆"], ["activity", "活动"],
@@ -13,72 +13,44 @@ const TABS = Object.freeze([
 // Where she looked on the web reads like a domain, which the raw-route guard would otherwise drop.
 const webDetail = /^(?:在看网页|在搜索) · [^\n]{1,61}$/u;
 const rawRoute = /\b(?:agent|worker|device|service|person):[A-Za-z0-9_-]+\b|\b[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+\b/i;
-const flowLabels = Object.freeze({ memory: "整理记忆", proactive: "寻找值得提醒的事", heartbeat: "查看托付事项", opener: "见面问候", tour: "使用提示" });
-const stepLabels = Object.freeze({ evidence: "查看对话", extract: "提取记忆", verify_claims: "核对记忆", append_log: "记下新发现",
-  sources: "查看线索", candidate: "判断是否提醒", handoff: "交给 Ash", read_heartbeat: "查看托付清单", wake: "通知 Ash", judge: "判断是否问候" });
-const backgroundStep = (step) => stepLabels[step] || (/^(?:read|reconcile|verify_plan|apply)_(?:memory|user)$/.test(step) ? "整理记忆" : null);
 
 /** Only ledger-derived, human-facing status steps enter the activity page. */
 export function safeActivityView(view) {
   const turns = {};
   for (const [id, turn] of Object.entries(view?.turns ?? {})) {
-    if (!/^[tr]_[A-Za-z0-9_-]+$/.test(id) || !turn || !Number.isFinite(turn.started)) continue;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id) || !turn || !Number.isFinite(turn.started)) continue;
     turns[id] = {
-      title: turn.background ? flowLabels[turn.title] || "后台任务" : typeof turn.title === "string" ? turn.title : "对话",
+      title: typeof turn.title === "string" && turn.title ? turn.title : turn.background ? "后台任务" : "对话",
       background: turn.background === true, started: turn.started,
       ended: Number.isFinite(turn.ended) ? turn.ended : undefined,
-      // Background runs end as done / no_change / failed; say them in the same words as a conversation.
-      outcome: ["completed", "cancelled", "error"].includes(turn.outcome) ? turn.outcome
-        : turn.background === true ? { done: "completed", no_change: "completed", failed: "error" }[turn.outcome] : undefined,
+      outcome: ["completed", "cancelled", "error"].includes(turn.outcome) ? turn.outcome : undefined,
       steps: Array.isArray(turn.steps) ? turn.steps.filter((step) => typeof step.label === "string" && step.label.length <= 180 &&
-        (step.tool || step.summary || (turn.background ? Boolean(backgroundStep(step.label)) : webDetail.test(step.label) || !rawRoute.test(step.label))))
-        .map((step) => ({ label: turn.background && !step.tool && !step.summary ? backgroundStep(step.label) : step.label,
-          ts: step.ts, ended: step.ended, state: step.state, tool: step.tool, target: step.target, requestId: step.requestId,
-          approval: step.approval, summary: step.summary })) : [],
+        (step.tool || step.summary || webDetail.test(step.label) || !rawRoute.test(step.label)))
+        .map((step) => ({ label: step.label, ts: step.ts, ended: step.ended, state: step.state, tool: step.tool,
+          requestId: step.requestId, approval: step.approval, summary: step.summary })) : [],
     };
   }
   return { turns };
 }
 
-async function sendClockForScreen(net, current, word, body, clientId) {
-  const token = net.token;
-  const screen = net.screen;
-  const scope = net.currentScope;
-  const generation = net.generation;
-  if (!token || !screen || !scope || !current()) throw new Error("还没连上，暂时不能读取或修改计划。");
-  const stillCurrent = () => current() && token === net.token && screen === net.screen &&
-    scope === net.currentScope && generation === net.generation;
-  let response;
-  try {
-    response = await net.request("/api/send", { method: "POST", credentials: "same-origin",
-      headers: { "content-type": "application/json", [SCREEN_TOKEN_HEADER]: token },
-      body: JSON.stringify({ to: "service:clock", kind: "request", word, body, wait: true,
-        ...(clientId ? { client_id: clientId } : {}) }) });
-  } catch {
-    if (!stillCurrent()) throw new Error("连接已经换过，这次的结果没有采用。");
-    throw new Error("连接断了，还没确认结果；再点一次会原样重试。");
-  }
-  if (!stillCurrent()) throw new Error("连接已经换过，这次的结果没有采用。");
-  if (!response.ok) throw new Error(response.status === 403 ? "这台设备不能修改计划。" : "没有收到确认，可以再试一次。" );
-  let accepted;
-  try { accepted = await response.json(); }
-  catch { throw new Error("还没确认结果；再点一次会原样重试。"); }
-  if (!stillCurrent()) throw new Error("连接已经换过，这次的结果没有采用。");
-  const reply = accepted?.reply;
-  if (typeof accepted?.id !== "string" || !accepted.id || reply?.kind !== "response" ||
-    reply.reply_to !== accepted.id || reply.from !== "service:clock" || reply.to !== "person:owner" ||
-    reply.word !== word || reply.body?.ok !== true) throw new Error("还没确认结果；再点一次会原样重试。");
-  return reply;
+/** A word of the clock on the connection [binding] stands for; its data, or an error the owner can read. */
+async function clockRequest(net, binding, word, body, clientId) {
+  if (!net.same(binding)) throw new Error("还没连上，暂时不能读取或修改计划。");
+  const reply = await net.call("service:clock", word, body, clientId ? { clientId } : undefined);
+  if (!net.same(binding)) throw new Error("连接已经换过，这次的结果没有采用。");
+  if (!reply.ok) throw new Error(reply.error?.code === "forbidden" ? "这台设备不能修改计划。" :
+    retryable(reply.error) ? "还没确认结果；再点一次会原样重试。" : "没有收到确认，可以再试一次。");
+  return reply.result?.data ?? {};
 }
 
-export async function listClockForScreen(net, current) {
-  return normalizeClockList(await sendClockForScreen(net, current, "list", {}));
+export async function listClock(net, binding) {
+  return normalizeClockList(await clockRequest(net, binding, "list", {}));
 }
 
-export async function cancelClockForScreen(net, current, id, clientId) {
+export async function cancelClock(net, binding, id, clientId) {
   if (typeof id !== "string" || !id || typeof clientId !== "string" || !clientId) throw new TypeError("invalid clock cancel intent");
-  const reply = await sendClockForScreen(net, current, "cancel", { id }, clientId);
-  if (reply.body.result?.cancelled !== true) throw new Error("没能删除这条计划，它还在。");
+  const data = await clockRequest(net, binding, "cancel", { id }, clientId);
+  if (data.cancelled !== true) throw new Error("没能删除这条计划，它还在。");
 }
 
 const node = (tag, label, className = "") => {
@@ -100,19 +72,16 @@ const retryCard = (message, retry) => {
 
 /** Separate from Settings: local admin and preference drafts are never reparented. */
 export class AgentSheet {
-  constructor(root, net, { getView = () => null, getLedgerMessage = () => null,
-    onAskAbout = () => {}, onPrefill,
+  constructor(root, net, { getView = () => null, onAskAbout = () => {}, onPrefill, onIdentityChanged = () => {},
     confirmDiscard = () => globalThis.confirm?.("有修改还没保存。现在关掉，这些修改会丢掉。确定关掉吗？") === true,
-    confirmRollback = ({ path, to_ts }) => globalThis.confirm?.(`把「${FILE_LABELS[path] ?? "这份内容"}」恢复成 ${when(to_ts)} 改动之前的样子？现在的内容会被替换。`) === true,
     idFactory = () => crypto.randomUUID() } = {}) {
     this.root = root;
     this.net = net;
     this.getView = getView;
-    this.getLedgerMessage = getLedgerMessage;
     this.onAskAbout = onAskAbout;
     this.onPrefill = onPrefill;
+    this.onIdentityChanged = onIdentityChanged;
     this.confirmDiscard = confirmDiscard;
-    this.confirmRollback = confirmRollback;
     this.idFactory = idFactory;
     this.name = "Ash";
     this.cancelIntents = new Map();
@@ -121,7 +90,6 @@ export class AgentSheet {
     this.tabs = root.querySelector("#agentTabs");
     this.panel = root.querySelector("#agentPanel");
     this.session = null;
-    this.activityDetails?.clear();
     this.identity = null;
     this.memory = null;
     this.panels = new Map();
@@ -139,20 +107,16 @@ export class AgentSheet {
   }
 
   binding() {
-    return { token: this.net.token, screen: this.net.screen, scope: this.net.currentScope,
-      localManagement: this.net.localManagement === true, generation: this.net.generation };
+    return this.net.binding();
   }
 
   current(binding = this.session) {
-    if (!binding || !binding.token || !binding.screen || !binding.scope) return false;
-    const now = this.binding();
-    return binding.token === now.token && binding.screen === now.screen && binding.scope === now.scope &&
-      binding.localManagement === now.localManagement && binding.generation === now.generation;
+    return Boolean(binding) && this.net.same(binding);
   }
 
   dirty() {
     return [this.identity?.editor, this.memory?.editor].some((editor) => editor &&
-      (editor.pending || editor.pendingRollback || editor.loaded && editor.draft !== editor.content));
+      (editor.pending || editor.loaded && editor.draft !== editor.content));
   }
 
   close() {
@@ -190,7 +154,8 @@ export class AgentSheet {
 
   network(status) { if (status !== "online") this.reset(); }
 
-  registration() { if (this.session && !this.current()) this.reset(); }
+  /** The connection just (re)opened: whatever the sheet showed belongs to the one before. */
+  connected() { if (this.session && !this.current()) this.reset(); }
 
   update() {
     if (!this.session || !this.current()) return;
@@ -210,13 +175,13 @@ export class AgentSheet {
     if (!section || !this.current()) return;
     const binding = this.session;
     const epoch = this.loadEpoch;
-    renderApprovalsSheet(section, this.getView(), { answerState: this.answerIntents, name: this.name,
+    renderApprovalsSheet(section, this.getView(), { answerState: this.answerIntents, name: this.name, primary: this.net.primary,
       loading: !this.approvalsLoaded,
       onAnswer: (ask, choice) => this.answerApproval(ask, choice, binding, epoch),
       history: this.approvalHistory, rules: this.approvalRules, status: this.approvalStatus,
       onRetry: () => this.loadApprovalData(binding, epoch),
       armedRule: this.armedRule, onArm: (id) => { this.armedRule = id; this.renderApprovals(); },
-      onRevoke: binding.localManagement ? (id) => this.revokeApprovalRule(id, binding, epoch) : undefined,
+      onRevoke: (id) => this.revokeApprovalRule(id, binding, epoch),
       evidence: this.approvalEvidence, onEvidence: (id) => this.toggleEvidence(id, binding, epoch) });
   }
 
@@ -227,7 +192,7 @@ export class AgentSheet {
     this.renderApprovals();
     let next;
     try {
-      const result = await gatePageRequest(this.net, () => this.current(binding), "audit", { request_id: id, limit: 1 });
+      const result = await gateRequest(this.net, binding, "audit", { request_id: id, limit: 1 });
       const entry = Array.isArray(result?.entries) ? result.entries.find((item) => item?.request_id === id) : undefined;
       next = entry ? { status: "ready", entry } : { status: "missing" };
     } catch { next = { status: "failed" }; }
@@ -239,8 +204,8 @@ export class AgentSheet {
   async loadApprovalData(binding, epoch) {
     try {
       const [history, rules] = await Promise.all([
-        gatePageRequest(this.net, () => this.current(binding), "history", { limit: 100 }),
-        gatePageRequest(this.net, () => this.current(binding), "rules.list", { limit: 100 }),
+        gateRequest(this.net, binding, "history", { limit: 100 }),
+        gateRequest(this.net, binding, "rules.list", { limit: 100 }),
       ]);
       if (!this.current(binding) || this.activeTab !== "approvals" || epoch !== this.loadEpoch) return;
       if (!Array.isArray(history?.items) || !Array.isArray(rules?.rules)) throw new Error("审批列表格式无效");
@@ -258,11 +223,11 @@ export class AgentSheet {
   }
 
   async revokeApprovalRule(id, binding, epoch) {
-    if (!binding.localManagement || !this.current(binding) || this.activeTab !== "approvals" || epoch !== this.loadEpoch) return;
+    if (!this.current(binding) || this.activeTab !== "approvals" || epoch !== this.loadEpoch) return;
     const clientId = this.revokeIntents.get(id) ?? crypto.randomUUID();
     this.revokeIntents.set(id, clientId);
     try {
-      const result = await gatePageRequest(this.net, () => this.current(binding), "rules.revoke", { id }, clientId);
+      const result = await gateRequest(this.net, binding, "rules.revoke", { id }, clientId);
       if (result?.revoked !== true) throw new Error("rule was not revoked");
       if (!this.current(binding) || this.activeTab !== "approvals" || epoch !== this.loadEpoch) return;
       this.revokeIntents.delete(id);
@@ -291,8 +256,7 @@ export class AgentSheet {
     this.approvalStatus = "";
     this.renderApprovals();
     try {
-      await answerGateAsk(this.net, () => this.current(binding) && this.activeTab === "approvals" && epoch === this.loadEpoch,
-        fresh, choice, intent.clientId, (id) => this.getLedgerMessage(id));
+      await answerGateAsk(this.net, fresh, choice, intent.clientId);
       if (!this.current(binding) || this.activeTab !== "approvals" || epoch !== this.loadEpoch) return;
       intent.status = "confirmed";
       // The ledger has the answer; the action itself may still be running or may still fail.
@@ -311,10 +275,13 @@ export class AgentSheet {
     renderActivitySheet(section, safeActivityView(this.getView()), { askAbout: this.onAskAbout,
       detailState: this.activityDetails,
       loadDetails: async (id, offset = 0) => {
-        const binding = this.binding();
-        const response = await this.net.request(`/api/activity/detail?id=${encodeURIComponent(id)}&offset=${offset}`, { credentials: "same-origin" });
-        if (!this.current(binding) || !response.ok) throw new Error("详情暂时无法读取");
-        return response.json();
+        const binding = this.session;
+        let data;
+        try { data = await this.net.data("service:history", "activity", { id, offset }); }
+        catch { throw new Error("详情暂时无法读取"); }
+        if (!this.current(binding)) throw new Error("详情暂时无法读取");
+        const text = (Array.isArray(data.items) ? data.items : []).map((item) => item?.text).filter((part) => typeof part === "string").join("\n");
+        return { text, next_offset: Number.isSafeInteger(data.next_offset) ? data.next_offset : null };
       },
       backgroundOpen: this.backgroundOpen,
       onToggleBackground: (open) => { this.backgroundOpen = open; this.renderActivity(); },
@@ -334,8 +301,8 @@ export class AgentSheet {
         clientId = this.idFactory();
         this.cancelIntents.set(id, clientId);
       }
-      await cancelClockForScreen(this.net, () => this.current(binding), id, clientId);
-      const fresh = await listClockForScreen(this.net, () => this.current(binding));
+      await cancelClock(this.net, binding, id, clientId);
+      const fresh = await listClock(this.net, binding);
       if (epoch !== this.loadEpoch || this.activeTab !== "upcoming" || !this.current(binding)) return;
       if (fresh.some((timer) => timer.id === id)) throw new Error("删除后它还在列表里；请稍后再看。");
       this.cancelIntents.delete(id);
@@ -404,7 +371,7 @@ export class AgentSheet {
       section.replaceChildren(node("p", "正在读取…", "sheet-loading"));
       const binding = this.session;
       try {
-        const timers = await listClockForScreen(this.net, () => this.current(binding));
+        const timers = await listClock(this.net, binding);
         if (epoch !== this.loadEpoch || this.activeTab !== key || !this.current(binding)) return;
         for (const id of this.cancelIntents.keys()) if (!timers.some((timer) => timer.id === id)) this.cancelIntents.delete(id);
         this.renderUpcoming(section, timers, binding, epoch);
@@ -419,16 +386,8 @@ export class AgentSheet {
     if (existing) { void existing.refresh(); return; }
     section.replaceChildren(node("p", "正在读取…", "sheet-loading"));
     const binding = this.session;
-    const rawSend = createSelfScreenSender(this.net);
-    const send = async (request) => {
-      if (!this.current(binding)) throw new Error("连接已经换过，这次的结果没有采用。");
-      if (["write", "rollback"].includes(request.word) && !binding.localManagement)
-        throw new Error("只有在她所在的手机上才能修改。");
-      const response = await rawSend(request);
-      if (!this.current(binding)) throw new Error("连接已经换过，这次的结果没有采用。");
-      return response;
-    };
-    const options = { send, canEdit: binding.localManagement, confirmRollback: this.confirmRollback, name: this.name };
+    const options = { store: isIdentity ? personaStore(this.net, binding) : workspaceStore(this.net, binding),
+      name: this.name, ...(isIdentity ? { onSaved: () => this.onIdentityChanged() } : {}) };
     const sheet = isIdentity
       ? new IdentitySheet(section, { ...options, extra: () => this.renameRow() })
       : new MemorySheet(section, options);
@@ -439,7 +398,7 @@ export class AgentSheet {
       sheet.dispose();
       if (isIdentity && this.identity === sheet) this.identity = null;
       if (!isIdentity && this.memory === sheet) this.memory = null;
-      if (!this.current(binding)) return;
+      if (epoch !== this.loadEpoch || !this.current(binding)) return;
       section.replaceChildren(retryCard("没能读取，请再试一次。", () => this.activeTab === key ? this.show(key) : undefined));
     }
   }

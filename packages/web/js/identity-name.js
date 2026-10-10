@@ -1,5 +1,4 @@
-import { createSelfScreenSender } from "./editor.js";
-
+// The agent's display name: one field of IDENTITY.md, read from the persona member.
 const DEFAULT_NAME = "Ash";
 
 /** The display name is one field of the managed identity file, not a status guess. */
@@ -20,49 +19,41 @@ export class IdentityName {
     this.onName = onName;
     this.epoch = 0;
     this.name = DEFAULT_NAME;
-    this.resolvedContext = null;
+    this.resolved = null;
     this.onName(this.name);
   }
 
   reset() {
     this.epoch++;
-    this.name = DEFAULT_NAME;
-    this.resolvedContext = null;
-    this.onName(this.name);
+    this.resetName();
   }
 
-  async refresh({ preserveCurrent = false } = {}) {
+  /**
+   * Reads the name again: when the page connects, and after the owner saved a new IDENTITY.md. On the connection the name
+   * was read on, the name shown stays until the new one is read; on any other connection it falls back at once.
+   */
+  async refresh() {
     const epoch = ++this.epoch;
-    const { token, screen, currentScope: scope, generation } = this.net;
-    const sameContext = this.resolvedContext?.token === token && this.resolvedContext?.screen === screen &&
-      this.resolvedContext?.scope === scope && this.resolvedContext?.generation === generation;
-    if (!preserveCurrent || !sameContext) this.resetName();
-    if (!token || !screen || !scope) return;
+    const binding = this.net.binding();
+    if (!this.resolved || !this.net.same(this.resolved)) this.resetName();
+    if (!this.net.same(binding)) return;
+    const current = () => epoch === this.epoch && this.net.same(binding);
     try {
-      const accepted = await createSelfScreenSender(this.net)({ to: "service:self", kind: "request", word: "read",
-        body: { path: "IDENTITY.md" }, wait: true });
-      if (epoch !== this.epoch || token !== this.net.token || screen !== this.net.screen ||
-        scope !== this.net.currentScope || generation !== this.net.generation) return;
-      const body = accepted.reply.body;
-      if (body?.ok !== true || typeof body.result?.content !== "string") { this.resetName(); return; }
-      this.name = nameFromIdentity(body.result.content) || DEFAULT_NAME;
-      this.resolvedContext = { token, screen, scope, generation };
+      const data = await this.net.data("service:persona", "get", { file: "IDENTITY.md" });
+      if (!current()) return;
+      const file = Array.isArray(data.files) ? data.files.find((item) => item?.file === "IDENTITY.md") : undefined;
+      if (typeof file?.content !== "string") { this.resetName(); return; }
+      this.name = nameFromIdentity(file.content) || DEFAULT_NAME;
+      this.resolved = binding;
       this.onName(this.name);
     } catch {
-      if (epoch === this.epoch && token === this.net.token && screen === this.net.screen &&
-        scope === this.net.currentScope && generation === this.net.generation) this.resetName();
+      if (current()) this.resetName();
     }
   }
 
   resetName() {
     this.name = DEFAULT_NAME;
-    this.resolvedContext = null;
+    this.resolved = null;
     this.onName(this.name);
-  }
-
-  changed(message, historical = false) {
-    if (historical || message?.kind !== "event" || message.from !== "service:self" ||
-      message.word !== "self.changed" || (message.body_summary || message.body)?.path !== "IDENTITY.md") return;
-    void this.refresh({ preserveCurrent: true });
   }
 }

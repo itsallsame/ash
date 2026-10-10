@@ -112,7 +112,7 @@ export function renderActivitySheet(root, view, { askAbout, now = Date.now(), ba
   expanded, onExpand, loadDetails, detailState = new Map() } = {}) {
   root.replaceChildren();
   const turns = Object.entries(view?.turns ?? {})
-    .filter(([id, item]) => /^[tr]_[A-Za-z0-9_-]+$/.test(id) && item && Number.isFinite(item.started))
+    .filter(([id, item]) => /^[A-Za-z0-9_-]{1,128}$/.test(id) && item && Number.isFinite(item.started))
     .sort((a, b) => b[1].started - a[1].started);
   if (!turns.length) return text(root, "p", "还没有活动记录。她做过的事会按天出现在这里。", "sheet-empty set-card");
   const options = { askAbout, now, expanded, onExpand, loadDetails, detailState };

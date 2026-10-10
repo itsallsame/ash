@@ -36,7 +36,7 @@ export function appState(app) {
   return app.running === true ? "已启用 · 运行中" : "已启用 · 还没运行起来";
 }
 
-/** The apps page body. `request(word, body)` sends one service:apps word as the owner and returns its response body. */
+/** The apps page body. `request(word, body)` calls one service:apps word as the owner and returns its `Reply`. */
 export class AppsSettings {
   constructor(request, { live = () => true, onSummary = () => {}, name = "Ash" } = {}) {
     this.request = request;
@@ -77,7 +77,8 @@ export class AppsSettings {
 
   async read(word) {
     const reply = await this.request(word, {});
-    const apps = reply?.ok === true && Array.isArray(reply.result?.apps) ? reply.result.apps.filter((app) => app && typeof app.id === "string") : null;
+    const list = reply?.ok === true ? reply.result?.data?.apps : null;
+    const apps = Array.isArray(list) ? list.filter((app) => app && typeof app.id === "string") : null;
     if (apps && this.live()) this.onSummary(apps);
     return apps;
   }

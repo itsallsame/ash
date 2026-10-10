@@ -1,7 +1,11 @@
+import { MAX_WIRE_BYTES } from "./pending-store.js";
+
+/** The longest file the page will open from a message. */
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
+/** A message travels in one frame of at most 4 MiB (SPEC-03 §1), and base64 adds a third: a file to send has to be about 3 MB or less. */
+const MAX_SEND_BYTES = 3 * 1024 * 1024;
 const RASTER = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const COMPACTABLE = new Set(["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif", "image/bmp"]);
-const MAX_REQUEST_BYTES = 28 * 1024 * 1024;
 
 function safeName(name) {
   return typeof name === "string" ? [...name.replace(/[\\/\x00-\x1f\x7f]/g, "_")].slice(0, 180).join("") || "attachment" : "attachment";
@@ -74,11 +78,12 @@ export async function prepareUploads(files, text = "") {
     const original = new Uint8Array(await file.slice(0, 16).arrayBuffer());
     const image = COMPACTABLE.has(file.type) && rasterBytes(file.type, original);
     const { selected, name } = image ? await compactImage(file) : { selected: file, name: file.name };
-    if (selected.size < 1 || selected.size > MAX_FILE_BYTES) throw new Error("attachment exceeds 20 MiB");
+    if (selected.size < 1) throw new Error("empty attachment");
+    if (selected.size > MAX_SEND_BYTES) throw new Error(`附件太大（${file.name}）：一条消息最多带约 3 MB`);
     attachments.push({ name: safeName(name), mime_type: typeof selected.type === "string" && selected.type ? selected.type : "application/octet-stream", data: base64(new Uint8Array(await selected.arrayBuffer())) });
   }
   const body = { text, ...(attachments.length ? { attachments } : {}) };
-  const wire = { to: "agent:main", kind: "request", word: "say", body, client_id: "0".repeat(36) };
-  if (new TextEncoder().encode(JSON.stringify(wire)).byteLength > MAX_REQUEST_BYTES) throw new Error("message exceeds request limit");
+  const wire = { to: "agent:placeholder", kind: "request", word: "say", body, client_id: "0".repeat(36) };
+  if (new TextEncoder().encode(JSON.stringify(wire)).byteLength > MAX_WIRE_BYTES) throw new Error("附件太大：一条消息最多带约 3 MB");
   return attachments;
 }

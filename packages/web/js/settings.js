@@ -1,7 +1,24 @@
-import { SCREEN_TOKEN_HEADER } from "../../sdk/src/api.ts";
+// The settings drawer. Every setting is a word called on a member of the hub as the owner, over the page's one
+// connection (net.js); the page keeps no secrets and no copy of the hub's state. The drawer is drawn whenever the page is
+// connected; whether a word may be done from this page is the hub's call (it answers `forbidden`, and the page says so).
+// `net.local` only adds a hint beside the few words that can only be done on the hub's own machine.
+import { retryable, unwrap } from "./link.js";
 import { ProactivePreferences } from "./settings-preferences.js";
 import { AppsSettings, appsSummary } from "./settings-apps.js";
 import { usdToCnyText as money, balanceText, CNY_ESTIMATE_NOTE } from "./money.js";
+
+const ADMIN = "service:admin";
+const GATE = "service:gate";
+const VAULT = "service:vault";
+const DEVICES = "service:devices";
+const LINK = "service:link";
+const COST = "service:cost";
+const AGENTS = "service:agents";
+const APPS = "service:apps";
+
+const QUIET_KEY = "delivery.quiet_hours";
+const QUIET_DEFAULT = "21:30-09:00";
+const QUIET_FORMAT = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
 
 function node(tag, label, className = "") {
   const element = document.createElement(tag);
@@ -59,39 +76,80 @@ function armed(control, label, confirmLabel, onWarn, run) {
   });
 }
 
-const SCOPE_NAMES = { chat: "对话", mind: "内心整理", background: "后台任务", title: "起标题", compaction: "压缩历史", review: "审批判断", progress: "进展摘要", other: "其他" };
 const KEYS = [
   { ref: "DEEPSEEK_API_KEY", title: "DeepSeek Key", use: "用于：对话模型", hint: "没有它，Ash 无法对话。" },
   { ref: "OPENROUTER_API_KEY", title: "OpenRouter Key", use: "用于：快速判断（JEV 模型）", hint: "没有它，快速判断只能靠关键词。" },
 ];
-/** Why the gateway is not usable, as the owner should read it; the codes come from service:devices gateway_status. */
-const GATEWAY_PROBLEMS = {
-  claimed_by_other: "网关已被另一台手机认领，这台手机连不上。要换成这台手机，需要先在网关上清除原来的主人，再在下面填一把新的认领密钥。",
-  bad_secret: "认领密钥不对，网关没有接受。请在下面重新填写正确的密钥。",
-  missing_secret: "网关还没有主人。请在下面填写一次性认领密钥。",
-  unsupported: "网关的版本和 Ash 对不上，需要先更新网关。",
-  unreachable: "连不上网关，Ash 会自动重试。请检查网络和网关地址。",
-};
-const RUNTIMES = { codex: "Codex", claude: "Claude Code", workbuddy: "WorkBuddy" };
-const CALL_STATUS = { ok: "成功", pending: "进行中", denied: "被拒绝", forbidden: "不允许", offline: "设备离线", timeout: "超时", cancelled: "已取消" };
-/** A device's diagnosis in plain words for the owner, not the raw record. */
-export function deviceDiagnosis(result) {
-  const r = result && typeof result === "object" ? result : {};
-  const count = Number(r.capabilities) || (Array.isArray(r.capability_specs) ? r.capability_specs.length : 0);
-  const calls = Array.isArray(r.recent_calls) ? r.recent_calls : [];
-  const time = (at) => { const d = new Date(Number(at)); return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : ""; };
-  return [
-    `${r.online ? "在线" : "离线"}${r.version ? `，设备端版本 ${r.version}` : ""}。`,
-    r.gateway_connected ? "网关已连接。" : "网关没有连上。",
-    count ? `借出 ${count} 项能力。` : "",
-    r.workdir ? `工作目录：${r.workdir}` : "",
-    calls.length ? `最近的调用：\n${calls.map((c) => `${time(c.at)} ${c.word ?? ""} · ${CALL_STATUS[c.status] ?? "失败"}`).join("\n")}` : "最近没有调用。",
-  ].filter(Boolean).join("\n");
-}
+const KIND_NAMES = { computer: "电脑", laptop: "电脑", server: "服务器", browser: "浏览器" };
+const PROVIDER_NAMES = { deepseek: "DeepSeek", openrouter: "OpenRouter" };
 const tokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+const number = (value) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+
+const clock = (at) => {
+  const d = new Date(Number(at));
+  return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : "";
+};
+
+/** The hand id behind a device id (`device:<hand>`), which `service:link` words name. */
+const handOf = (device) => (typeof device === "string" ? device.replace(/^device:/, "") : "");
+
+/** A device's diagnosis in plain words for the owner, not the raw record. */
+export function deviceDiagnosis({ device = {}, connections = [], diagnosis = null } = {}) {
+  const lines = [`${device.online ? "在线" : "离线"}${device.via === "gateway" ? "（经中转站）" : device.via === "local" ? "（和这台手机直连）" : ""}。`];
+  if (!device.online && device.last_seen) lines.push(`上次在线：${clock(device.last_seen)}。`);
+  if (connections.length) lines.push(`现在有 ${connections.length} 条连接。`);
+  if (diagnosis) {
+    const findings = Array.isArray(diagnosis.findings) ? diagnosis.findings.filter((finding) => typeof finding?.message === "string") : [];
+    if (diagnosis.ok === true && !findings.length) lines.push("没有发现问题。");
+    else lines.push(diagnosis.ok === true ? "提醒：" : "发现这些问题：", ...findings.map((finding) => `· ${finding.message}`));
+  }
+  return lines.join("\n");
+}
+
+/** The relay's state in one plain sentence (`service:link/gateway.status`). */
+export function relayText(status) {
+  if (!status || status.configured !== true) return "还没有设置中转站，其他设备暂时连不上。";
+  const where = typeof status.url === "string" && status.url ? `（${status.url}）` : "";
+  if (status.connected === true) return `中转站已连接${where}${status.account_email ? `，账号 ${status.account_email}` : ""}。`;
+  const why = typeof status.last_error === "string" && status.last_error ? `：${status.last_error}` : "";
+  return `中转站暂时连不上${where}${why}。会自动重试，也请检查网络和地址。`;
+}
+
+/** Where a Cloudflare setup stands, in words. */
+export function setupText(setup) {
+  switch (setup?.state) {
+    case "waiting_login": return "等你在 Cloudflare 登录：登录卡片已经发到对话里。登录后回到这里点「看看进度」。";
+    case "authorized": return "已登录 Cloudflare，可以开始搭建了。";
+    case "deploying": return "正在搭建中转站，需要一两分钟…";
+    case "claimed": return "中转站已搭好，正在连接…";
+    case "connected": return "中转站已搭好，也连上了。";
+    case "failed": return `搭建没有成功${setup.reason ? `：${setup.reason}` : ""}。可以重新搭一次。`;
+    default: return "";
+  }
+}
+const SETUP_ACTIVE = ["waiting_login", "authorized", "deploying", "claimed"];
+
+/** What the account balances answer says, with an unreadable provider named rather than shown as zero. */
+export function balanceSentence(data) {
+  const entries = Array.isArray(data?.balances) ? data.balances : [];
+  const parts = [];
+  let unavailable = false;
+  for (const entry of entries) {
+    const balance = entry?.balance;
+    if (!balance || typeof balance !== "object") continue;
+    if (balance.available === false) unavailable = true;
+    const list = Array.isArray(balance.balances) ? balance.balances : [];
+    const label = PROVIDER_NAMES[entry.provider] ?? entry.provider ?? "";
+    for (const item of list) parts.push(`${label ? `${label} ` : ""}${balanceText(item)}`);
+  }
+  const failed = Object.keys(data?.errors ?? {}).map((provider) => PROVIDER_NAMES[provider] ?? provider);
+  return `账户余额：${parts.join("，") || "无数据"}${unavailable ? "（账户当前不可用）" : ""}${failed.length ? `（${failed.join("、")} 暂时读不到）` : ""}`;
+}
 
 /** Usage as two lists: how much per period, then where the last week went. */
-export function renderUsage(summary) {
+export function renderUsage(summary, names = {}) {
+  const zero = { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0, unpriced_calls: 0 };
+  const period = (key) => ({ ...zero, ...(summary?.periods?.[key] ?? {}) });
   const line = (label, totals) => {
     const row = document.createElement("div");
     row.className = "set-line";
@@ -99,25 +157,34 @@ export function renderUsage(summary) {
     text.className = "set-text";
     const note = totals.unpriced_calls ? ` · 另有 ${totals.unpriced_calls} 次没有价格` : "";
     text.append(node("span", label, "set-title"),
-      node("span", `${totals.calls} 次调用 · 输入 ${tokens(totals.input_tokens + totals.cache_read_tokens)} / 输出 ${tokens(totals.output_tokens)}${note}`, "set-sub"));
+      node("span", `${number(totals.calls)} 次调用 · 输入 ${tokens(number(totals.input_tokens))} / 输出 ${tokens(number(totals.output_tokens))}${note}`, "set-sub"));
     row.append(text, node("span", money(totals.cost_usd), "set-value"));
     return row;
   };
-  const groups = [group("", line("今天", summary.periods.today), line("近 7 天", summary.periods["7d"]), line("近 30 天", summary.periods["30d"]))];
-  if (summary.by_scope.length)
-    groups.push(group("近 7 天花在哪", ...summary.by_scope.map((scope) => line(SCOPE_NAMES[scope.scope] ?? scope.scope, scope))));
+  const groups = [group("", line("今天", period("today")), line("近 7 天", period("7d")), line("近 30 天", period("30d")))];
+  // Where the last week went, by whoever made the calls: a member's name where the page knows it, else its id.
+  const parts = (Array.isArray(summary?.by_caller) ? summary.by_caller : []).map((entry) => ({ ...zero, ...entry })).filter((entry) => typeof entry.caller === "string");
+  if (parts.length) groups.push(group("近 7 天花在哪", ...parts.map((entry) => line(names[entry.caller] ?? entry.caller, entry))));
   return groups;
 }
 
-/** Local management controls are rendered only for this screen's current server registration. */
+/** The time a quiet-hours setting names: "HH:MM-HH:MM", "" for none, or null when it cannot be read. */
+function quietOf(settings) {
+  const value = settings?.[QUIET_KEY];
+  if (value === undefined) return QUIET_DEFAULT;
+  if (value === "") return "";
+  return typeof value === "string" && QUIET_FORMAT.test(value) ? value : null;
+}
+
+/** Local management controls are rendered only while this page is connected to a hub on this machine. */
 export class SettingsControls {
   constructor(panel, net, { onClose } = {}) {
+    this.adminIntent = null;
     this.panel = panel;
     this.net = net;
     this.onClose = onClose;
     this.name = "Ash";
-    this.allowed = false;
-    this.connected = false;
+    this.online = false;
     this.section = null;
     this.sectionContext = null;
     this.preferences = null;
@@ -125,20 +192,18 @@ export class SettingsControls {
     this.render();
   }
 
-  registration(frame) {
-    this.allowed = frame?.local_management === true;
+  /** The connection just opened; the drawer is drawn for it. */
+  connected() {
     this.render();
   }
 
   network(status) {
-    this.connected = status === "online";
-    if (!this.connected) this.allowed = false;
+    this.online = status === "online";
     this.render();
   }
 
   reset() {
-    this.allowed = false;
-    this.connected = false;
+    this.online = false;
     this.render();
   }
 
@@ -156,8 +221,9 @@ export class SettingsControls {
   }
 
   render() {
-    const usable = this.allowed && this.connected && this.net.localManagement === true && Boolean(this.net.token);
-    const context = usable ? `${this.net.currentScope ?? ""}\0${this.net.screen ?? ""}\0${this.net.token}` : null;
+    const binding = this.net.binding();
+    const usable = this.online && Boolean(binding.session);
+    const context = usable ? `${binding.session}\0${binding.generation}` : null;
     if (this.section && context && context === this.sectionContext) return;
     this.preferences?.dispose();
     this.preferences = null;
@@ -209,29 +275,17 @@ export class SettingsControls {
       return element;
     };
 
-    const requestSetting = async (word, body, to = "service:admin") => {
-      const token = this.net.token, screen = this.net.screen, scope = this.net.currentScope;
-      if (!live() || !this.connected || !this.allowed || !this.net.localManagement || !token || !screen || !scope) return null;
-      const response = await this.net.request("/api/send", { method: "POST", credentials: "same-origin",
-        headers: { "content-type": "application/json", [SCREEN_TOKEN_HEADER]: token },
-        body: JSON.stringify({ to, kind: "request", word, body, wait: true, client_id: crypto.randomUUID() }) });
-      if (!live() || !this.connected || !this.allowed || token !== this.net.token ||
-        screen !== this.net.screen || scope !== this.net.currentScope || !this.net.localManagement || !response.ok) return null;
-      const accepted = await response.json();
-      const reply = accepted?.reply;
-      return reply?.kind === "response" && reply.reply_to === accepted.id && reply.from === to &&
-        reply.to === "person:owner" && reply.word === word ? reply.body : null;
+    // One word, as the owner. It answers with the reply, or with a "stale" failure when this section or the connection it
+    // was drawn for is gone (so a late answer never lands on a screen that moved on). `ask` returns the data or throws.
+    const stale = () => ({ ok: false, error: { code: "stale", message: "连接已经换了" } });
+    const callReply = async (to, word, body = {}, options) => {
+      const binding = this.net.binding();
+      if (!live() || !this.online || !this.net.same(binding)) return stale();
+      const reply = await this.net.call(to, word, body, options);
+      if (!live() || !this.net.same(binding)) return stale();
+      return reply;
     };
-    // Credentials live in ash's own vault. This is the only door in: the local owner's screen, a route that never touches
-    // the ledger. The page learns whether a key is saved, never what it is.
-    const vaultRequest = async (method, ref, body) => {
-      const token = this.net.token, screen = this.net.screen, scope = this.net.currentScope;
-      if (!live() || !this.connected || !this.allowed || !this.net.localManagement || !token || !screen || !scope) return null;
-      const response = await this.net.request(ref ? `/api/vault/${ref}` : "/api/vault", { method, credentials: "same-origin",
-        headers: { "content-type": "application/json", [SCREEN_TOKEN_HEADER]: token }, ...(body ? { body: JSON.stringify(body) } : {}) });
-      if (!live() || token !== this.net.token || screen !== this.net.screen || scope !== this.net.currentScope || !response.ok) return null;
-      return await response.json();
-    };
+    const ask = async (to, word, body = {}) => unwrap(await callReply(to, word, body));
 
     // ---- Home: usage at a glance, then what Ash can use, how she treats your time, pause, and the rest.
     const usageCard = document.createElement("button");
@@ -277,14 +331,30 @@ export class SettingsControls {
       pause.hidden = paused === true;
       resume.hidden = paused === false;
     };
+    // Pause and resume are confirmed by what the word says (`paused`). A lost answer keeps the request id, so the same
+    // request may be sent again; a definite refusal retires it.
+    const setPaused = async (word) => {
+      const session = this.net.session;
+      if (this.adminIntent?.word !== word || this.adminIntent.session !== session) this.adminIntent = { word, session, clientId: crypto.randomUUID() };
+      const intent = this.adminIntent;
+      const reply = await callReply("service:admin", word, word === "resume" ? { confirmed: true } : {}, { clientId: intent.clientId });
+      if (!reply.ok) {
+        if (!retryable(reply.error) && this.adminIntent === intent) this.adminIntent = null;
+        return { ok: false };
+      }
+      const paused = word === "pause";
+      if (reply.result?.data?.paused !== paused) return { ok: false };
+      if (this.adminIntent === intent) this.adminIntent = null;
+      return { ok: true, paused };
+    };
     const run = async (word) => {
-      if (!live() || !this.connected || !this.allowed || !this.net.localManagement) return;
+      if (!live() || !this.online) return;
       pause.disabled = true;
       resume.disabled = true;
       yes.disabled = true;
       feedback.textContent = "正在处理…";
-      const result = await this.net.sendAdmin(word);
-      if (!live() || !this.connected || !this.allowed) return;
+      const result = await setPaused(word);
+      if (!live() || !this.online) return;
       const done = result.ok && result.paused === (word === "pause");
       feedback.textContent = done ? word === "pause" ? `已暂停 ${name}` : `已恢复 ${name}` : "状态未确认，请检查连接后重试。";
       if (done) showPaused(result.paused);
@@ -299,6 +369,8 @@ export class SettingsControls {
     pauseCard.append(pauseTitle, pauseText, pause, resume, confirmation, feedback);
 
     const devRow = navRow("settingsDevRow", "code", "开发者选项", "主模型、DSH 插件", () => devPage.open());
+    // A few words can only be done on the machine the hub runs on; the hub refuses them elsewhere, and says so here beforehand.
+    if (!this.net.local) home.append(node("p", "暂停和恢复、保存和删除密钥、查看配对码，这几项只能在 Ash 所在的手机上操作。", "set-intro"));
     home.append(usageCard, group(`${name} 能用的`, ...capability), group("相处方式", quietRow, proactiveRow, approvalRow), pauseCard, group("其他", devRow));
     usageCard.addEventListener("click", () => usagePage.open());
 
@@ -315,29 +387,25 @@ export class SettingsControls {
     usageRefresh.addEventListener("click", () => { void refreshUsage(); });
     usagePage.append(usageTable, balanceLine, usageStatus, usageRefresh);
     const showUsage = (summary) => {
-      usageToday.textContent = money(summary.periods.today.cost_usd);
-      usageMore.textContent = `近 7 天 ${money(summary.periods["7d"].cost_usd)} · 近 30 天 ${money(summary.periods["30d"].cost_usd)}`;
+      usageToday.textContent = money(summary?.periods?.today?.cost_usd);
+      usageMore.textContent = `近 7 天 ${money(summary?.periods?.["7d"]?.cost_usd)} · 近 30 天 ${money(summary?.periods?.["30d"]?.cost_usd)}`;
     };
     const refreshUsage = async () => {
       usageStatus.textContent = "正在读取…";
       try {
-        const reply = await requestSetting("usage.get", { days: 7 }, "service:cost");
-        if (reply?.ok !== true) throw new Error("unavailable");
+        const summary = await ask(COST, "usage.get", { days: 7 });
         if (!live()) return;
-        usageTable.replaceChildren(...renderUsage(reply.result));
-        showUsage(reply.result);
-        usageStatus.textContent = `${reply.result.estimated ? "费用按模型的公开价格估算。" : ""}${CNY_ESTIMATE_NOTE}`;
+        usageTable.replaceChildren(...renderUsage(summary, { [this.net.primary]: name }));
+        showUsage(summary);
+        usageStatus.textContent = `${summary.estimated ? "费用按模型的公开价格估算。" : ""}${CNY_ESTIMATE_NOTE}`;
       } catch { if (live()) usageStatus.textContent = "用量读取失败，请重试。"; return; }
       try {
-        const reply = await requestSetting("balance.get", {}, "service:cost");
-        if (!live()) return;
-        balanceLine.textContent = reply?.ok === true
-          ? `账户余额：${reply.result.balances.map(balanceText).join("，") || "无数据"}${reply.result.available ? "" : "（账户当前不可用）"}`
-          : "账户余额暂时读不到（不是零）。";
+        const balance = await ask(COST, "balance.get", {});
+        if (live()) balanceLine.textContent = balanceSentence(balance);
       } catch { if (live()) balanceLine.textContent = "账户余额暂时读不到（不是零）。"; }
     };
 
-    // ---- Keys
+    // ---- Keys. The page learns whether a key is saved, never what it is.
     const vaultPage = page("settingsVault", "密钥",
       `Key 只保存在这台手机上。${name} 知道存了哪几个，但看不到内容，Key 也不会出现在聊天里。保存后立刻生效。`, () => refreshVault());
     const vaultViews = [];
@@ -359,7 +427,7 @@ export class SettingsControls {
       const save = button("保存");
       const remove = button("移除", "btn gray");
       remove.hidden = true;
-      const show = (saved) => {
+      const showSaved = (saved) => {
         status.textContent = saved ? "已保存。" : `还没有保存。${hint}`;
         status.className = saved ? "set-status ok" : "set-status warn";
         field.placeholder = saved ? "粘贴新的 Key 替换" : "粘贴 Key";
@@ -377,7 +445,8 @@ export class SettingsControls {
         remove.disabled = true;
         remove.hidden = true;
       };
-      vaultViews.push({ ref, show, lock, status });
+      vaultViews.push({ ref, show: showSaved, lock, status });
+      const failure = (error, text) => { if (live()) { if (error?.code === "unavailable") for (const view of vaultViews) view.lock(); else status.textContent = text; } };
       save.addEventListener("click", () => { void (async () => {
         if (save.disabled) return;
         const value = field.value.trim();
@@ -386,18 +455,18 @@ export class SettingsControls {
         save.disabled = true;
         status.textContent = "正在保存…";
         try {
-          const reply = await vaultRequest("PUT", ref, { value });
-          if (live()) { if (reply?.ok === true) show(true); else status.textContent = "保存失败，请重试。"; }
-        } catch { if (live()) status.textContent = "保存失败，请重试。"; }
-        finally { save.disabled = false; }
+          const saved = await ask(VAULT, "set", { ref, value, label: title, kind: "model" });
+          if (live()) { if (saved.configured === true) showSaved(true); else status.textContent = "保存失败，请重试。"; }
+        } catch (error) { failure(error, "保存失败，请重试。"); }
+        finally { if (!field.disabled) save.disabled = false; }
       })(); });
       armed(remove, "移除", "确定移除？", () => { status.textContent = `移除后，${hint.replace(/^没有它，/, "")}`; }, async () => {
         remove.disabled = true;
         try {
-          const reply = await vaultRequest("DELETE", ref);
-          if (live()) { if (reply?.ok === true) show(false); else status.textContent = "移除失败，请重试。"; }
-        } catch { if (live()) status.textContent = "移除失败，请重试。"; }
-        finally { remove.disabled = false; }
+          const removed = await ask(VAULT, "delete", { ref });
+          if (live()) { if (removed.deleted === true) showSaved(false); else status.textContent = "移除失败，请重试。"; }
+        } catch (error) { failure(error, "移除失败，请重试。"); }
+        finally { if (!field.disabled) remove.disabled = false; }
       });
       const actions = document.createElement("div");
       actions.className = "set-actions";
@@ -405,132 +474,28 @@ export class SettingsControls {
       card.append(head, status, field, actions);
       vaultPage.append(card);
     }
+    // `unavailable` is the locked secure storage: nothing was read or changed.
     const readVault = async () => {
-      const reply = await vaultRequest("GET");
-      return Array.isArray(reply?.entries) ? { entries: reply.entries, available: reply.available !== false } : null;
+      try {
+        const { entries } = await ask(VAULT, "list", {});
+        return { entries: Array.isArray(entries) ? entries : [], available: true };
+      } catch (error) {
+        if (error?.code === "unavailable") return { entries: [], available: false };
+        throw error;
+      }
     };
     const refreshVault = async () => {
       try {
         const vault = await readVault();
         if (!live()) return;
-        if (vault?.available === false) { for (const view of vaultViews) view.lock(); return; }
-        for (const view of vaultViews) {
-          const entry = vault?.entries.find((item) => item.ref === view.ref);
-          if (entry) view.show(entry.configured === true); else view.status.textContent = "读取失败，请重试。";
-        }
+        if (!vault.available) { for (const view of vaultViews) view.lock(); return; }
+        for (const view of vaultViews) view.show(vault.entries.find((item) => item.ref === view.ref)?.configured === true);
       } catch { if (live()) for (const view of vaultViews) view.status.textContent = "读取失败，请重试。"; }
     };
 
-    // ---- Connected devices
+    // ---- Connected devices, and the relay they connect through
     const gatewayPage = page("settingsGateway", "已连接设备",
-      `其他电脑或浏览器可以通过网关连上这台手机上的 ${name}。每一台都要你在这里批准。`, () => openGateway());
-    const gatewayStatus = node("p", "", "set-status");
-    gatewayStatus.id = "settingsGatewayStatus";
-    gatewayStatus.setAttribute("role", "status");
-    const gatewayList = document.createElement("div");
-    gatewayList.id = "settingsGatewayList";
-    gatewayList.className = "set-group";
-    const pairCode = button("添加设备", "btn", "settingsGatewayPair");
-    const choose = (entries, value, id) => {
-      const select = document.createElement("select"); select.id = id;
-      for (const [key, label] of entries) { const option = node("option", label); option.value = key; select.append(option); }
-      select.value = value; return select;
-    };
-    const kinds = [["laptop", "电脑"], ["server", "服务器"], ["browser", "浏览器（仅聊天和界面）"]];
-    const pairKind = choose(kinds, "laptop", "settingsGatewayPairKind");
-    const deviceRequest = (word, body = {}) => requestSetting(word, body, "service:devices");
-    const permissions = (device, prefix) => {
-      const box = node("div", "", "set-card");
-      const access = choose([["approval", "按规则和影响审批"], ["full", "完全放开（命令也不再询问）"]], device.access || "approval", `${prefix}Access`);
-      const check = (title, checked, id) => {
-        const label = node("label", title); const input = document.createElement("input");
-        input.type = "checkbox"; input.checked = checked; input.id = id; label.append(input); box.append(label); return input;
-      };
-      box.append(access);
-      const local = check("允许本地 Agent（使用电脑本地完整权限）", device.local_agents === true, `${prefix}Agents`);
-      const web = check("允许访问 Ash 聊天和网页界面", device.web_ui === true, `${prefix}Web`);
-      return { box, read: () => ({ access: access.value, local_agents: local.checked, web_ui: web.checked }),
-        browser: (yes) => { access.disabled = yes; local.disabled = yes; web.disabled = yes; if (yes) { access.value = "approval"; local.checked = false; web.checked = true; } } };
-    };
-    const pairResult = node("p", "", "set-status");
-    pairResult.id = "settingsGatewayPairResult";
-    pairResult.setAttribute("role", "status");
-    // The pairing code reaches only this screen, over an owner-only route that never touches the ledger; starting
-    // pairing (by the owner or by Ash) only says a code was issued. The page polls that route while it is open: a new
-    // revision means a request arrived, a device was approved or came online, so the list is read again.
-    const pairBox = node("div", "", "set-card");
-    pairBox.id = "settingsGatewayPairCode";
-    pairBox.hidden = true;
-    const pairText = node("p", "", "set-status");
-    pairText.id = "settingsGatewayPairCodeText";
-    const pairCommand = node("pre", "");
-    pairCommand.id = "settingsGatewayPairCommand";
-    const pairCopy = button("复制命令", "btn gray", "settingsGatewayPairCopy");
-    pairBox.append(pairText, pairCommand, pairCopy);
-    let shownCode = null, codeDeadline = 0, revision = null, polling = null;
-    pairCopy.addEventListener("click", () => { void (async () => {
-      try { await globalThis.navigator.clipboard.writeText(pairCommand.textContent); pairCopy.textContent = "已复制"; }
-      catch { pairCopy.textContent = "长按上面的命令复制"; }
-    })(); });
-    const countdown = (ms) => { const seconds = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; };
-    let waiting = 0;
-    const showCode = () => {
-      const code = shownCode;
-      const left = code ? codeDeadline - Date.now() : 0;
-      const state = code?.state === "active" && left <= 0 ? "expired" : code?.state;
-      // A spent code stays on the page only while the request it brought still waits for the owner.
-      pairBox.hidden = !code || (state === "used" && waiting === 0);
-      pairCommand.hidden = pairCopy.hidden = state !== "active" || !code?.install_command;
-      if (!code) return;
-      if (state === "used") { pairText.textContent = "配对码已使用。新设备发来的连接请求在上面，确认是你的设备再批准。"; return; }
-      if (state === "expired") { pairText.textContent = "配对码已过期。需要时再点「添加设备」。"; return; }
-      const where = typeof code.gateway === "string" ? code.gateway : "网关地址";
-      pairText.textContent = code.kind === "browser"
-        ? `配对码：${code.ticket}（还剩 ${countdown(left)}，只能用一次）。在新浏览器打开 ${where}，输入配对码，再回到这里批准。`
-        : `配对码：${code.ticket}（还剩 ${countdown(left)}，只能用一次）。在要连接的电脑上打开“终端”，运行下面这一行，再回到这里批准：`;
-      pairCommand.textContent = code.install_command ?? "";
-    };
-    const pairingRequest = async () => {
-      const token = this.net.token, screen = this.net.screen, scope = this.net.currentScope;
-      if (!live() || !this.connected || !this.allowed || !this.net.localManagement || !token || !screen || !scope) return null;
-      const response = await this.net.request("/api/devices/pairing", { method: "GET", credentials: "same-origin", headers: { [SCREEN_TOKEN_HEADER]: token } });
-      if (!live() || token !== this.net.token || screen !== this.net.screen || scope !== this.net.currentScope || !response.ok) return null;
-      return await response.json();
-    };
-    const readPairing = async () => {
-      const view = await pairingRequest().catch(() => null);
-      if (!view || !live()) return;
-      if (view.code?.state !== shownCode?.state || view.code?.ticket !== shownCode?.ticket) pairCopy.textContent = "复制命令";
-      shownCode = view.code ?? null;
-      codeDeadline = Date.now() + (Number(view.code?.expires_in_ms) || 0);
-      showCode();
-      if (revision !== null && view.revision !== revision) await refreshGateway().catch(() => {});
-      revision = view.revision;
-    };
-    const watch = () => {
-      if (polling) return;
-      let tick = 0;
-      polling = setInterval(() => {
-        if (!live() || gatewayPage.hidden) { clearInterval(polling); polling = null; return; }
-        if (globalThis.document?.hidden) return;
-        showCode();
-        if (++tick % 2 === 0) void readPairing();
-      }, 1000);
-      polling.unref?.();
-    };
-    pairCode.addEventListener("click", () => { void (async () => {
-      pairCode.disabled = true;
-      pairResult.textContent = "正在生成配对码…";
-      try {
-        const reply = await deviceRequest("pair_start", { kind: pairKind.value });
-        if (reply?.ok !== true || reply.result?.issued !== true) throw new Error("not issued");
-        await readPairing();
-        if (!live()) return;
-        if (shownCode?.state !== "active") throw new Error("code not shown");
-        pairResult.textContent = "";
-      } catch { if (live()) { pairResult.textContent = "生成失败：网关可能离线，请稍后重试。"; shownCode = null; showCode(); } }
-      finally { pairCode.disabled = false; }
-    })(); });
+      `其他电脑或浏览器可以通过中转站连上这台手机上的 ${name}。每一台都要你在这里批准。`, () => openGateway());
     const item = (title, subtitle) => {
       const row = document.createElement("div");
       row.className = "set-item settings-plugin";
@@ -540,121 +505,296 @@ export class SettingsControls {
       row.append(text);
       return row;
     };
-    const refreshGateway = async () => {
-      const reply = await deviceRequest("gateway_status");
-      if (reply?.ok !== true) throw new Error("gateway unavailable");
-      const state = reply.result;
-      if (!live()) return state;
+    const choose = (entries, value, id) => {
+      const select = document.createElement("select"); select.id = id;
+      for (const [key, label] of entries) { const option = node("option", label); option.value = key; select.append(option); }
+      select.value = value; return select;
+    };
+
+    // The relay: an address to use, or a Cloudflare setup the hub walks through with the owner.
+    const relayStatus = node("p", "", "set-status");
+    relayStatus.id = "settingsRelayStatus";
+    relayStatus.setAttribute("role", "status");
+    const relayUrl = document.createElement("input");
+    relayUrl.id = "settingsGatewayUrl";
+    relayUrl.type = "url";
+    relayUrl.placeholder = "https://你的中转站地址";
+    const relayUse = button("使用这个中转站", "btn", "settingsGatewayUse");
+    const relayResult = node("p", "", "set-status");
+    relayResult.id = "settingsGatewayConfigStatus";
+    relayResult.setAttribute("role", "status");
+    const setupState = node("p", "", "set-status");
+    setupState.id = "settingsGatewaySetupState";
+    setupState.setAttribute("role", "status");
+    const setupName = document.createElement("input");
+    setupName.id = "settingsGatewaySetupName";
+    setupName.placeholder = "中转站的名字（可不填）";
+    const setupStart = button("在 Cloudflare 搭一个", "btn gray", "settingsGatewaySetup");
+    const setupDeploy = button("开始搭建", "btn", "settingsGatewayDeploy");
+    const setupCheck = button("看看进度", "btn gray", "settingsGatewaySetupCheck");
+    const setupCancel = button("放弃搭建", "btn gray", "settingsGatewaySetupCancel");
+    const relayCard = node("div", "", "set-card");
+    relayCard.id = "settingsRelay";
+    relayCard.append(node("span", "中转站", "set-title"), relayStatus, relayUrl, relayUse, relayResult,
+      node("span", "没有中转站？可以在你的 Cloudflare 账号里搭一个。", "set-sub"), setupState, setupName, setupStart, setupDeploy, setupCheck, setupCancel);
+    let setup = null;
+    const showSetup = () => {
+      const state = setup?.state;
+      const active = SETUP_ACTIVE.includes(state);
+      setupState.textContent = setupText(setup);
+      setupStart.hidden = active || state === "connected";
+      setupDeploy.hidden = setupName.hidden = state !== "authorized";
+      setupCheck.hidden = !["waiting_login", "deploying", "claimed"].includes(state);
+      setupCancel.hidden = !["waiting_login", "authorized", "deploying"].includes(state);
+    };
+    showSetup();
+    let relay = null;
+    const refreshRelay = async () => {
+      relay = await ask(LINK, "gateway.status", {});
+      if (!live()) return relay;
+      relayStatus.textContent = relayText(relay);
+      if (relay.configured === true && typeof relay.url === "string" && !relayUrl.value) relayUrl.value = relay.url;
+      return relay;
+    };
+    const setupFailed = (text) => (error) => { if (live()) setupState.textContent = error?.code === "stale" ? "" : text; };
+    const adopt = async (state) => {
+      setup = { ...setup, ...state };
+      showSetup();
+      if (state.state === "claimed" || state.state === "connected") { await refreshRelay().catch(() => {}); await refreshDevices().catch(() => {}); }
+    };
+    relayUse.addEventListener("click", () => { void (async () => {
+      const url = relayUrl.value.trim();
+      if (!url) { relayResult.textContent = "请先填中转站的地址。"; return; }
+      relayUse.disabled = true;
+      relayResult.textContent = "正在保存…";
+      try {
+        const used = await ask(LINK, "gateway.use", { url });
+        if (!live()) return;
+        if (typeof used.url === "string") relayUrl.value = used.url;
+        relayResult.textContent = `已设置中转站：${used.url ?? url}。`;
+        await refreshRelay().catch(() => {});
+      } catch (error) { if (live()) relayResult.textContent = error?.code === "stale" ? "" : "保存失败，请检查地址后重试。"; }
+      finally { relayUse.disabled = false; }
+    })(); });
+    setupStart.addEventListener("click", () => { void (async () => {
+      setupStart.disabled = true;
+      setupState.textContent = "正在准备…";
+      try { setup = await ask(LINK, "gateway.setup.start", { provider: "cloudflare" }); if (live()) showSetup(); }
+      catch (error) { setupFailed("没能开始，请稍后重试。")(error); }
+      finally { setupStart.disabled = false; }
+    })(); });
+    setupCheck.addEventListener("click", () => { void readSetup(); });
+    setupDeploy.addEventListener("click", () => { void (async () => {
+      if (!setup) return;
+      setupDeploy.disabled = true;
+      try {
+        const nameText = setupName.value.trim();
+        const state = await ask(LINK, "gateway.setup.deploy", { setup_id: setup.setup_id, ...(nameText ? { name: nameText } : {}) });
+        if (live()) await adopt(state);
+      } catch (error) { setupFailed("没能开始搭建，请重试。")(error); }
+      finally { setupDeploy.disabled = false; }
+    })(); });
+    armed(setupCancel, "放弃搭建", "确定放弃？", () => { setupState.textContent = "放弃后，已经搭到一半的东西不会继续。"; }, async () => {
+      if (!setup) return;
+      try {
+        await ask(LINK, "gateway.setup.cancel", { setup_id: setup.setup_id });
+        if (live()) { setup = null; showSetup(); setupState.textContent = "已放弃搭建。"; }
+      } catch (error) { setupFailed("没能放弃，请重试。")(error); }
+    });
+    const readSetup = async () => {
+      if (!setup?.setup_id) return;
+      try { const state = await ask(LINK, "gateway.setup.status", { setup_id: setup.setup_id }); if (live()) await adopt(state); }
+      catch (error) { setupFailed("没读到进度，请重试。")(error); }
+    };
+
+    // The devices.
+    const gatewayStatus = node("p", "", "set-status");
+    gatewayStatus.id = "settingsGatewayStatus";
+    gatewayStatus.setAttribute("role", "status");
+    const gatewayList = document.createElement("div");
+    gatewayList.id = "settingsGatewayList";
+    gatewayList.className = "set-group";
+    const pairCode = button("添加设备", "btn", "settingsGatewayPair");
+    const kinds = [["computer", "电脑"], ["server", "服务器"], ["browser", "浏览器（仅聊天和界面）"]];
+    const pairKind = choose(kinds, "computer", "settingsGatewayPairKind");
+    const permissions = (device, prefix) => {
+      const box = node("div", "", "set-card");
+      const tier = choose([["ask", "按规则和影响审批"], ["full", "完全放开（命令也不再询问）"]], device.tier || "ask", `${prefix}Access`);
+      const check = (title, checked, id) => {
+        const label = node("label", title); const input = document.createElement("input");
+        input.type = "checkbox"; input.checked = checked; input.id = id; label.append(input); box.append(label); return input;
+      };
+      box.append(tier);
+      const lend = check("借出它的能力（让 Ash 能用它）", device.lend === true, `${prefix}Lend`);
+      const body = check("当作身体：让 Ash 读写它的文件、执行命令", device.body === true, `${prefix}Body`);
+      const local = check("允许本地 Agent（使用电脑本地完整权限）", device.local_agents === true, `${prefix}Agents`);
+      const web = check("允许访问 Ash 聊天和网页界面", device.web_ui === true, `${prefix}Web`);
+      return { box,
+        read: () => ({ tier: tier.value, lend: lend.checked, body: body.checked, local_agents: local.checked, web_ui: web.checked }),
+        // A browser only gets the chat and the page.
+        browser: (yes) => { for (const input of [tier, lend, body, local, web]) input.disabled = yes;
+          if (yes) { tier.value = "ask"; lend.checked = body.checked = local.checked = false; web.checked = true; } } };
+    };
+
+    const pairResult = node("p", "", "set-status");
+    pairResult.id = "settingsGatewayPairResult";
+    pairResult.setAttribute("role", "status");
+    // The pairing code is shown here and nowhere else: `pair_code` answers the owner on this machine only, and starting
+    // a pairing says only that one began. The page watches the pairing while it is open: a state that changed means a
+    // request arrived, or a device was approved or came online, so the list is read again.
+    const pairBox = node("div", "", "set-card");
+    pairBox.id = "settingsGatewayPairCode";
+    pairBox.hidden = true;
+    const pairText = node("p", "", "set-status");
+    pairText.id = "settingsGatewayPairCodeText";
+    const pairCommand = node("pre", "");
+    pairCommand.id = "settingsGatewayPairCommand";
+    const pairCopy = button("复制地址", "btn gray", "settingsGatewayPairCopy");
+    pairBox.append(pairText, pairCommand, pairCopy);
+    pairCommand.hidden = pairCopy.hidden = true;
+    let shown = null, signature = null, polling = null;
+    pairCopy.addEventListener("click", () => { void (async () => {
+      try { await globalThis.navigator.clipboard.writeText(pairCommand.textContent); pairCopy.textContent = "已复制"; }
+      catch { pairCopy.textContent = "长按上面的地址复制"; }
+    })(); });
+    const countdown = (ms) => { const seconds = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; };
+    const showCode = () => {
+      // A pairing that ended (approved, refused, or the device is online) leaves the page.
+      if (shown && ["approved", "connected", "rejected"].includes(shown.state)) shown = null;
+      const left = shown ? shown.deadline - Date.now() : 0;
+      const state = shown?.state === "waiting" && left <= 0 ? "expired" : shown?.state;
+      pairBox.hidden = !shown;
+      pairCommand.hidden = pairCopy.hidden = state !== "waiting" || !shown?.url;
+      if (!shown) return;
+      if (state === "requested") { pairText.textContent = "配对码已使用。新设备发来的连接请求在上面，确认是你的设备再批准。"; return; }
+      if (state === "expired") { pairText.textContent = "配对码已过期。需要时再点「添加设备」。"; return; }
+      const how = !shown.url ? "" : shown.kind === "browser" ? "在新浏览器里打开下面的地址，再回到这里批准：" : "在要连接的电脑上用浏览器打开下面的地址，按页面提示安装，再回到这里批准：";
+      pairText.textContent = `配对码：${shown.code}（还剩 ${countdown(left)}，只能用一次）。${how}`;
+      pairCommand.textContent = shown.url ?? "";
+    };
+    const waitingPairs = (pairs) => pairs.filter((pair) => pair.state === "requested");
+    const pairSignature = (pairs) => pairs.map((pair) => `${pair.pair_id}:${pair.state}`).join(",");
+    let deviceCount = 0, waitingCount = 0;
+    /** Reads the devices and the requests waiting for the owner, and draws both. */
+    const refreshDevices = async () => {
+      const [{ devices }, { pairs }] = await Promise.all([ask(DEVICES, "list", {}), ask(DEVICES, "pair_pending", {})]);
+      if (!live()) return;
+      signature = pairSignature(pairs ?? []);
       gatewayList.replaceChildren();
       gatewayList.hidden = true;
-      if (state?.configured !== true) { gatewayStatus.textContent = "还没有设置网关，其他设备暂时连不上。"; return state; }
-      gatewayStatus.textContent = state.connected ? "网关已连接。" : GATEWAY_PROBLEMS[state.error] ?? "网关暂时离线。";
-      waiting = Array.isArray(state.pending) ? state.pending.length : 0; showCode();
-      const act = async (word, body) => {
-        const result = await deviceRequest(word, body);
-        if (result?.ok !== true) throw new Error("gateway operation failed");
-        await refreshGateway();
-      };
-      const failed = (text) => () => { if (live()) gatewayStatus.textContent = text; };
-      for (const pending of Array.isArray(state.pending) ? state.pending : []) {
-        if (typeof pending.request_id !== "string" || typeof pending.name !== "string") continue;
-        const row = item(pending.name, `等你批准 · 先选择设备类型和权限${pending.fingerprint ? ` · 指纹 ${pending.fingerprint}` : ""}`);
-        const prefix = `settingsPending-${pending.request_id}`;
-        const kind = choose(kinds, pairKind.value, `${prefix}Kind`);
-        const grant = permissions({}, prefix);
-        grant.browser(kind.value === "browser");
-        kind.addEventListener("change", () => grant.browser(kind.value === "browser"));
+      gatewayStatus.textContent = "";
+      const act = async (word, body) => { await ask(DEVICES, word, body); await refreshDevices(); };
+      const failed = (text) => (error) => { if (live() && error?.code !== "stale") gatewayStatus.textContent = text; };
+      for (const pending of waitingPairs(pairs ?? [])) {
+        if (typeof pending.pair_id !== "string") continue;
+        const kindName = KIND_NAMES[pending.kind] ?? "设备";
+        const row = item(pending.name || `新${kindName}`, `等你批准 · ${kindName} · 先确认它是你的设备，再选择权限`);
+        const prefix = `settingsPending-${pending.pair_id}`;
+        const grant = permissions({ tier: "ask", lend: pending.kind !== "browser" }, prefix);
+        grant.browser(pending.kind === "browser");
         const approve = button("批准");
         approve.id = `${prefix}Approve`;
-        approve.addEventListener("click", () => { void act("pair_approve", { request_id: pending.request_id,
-          kind: kind.value, ...grant.read() }).catch(failed("批准未确认，请刷新状态后检查。")); });
+        approve.addEventListener("click", () => { void act("pair_approve", { pair_id: pending.pair_id, ...grant.read() }).catch(failed("批准未确认，请刷新状态后检查。")); });
         const reject = button("拒绝", "btn gray");
-        reject.addEventListener("click", () => { void act("pair_reject", { request_id: pending.request_id }).catch(failed("拒绝未确认，请重试。")); });
-        row.append(kind, grant.box, approve, reject);
+        reject.id = `${prefix}Reject`;
+        reject.addEventListener("click", () => { void act("pair_reject", { pair_id: pending.pair_id }).catch(failed("拒绝未确认，请重试。")); });
+        row.append(grant.box, approve, reject);
         gatewayList.append(row);
       }
-      for (const device of Array.isArray(state.devices) ? state.devices : []) {
-        if (typeof device.id !== "string" || typeof device.name !== "string") continue;
-        // A computer lends its capabilities once its list has been read; until then the count would wrongly read zero.
-        const count = Number(device.capabilities) || (Array.isArray(device.capability_specs) ? device.capability_specs.length : 0);
-        const lends = device.lends === true || count > 0 ? ` · ${count} 个能力` : device.online ? " · 正在读取能力" : "";
-        const kind = device.kind === "browser" ? "浏览器" : `${device.kind === "server" ? "服务器" : "电脑"}${lends}`;
-        const row = item(device.name, `${kind} · ${device.online ? "在线" : "离线"}${device.version ? ` · v${device.version}` : ""} · ${device.access === "full" ? "完全放开" : "按规则审批"}`);
+      const all = Array.isArray(devices) ? devices.filter((device) => typeof device?.device === "string" && typeof device.name === "string") : [];
+      for (const device of all) {
+        const id = device.device;
+        const kindName = KIND_NAMES[device.kind] ?? "设备";
+        if (device.revoked_at) {
+          const row = item(device.name, `${kindName} · 已移除，连不上了`);
+          const restore = button("恢复", "btn gray");
+          restore.id = `settingsDevice-${id}Restore`;
+          restore.addEventListener("click", () => { void act("restore", { device: id }).catch(failed("恢复未确认，请重试。")); });
+          row.append(restore);
+          gatewayList.append(row);
+          continue;
+        }
+        const seen = !device.online && device.last_seen ? ` · 上次在线 ${clock(device.last_seen)}` : "";
+        const row = item(device.name, `${kindName} · ${device.online ? "在线" : "离线"}${seen}${device.via === "gateway" ? " · 经中转站" : ""} · ${device.tier === "full" ? "完全放开" : "按规则审批"}`);
         const revoke = button("移除", "btn gray");
-        revoke.id = `settingsDevice-${device.id}Revoke`;
+        revoke.id = `settingsDevice-${id}Revoke`;
         armed(revoke, "移除", "确定移除？", () => { gatewayStatus.textContent = `移除后 ${device.name} 需要重新配对才能连上。`; },
-          () => act("revoke", { device: device.id }).catch(failed("移除未确认，请重试。")));
+          () => act("revoke", { device: id }).catch(failed("移除未确认，请重试。")));
         row.append(revoke);
         const details = node("details"); details.append(node("summary", "名称、权限与诊断"));
-        if (device.workdir) details.append(node("p", `工作目录：${device.workdir}`, "set-sub"));
-        if (Array.isArray(device.agents) && device.agents.length) details.append(node("p", `本地 Agent：${device.agents.map(a => `${RUNTIMES[a.kind] ?? a.kind}${a.installed ? "" : "（未安装）"}`).join("、")}`, "set-sub"));
         const nameInput = document.createElement("input"); nameInput.value = device.name; nameInput.setAttribute("aria-label", "设备名称");
         const rename = button("保存名称", "btn gray");
-        rename.addEventListener("click", () => { void act("rename", { device: device.id, name: nameInput.value }).catch(failed("名称未保存。")); });
-        const grant = permissions(device, `settingsDevice-${device.id}`); grant.browser(device.kind === "browser");
+        rename.addEventListener("click", () => {
+          const next = nameInput.value.trim();
+          if (!next) { gatewayStatus.textContent = "名称不能是空的。"; return; }
+          void act("rename", { device: id, name: next }).catch(failed("名称未保存。"));
+        });
+        const grant = permissions(device, `settingsDevice-${id}`); grant.browser(device.kind === "browser");
         const save = button("保存权限");
-        save.addEventListener("click", () => { void act("access_set", { device: device.id, ...grant.read() }).catch(failed("权限未确认，请刷新状态后检查。")); });
+        save.addEventListener("click", () => { void act("access_set", { device: id, ...grant.read() }).catch(failed("权限未确认，请刷新状态后检查。")); });
         const diagnose = button("诊断", "btn gray"); const info = node("pre", "", "set-status");
-        diagnose.addEventListener("click", () => { void deviceRequest("diagnose", { device: device.id }).then(reply => {
-          info.textContent = reply?.ok ? deviceDiagnosis(reply.result) : "诊断失败，请刷新状态。";
-        }).catch(() => { info.textContent = "诊断失败。"; }); });
+        diagnose.addEventListener("click", () => { void (async () => {
+          info.textContent = "正在诊断…";
+          try {
+            const hand = handOf(id);
+            const [diagnosis, connected] = await Promise.all([ask(LINK, "diagnose", { hand }), ask(LINK, "list", {}).catch(() => ({ connections: [] }))]);
+            if (live()) info.textContent = deviceDiagnosis({ device, diagnosis, connections: (connected.connections ?? []).filter((c) => c.hand === hand) });
+          } catch (error) { if (live()) info.textContent = error?.code === "stale" ? "" : "诊断失败，请刷新状态。"; }
+        })(); });
         details.append(nameInput, rename, grant.box, save, diagnose, info); row.append(details);
         gatewayList.append(row);
       }
+      deviceCount = all.filter((device) => !device.revoked_at).length;
+      waitingCount = waitingPairs(pairs ?? []).length;
       gatewayList.hidden = gatewayList.children.length === 0;
-      if (gatewayList.hidden) gatewayStatus.textContent += "还没有连接其他设备。";
-      return state;
+      if (gatewayList.hidden) gatewayStatus.textContent = "还没有连接其他设备。";
+      showCode();
     };
-    gatewayPage.append(gatewayStatus, gatewayList, pairKind, pairCode, pairResult, pairBox);
-    let loadGatewayConfig = null;
-    if (android && typeof globalThis.__ashGatewayConfig === "function") {
-      const url = document.createElement("input");
-      url.id = "settingsGatewayUrl";
-      url.type = "url";
-      url.placeholder = "https://你的网关域名";
-      const secret = document.createElement("input");
-      secret.id = "settingsGatewaySecret";
-      secret.type = "password";
-      secret.placeholder = "首次认领用的一次性密钥；已认领可留空";
-      secret.autocomplete = "off";
-      const saveConfig = button("保存网关", "btn", "settingsGatewaySave");
-      const configStatus = node("p", `保存后 ${name} 会重启一下。`, "set-status");
-      configStatus.id = "settingsGatewayConfigStatus";
-      configStatus.setAttribute("role", "status");
-      loadGatewayConfig = async () => {
-        try {
-          const result = await globalThis.__ashGatewayConfig("status");
-          if (!live()) return;
-          if (!result.ok) throw new Error("unavailable");
-          url.value = result.url;
-          configStatus.textContent = result.configured ? `当前网关：${result.url}` : "网关还没有设置。";
-        } catch { if (live()) configStatus.textContent = "网关设置读取失败。"; }
-      };
-      saveConfig.addEventListener("click", () => { void (async () => {
-        const enteredUrl = url.value.trim();
-        const enteredSecret = secret.value.trim();
-        secret.value = "";
-        saveConfig.disabled = true;
-        configStatus.textContent = "正在保存…";
-        try {
-          const result = await globalThis.__ashGatewayConfig("save", enteredUrl, enteredSecret);
-          if (!live()) return;
-          if (!result.ok) throw new Error("unconfirmed");
-          url.value = result.url;
-          configStatus.textContent = result.configured ? `网关已保存，${name} 正在重启。` : `网关已移除，${name} 正在重启。`;
-        } catch { if (live()) configStatus.textContent = "保存失败，请检查域名和密钥。"; }
-        finally { saveConfig.disabled = false; }
-      })(); });
-      const config = document.createElement("div");
-      config.className = "set-card";
-      config.append(node("span", "网关地址", "set-title"), url, secret, saveConfig, configStatus);
-      gatewayPage.append(node("h3", "网关", "set-header"), config);
-    }
+    const readPairing = async () => {
+      let pairs;
+      try { pairs = (await ask(DEVICES, "pair_pending", {})).pairs ?? []; } catch { return; }
+      if (!live()) return;
+      let changed = signature !== null && pairSignature(pairs) !== signature;
+      if (shown) {
+        let own = pairs.find((pair) => pair.pair_id === shown.pair_id);
+        if (!own) { own = await ask(DEVICES, "pair_status", { pair_id: shown.pair_id }).catch(() => null); if (!live()) return; }
+        if (own?.state && own.state !== shown.state) { shown.state = own.state; changed = true; }
+      }
+      showCode();
+      if (changed) await refreshDevices().catch(() => {});
+    };
+    const watch = () => {
+      if (polling) return;
+      let tick = 0;
+      polling = setInterval(() => {
+        if (!live() || gatewayPage.hidden) { clearInterval(polling); polling = null; return; }
+        if (globalThis.document?.hidden) return;
+        showCode();
+        if (++tick % 2 === 0) { void readPairing(); if (SETUP_ACTIVE.includes(setup?.state)) void readSetup(); }
+      }, 1000);
+      polling.unref?.();
+    };
+    pairCode.addEventListener("click", () => { void (async () => {
+      pairCode.disabled = true;
+      pairResult.textContent = "正在生成配对码…";
+      try {
+        const started = await ask(DEVICES, "pair_start", { kind: pairKind.value });
+        const issued = await ask(DEVICES, "pair_code", { pair_id: started.pair_id });
+        if (!live()) return;
+        pairCopy.textContent = "复制地址";
+        shown = { pair_id: started.pair_id, kind: pairKind.value, code: issued.code, url: typeof issued.url === "string" ? issued.url : "",
+          deadline: Number(issued.expires_at ?? started.expires_at) || Date.now(), state: "waiting" };
+        showCode();
+        pairResult.textContent = "";
+      } catch (error) { if (live()) { pairResult.textContent = error?.code === "stale" ? "" : "生成失败：中转站可能离线，请稍后重试。"; shown = null; showCode(); } }
+      finally { pairCode.disabled = false; }
+    })(); });
+    gatewayPage.append(gatewayStatus, gatewayList, pairKind, pairCode, pairResult, pairBox, node("h3", "中转站", "set-header"), relayCard);
     const openGateway = async () => {
       gatewayStatus.textContent = "正在读取…";
-      void loadGatewayConfig?.();
-      revision = null;
-      try { await refreshGateway(); } catch { if (live()) gatewayStatus.textContent = "读取失败，请重试。"; }
+      signature = null;
+      void refreshRelay().catch(() => { if (live()) relayStatus.textContent = "中转站状态读取失败。"; });
+      try { await refreshDevices(); } catch { if (live()) gatewayStatus.textContent = "读取失败，请重试。"; }
       await readPairing();
       watch();
     };
@@ -682,56 +822,59 @@ export class SettingsControls {
     }
 
     // ---- Apps: the same service:apps words an agent calls; installing here is the owner's own approval of what it needs.
-    const apps = new AppsSettings((word, body) => requestSetting(word, body, "service:apps"), { live, name,
+    const apps = new AppsSettings((word, body) => callReply(APPS, word, body), { live, name,
       onSummary: (list) => { appsRow.sub.textContent = appsSummary(list); } });
     const appsPage = page("settingsApps", "应用",
       `装在 ${name} 里的应用。安装时列出它要用的东西，你点了才算同意；停用后权限还留着，收回后要重新安装。`, () => apps.load());
     appsPage.append(apps.root);
 
-    // ---- Quiet hours
+    // ---- Quiet hours (`delivery.quiet_hours`; "" means none)
     const quietPage = page("settingsQuiet", "免打扰",
       `这段时间里，${name} 想主动跟你说的事会先攒着，到点再告诉你。你找她、你定的提醒，照常送达。`, () => loadQuiet());
     const start = document.createElement("input");
     start.id = "settingsQuietStart";
     start.type = "time";
-    start.value = "21:30";
+    start.value = QUIET_DEFAULT.slice(0, 5);
     const end = document.createElement("input");
     end.id = "settingsQuietEnd";
     end.type = "time";
-    end.value = "09:00";
+    end.value = QUIET_DEFAULT.slice(6);
     const save = button("保存", "btn", "settingsQuietSave");
+    const quietOff = button("不设免打扰", "btn gray", "settingsQuietOff");
     const quietStatus = node("p", "", "set-status");
     quietStatus.id = "settingsQuietStatus";
     quietStatus.setAttribute("role", "status");
     const range = document.createElement("div");
     range.className = "set-card set-range";
     range.append(node("span", "从", "set-sub"), start, node("span", "到", "set-sub"), end);
-    const showQuiet = (quiet) => { quietRow.sub.textContent = `每天 ${quiet.replace("-", " 到 ")} 不主动找你`; };
+    const showQuiet = (quiet) => {
+      if (quiet) [start.value, end.value] = quiet.split("-");
+      quietRow.sub.textContent = quiet ? `每天 ${quiet.replace("-", " 到 ")} 不主动找你` : "没有设置免打扰";
+    };
     const loadQuiet = async () => {
       quietStatus.textContent = "正在读取…";
       try {
-        const reply = await requestSetting("settings.get", {});
-        const quiet = reply?.ok === true ? reply.result?.delivery?.quiet : null;
-        if (typeof quiet !== "string" || !/^\d\d:\d\d-\d\d:\d\d$/.test(quiet)) throw new Error("unavailable");
-        [start.value, end.value] = quiet.split("-");
+        const quiet = quietOf((await ask(ADMIN, "settings.get", { keys: [QUIET_KEY] })).settings);
+        if (quiet === null) throw new Error("unreadable");
         showQuiet(quiet);
         quietStatus.textContent = "";
       } catch { if (live()) quietStatus.textContent = "读取失败，请返回后重试。"; }
     };
-    save.addEventListener("click", () => { void (async () => {
+    const saveQuiet = async (quiet) => {
       quietStatus.textContent = "正在保存…";
       try {
-        const quiet = `${start.value}-${end.value}`;
-        if (!/^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/.test(quiet)) throw new Error("invalid");
-        const reply = await requestSetting("settings.set", { delivery: { quiet } });
-        if (reply?.ok !== true || reply.result?.delivery?.quiet !== quiet) throw new Error("unconfirmed");
+        if (quiet !== "" && !QUIET_FORMAT.test(quiet)) throw new Error("invalid");
+        const reply = await ask(ADMIN, "settings.set", { [QUIET_KEY]: quiet });
+        if (reply[QUIET_KEY] !== quiet) throw new Error("unconfirmed");
         showQuiet(quiet);
-        quietStatus.textContent = "已保存免打扰时段。";
+        quietStatus.textContent = quiet ? "已保存免打扰时段。" : "已关闭免打扰。";
       } catch { if (live()) quietStatus.textContent = "保存未确认，请重试。"; }
-    })(); });
-    quietPage.append(range, save, quietStatus);
+    };
+    save.addEventListener("click", () => { void saveQuiet(`${start.value}-${end.value}`); });
+    quietOff.addEventListener("click", () => { void saveQuiet(""); });
+    quietPage.append(range, save, quietOff, quietStatus);
 
-    // ---- Approval: one choice, how often she asks before acting.
+    // ---- Approval: one choice, how often she asks before acting (`service:gate`).
     const APPROVAL_MODES = [
       { mode: "auto", title: "有影响时才问", sub: `替你对外发消息、删改你的数据、花钱或执行命令前先问你；看、找、打开这类可撤回的事 ${name} 直接做。` },
       { mode: "always", title: "每次都问", sub: `除了看和读，外部操作都先问你；单独设为「完全放开」的电脑除外。` },
@@ -767,8 +910,7 @@ export class SettingsControls {
     const loadApproval = async () => {
       approvalStatus.textContent = "正在读取…";
       try {
-        const reply = await requestSetting("settings.get", {});
-        const mode = reply?.ok === true ? reply.result?.approval?.mode : null;
+        const { mode } = await ask(GATE, "rules.list", { limit: 1 });
         if (mode !== "auto" && mode !== "always") throw new Error("unavailable");
         showApproval(mode);
         approvalStatus.textContent = "";
@@ -778,8 +920,8 @@ export class SettingsControls {
       for (const row of approvalChoices) row.disabled = true;
       approvalStatus.textContent = "正在保存…";
       try {
-        const reply = await requestSetting("settings.set", { approval: { mode } });
-        if (reply?.ok !== true || reply.result?.approval?.mode !== mode) throw new Error("unconfirmed");
+        const reply = await ask(GATE, "mode.set", { mode });
+        if (reply.mode !== mode) throw new Error("unconfirmed");
         showApproval(mode);
         approvalStatus.textContent = "已保存。";
       } catch { if (live()) approvalStatus.textContent = "保存未确认，请重试。"; }
@@ -804,7 +946,7 @@ export class SettingsControls {
     modelSection.className = "set-card";
     const provider = document.createElement("input");
     provider.id = "settingsModelProvider";
-    provider.placeholder = "Provider";
+    provider.placeholder = "Provider（比如 deepseek）";
     const model = document.createElement("input");
     model.id = "settingsModelName";
     model.placeholder = "Model";
@@ -812,26 +954,26 @@ export class SettingsControls {
     const modelStatus = node("p", "", "set-status");
     modelStatus.id = "settingsModelStatus";
     modelStatus.setAttribute("role", "status");
+    // The hub has no getter for the model: it is what the primary agent runs. Only the model is known there, so the
+    // provider is left for the owner to fill in rather than guessed.
     const loadModel = async () => {
       modelStatus.textContent = "正在读取…";
       try {
-        const reply = await requestSetting("settings.get", {});
-        const selection = reply?.ok === true ? reply.result?.model : null;
-        if (typeof selection?.provider !== "string" || typeof selection?.model !== "string") throw new Error("unavailable");
-        provider.value = selection.provider;
-        model.value = selection.model;
-        modelStatus.textContent = "";
+        const { agents } = await ask(AGENTS, "list", {});
+        const runtime = (Array.isArray(agents) ? agents : []).find((agent) => agent.primary === true)?.runtime;
+        if (!live()) return;
+        model.value = typeof runtime?.model === "string" ? runtime.model : "";
+        modelStatus.textContent = model.value ? "" : "没有读到现在用的模型，请直接填写。";
       } catch { if (live()) modelStatus.textContent = "读取失败，请返回后重试。"; }
     };
     modelSave.addEventListener("click", () => { void (async () => {
       modelStatus.textContent = "正在保存…";
       try {
         const requested = { provider: provider.value.trim(), model: model.value.trim() };
-        if (!requested.provider || !requested.model) throw new Error("invalid");
-        const reply = await requestSetting("model.set", requested);
-        if (reply?.ok !== true || reply.result?.provider !== requested.provider || reply.result?.model !== requested.model ||
-          typeof reply.result?.restart_required !== "boolean") throw new Error("unconfirmed");
-        modelStatus.textContent = reply.result.restart_required ? `已保存；重启 ${name} 后主模型生效。` : "已保存，下一条消息起就用它。";
+        if (!requested.provider || !requested.model) { modelStatus.textContent = "Provider 和 Model 都要填。"; return; }
+        const reply = await ask(ADMIN, "model.set", requested);
+        if (reply.provider !== requested.provider || reply.model !== requested.model || typeof reply.restart_required !== "boolean") throw new Error("unconfirmed");
+        modelStatus.textContent = reply.restart_required ? `已保存；重启 ${name} 后主模型生效。` : "已保存，下一条消息起就用它。";
       } catch { if (live()) modelStatus.textContent = "保存未确认，请重试。"; }
     })(); });
     modelSection.append(node("span", "主模型", "set-title"), provider, model, modelSave, modelStatus);
@@ -845,25 +987,26 @@ export class SettingsControls {
     pluginsList.className = "set-group";
     const readPlugins = async () => {
       pluginsStatus.textContent = "正在读取…";
-      const reply = await requestSetting("plugins.list", {});
-      const plugins = reply?.ok === true ? reply.result?.plugins : null;
+      const { plugins } = await ask(ADMIN, "plugins.list", {});
       if (!Array.isArray(plugins)) throw new Error("plugins unavailable");
       if (!live()) return;
       pluginsList.replaceChildren();
       for (const plugin of plugins) {
-        if (typeof plugin.entryId !== "string" || typeof plugin.moduleName !== "string") continue;
-        const row = item(plugin.moduleName, plugin.enabled ? "已启用" : "已停用");
-        row.setAttribute("data-plugin-id", plugin.entryId);
+        const entry = plugin?.entryId ?? plugin?.id;
+        const title = plugin?.moduleName ?? plugin?.name;
+        if (typeof entry !== "string" || typeof title !== "string") continue;
+        const row = item(title, plugin.enabled ? "已启用" : "已停用");
+        row.setAttribute("data-plugin-id", entry);
         if (!plugin.readOnlyReason) {
           const toggle = button(plugin.enabled ? "停用" : "启用", "btn gray");
           toggle.addEventListener("click", () => { void (async () => {
             toggle.disabled = true;
             pluginsStatus.textContent = "正在保存…";
             try {
-              const result = await requestSetting("plugins.op", { op: "plugin", id: plugin.entryId, enabled: !plugin.enabled });
-              if (result?.ok !== true || !["applied", "restart-required"].includes(result.result?.application)) throw new Error("operation failed");
+              const result = await ask(ADMIN, "plugins.op", { op: "plugin", id: entry, enabled: !plugin.enabled });
+              if (typeof result.application === "string" && !["applied", "restart-required"].includes(result.application)) throw new Error("operation failed");
               await readPlugins();
-              pluginsStatus.textContent = result.result.application === "restart-required" ? `已保存；重启 ${name} 后生效。` : "已更新插件。";
+              pluginsStatus.textContent = result.application === "restart-required" ? `已保存；重启 ${name} 后生效。` : "已更新插件。";
             } catch { if (live()) pluginsStatus.textContent = "插件更新未确认，请重试。"; }
             finally { toggle.disabled = false; }
           })(); });
@@ -879,36 +1022,35 @@ export class SettingsControls {
     // ---- What the home rows say: read when the drawer opens and whenever you come back to it.
     this.refreshHome = async () => {
       void apps.summary();
-      const settled = (work) => work.catch(() => null);
-      const [settings, usage, vault, gateway] = await Promise.all([
-        settled(requestSetting("settings.get", {})), settled(requestSetting("usage.get", { days: 7 }, "service:cost")),
-        settled(readVault()), settled(deviceRequest("gateway_status"))]);
+      const settled = (work) => work.then((value) => value, () => null);
+      const readDevices = async () => {
+        const [{ devices }, { pairs }] = await Promise.all([ask(DEVICES, "list", {}), ask(DEVICES, "pair_pending", {})]);
+        return { devices: Array.isArray(devices) ? devices : [], pairs: Array.isArray(pairs) ? pairs : [] };
+      };
+      const [status, quietSettings, approval, usage, vault, devices, relayState] = await Promise.all([
+        settled(ask(ADMIN, "status", {})), settled(ask(ADMIN, "settings.get", { keys: [QUIET_KEY] })), settled(ask(GATE, "rules.list", { limit: 1 })),
+        settled(ask(COST, "usage.get", { days: 7 })), settled(readVault()), settled(readDevices()), settled(ask(LINK, "gateway.status", {}))]);
       if (!live()) return;
-      const quiet = settings?.ok === true ? settings.result?.delivery?.quiet : null;
-      if (typeof quiet === "string" && /^\d\d:\d\d-\d\d:\d\d$/.test(quiet)) {
-        [start.value, end.value] = quiet.split("-");
-        showQuiet(quiet);
-      }
-      if (settings?.ok === true && typeof settings.result?.paused === "boolean") showPaused(settings.result.paused);
-      const approvalMode = settings?.ok === true ? settings.result?.approval?.mode : null;
-      if (approvalMode === "auto" || approvalMode === "always") showApproval(approvalMode);
-      if (usage?.ok === true) showUsage(usage.result);
+      const quiet = quietSettings ? quietOf(quietSettings.settings) : null;
+      if (quiet !== null) showQuiet(quiet);
+      if (typeof status?.paused === "boolean") showPaused(status.paused);
+      if (approval?.mode === "auto" || approval?.mode === "always") showApproval(approval.mode);
+      if (usage) showUsage(usage);
       else usageMore.textContent = "用量暂时读不到";
       if (vault?.available === false) {
         vaultRow.sub.textContent = "手机安全存储暂时不可用";
         vaultRow.sub.className = "set-sub warn";
       } else if (vault) {
-        const parts = KEYS.map(({ ref, title }) => `${title} ${vault.entries.find((entry) => entry.ref === ref)?.configured === true ? "已保存" : "未设置"}`);
-        vaultRow.sub.textContent = parts.join(" · ");
-        vaultRow.sub.className = vault.entries.find((entry) => entry.ref === KEYS[0].ref)?.configured === true ? "set-sub" : "set-sub warn";
+        const saved = (ref) => vault.entries.find((entry) => entry.ref === ref)?.configured === true;
+        vaultRow.sub.textContent = KEYS.map(({ ref, title }) => `${title} ${saved(ref) ? "已保存" : "未设置"}`).join(" · ");
+        vaultRow.sub.className = saved(KEYS[0].ref) ? "set-sub" : "set-sub warn";
       }
-      if (gateway?.ok === true) {
-        const state = gateway.result ?? {};
-        const devices = Array.isArray(state.devices) ? state.devices.length : 0;
-        const waiting = Array.isArray(state.pending) ? state.pending.length : 0;
-        const broken = state.configured === true && state.connected !== true && typeof state.error === "string";
-        gatewayRow.sub.textContent = state.configured !== true ? "还没有设置网关" : broken ? "网关连不上，点开看原因"
-          : `${devices ? `${devices} 台设备` : "还没有连接其他设备"}${waiting ? ` · ${waiting} 个等你批准` : ""}`;
+      if (devices || relayState) {
+        const count = devices ? devices.devices.filter((device) => !device.revoked_at).length : deviceCount;
+        const waiting = devices ? waitingPairs(devices.pairs).length : waitingCount;
+        const broken = relayState?.configured === true && relayState.connected !== true;
+        gatewayRow.sub.textContent = relayState && relayState.configured !== true ? "还没有设置中转站" : broken ? "中转站连不上，点开看原因"
+          : `${count ? `${count} 台设备` : "还没有连接其他设备"}${waiting ? ` · ${waiting} 个等你批准` : ""}`;
         gatewayRow.sub.className = waiting || broken ? "set-sub warn" : "set-sub";
       }
     };
@@ -917,6 +1059,6 @@ export class SettingsControls {
     this.panel.append(section);
     this.section = section;
     this.sectionContext = context;
-    this.preferences = new ProactivePreferences(preferencesRoot, this.net, () => live() && this.connected && this.allowed);
+    this.preferences = new ProactivePreferences(preferencesRoot, this.net, () => live() && this.online);
   }
 }
