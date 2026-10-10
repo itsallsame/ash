@@ -22,33 +22,6 @@ val copyPayload by tasks.registering(Copy::class) {
     }
 }
 
-// The screen helper (android/screen) ships inside Ash, which installs or updates it for the owner.
-val screenAssets = layout.buildDirectory.dir("generated/screen-assets")
-val copyScreen by tasks.registering(Copy::class) {
-    dependsOn(":screen:assembleDebug")
-    from(project(":screen").layout.buildDirectory.file("outputs/apk/debug/screen-debug.apk"))
-    into(screenAssets.map { it.dir("screen") })
-    rename { "ash-screen.apk" }
-}
-
-// The senses helper (android/senses): location, motion and health, in an app that targets a current Android.
-val sensesAssets = layout.buildDirectory.dir("generated/senses-assets")
-val copySenses by tasks.registering(Copy::class) {
-    dependsOn(":senses:assembleDebug")
-    from(project(":senses").layout.buildDirectory.file("outputs/apk/debug/senses-debug.apk"))
-    into(sensesAssets.map { it.dir("senses") })
-    rename { "ash-senses.apk" }
-}
-
-// The apps shell (android/apps): each of the owner's apps in its own sandboxed page and task.
-val appsAssets = layout.buildDirectory.dir("generated/apps-assets")
-val copyApps by tasks.registering(Copy::class) {
-    dependsOn(":apps:assembleDebug")
-    from(project(":apps").layout.buildDirectory.file("outputs/apk/debug/apps-debug.apk"))
-    into(appsAssets.map { it.dir("apps") })
-    rename { "ash-apps.apk" }
-}
-
 // The agent container (arm64 Ubuntu + node + DSH + proot) from `npm run build:container`
 // (repo root build/container): shipped as assets/container/{ash-container.tgz,VERSION}
 // (not .tar.gz: the asset merger would gunzip anything named *.gz).
@@ -87,20 +60,17 @@ android {
 
     defaultConfig {
         applicationId = "ai.ash.agent"
-        minSdk = 24
-        // 28 on purpose: from 29 on, app-private files are no longer executable (the payload's
-        // node/git/python run from files/). Moving binaries to jniLibs is a separate project.
-        targetSdk = 28
-        versionCode = 11
-        versionName = "0.3.6"
+        minSdk = 26
+        // 35, as SPEC-05 asks. The kernel classes still in this module (payload, container, node) cannot run from files/ at 35;
+        // they move to their own package, which stays on 28.
+        targetSdk = 35
+        versionCode = 12
+        versionName = "0.4.0"
         buildConfigField("int", "CORE_PORT", "4700")
         buildConfigField("int", "HOST_PORT", "4710")
         buildConfigField("int", "SENSE_PORT", "4700")
         buildConfigField("boolean", "ISOLATED_PROBE", "false")
         buildConfigField("long", "SENSE_RESCAN_MS", "21600000L")
-        buildConfigField("long", "SCREEN_VERSION_CODE", "${providers.gradleProperty("ashScreenVersionCode").get()}L")
-        buildConfigField("long", "SENSES_VERSION_CODE", "${providers.gradleProperty("ashSensesVersionCode").get()}L")
-        buildConfigField("long", "APPS_VERSION_CODE", "${providers.gradleProperty("ashAppsVersionCode").get()}L")
         ndk { abiFilters += listOf("arm64-v8a") }
     }
     ndkVersion = "27.2.12479018"
@@ -167,9 +137,6 @@ android {
 
     sourceSets["main"].assets.srcDir(payloadAssets)
     sourceSets["main"].assets.srcDir(containerAssets)
-    sourceSets["main"].assets.srcDir(screenAssets)
-    sourceSets["main"].assets.srcDir(sensesAssets)
-    sourceSets["main"].assets.srcDir(appsAssets)
     buildFeatures { buildConfig = true }
 
     androidResources {
@@ -190,14 +157,19 @@ android {
 
 tasks.named("preBuild") { dependsOn(copyPayload) }
 // Only packaging needs the container (unit tests do not merge assets, so they run without it).
-tasks.matching { it.name.matches(Regex("merge.*Assets")) }.configureEach { dependsOn(copyContainer, copyScreen, copySenses, copyApps) }
+tasks.matching { it.name.matches(Regex("merge.*Assets")) }.configureEach { dependsOn(copyContainer) }
 // The card cases the core checks too (npm run gen:widget-cards): the phone's tests read them, so they rerun when they change.
 tasks.withType<Test>().configureEach { inputs.file(rootProject.file("../packages/core/test/fixtures/widget-cards.json")).withPropertyName("widgetCards") }
 
 dependencies {
-    implementation(project(":bridge"))
     implementation(files("libs/shizuku-api.aar", "libs/shizuku-provider.aar", "libs/shizuku-aidl.aar"))
     implementation("androidx.webkit:webkit:1.17.1")
+    // Spring physics for the island's transitions (SpringAnimation).
+    implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
+    // Health Connect (read only): the platform's store on Android 14+, the Health Connect app before that.
+    // 1.1.0-beta01: the last release that builds with compileSdk 35 and this Android Gradle plugin (1.1.0 needs 36 / 8.9.1).
+    implementation("androidx.health.connect:connect-client:1.1.0-beta01")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

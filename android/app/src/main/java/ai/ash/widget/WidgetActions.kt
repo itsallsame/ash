@@ -4,17 +4,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import ai.ash.bridge.Bridge
-import ai.ash.host.apps.AppsShell
+import ai.ash.apps.OpenActivity
 import ai.ash.ui.HomeActivity
 
-/** Where a card's open actions go: an app's page in 「Ash 应用」, Ash itself, or a link. */
+/** Where a card's open actions go: an app's page in 「Ash 应用」 (the apps shell), Ash itself, or a link. */
 object WidgetActions {
     fun openIntent(ctx: Context, target: CAction): Intent = when (target) {
-        is CAction.OpenApp -> if (AppsShell.installedVersion(ctx) > 0)
+        is CAction.OpenApp ->
             Intent(Intent.ACTION_VIEW, Uri.parse("ash-app://open?app=${Uri.encode(target.app)}" + (target.surface?.let { "&surface=${Uri.encode(it)}" } ?: "")))
-                .setClassName(Bridge.APPS_PACKAGE, Bridge.APPS_OPEN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            else ash(ctx)
+                .setClass(ctx, OpenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         is CAction.OpenUrl -> Intent(Intent.ACTION_VIEW, Uri.parse(target.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         else -> ash(ctx)
     }

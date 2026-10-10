@@ -19,8 +19,8 @@ object KeepAliveRecheck {
 
     data class Plan(val forgetWords: Boolean, val offer: Offer)
 
-    /** The entries whose only proof is the owner's word: the maker's auto-start switches for Ash and its helpers. */
-    val WORD_KEYS = listOf("autostart", "screen_keepalive", "senses_keepalive")
+    /** The entries whose only proof is the owner's word: the maker's auto-start switches for Ash. */
+    val WORD_KEYS = listOf("autostart")
 
     /**
      * [previous]: the install seen last time (null on the very first start, which the first-launch guide covers).

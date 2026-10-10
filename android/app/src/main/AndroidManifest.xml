@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-    <!-- Granted once over USB or Shizuku; used only to bring the screen helper's accessibility service back (ScreenRecovery). -->
+    <!-- Granted once over USB or Shizuku; used only to bring Ash's accessibility service back (ScreenRecovery). -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -30,12 +30,38 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <!-- Task status capsule and virtual-screen preview; explicitly granted by the owner. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- Installs the screen helper Ash carries (accessibility and the island live in that small app). -->
+    <!-- Installs the kernel package. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
-    <!-- Lets Ash's own helper apps (same signature) bring Ash back after the system cleared it. -->
-    <permission android:name="ai.ash.permission.WAKE" android:protectionLevel="signature" />
+    <!-- Senses. Location: a fix now, and a track while the owner has recording on (background needs 「始终允许」). -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- The step counter and motion. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <!-- A watch's connection; the owner's scale, heard in a background scan (before Android 12: the two older ones). -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Health Connect, read only: nothing is ever written. -->
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_BODY_FAT" />
+    <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
+
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+        <package android:name="nodomain.freeyourgadget.gadgetbridge" />
+    </queries>
 
     <application
         android:name=".AshApp"
@@ -106,8 +132,6 @@
             </intent-filter>
         </receiver>
         <receiver android:name=".host.WakeReceiver" android:exported="false" />
-        <!-- Ash 感知 wakes Ash here when it holds facts and Ash is gone; only apps signed like Ash may send. -->
-        <receiver android:name=".host.senses.SensesWakeReceiver" android:exported="true" android:permission="ai.ash.permission.WAKE" />
         <receiver android:name=".host.PresentActionReceiver" android:exported="false" />
         <receiver android:name=".host.NotificationPauseReceiver" android:exported="false" />
         <receiver android:name=".host.TaskStopReceiver" android:exported="false" />
@@ -145,19 +169,10 @@
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
             </intent-filter>
         </activity>
-        <!-- The apps shell (ai.ash.apps) reaches the owner's apps here; every call checks it is signed like Ash. -->
-        <service android:name=".host.apps.AppsHostService" android:exported="true" />
-        <!-- Ash's home-screen shortcut for one of the owner's apps (when the shell cannot pin its own): hands it to the shell. -->
-        <activity android:name=".host.apps.AppShortcutActivity" android:exported="true"
-            android:theme="@android:style/Theme.NoDisplay" android:taskAffinity="" android:excludeFromRecents="true" android:noHistory="true" />
 
-        <!-- The screen helper brings Ash back here after the keep-alive switches: Ash's task returns as it was left. -->
-        <activity android:name=".host.screen.ReturnActivity" android:exported="true" android:permission="ai.ash.permission.WAKE"
+        <!-- Brings Ash's task back as it was left (after the keep-alive switches), or opens Ash if it had no task. -->
+        <activity android:name=".host.screen.ReturnActivity" android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
-
-        <!-- Installing the helpers Ash carries (ai.ash.screen, ai.ash.senses): the installer reports here. -->
-        <activity android:name=".host.HelperInstallActivity" android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:launchMode="singleTop" />
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
@@ -184,5 +199,109 @@
             android:authorities="${applicationId}.logshare"
             android:exported="false"
             android:grantUriPermissions="true" />
+
+        <!-- Screen reading and operation for Ash (the owner turns it on in system settings). -->
+        <service
+            android:name=".screen.a11y.A11yService"
+            android:exported="false"
+            android:label="@string/a11y_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_config" />
+        </service>
+
+        <!-- Ash's own page to ask the system to let it run in the background. -->
+        <activity
+            android:name=".screen.KeepAliveActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- A card in recent apps that the owner can lock. -->
+        <activity
+            android:name=".screen.LockCardActivity"
+            android:exported="false"
+            android:label="Ash"
+            android:taskAffinity="ai.ash.screen.lock" />
+
+        <!-- Senses: the owner's page, each permission and source with a button to grant it. -->
+        <activity
+            android:name=".senses.SetupActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+            <!-- Health Connect (Android 13 and lower) shows the owner why the app asks. -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+
+        <!-- Health Connect (Android 14+) links here for why the app reads health data. -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".senses.SetupActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Runs only while the owner has recording on. -->
+        <service
+            android:name=".senses.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="location|health" />
+
+        <!-- The system's scan for the owner's scale delivers here (a PendingIntent of this app's own). -->
+        <receiver android:name=".senses.health.ScaleReceiver" android:exported="false" />
+
+        <receiver android:name=".senses.AlarmReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- The apps shell 「Ash 应用」: the owner's apps, from Ash. -->
+        <activity
+            android:name=".apps.MainActivity"
+            android:exported="true"
+            android:label="Ash 应用"
+            android:taskAffinity="ai.ash.apps"
+            android:theme="@style/AppsShell">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ash-app://open?app=<id> (links, home-screen icons): checks the id, then opens that app's own task. -->
+        <activity
+            android:name=".apps.OpenActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ash-app" android:host="open" />
+            </intent-filter>
+        </activity>
+
+        <!-- One app, in a task of its own (keyed by its ash-app://open?app=<id> data), in the WebView process. -->
+        <activity
+            android:name=".apps.AppActivity"
+            android:exported="false"
+            android:theme="@style/AppsShell"
+            android:process=":app"
+            android:documentLaunchMode="intoExisting"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode" />
     </application>
 </manifest>

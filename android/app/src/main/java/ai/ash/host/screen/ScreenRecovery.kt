@@ -1,6 +1,5 @@
 package ai.ash.host.screen
 
-import ai.ash.bridge.Bridge
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -12,12 +11,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Brings the screen helper's accessibility service back after the system stopped the helper (a maker's background
+ * Brings Ash's accessibility service back after the system stopped the service (a maker's background
  * cleaning does): the switch stays on in settings, but Android does not start the service again by itself.
  *
  * It needs WRITE_SECURE_SETTINGS, which Android grants whole (any secure or global setting) and only over USB or
- * Shizuku. Ash keeps it to this one use: in this file, the only place Ash writes a secure setting itself, it takes the
- * helper's own entry out of the enabled services and puts it back, and only while that entry is still there (the owner
+ * Shizuku. Ash keeps it to this one use: in this file, the only place Ash writes a secure setting itself, it takes Ash's
+ * own accessibility entry out of the enabled services and puts it back, and only while that entry is still there (the owner
  * left the switch on). The agent has no way to reach it; settings.put writes secure settings only through Shizuku,
  * with the owner's approval each time. Every recovery is recorded; the owner can turn it off.
  */
@@ -27,7 +26,7 @@ object ScreenRecovery {
     private const val CHECK_MS = 15_000L
     /** A reconnecting service is not a stopped one: wait this long before acting. */
     private const val DOWN_MS = 20_000L
-    /** At most once per this long, so a helper that keeps failing is not toggled in a loop. */
+    /** At most once per this long, so a service that keeps failing is not toggled in a loop. */
     private const val GAP_MS = 120_000L
     private val main = Handler(Looper.getMainLooper())
     private var app: Context? = null
@@ -54,7 +53,7 @@ object ScreenRecovery {
     private fun check() {
         val ctx = app ?: return
         main.postDelayed(::check, CHECK_MS)
-        val down = ScreenBridge.trusted(ctx) && ScreenBridge.switchedOn(ctx) && !ScreenBridge.accessibility()
+        val down = ScreenBridge.switchedOn(ctx) && !ScreenBridge.accessibility()
         val now = System.currentTimeMillis()
         if (!down) { downSince = 0; return }
         if (downSince == 0L) { downSince = now; return }
@@ -68,31 +67,30 @@ object ScreenRecovery {
         val key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         val services = Settings.Secure.getString(resolver, key).orEmpty()
         // The owner turned the switch off since the check: leave it off.
-        if (Services.helpers(services).isEmpty()) return
+        if (Services.helpers(services, ctx.packageName).isEmpty()) return
         try {
-            Settings.Secure.putString(resolver, key, Services.withoutHelper(services))
+            Settings.Secure.putString(resolver, key, Services.withoutHelper(services, ctx.packageName))
             Thread.sleep(800)
-            Settings.Secure.putString(resolver, key, Services.withHelperBack(Settings.Secure.getString(resolver, key).orEmpty(), services))
+            Settings.Secure.putString(resolver, key, Services.withHelperBack(Settings.Secure.getString(resolver, key).orEmpty(), services, ctx.packageName))
             Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
         } catch (e: SecurityException) { Log.w(TAG, "accessibility recovery not permitted", e); return }
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val list = (history(ctx) + System.currentTimeMillis()).takeLast(20)
         prefs.edit().putString("history", JSONArray(list).toString()).apply()
-        Log.i(TAG, "brought the screen helper's accessibility service back")
+        Log.i(TAG, "brought Ash's accessibility service back")
         downSince = 0
-        main.postDelayed({ ScreenBridge.rebind() }, 1500)
     }
 
     /**
-     * The enabled-services list (`pkg/service:pkg/service`) as recovery may change it: only the screen helper's own
+     * The enabled-services list (`pkg/service:pkg/service`) as recovery may change it: only Ash's own
      * entries are taken out and put back; every other app's entry stays exactly as it was.
      */
     internal object Services {
         private fun entries(list: String) = list.split(':').filter { it.isNotBlank() }
-        fun helpers(list: String) = entries(list).filter { it.startsWith("${Bridge.SCREEN_PACKAGE}/") }
-        fun withoutHelper(list: String) = (entries(list) - helpers(list).toSet()).joinToString(":")
-        /** [now] with the helper's entries from [before] back at its end; nothing is added unless it was there before. */
-        fun withHelperBack(now: String, before: String) = (entries(now) + helpers(before)).distinct().joinToString(":")
+        fun helpers(list: String, pkg: String) = entries(list).filter { it.startsWith("$pkg/") }
+        fun withoutHelper(list: String, pkg: String) = (entries(list) - helpers(list, pkg).toSet()).joinToString(":")
+        /** [now] with Ash's entries from [before] back at its end; nothing is added unless it was there before. */
+        fun withHelperBack(now: String, before: String, pkg: String) = (entries(now) + helpers(before, pkg)).distinct().joinToString(":")
     }
 
     /** For the diagnostics page. */

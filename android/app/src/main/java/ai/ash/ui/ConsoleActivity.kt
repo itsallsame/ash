@@ -190,12 +190,11 @@ class ConsoleActivity : Activity() {
         recoveryToggle.visibility = if (r.granted(this)) View.VISIBLE else View.GONE
     }
 
-    /** The island's resident entry: on, off, or waiting for a screen helper that can draw it. */
+    /** The island's resident entry: on or off. */
     private fun renderResident() {
         val kept = TaskCapsule.residentKept(this)
         residentState.text = when {
             !kept -> "已关闭：灵动岛只在任务进行中、或有你没看过的新东西时出现。"
-            !ai.ash.host.screen.ScreenBridge.islandResident() -> "已开启，等屏幕助手连上（需要新版屏幕助手）后出现。"
             else -> "已开启：平时贴着摄像头显示 Ash 的头像。轻点直接跟 Ash 说，长按打开 Ash，上划收起到下次解锁。"
         }
         residentToggle.text = if (kept) "关闭常驻入口" else "开启常驻入口"
