@@ -23,9 +23,11 @@ class MainActivity : Activity() {
     private lateinit var openAsh: Button
     private val icons: MutableMap<String, Bitmap?> = java.util.Collections.synchronizedMap(HashMap())
     @Volatile private var loading = false
+    private lateinit var ash: Ash
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        ash = Ash(this, null)
         val pad = Ui.dp(this, 20)
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, Ui.dp(this@MainActivity, 16), pad, pad) }
         column.addView(TextView(this).apply { text = "Ash 应用"; textSize = 24f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Ui.text(this@MainActivity)) })
@@ -45,6 +47,8 @@ class MainActivity : Activity() {
         Ui.systemBars(this)
     }
 
+    override fun onDestroy() { ash.close(); super.onDestroy() }
+
     override fun onResume() { super.onResume(); refresh() }
 
     private fun refresh() {
@@ -52,8 +56,8 @@ class MainActivity : Activity() {
         loading = true
         if (list.childCount == 0) status.text = "正在向 Ash 要应用列表…"
         Thread({
-            val result = runCatching { Ash.apps(this) }
-            result.getOrNull()?.forEach { a -> if (!icons.containsKey(a.id)) icons[a.id] = Ash.icon(this, a.id) }
+            val result = runCatching { ash.apps() }
+            result.getOrNull()?.forEach { a -> if (!icons.containsKey(a.id)) icons[a.id] = ash.icon(a.id) }
             runOnUiThread {
                 loading = false
                 if (isDestroyed) return@runOnUiThread

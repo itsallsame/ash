@@ -253,6 +253,9 @@
             </intent-filter>
         </receiver>
 
+        <!-- The apps shell's way to Ash: its pages run in the ":app" process, which has no connection to the kernel. Only this app's own processes can bind it. -->
+        <service android:name=".host.apps.AppsBridgeService" android:exported="false" />
+
         <!-- The apps shell 「Ash 应用」: the owner's apps, from Ash. -->
         <activity
             android:name=".apps.MainActivity"

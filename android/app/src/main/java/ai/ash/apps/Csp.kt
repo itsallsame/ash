@@ -3,8 +3,9 @@ package ai.ash.apps
 import java.net.URI
 
 /**
- * An app page's network rules, from the domains its view declares (MCP Apps `ui.csp`): nothing but these, ever. The
- * page gets them as a Content-Security-Policy meta tag, and the WebView refuses every other request as well.
+ * An app page's network rules, from the domains its view declares (MCP Apps `ui.csp`), as `service:apps/apps.surface` gives
+ * them in its `csp {connectDomains, resourceDomains}` ([fromJson]; none given means none allowed): nothing but these, ever.
+ * The page gets them as a Content-Security-Policy meta tag, and the WebView refuses every other request as well.
  */
 class Csp(connectDomains: List<String>, resourceDomains: List<String>) {
     val connect: List<String> = connectDomains.mapNotNull(::source).distinct()

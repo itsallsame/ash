@@ -84,8 +84,8 @@ class SandboxTest {
     }
 
     @Test fun appListSkipsWhatItCannotOpen() {
-        val apps = AppInfo.list("""[{"id":"health","name":"健康","summary":"s","surfaces":[{"id":"home","title":"今日"},{"id":"../x"}],"enabled":true,"granted":true},
-            {"id":"Bad/Id","name":"x"},{"id":"notes","enabled":true,"granted":false}]""")
+        val apps = AppInfo.list(org.json.JSONArray("""[{"id":"health","name":"健康","summary":"s","surfaces":[{"id":"home","title":"今日"},{"id":"../x"}],"enabled":true,"granted":true},
+            {"id":"Bad/Id","name":"x"},{"id":"notes","enabled":true,"granted":false}]"""))
         assertEquals(listOf("health", "notes"), apps.map { it.id })
         assertEquals(listOf("home" to "今日"), apps[0].surfaces)
         assertTrue(apps[0].usable)

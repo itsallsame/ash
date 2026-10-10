@@ -7,10 +7,11 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** What the host does for a view, through Ash: always for the one app the view belongs to. */
 interface AppsBackend {
-    /** POST /api/apps/<app>/call: an MCP CallToolResult. Throws [AppsError] when Ash or the core refuses. */
+    /**
+     * Calls the app's tool as the owner: an MCP CallToolResult (see [Replies.toolResult]); a tool that failed, or Ash that
+     * refused or was out of reach, is a result with `isError`. Throws [AppsError] only when there is no result at all.
+     */
     fun callTool(app: String, tool: String, arguments: JSONObject): JSONObject
-    /** POST /api/apps/<app>/message. */
-    fun sendMessage(app: String, text: String)
 }
 
 class AppsError(message: String) : Exception(message)
@@ -18,7 +19,6 @@ class AppsError(message: String) : Exception(message)
 /** What only the owner's screen can do: ask, open a link. Answers may come later, on any thread. */
 interface HostUi {
     fun confirmLink(url: String, answer: (Boolean) -> Unit)
-    fun confirmMessage(text: String, answer: (Boolean) -> Unit)
     fun openLink(url: String)
     fun sizeChanged(width: Int?, height: Int?) {}
     fun log(level: String, data: String) {}
@@ -26,8 +26,9 @@ interface HostUi {
 
 /**
  * The MCP Apps host for one view (JSON-RPC 2.0, spec 2026-01-26). The view can: initialize, call its own app's tools,
- * ask to open a link (the owner confirms), send Ash a message (the owner confirms), report its size and log. Anything
- * else is "method not found". The app is fixed when the router is made: nothing in a message can point it elsewhere.
+ * ask to open a link (the owner confirms), report its size and log. Anything else is "method not found", `ui/message`
+ * too: this version does not let a page speak to an agent for the owner (an app's server that wants an agent uses
+ * `wake_events`). The app is fixed when the router is made: nothing in a message can point it elsewhere.
  */
 class McpHost(
     private val app: String,
@@ -68,7 +69,6 @@ class McpHost(
             "ping" -> result(id, JSONObject())
             "tools/call" -> toolsCall(id, params)
             "ui/open-link" -> openLink(id, params)
-            "ui/message" -> message(id, params)
             "ui/request-display-mode" -> result(id, JSONObject().put("mode", "fullscreen"))
             // Accepted, kept nowhere yet: Ash has no per-view model context.
             "ui/update-model-context" -> result(id, JSONObject())
@@ -111,7 +111,7 @@ class McpHost(
 
     private fun toolsCall(id: Any, params: JSONObject) {
         val name = params.opt("name") as? String
-        if (name == null || !TOOL.matches(name)) return error(id, INVALID_PARAMS, "Invalid tool name")
+        if (name == null || !AppIds.validTool(name)) return error(id, INVALID_PARAMS, "Invalid tool name")
         val args = when (val a = params.opt("arguments")) { null, JSONObject.NULL -> JSONObject(); is JSONObject -> a; else -> return error(id, INVALID_PARAMS, "arguments must be an object") }
         if (inFlight.incrementAndGet() > MAX_IN_FLIGHT) { inFlight.decrementAndGet(); return error(id, SERVER_ERROR, "Too many calls in flight") }
         worker.execute {
@@ -133,21 +133,6 @@ class McpHost(
         }
     }
 
-    private fun message(id: Any, params: JSONObject) {
-        val text = messageText(params) ?: return error(id, INVALID_PARAMS, "Invalid message format")
-        if (asking) return error(id, SERVER_ERROR, "Message sending denied")
-        asking = true
-        ui.confirmMessage(text) { yes ->
-            asking = false
-            if (!yes) return@confirmMessage error(id, SERVER_ERROR, "Message sending denied")
-            worker.execute {
-                try { backend.sendMessage(app, text); result(id, JSONObject()) }
-                catch (e: AppsError) { error(id, SERVER_ERROR, e.message ?: "Message sending failed") }
-                catch (e: Exception) { error(id, SERVER_ERROR, "Message sending failed") }
-            }
-        }
-    }
-
     private fun notify(method: String, params: JSONObject) =
         send(JSONObject().put("jsonrpc", "2.0").put("method", method).put("params", params).toString())
 
@@ -166,25 +151,12 @@ class McpHost(
         const val SERVER_ERROR = -32000
         const val MAX_MESSAGE = 4 shl 20
         const val MAX_IN_FLIGHT = 8
-        private val TOOL = Regex("[A-Za-z0-9_][A-Za-z0-9_./-]{0,127}")
 
         /** Only http(s), with a host, no credentials in it. */
         fun webLink(url: String): Boolean {
             if (url.length > 2048) return false
             val u = runCatching { java.net.URI(url) }.getOrNull() ?: return false
             return (u.scheme == "https" || u.scheme == "http") && !u.host.isNullOrEmpty() && u.rawUserInfo == null
-        }
-
-        /** ui/message content: one text block, or a list of blocks whose text parts are joined. */
-        fun messageText(params: JSONObject): String? {
-            if (params.has("role") && params.optString("role") != "user") return null
-            val blocks = when (val c = params.opt("content")) {
-                is JSONObject -> listOf(c)
-                is JSONArray -> (0 until c.length()).mapNotNull { c.opt(it) as? JSONObject }
-                else -> return null
-            }
-            val text = blocks.filter { it.optString("type") == "text" }.mapNotNull { it.opt("text") as? String }.joinToString("\n").trim()
-            return text.takeIf { it.isNotEmpty() && it.length <= 8000 }
         }
     }
 }
