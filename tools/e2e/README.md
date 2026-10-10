@@ -34,7 +34,9 @@ owner.mjs --port 8765 --token-file ./token set-key < deepseek-key.txt
 ```
 
 Connection: `--port N` (or `--url ws://127.0.0.1:N/link`; env `ASH_OWNER_PORT`), the token from `--token-file PATH`
-(env `ASH_OWNER_TOKEN_FILE`) or `--token-stdin` (first line). The token and any key are **never arguments**: arguments
+(env `ASH_OWNER_TOKEN_FILE`) or `--token-stdin` (first line). Or both at once from `--link-file PATH` (env
+`ASH_OWNER_LINK_FILE`): the `{port, token}` JSON a debug build of the phone app writes (see "On a phone or emulator");
+`--port`, `--url` and the token options, when given, win over it. The token and any key are **never arguments**: arguments
 land in the shell history and in `ps`. `--state DIR` keeps the identity key (one hand per state dir); `--name` names the channel.
 
 | Command | What it does |
@@ -86,9 +88,32 @@ Only the hand app holds it. What is available without touching the hub:
 
 - On a machine where the hub runs as a plain process (tests, `startHub` with a fake host), the host's `hands.handoff` call
   carries it: that is how `packages/core/test/scenarios` and this tool's test get it.
-- On a phone, nothing hands it to an outside process, and that is intended. A way to give an adb-driven tool the token
-  has to be a decision of the owner on the phone (for example an explicit, switched-off-by-default action in the hand
-  app that writes the token for a debugging session), not something the tool or an adb shell can reach into.
+- On a phone, nothing hands it to an outside process, with one exception that exists only in a **debuggable** build of
+  the hand app (see "On a phone or emulator" below).
 - A relay (a computer paired with `web_ui`) is the other formal door for a remote owner; it gives the human channel with
   `local=false`, so `say`, `answer` and most `call`s work but the local-only words (`vault/set`, `admin/pause`, `admin/logs`) are refused.
   This tool does not speak the relay.
+
+## On a phone or emulator (debuggable build only)
+
+A debuggable build of the hand app (`ai.ash.agent`, `assembleDebug`) writes the connection it was handed to its own
+private directory, each time the kernel host attaches: `files/debug/local-link.json`, mode 0600, `{"port":…,"token":"…","at":<ms>}`.
+It is replaced atomically when the token changes, and deleted when the kernel host lets go of the hand app (unbinds) and
+when the app process starts again. A release build never writes it: the code is off unless both `BuildConfig.DEBUG` and the
+package's `FLAG_DEBUGGABLE` are set, and only a debuggable package can be read with `run-as`, so a release build adds no way in.
+
+```
+adb shell run-as ai.ash.agent cat files/debug/local-link.json > link.json && chmod 600 link.json
+PORT=$(node -p 'require("./link.json").port')
+adb forward tcp:$PORT tcp:$PORT                     # same number on both sides, so --link-file alone is enough
+node tools/e2e/owner.mjs --link-file link.json say "你好"
+```
+
+If the local port must differ, forward `adb forward tcp:<local> tcp:<port>` and add `--port <local>`; the token still comes
+from the file. Without `--link-file`, take `port` and `token` out of the JSON yourself, keep the token in a 0600 file and give
+that to `--token-file` (`node -p 'require("./link.json").token' > token && chmod 600 token`). Remember the token is never an argument.
+
+**The token changes every time the hub starts** (a phone restart, the kernel host restarting the hub, a reinstall). After
+that, `link.json` is stale and the hub closes the connection with 4001: read the file from the phone again. If the file is
+missing, the kernel host has not attached yet (or has let go): open the app and wait for it to say it is connected.
+The file holds the token in clear, so keep your copy private and delete it when you are done.

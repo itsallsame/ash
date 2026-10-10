@@ -21,7 +21,12 @@ class HandService : Service() {
 
     override fun onBind(intent: Intent?): IBinder { binds.incrementAndGet(); return binder }
 
-    override fun onUnbind(intent: Intent?): Boolean { binds.updateAndGet { (it - 1).coerceAtLeast(0) }; return false }
+    override fun onUnbind(intent: Intent?): Boolean {
+        if (binds.updateAndGet { (it - 1).coerceAtLeast(0) } == 0) Link.get(this).detached()
+        return false
+    }
+
+    override fun onDestroy() { Link.get(this).detached(); super.onDestroy() }
 
     companion object {
         private val binds = AtomicInteger(0)
