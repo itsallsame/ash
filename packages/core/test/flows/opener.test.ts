@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { openerFlow } from "../../src/flows/opener";
 import { WorkMember } from "../../src/members/work";
 import { registerWorkerMembers, type WorkerModel } from "../../src/workers/llm";

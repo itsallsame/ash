@@ -1,5 +1,5 @@
 import type { JsonSchema, WorkerName } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 
 /** The route contract is the single source for both model instructions and validation. */
 export function workerSchemas(name: WorkerName): { input: JsonSchema; result: JsonSchema } {

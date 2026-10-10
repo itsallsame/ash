@@ -44,7 +44,22 @@
           "properties": {
             "code": {
               "type": "string",
-              "minLength": 1
+              "enum": [
+                "bad_request",
+                "unauthorized",
+                "forbidden",
+                "not_found",
+                "denied",
+                "cancelled",
+                "timeout",
+                "offline",
+                "result_unknown",
+                "conflict",
+                "too_large",
+                "unavailable",
+                "failed",
+                "internal"
+              ]
             },
             "message": {
               "type": "string"

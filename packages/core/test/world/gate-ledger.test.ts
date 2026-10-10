@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { Ledger } from "../../src/world/ledger";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { WorldRouter } from "../../src/world/router";
 
 const gate = (expiresAt: number) => ({ subject: "principal:exact", risk: "outward" as const,

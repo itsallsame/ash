@@ -1,5 +1,5 @@
 import type { Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
-import { AGENT_ID, wordContract } from "../../../sdk/src/words";
+import { AGENT_ID, wordContract } from "../../../sdk/src/legacy/words";
 import type { Member } from "../world/member";
 import { Ledger } from "../world/ledger";
 import { WorldRouter, type RouteHandlerContext, type TrustedRouteContext } from "../world/router";

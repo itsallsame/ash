@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { AgentMcpServer, TOOL_NAMES, type AgentBinding } from "../../src/agent-mcp/server";
 import { AgentSystem, type AgentRuntime } from "../../src/agent-system/system";
 import { DeviceAgentRuntimes } from "../../src/agent-system/device-runtime";

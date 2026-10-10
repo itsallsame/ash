@@ -1,4 +1,4 @@
-import { AGENT_ID } from "../../sdk/src/words";
+import { AGENT_ID } from "../../sdk/src/legacy/words";
 
 /**
  * One agent in ash's world. agent:main is the assistant the owner talks with; every other agent is declared here or in

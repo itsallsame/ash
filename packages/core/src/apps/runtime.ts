@@ -6,7 +6,7 @@ import { dirname, extname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import type { AppMemberLike, Member, WorldMembers } from "../world/member";
 import type { DeviceCapability, RouteHandlerContext, TrustedRouteContext, WorldRouter } from "../world/router";
 import { AppBridge, type RecentFacts } from "./bridge";

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { AppRuntime, type AppLauncher } from "../../src/apps/runtime";
 import { scaffoldFiles } from "../../src/apps/templates";
 import { OwnerMember } from "../../src/members/owner";

@@ -1,8 +1,21 @@
-import type { Card, JsonSchema, WordEffect, WordSpec } from "./api";
-import { matchesSchema } from "./schema";
-import { DEVICE_WORDS } from "./device-words";
+/**
+ * The service words: the one list of every word the hub's members speak, apart from the standard hand actions
+ * (namespaces.ts) and app tools (app.ts). It covers the services (SPEC-02 §4.1), the owner's words (§4.2), the words
+ * every agent speaks, `service:llm/complete`, and the events. Contracts only; nothing here runs.
+ *
+ * `callers` defaults to owner, agent, app (SPEC-01 §5.2). Words that are not default are listed in the callers snapshot
+ * (test/callers.snapshot.txt) so a review sees every change. Events are always `kernel`: they are sent by the hub's
+ * own edges and services (the human module, the hands module, the agents module), never by an agent or an app.
+ * An agent's name never appears here; `agent:*` stands for every declared agent.
+ */
+import { AGENT_ID, AGENT_ID_PATTERN, APP_NAME_PATTERN, BODY_ID_PATTERN, CLIENT_ID_PATTERN, DEVICE_ID_PATTERN, HAND_ID_PATTERN } from "./ids";
+import { ACTIVITY_STATES } from "./namespaces";
+import {
+  DEFAULT_CALLERS, secret, sensitive, wordEffect,
+  type CallerKind, type Effect, type JsonSchema, type Risk, type WordContract,
+} from "./word";
 
-export interface WordContract extends WordSpec { member: string; direction: "in" | "out" }
+// ---- schema kit -----------------------------------------------------------------------------------------------------
 const str: JsonSchema = { type: "string" };
 const nonempty: JsonSchema = { type: "string", minLength: 1 };
 const num: JsonSchema = { type: "number" };
@@ -14,174 +27,526 @@ const obj = (properties: Record<string, JsonSchema> = {}, required: string[] = [
 const array = (items: JsonSchema): JsonSchema => ({ type: "array", items });
 const choice = (...values: string[]): JsonSchema => ({ type: "string", enum: values });
 const id = nonempty;
-const workName: JsonSchema = { type: "string", minLength: 1, maxLength: 48, pattern: "^[a-z][a-z0-9._-]*$" };
-const workRunId: JsonSchema = { type: "string", minLength: 3, maxLength: 128, pattern: "^r_[A-Za-z0-9_-]+$" };
-const workReason: JsonSchema = { type: "string", minLength: 1, maxLength: 96, pattern: "^[a-z][a-z0-9._-]*$" };
-const workTime: JsonSchema = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
-const workRunInfo: JsonSchema = obj({
-  run: workRunId, flow: workName, trigger: choice("manual", "cooldown", "hourly", "event"),
-  state: choice("running", "done", "no_change", "failed"), started_at: workTime,
-  ended_at: { anyOf: [workTime, { type: "null" }] },
-}, ["run", "flow", "trigger", "state", "started_at", "ended_at"]);
-const deliveryDedupeKey: JsonSchema = { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" };
 const empty = obj();
 const accepted = obj({ accepted: bool }, ["accepted"]);
+const free = obj({}, [], true);
+const nullable = (schema: JsonSchema): JsonSchema => ({ anyOf: [schema, { type: "null" }] });
+const positiveSafe: JsonSchema = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
+const nonnegativeSafe: JsonSchema = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+const sha: JsonSchema = { type: "string", pattern: "^[0-9a-f]{64}$" };
+const deliveryDedupeKey: JsonSchema = { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" };
 const attachmentInput = obj({ name: nonempty, mime_type: nonempty, data: nonempty }, ["name", "mime_type", "data"]);
-// from_agent: the agent whose question or news the Agent system delivers; reply_from: the agent whose answer it passes back.
-const sayExtras = { attachments: array(attachmentInput), in_reply_to: id, option_id: id, from_agent: id, reply_from: id };
-const askChoice = choice("once", "always", "deny");
-const askOption = obj({ id: askChoice, label: nonempty }, ["id", "label"]);
-const origin = obj({ screen: nonempty, label: str }, ["screen", "label"]);
+const agentRef: JsonSchema = { type: "string", pattern: AGENT_ID_PATTERN };
+const deviceRef: JsonSchema = { type: "string", pattern: DEVICE_ID_PATTERN };
+const bodyRef: JsonSchema = { type: "string", pattern: BODY_ID_PATTERN };
+const handRef: JsonSchema = { type: "string", pattern: HAND_ID_PATTERN };
+const ref: JsonSchema = { type: "string", minLength: 1, maxLength: 128 };
+/** What the host module sends when the device's environment changes (the host event env.changed of ash-host/1, minus its `event` name). */
+const ENV_CHANGED: JsonSchema = { type: "object", oneOf: [
+  obj({ what: { const: "network" }, network: obj({ proxy: nullable(obj({ http: str, https: str, no_proxy: str })) }, ["proxy"]), online: bool }, ["what", "network", "online"]),
+  obj({ what: { const: "power" }, saver: bool }, ["what", "saver"]),
+] };
+
+// ---- how a word is written --------------------------------------------------------------------------------------------
+const OWNER: CallerKind[] = ["owner"];
+const OWNER_AGENT: CallerKind[] = ["owner", "agent"];
+const KERNEL: CallerKind[] = ["kernel"];
+
+interface Options {
+  /** Default: derived from risk (none -> read). Say it for anything that changes something. */
+  effect?: Effect;
+  /** Default none. */
+  risk?: Risk;
+  /** What the owner sees while it runs, in the present continuous: 「在看提醒」. Required. */
+  label?: string;
+  /** For the agent: what it does and when to use it, at least 20 characters. Required. */
+  description?: string;
+  callers?: CallerKind[];
+  local_only?: boolean;
+  per_call_risk?: boolean;
+  timeout_ms?: number;
+  /** Events: out = the member emits it, in = the member receives it (default out). */
+  direction?: "in" | "out";
+  /** Events only: goes into the ledger. */
+  record?: boolean;
+}
+
+const entries: WordContract[] = [];
+function add(member: string, word: string, kind: "request" | "event", input: JsonSchema, result: JsonSchema | undefined, o: Options): void {
+  if (!o.label || !o.description) throw new TypeError(`${member}/${word}: label and description are required`);
+  const event = kind === "event";
+  const risk: Risk = event ? "none" : o.risk ?? "none";
+  const effect: Effect = event ? "read" : o.effect ?? wordEffect({ risk });
+  entries.push({
+    member, word, kind, direction: event ? o.direction ?? "out" : "in", description: o.description, input_schema: input,
+    ...(result ? { result_schema: result } : {}), effect, risk,
+    ...(o.per_call_risk ? { per_call_risk: true } : {}),
+    callers: event ? o.callers ?? [...KERNEL] : [...(o.callers ?? DEFAULT_CALLERS)],
+    ...(o.local_only ? { local_only: true } : {}), ...(o.record ? { record: true } : {}),
+    ...(o.timeout_ms ? { timeout_ms: o.timeout_ms } : {}), label: { doing: o.label },
+  });
+}
+
+// ===================================================================================================================
+// service:admin: switches and settings
+// ===================================================================================================================
+const adminOwnerOnly = { callers: OWNER, local_only: true } as const;
+add("service:admin", "pause", "request", obj({ by: id }), obj({ paused: { const: true } }, ["paused"]),
+  { callers: ["owner", "kernel"], local_only: true, effect: "write", label: "在暂停", description: "Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine, or the hub's own reflex: `by` cites the one owner message that said stop." });
+add("service:admin", "resume", "request", obj({ confirmed: { const: true } }, ["confirmed"]), obj({ paused: { const: false } }, ["paused"]),
+  { ...adminOwnerOnly, effect: "write", label: "在恢复", description: "Resume after a pause. Only the owner can, from a channel on this machine, after an explicit confirmation." });
+add("service:admin", "settings.get", "request", obj({ keys: strings }), free,
+  { label: "在看设置", description: "Read the hub's settings (all of them, or the named keys). Credentials are never part of the result." });
+add("service:admin", "settings.set", "request", free, free,
+  { effect: "write", risk: "structure", label: "在改设置", description: "Change settings: the body is the keys to change and their new values. Agents asking for this are asked about by the owner." });
+add("service:admin", "model.set", "request", obj({ provider: nonempty, model: nonempty }, ["provider", "model"]),
+  obj({ provider: nonempty, model: nonempty, restart_required: bool }, ["provider", "model", "restart_required"]),
+  { effect: "write", risk: "structure", label: "在换主模型", description: "Choose the main model (provider and model name) the hub's own agents run on; restart_required says whether an agent must be restarted for it to apply." });
+add("service:admin", "plugins.list", "request", empty, free, { label: "在看插件", description: "List the plugins of the agent runtime and whether each is enabled." });
+add("service:admin", "plugins.op", "request", { type: "object", oneOf: [
+  obj({ op: choice("enable", "disable"), name: nonempty }, ["op", "name"]),
+  obj({ op: { const: "plugin" }, id: nonempty, enabled: bool }, ["op", "id", "enabled"]),
+] }, free, { effect: "write", risk: "structure", label: "在调整插件", description: "Enable or disable a plugin of the agent runtime. Plugins change what an agent can do, so an agent asking for this is asked about by the owner." });
+add("service:admin", "status", "request", empty,
+  obj({ now: integer, time_zone: str, paused: bool, version: str, uptime_ms: nonnegativeSafe, agents: integer, hands_online: integer }, ["now", "paused"], true),
+  { label: "在看系统状态", description: "The hub's state in a few facts: the time and time zone, whether activity is paused, the version, how long it has been up, how many agents and hands are online." });
+add("service:admin", "logs", "request", obj({ lines: { type: "integer", minimum: 1, maximum: 1000 }, level: choice("error", "warn", "info", "debug"), since: nonnegativeSafe }),
+  obj({ lines: strings }, ["lines"]),
+  { ...adminOwnerOnly, label: "在看日志", description: "The hub's recent log lines (default 200, newest last). Only the owner, from a channel on this machine: logs can hold things nobody else should see." });
+add("service:admin", "settings.changed", "event", obj({ keys: strings, by: id }, ["keys"]), undefined,
+  { record: true, label: "在记下设置改动", description: "A setting was changed (the key names, never the values). Goes into the ledger so that what changed, when and by whom can be found again." });
+
+// ===================================================================================================================
+// service:gate: approval rules and pending requests
+// ===================================================================================================================
+const gateRisk = choice("none", "outward", "structure");
+const gateRule = obj({ id, subject: nonempty, device_id: id, capability_id: id, to: id, word: id, object_pattern: nonempty,
+  risk: gateRisk, contract_fingerprint: sha, created_at: nonnegativeSafe, expires_at: nonnegativeSafe, revoked_at: nonnegativeSafe },
+["id", "subject", "to", "word", "object_pattern", "risk", "contract_fingerprint", "created_at", "expires_at"]);
+const gateDecision = choice("once", "always", "deny", "timeout", "cancelled", "rule", "review", "carry", "hand_full", "declared_none", "assessed_none");
+const gateHistoryItem = obj({ id, request_id: id, ask_id: id, subject: nonempty, to: id, word: id, risk: gateRisk, decision: gateDecision, at: nonnegativeSafe, rule_id: id,
+  reason: { type: "string", maxLength: 500 }, label: { type: "string", maxLength: 120 } }, ["id", "request_id", "decision", "at"]);
+const gateEvidence = obj({ request_id: id, at: nonnegativeSafe, requester: str, member: str, word: str, label: str, effect: str, turn: str,
+  content: str, facts: any, review: any, card: any, decision: str, decided_by: str, reason: str, rule_id: str, answered_at: any, executed: any },
+["request_id", "at", "requester", "member", "word"], true);
+const pendingState = choice("waiting", "approved", "denied", "expired", "withdrawn", "skipped", "redeemed");
+const pendingItem = obj({ id, to: id, word: id, label: str, state: pendingState, created_at: nonnegativeSafe, expires_at: nonnegativeSafe }, ["id", "to", "word", "state", "expires_at"]);
+
+add("service:gate", "rules.list", "request", obj({ before: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+  obj({ rules: { type: "array", items: gateRule, maxItems: 100 }, next_before: positiveSafe, mode: choice("auto", "always") }, ["rules"]),
+  { label: "在看审批规则", description: "Inspect the current approval rules (who may use which capability without asking, until when) and the approval mode. Do not assume a risky action is already allowed." });
+add("service:gate", "rules.set", "request", obj({ agent: agentRef, member: id, word: id, target: nonempty, days: { type: "integer", minimum: 1, maximum: 30 } }, ["agent", "member", "word"]),
+  obj({ id, expires_at: nonnegativeSafe }, ["id", "expires_at"]),
+  { callers: OWNER_AGENT, effect: "write", risk: "structure", label: "在申请新增审批规则",
+    description: "Allow one agent to use one outside capability without asking, for up to 30 days, optionally only for one target (site:<host>, a calendar id, a recipient id, browse). The owner is always asked when an agent requests it." });
+add("service:gate", "rules.revoke", "request", obj({ id }, ["id"]), obj({ revoked: bool }, ["revoked"]),
+  { callers: OWNER_AGENT, effect: "write", risk: "structure", label: "在申请撤销审批规则", description: "Remove a known approval rule. It changes future decisions, not past actions. The owner is always asked when an agent requests it." });
+add("service:gate", "mode.set", "request", obj({ mode: choice("auto", "always") }, ["mode"]), obj({ mode: choice("auto", "always") }, ["mode"]),
+  { callers: OWNER_AGENT, effect: "write", risk: "structure", label: "在申请改审批档位",
+    description: "Switch the approval mode: auto asks only when an outside action needs it; always asks about every outside action that is not a read. The owner is always asked when an agent requests it." });
+add("service:gate", "audit", "request", obj({ request_id: id, requester: str, word: str, decision: str, before: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 50 } }),
+  obj({ entries: array(gateEvidence), next_before: any }, ["entries"]),
+  { label: "在查审批记录", description: "Approval evidence, newest first: what was asked, the facts the reviewer saw and its verdict, the card shown, the owner's answer, and whether the action then ran." });
+add("service:gate", "history", "request", obj({ before: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 1000 } }),
+  obj({ items: { type: "array", items: gateHistoryItem, maxItems: 1000 }, next_before: positiveSafe }, ["items"]),
+  { label: "在查审批记录", description: "Review earlier gate decisions (who asked for what and how it was decided). Read only." });
+const ORIGINATOR = { callers: ["agent"] as CallerKind[] };
+add("service:gate", "pending.list", "request", empty, obj({ pending: array(pendingItem) }, ["pending"]),
+  { ...ORIGINATOR, label: "在核对待回复的事", description: "The requests you made that are waiting for the owner or have been answered and not yet acted on. Only the agent that made a request sees it." });
+add("service:gate", "pending.get", "request", obj({ id }, ["id"]),
+  obj({ ...(pendingItem.properties as Record<string, JsonSchema>), request: obj({ to: id, word: id, body: any }, ["to", "word"]), answer: obj({ choice: str, text: str, at: nonnegativeSafe }) }, ["id", "state", "request"]),
+  { ...ORIGINATOR, label: "在看原问题与回答", description: "One pending request of yours: the original request, its state and the owner's answer. Use it before redeeming, to be sure the action is still wanted." });
+add("service:gate", "pending.redeem", "request", obj({ id }, ["id"]), obj({ result: any }),
+  { ...ORIGINATOR, effect: "act", label: "在执行你批准的事", description: "Carry out a request the owner approved: the original request is sent again and, this time, passes the gate as approved. Works once, only for the agent that made it, in its own turn." });
+add("service:gate", "pending.skip", "request", obj({ id, reason: str }, ["id"]), obj({ skipped: bool }, ["skipped"]),
+  { ...ORIGINATOR, effect: "write", label: "在说明为何不再继续", description: "Say that you will not carry out a request that was answered, for example because it is no longer wanted. The owner is told." });
+add("service:gate", "pending.withdraw", "request", obj({ id }, ["id"]), obj({ withdrawn: bool }, ["withdrawn"]),
+  { ...ORIGINATOR, effect: "write", label: "在撤回问题", description: "Withdraw a question or approval request you made, while it is still waiting; the owner's card is taken down." });
+
+// ===================================================================================================================
+// service:vault: credentials. An agent may look, never touch.
+// ===================================================================================================================
+const vaultEntry = obj({ ref: nonempty, label: nonempty, kind: choice("model", "login", "api", "other"), configured: bool, updated_at: nonnegativeSafe }, ["ref", "label", "kind", "configured"]);
+add("service:vault", "list", "request", empty, obj({ entries: array(vaultEntry) }, ["entries"]),
+  { label: "在看保存的密钥", description: "Which credentials are saved (names and kinds only, never a value)." });
+add("service:vault", "describe", "request", obj({ ref: nonempty }, ["ref"]), vaultEntry,
+  { label: "在看保存的密钥", description: "Whether one credential is saved, and what it is for. A value is never returned." });
+add("service:vault", "set", "request", obj({ ref: nonempty, value: secret({ type: "string", minLength: 1 }), label: nonempty, kind: choice("model", "login", "api", "other") }, ["ref", "value"]),
+  obj({ ref: nonempty, configured: { const: true } }, ["ref", "configured"]),
+  { callers: OWNER, local_only: true, effect: "write", risk: "structure", label: "在保存密钥", description: "Save a credential in the vault. Only the owner, from a channel on this machine; the value is held sealed and never reaches the ledger or an agent." });
+add("service:vault", "delete", "request", obj({ ref: nonempty }, ["ref"]), obj({ deleted: bool }, ["deleted"]),
+  { callers: OWNER, local_only: true, effect: "write", risk: "structure", label: "在删除密钥", description: "Delete a saved credential. Only the owner, from a channel on this machine." });
+add("service:vault", "vault.changed", "event", obj({ ref: nonempty, action: choice("saved", "removed") }, ["ref", "action"]), undefined,
+  { label: "在记下密钥变化", description: "A credential was saved or removed. Names only; the value is never on the ledger. The agents module listens to configure the runtime's own credentials." });
+
+// ===================================================================================================================
+// service:devices: who may connect (the hub's registry of hands)
+// ===================================================================================================================
+const pairKind = choice("computer", "server", "browser");
+const accessFields = { tier: choice("ask", "full"), lend: bool, body: bool, local_agents: bool, web_ui: bool };
+const deviceInfo = obj({
+  device: deviceRef, name: str, kind: str, online: bool, tier: choice("ask", "full"), lend: bool, body: bool, local_agents: bool, web_ui: bool,
+  via: choice("local", "gateway"), ip: sensitive(str, "ip"), last_seen: nonnegativeSafe, revoked_at: nonnegativeSafe,
+}, ["device", "name", "online"], true);
+const pairState = choice("waiting", "requested", "approved", "connected", "rejected", "expired");
+const pairInfo = obj({ pair_id: id, state: pairState, name: str, kind: pairKind, expires_at: nonnegativeSafe, device: deviceRef }, ["pair_id", "state"]);
+add("service:devices", "list", "request", empty, obj({ devices: array(deviceInfo) }, ["devices"]),
+  { label: "在看已连接设备", description: "Every hand the hub knows: name, kind, whether online, what the owner allowed it (lend capabilities, serve as a body, run local agents, web chat) and its tier." });
+add("service:devices", "describe", "request", obj({ device: deviceRef }, ["device"]), deviceInfo,
+  { label: "在看设备详情", description: "One hand in detail: how it connects, what it was allowed, when it was last seen." });
+add("service:devices", "pair_start", "request", obj({ kind: pairKind, name: nonempty }),
+  obj({ pair_id: id, expires_at: nonnegativeSafe }, ["pair_id", "expires_at"]),
+  { effect: "act", label: "在开始设备配对", description: "Start pairing a new computer or browser. The pairing code is shown only to the owner; you get a pair_id and, as the pairing moves on, a background message. Use pair_status to look." });
+add("service:devices", "pair_status", "request", obj({ pair_id: id }, ["pair_id"]), pairInfo,
+  { label: "在看配对进展", description: "Where a pairing is: waiting for the code, requested (the owner is asked), approved, connected, rejected or expired." });
+add("service:devices", "pair_pending", "request", empty, obj({ pairs: array(pairInfo) }, ["pairs"]),
+  { label: "在看配对申请", description: "The pairing requests that are waiting for the owner's decision." });
+add("service:devices", "pair_approve", "request", obj({ pair_id: id, name: nonempty, ...accessFields }, ["pair_id"]), pairInfo,
+  { effect: "write", risk: "structure", label: "在批准设备配对", description: "Approve a pairing request, with what the new hand may do: lend capabilities, serve as a body, run local agents, web chat; and its tier. An agent asking for this is always asked about by the owner." });
+add("service:devices", "pair_reject", "request", obj({ pair_id: id }, ["pair_id"]), pairInfo,
+  { effect: "write", risk: "structure", label: "在拒绝设备配对", description: "Reject a pairing request." });
+add("service:devices", "revoke", "request", obj({ device: deviceRef }, ["device"]), obj({ revoked: bool }, ["revoked"]),
+  { effect: "write", risk: "structure", label: "在断开并撤销设备", description: "Disconnect a hand and revoke it: it can no longer connect, and its capabilities and body go away. An agent asking for this is always asked about by the owner." });
+add("service:devices", "restore", "request", obj({ device: deviceRef }, ["device"]), obj({ restored: bool }, ["restored"]),
+  { callers: OWNER, effect: "write", risk: "structure", label: "在恢复已撤销的设备", description: "Let a revoked hand pair again, with the permissions it had. Only the owner." });
+add("service:devices", "rename", "request", obj({ device: deviceRef, name: nonempty }, ["device", "name"]), obj({ device: deviceRef, name: str }, ["device", "name"]),
+  { effect: "write", risk: "structure", label: "在修改设备名称", description: "Change the name a hand is shown with." });
+add("service:devices", "access_set", "request", obj({ device: deviceRef, ...accessFields }, ["device"]), deviceInfo,
+  { effect: "write", risk: "structure", label: "在调整设备权限", description: "Change what a hand may do (lend capabilities, serve as a body, run local agents, web chat) and its tier (ask, full). An agent asking for this is always asked about by the owner." });
+add("service:devices", "update", "request", obj({ device: deviceRef, version: { type: "string", pattern: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$" }, sha256: sha }, ["device", "version", "sha256"]), obj({ started: bool }, ["started"]),
+  { effect: "write", risk: "structure", label: "在更新设备程序", description: "Have a computer update its Ash program to the given version (checked against sha256). Approved here once; the update itself is then run by the hub. An agent asking for this is always asked about by the owner." });
+add("service:devices", "pair_code", "request", obj({ pair_id: id }), obj({ code: sensitive(nonempty, "hidden"), url: str, expires_at: nonnegativeSafe }, ["code"]),
+  { callers: OWNER, local_only: true, label: "在看配对码", description: "Show the pairing code of a pairing the owner started, with the address to open on the new computer. Only the owner, from a channel on this machine." });
+add("service:devices", "pair.changed", "event", obj({ pair_id: id, state: pairState, device: deviceRef }, ["pair_id", "state"]), undefined,
+  { record: true, label: "在记下配对进展", description: "A pairing moved on (requested, approved, rejected, connected, expired). The one who started it is told by a background message." });
+add("service:devices", "config.changed", "event", obj({ item: nonempty, state: nonempty }, ["item", "state"]), undefined,
+  { direction: "in", label: "在记下手机设置变化", description: "A hand reports that one of its own permissions or switches changed (config.*). Sent by the hands module; not recorded." });
+
+// ===================================================================================================================
+// service:link: how things connect (the connection layer itself)
+// ===================================================================================================================
+const LINK_CALLERS = OWNER_AGENT;
+const conn = obj({ conn: id, hand: handRef, name: str, kind: str, channels: strings, via: choice("local", "gateway"), since: nonnegativeSafe, heartbeat_ms: nonnegativeSafe, address: sensitive(str, "ip") }, ["conn", "hand"], true);
+const setupState = choice("waiting_login", "authorized", "deploying", "claimed", "connected", "failed");
+const setupInfo = obj({ setup_id: id, state: setupState, reason: str }, ["setup_id", "state"], true);
+add("service:link", "list", "request", empty, obj({ connections: array(conn) }, ["connections"]),
+  { callers: LINK_CALLERS, label: "在看当前连接", description: "Every live connection: which hand, which channels are open (device, human, agent), local or through the relay, since when, heartbeat delay." });
+add("service:link", "describe", "request", obj({ hand: handRef, conn: id }), conn,
+  { callers: LINK_CALLERS, label: "在看连接详情", description: "One connection in detail: each channel's state, calls in flight, the latest disconnect and its reason code. Give hand or conn." });
+add("service:link", "diagnose", "request", obj({ hand: handRef }), obj({ ok: bool, findings: array(obj({ code: str, message: str }, ["code", "message"])) }, ["ok", "findings"], true),
+  { callers: LINK_CALLERS, label: "在检查连接", description: "A health check: is the relay reachable, the state of each tunnel, the latest handshake failures with what their codes mean, clock difference, whether a capability list was refused." });
+add("service:link", "disconnect", "request", obj({ conn: id, reason: str }, ["conn"]), obj({ closed: bool }, ["closed"]),
+  { callers: LINK_CALLERS, effect: "act", risk: "outward", label: "在断开连接", description: "Close one connection. The hand may reconnect by itself unless it was revoked." });
+add("service:link", "reconnect", "request", obj({ hand: handRef }, ["hand"]), obj({ requested: bool }, ["requested"]),
+  { callers: LINK_CALLERS, effect: "act", label: "在重连", description: "Ask the relay to open the tunnel again, or tell a local hand to reconnect." });
+add("service:link", "refresh_manifest", "request", obj({ hand: handRef }, ["hand"]), obj({ requested: bool }, ["requested"]),
+  { callers: LINK_CALLERS, effect: "act", label: "在请手重发能力清单", description: "Ask a hand to send its capability list again, for example after you changed what it may lend." });
+add("service:link", "gateway.status", "request", empty,
+  obj({ configured: bool, url: str, claimed: bool, connected: bool, account_email: sensitive(str, "email"), last_error: str }, ["configured", "connected"], true),
+  { callers: LINK_CALLERS, label: "在看中转站", description: "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error." });
+add("service:link", "gateway.setup.start", "request", obj({ provider: { const: "cloudflare" } }, ["provider"]), setupInfo,
+  { callers: LINK_CALLERS, effect: "act", label: "在开始搭中转站", description: "Start building a relay in the owner's Cloudflare account: a 'sign in to Cloudflare' card goes to the owner. You get a setup_id and a background message at each step." });
+add("service:link", "gateway.setup.status", "request", obj({ setup_id: id }, ["setup_id"]), setupInfo,
+  { callers: LINK_CALLERS, label: "在看中转站搭建进展", description: "Where a relay setup is: waiting_login, authorized, deploying, claimed, connected, or failed with the reason." });
+add("service:link", "gateway.setup.deploy", "request", obj({ setup_id: id, name: nonempty }, ["setup_id"]), setupInfo,
+  { callers: LINK_CALLERS, effect: "write", risk: "structure", label: "在部署中转站", description: "Deploy the relay in the owner's account, claim it and connect. An agent asking for this is asked about by the owner." });
+add("service:link", "gateway.setup.cancel", "request", obj({ setup_id: id }, ["setup_id"]), setupInfo,
+  { callers: LINK_CALLERS, effect: "act", label: "在取消搭中转站", description: "Cancel a relay setup that is not finished." });
+add("service:link", "gateway.use", "request", obj({ url: { type: "string", minLength: 1, maxLength: 2048 } }, ["url"]), obj({ url: str }, ["url"]),
+  { callers: LINK_CALLERS, effect: "write", risk: "structure", label: "在改用中转站", description: "Use an existing relay at this address instead of building one. An agent asking for this is asked about by the owner." });
+const linkEvent = { hand: handRef, conn: id, channel: choice("device", "human", "agent"), code: integer, reason: str };
+add("service:link", "connected", "event", obj({ hand: handRef, conn: id, channels: strings }, ["hand", "conn"]), undefined,
+  { record: true, label: "在记下设备连上", description: "A hand finished the handshake and is connected. Goes into the ledger." });
+add("service:link", "disconnected", "event", obj({ ...linkEvent }, ["hand"]), undefined,
+  { record: true, label: "在记下设备断开", description: "A hand's connection closed, with the close code and reason. Goes into the ledger." });
+add("service:link", "handshake_failed", "event", obj({ ...linkEvent }, ["code"]), undefined,
+  { label: "在记下握手失败", description: "A connection attempt failed the handshake (4001 identity, 4003 revoked, 4008 version, ...). Not recorded; service:link/diagnose reports the recent ones." });
+add("service:link", "env.changed", "event", ENV_CHANGED, undefined,
+  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); the link layer reconnects the relay. Sent by the host module; not recorded." });
+
+// ===================================================================================================================
+// service:bodies: the hub's bodies (file and shell)
+// ===================================================================================================================
+const bodyInfoResult = obj({ body: bodyRef, name: str, ownership: choice("own", "borrowed"), online: bool, bound: bool, hand: handRef }, ["body", "ownership", "online"], true);
+add("service:bodies", "list", "request", empty, obj({ bodies: array(bodyInfoResult) }, ["bodies"]),
+  { label: "在看有哪些身体", description: "The bodies the hub has bound: its own (body:main) and any computer the owner lent, with whether each is Ash's own or borrowed, and whether it is online." });
+add("service:bodies", "describe", "request", obj({ body: bodyRef }, ["body"]), obj({ info: any, disk: any, last_error: str }, ["info"], true),
+  { label: "在看身体详情", description: "One body in detail: its body.info (system, resources, work directory, ownership), disk use, and the latest error." });
+add("service:bodies", "bind", "request", obj({ hand: handRef }, ["hand"]), bodyInfoResult,
+  { effect: "write", risk: "structure", label: "在把电脑当作身体", description: "Bind a paired computer as a body: its workspace.* capabilities become available as body:<hand>. An agent asking for this goes through the gate." });
+add("service:bodies", "unbind", "request", obj({ body: bodyRef }, ["body"]), obj({ unbound: bool }, ["unbound"]),
+  { effect: "write", risk: "structure", label: "在解绑身体", description: "Unbind a body: workspace.* goes offline at once; the computer stays as a hand and as a host for local agents. body:main cannot be unbound." });
+// ===================================================================================================================
+// person:owner: the owner's words (what the hub says to the owner). The owner's own words are the other words.
+// ===================================================================================================================
+const TO_OWNER: CallerKind[] = ["agent", "app", "kernel"];
 const cardOption = obj({ id: nonempty, text: nonempty }, ["id", "text"]);
+/** The Android settings a permission card can send the owner to. */
 export const PHONE_PERMISSIONS = ["calendar", "notifications", "battery", "accessibility", "photos", "all_files", "usage", "write_settings", "overlay", "shizuku"] as const;
+/** What `person:owner/show` presents. */
 export const CARD_SCHEMA: JsonSchema = { oneOf: [
   obj({ type: { const: "options" }, prompt: str, options: { type: "array", items: cardOption, minItems: 1 }, allow_custom: bool }, ["type", "options"]),
   obj({ type: { const: "file" }, workspace: nonempty, path: nonempty, name: nonempty, mime_type: nonempty, size: { type: "integer", minimum: 0 } }, ["type", "workspace", "path", "name", "mime_type", "size"]),
   obj({ type: { const: "image" }, workspace: nonempty, path: nonempty, alt: str }, ["type", "workspace", "path"]),
   obj({ type: { const: "link" }, url: nonempty, title: nonempty, summary: str }, ["type", "url", "title"]),
-  // An Android setting the owner switches on by hand; the phone app opens exactly that page.
+  // An Android setting the owner switches on by hand; the hand app opens exactly that page.
   obj({ type: { const: "permission" }, permission: choice(...PHONE_PERMISSIONS), why: nonempty }, ["type", "permission", "why"]),
 ] };
-const sha = { type: "string", pattern: "^[0-9a-f]{64}$" } as const satisfies JsonSchema;
-const positiveSafe: JsonSchema = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
-const nonnegativeSafe: JsonSchema = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
-const datePath = { type: "string", pattern: "^memory/[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md$" } as const satisfies JsonSchema;
-const selfPath = { type: "string", pattern: "^(SOUL|IDENTITY|USER|MEMORY|HEARTBEAT|PROACTIVE|PULSE)\\.md$|^memory/[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md$" } as const satisfies JsonSchema;
-// Requests accept any short path so that service:self answers a non-managed one with forbidden (F-S22).
-const selfPathRequest = { type: "string", minLength: 1, maxLength: 256 } as const satisfies JsonSchema;
-const edit = obj({ op: choice("replace", "delete", "insert_after"), start: { type: "integer", minimum: 1 }, end: { type: "integer", minimum: 1 }, guard: str, text: str, reason: choice("promote", "correct", "complete", "expire", "dedupe", "condense", "demote"), evidence: strings }, ["op", "start", "end", "guard", "reason", "evidence"]);
-const claim = obj({ text: nonempty, type: choice("fact", "preference", "relationship", "event", "boundary", "correction"), salience: choice("low", "medium", "high"), evidence: strings, quote: str, supersedes: str, valid_until: str }, ["text", "type", "salience", "evidence"]);
-const message = obj({ seq: integer, id, ts: num, from: id, to: { anyOf: [str, { type: "null" }] }, kind: choice("request", "response", "event"), word: id, body: obj({}, [], true), reply_to: str, origin, turn: str, thread: str }, ["seq", "id", "ts", "from", "to", "kind", "word", "body"]);
-const noChange = obj({ no_change: obj({ checked: strings, details: str }, ["checked", "details"]) }, ["no_change"]);
-const workerResult = (normal: JsonSchema): JsonSchema => ({ oneOf: [normal, noChange] });
+add("person:owner", "say", "request", obj({ text: nonempty, kind: choice("reply", "due", "offer", "heads_up"), facts: strings, dedupe_key: deliveryDedupeKey }, ["text"]), accepted,
+  { callers: TO_OWNER, effect: "act", label: "在回你消息", description: "Send the owner a short message; it is acknowledged when recorded and does not wait for a reply or replace ask. kind (default reply): reply, due (a reminder), offer or heads_up (unprompted; an opaque stable dedupe_key keeps a repeat from showing twice). facts are source message or fact ids." });
+add("person:owner", "react", "request", obj({ message_id: id, emoji: nonempty }, ["message_id", "emoji"]), accepted,
+  { callers: TO_OWNER, effect: "act", label: "在给消息加表情", description: "React to one existing message with an emoji; an unknown message id fails. Not for a new explanation: use say for that." });
+add("person:owner", "show", "request", obj({ card: CARD_SCHEMA }, ["card"]), accepted,
+  { callers: TO_OWNER, effect: "act", label: "在给你看卡片", description: "Show the owner a file, image, link, a permission page to switch on, or choices. Showing choices does not itself authorize anything. A permission card only names an Android setting the owner must switch on; calling a capability asks the owner by itself." });
+add("person:owner", "ask", "request", {
+  ...obj({
+    title: nonempty, detail: str, human_kind: choice("question", "confirmation"), allow_custom: bool,
+    options: { type: "array", items: obj({ id: nonempty, label: nonempty }, ["id", "label"]), minItems: 1 }, expires_at: num,
+    source: obj({ word: nonempty, to: id, body_preview: str, body_full: str }, ["word", "to", "body_preview"]),
+  }, ["title"]),
+  // A question (the default kind) needs its options; a confirmation gets the usual yes / no from the tool.
+  if: { properties: { human_kind: { const: "confirmation" } }, required: ["human_kind"] },
+  else: { required: ["options"], properties: { options: { type: "array" } } },
+}, obj({ choice: nonempty, text: str }, ["choice"]),
+  { callers: ["agent"], effect: "act", timeout_ms: 600_000, label: "在问你", description: "A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options. detail, source and expires_at are optional: the gate fills them for an approval, and the expiry follows approval_ttl_minutes. The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards." });
+add("person:owner", "open", "request", obj({ target: choice("activity", "upcoming", "approvals", "identity", "memory", "settings", "turn", "file"), id: str, mode: choice("perform", "suggest"), client: { type: "string", pattern: CLIENT_ID_PATTERN } }, ["target"]),
+  obj({ opened: bool }, ["opened"]),
+  { callers: TO_OWNER, effect: "act", label: "在打开页面", description: "Open or suggest a page on one of the owner's channels: settings, the activity of a turn, a file (id says which). `client` picks the channel; leave it out for the one the owner is on. Check `opened`: a suggestion may be declined." });
 
-const entries: WordContract[] = [];
-entries.push(...DEVICE_WORDS.map(spec => ({ ...spec, member: "service:devices", direction: "in" as const })));
-const guidance: Record<string, string> = {
-  "agent:main/say": "Use to tell the agent something or answer an active option card. It acknowledges receipt immediately; read later conversation messages for the answer.",
-  "person:owner/say": "Use to reply or offer a heads-up to the owner. This records immediately; it does not wait for a response or replace ask.",
-  "person:owner/react": "Use for a brief reaction to a known message. Do not use for a new explanation; send say instead.",
-  "person:owner/show": "Use to present a file, image, link, permission, or choices. Showing choices does not itself authorize an action. A permission card only names an Android setting the owner must switch on (calendar, notifications, battery, accessibility, photos, all_files, usage, write_settings, overlay, shizuku); never use it to ask for access to a phone capability, because calling the capability asks the owner by itself.",
-  "person:owner/ask": "Use when the owner must choose before an action continues. It waits for the first valid unexpired answer; do not treat mere presentation as consent.",
-  "screen:*/ui.open": "Use to ask a named screen to show a view. A suggested opening may be declined; check opened in the response.",
-  "service:clock/set": "Use for a future or repeating message, not for immediate delivery. Record the returned timer id for cancellation.",
-  "service:clock/cancel": "Use to cancel a known timer id; check cancelled because the timer may already have fired.",
-  "service:clock/list": "Use to inspect active timers before changing them; the result is a snapshot.",
-  "service:gate/rules.list": "Use to inspect current approval rules, not to assume a risky action is already allowed.",
-  "service:gate/rules.revoke": "Use to remove a known rule with local owner authority; this changes future decisions, not past actions.",
-  "service:gate/history": "Use to review earlier gate decisions; this is read-only.",
-  "service:gate/access.list": "Inspect the earlier device access grants. They are kept as a record only: agents no longer need one, and none approves an action.",
-  "service:gate/access.grant": "Legacy: record one exact agent and device capability for 30 days. Agents no longer need a grant; the approval gate judges each action.",
-  "service:gate/access.revoke": "Legacy: revoke one recorded device access grant. It changes no approval decision; already executed actions cannot be undone.",
-  "service:self/read": "Use to read an allowed managed file and its hash before editing. Do not infer a stable baseline from stale conversation context.",
-  "service:self/write": "Use for a complete managed-file replacement with the exact baseline hash; null creates only a missing file. Do not use native file tools for managed writes.",
-  "service:self/append": "Use to atomically add text to an allowed dated log, including an older date. No baseline hash is required.",
-  "service:self/apply_plan": "Use for guarded line edits against a saved baseline hash. A stale hash or guard rejects the whole batch; reread before retrying.",
-  "service:self/rollback": "Use to restore a known snapshot when a prior change was wrong; this changes the managed file.",
-  "service:self/history": "Use to inspect available managed-file snapshots before choosing a rollback target.",
-  "service:work/run": "Use for an authorized manual background-flow trigger, not for a conversational answer. Follow its run id for outcome.",
-  "service:work/runs": "Use to inspect recent background runs; this does not start a run.",
+// ===================================================================================================================
+// agent:*: the words every declared agent speaks
+// ===================================================================================================================
+add("agent:*", "say", "request", { type: "object", properties: {
+    text: { type: "string" }, attachments: { type: "array", items: attachmentInput, minItems: 1 }, in_reply_to: id, option_id: id,
+  }, additionalProperties: false, dependentRequired: { in_reply_to: ["option_id"], option_id: ["in_reply_to"] },
+  anyOf: [{ required: ["text"], properties: { text: { type: "string", minLength: 1 } } }, { required: ["attachments"], properties: { attachments: { type: "array", minItems: 1 } } }] }, accepted,
+  { callers: OWNER, effect: "act", label: "在读你的消息", description: "The owner speaks to the agent, or answers an option card (in_reply_to and option_id together). Acknowledged at once and queued on the front lane; the agent's answer arrives later as a message." });
+add("agent:*", "tell", "request", obj({ text: nonempty, attachments: array(attachmentInput) }, ["text"]), accepted,
+  { effect: "act", label: "在告诉帮手", description: "Tell the agent something. It joins the agent's back lane and the agent decides what to do with it; there is no direct answer to the sender." });
+add("agent:*", "ask", "request", obj({ text: nonempty }, ["text"]), obj({ answer: str }, ["answer"]),
+  { effect: "act", timeout_ms: 600_000, label: "在问帮手", description: "Put a question to the agent; what it says in the turn that takes the question is the answer. A quick answer is returned directly, a slow one as a receipt." });
+add("agent:*", "wake", "request", obj({ lane: nonempty, reason: nonempty, context: free }, ["reason"]), accepted,
+  { callers: ["agent", "app", "kernel"], effect: "act", label: "在叫醒帮手", description: "Wake the agent for a reason, on a lane (default back), with the facts it needs in context. Its own turn runs; nothing is said to the owner by this. Harmless by itself, so organs (apps) may use it to alert an agent." });
+add("agent:*", "typing", "event", empty, undefined,
+  { direction: "in", label: "在等你说完", description: "The owner is composing a message to this agent in some channel; the inbox waits for them to finish before opening a turn. Sent by the human module." });
+add("agent:*", "turn.started", "event", obj({ turn: id, lane: nonempty, ids: strings }, ["turn", "lane"]), undefined,
+  { record: true, label: "在记下一轮开始", description: "A turn of the agent began (the lane and the ids of the messages it was given). Goes into the ledger." });
+add("agent:*", "turn.ended", "event", obj({ turn: id, lane: nonempty, outcome: choice("completed", "cancelled", "error", "interrupted"), error: str }, ["turn", "lane", "outcome"]), undefined,
+  { record: true, label: "在记下一轮结束", description: "A turn of the agent ended, with how it ended. Goes into the ledger." });
+add("agent:*", "agent.tool", "event", obj({ turn: id, name: nonempty, phase: choice("start", "end"), summary: str, ok: bool }, ["turn", "name", "phase"]), undefined,
+  { record: true, label: "在记下工具摘要", description: "One tool call of an agent's turn, as a one-line summary for the activity page. Goes into the ledger; the full result stays where the call was made." });
+
+// ===================================================================================================================
+// service:agents: declarations, running agents, sessions
+// ===================================================================================================================
+const AGENT_RUNTIME = obj({ kind: nonempty, model: nonempty, effort: nonempty }, ["kind"]);
+const AGENT_NATIVE = obj({ on: bodyRef, cwd: nonempty, env: { type: "object", additionalProperties: str } }, ["on"]);
+const AGENT_LANES: JsonSchema = { type: "object", additionalProperties: obj({ from: strings, on: strings, guide: str, speak: bool }) };
+const AGENT_MODULES: JsonSchema = array(choice("identity", "rules", "user", "skills", "environment", "lane"));
+const agentFields: Record<string, JsonSchema> = {
+  name: nonempty, summary: nonempty, brief: nonempty, runtime: AGENT_RUNTIME, native: AGENT_NATIVE, tools: strings, words: strings,
+  lanes: AGENT_LANES, modules: AGENT_MODULES, primary: bool,
 };
-// What the owner reads for a request word that declares no label of its own: the status line, the activity page and the
-// approval card all show it, so it is plain Chinese. Events keep the neutral default; they never appear as an action.
-const ownerLabels: Record<string, string> = {
-  "agent:main/cancel_turn": "停下手头的事", "agent:main/wake": "醒来想一想",
-  "person:owner/react": "给消息加表情", "person:owner/show": "给你看卡片", "person:owner/ask": "问你",
-  "screen:*/ui.open": "打开页面", "service:agents/answer": "回答帮手",
-  "service:clock/set": "定提醒", "service:clock/cancel": "取消提醒", "service:clock/list": "看提醒",
-  "service:post/deliver": "送达消息",
-  "service:gate/rules.list": "看审批规则", "service:gate/rules.revoke": "撤销审批规则", "service:gate/history": "查审批记录",
-  "service:gate/access.list": "看帮手的授权", "service:gate/access.grant": "给帮手授权", "service:gate/access.revoke": "收回帮手的授权",
-  "service:self/read": "看资料", "service:self/apply_plan": "改资料", "service:self/rollback": "撤回改动", "service:self/history": "看改动记录",
-  "service:reflex/task.stop": "停下任务", "service:reflex/task.end": "结束任务", "service:reflex/before_turn": "准备动手",
-  "service:reflex/surface.get": "看界面状态", "service:reflex/screen.get": "看前台应用", "service:reflex/screen.return": "回到原来的应用",
-  "service:reflex/virtual.close": "关闭后台屏幕",
-  "service:work/run": "做后台任务", "service:work/runs": "看后台任务",
-  "worker:extract/extract": "整理要点", "worker:verify_claims/verify_claims": "核对说法", "worker:reconcile/reconcile": "整理记忆",
-  "worker:verify_plan/verify_plan": "核对计划", "worker:proactive/proactive": "想想要不要找你", "worker:opener/opener": "想想怎么开口",
-  "service:admin/settings.get": "看设置", "service:admin/settings.set": "改设置", "service:admin/plugins.list": "看插件",
-  "service:admin/plugins.op": "调整插件", "service:admin/gateway.state": "看网关", "service:admin/gateway.op": "调整网关",
-  "service:admin/model.set": "换主模型", "service:admin/pause": "暂停", "service:admin/resume": "恢复",
-};
-function add(member: string, word: string, kind: "request" | "event", input_schema: JsonSchema, result_schema?: JsonSchema, options: Partial<Pick<WordSpec, "risk" | "effect" | "label" | "audience" | "timeout_ms">> & { direction?: "in" | "out"; description?: string } = {}) {
-  entries.push({ member, word, kind, description: options.description ?? guidance[`${member}/${word}`] ?? (kind === "event" ? `Status event ${word} from ${member}; observe rather than call it.` : `Use ${word} on ${member} for the declared input only; inspect the result before following up.`), input_schema, ...(result_schema ? { result_schema } : {}), risk: options.risk ?? "none", ...(options.effect ? { effect: options.effect } : {}), label: options.label ?? ownerLabels[`${member}/${word}`] ?? "Working", audience: options.audience ?? "all", ...(options.timeout_ms ? { timeout_ms: options.timeout_ms } : {}), direction: options.direction ?? "in" });
-}
+const agentInfo = obj({ id: agentRef, name: str, summary: str, state: choice("idle", "working", "stopped", "error"), available: bool, primary: bool, ephemeral: bool,
+  brief: str, runtime: AGENT_RUNTIME, native: AGENT_NATIVE, created_by: str, tools: nullable(strings), words: nullable(strings), lanes: AGENT_LANES, modules: nullable(AGENT_MODULES) },
+["id", "name", "summary", "state"]);
+const sessionKey = nonempty;
+const sessionTarget = { agent: agentRef, key: sessionKey };
+const sessionResult = obj({ key: sessionKey, handle: nullable(str) }, ["key"], true);
+/** One rule for every word that gives a new or changed agent its powers (declare, update, spawn); the check itself is one function in the router's authorization. */
+export const DELEGATION_RULE = "Delegation rule: when the caller is not the owner, the tools and words you give the agent must be a subset of the tools and words you have yourself; anything beyond that is refused with forbidden. This is not a question to the owner. Delegation goes at most three levels deep.";
+const session = (word: string, label: string, description: string, input: Record<string, JsonSchema>, required: string[], result: JsonSchema, effect: Effect = "act") =>
+  add("service:agents", word, "request", obj(input, required), result, { effect, label, description });
 
-export const WORD_EFFECTS: readonly WordEffect[] = Object.freeze(["read", "act", "write", "send", "execute", "structure"]);
-export const isWordEffect = (value: unknown): value is WordEffect => typeof value === "string" && (WORD_EFFECTS as readonly string[]).includes(value);
-/**
- * The effect a word declares; without one it follows risk (none -> read, outward -> act, structure -> write).
- * A word that claims to only read while its risk says otherwise is treated by its risk: a mismatch never relaxes the gate.
- */
-export function wordEffect(spec: Pick<WordSpec, "risk" | "effect">): WordEffect {
-  const derived: WordEffect = spec.risk === "outward" ? "act" : spec.risk === "structure" ? "write" : "read";
-  if (!isWordEffect(spec.effect)) return derived;
-  return spec.effect === "read" && derived !== "read" ? derived : spec.effect;
-}
-
-// Main agent: a queued conversation and a separately driven secondary session.
-add("agent:main", "say", "request", { oneOf: [
-  obj({ text: nonempty, ...sayExtras }, ["text"]),
-  obj({ text: { const: "" }, attachments: { type: "array", items: attachmentInput, minItems: 1 }, in_reply_to: id, option_id: id }, ["text", "attachments"]),
-] }, accepted, { label: "读你的消息", description: "Use to speak to the agent or send attachments; accepted immediately and queued." });
-add("agent:main", "cancel_turn", "request", obj({ reason: nonempty, by: id }, ["reason"]), obj({ cancelled: bool }, ["cancelled"]), { audience: "owner", description: "Control only; stop the current turn and settle pending requests." });
-add("agent:main", "wake", "request", obj({ reason: nonempty, context: obj({}, [], true) }, ["reason", "context"]), accepted, { audience: "owner", description: "Internal wake for the secondary session: a trigger, answered once it is queued. The wake turn runs on its own." });
-add("agent:main", "typing", "event", empty, undefined, { audience: "owner", description: "Current authenticated screen is composing a message." });
-add("agent:main", "status", "event", obj({ state: choice("idle", "listening", "thinking", "working", "done", "waiting_you", "resting"), text: str }, ["state", "text"]), undefined, { direction: "out" });
-add("agent:main", "received", "event", obj({ ids: strings }, ["ids"]), undefined, { direction: "out" });
-add("agent:main", "read", "event", obj({ ids: strings, turn: id }, ["ids", "turn"]), undefined, { direction: "out" });
-add("agent:main", "turn.start", "event", obj({ turn: id, ids: strings }, ["turn", "ids"]), undefined, { direction: "out" });
-add("agent:main", "turn.end", "event", obj({ turn: id, reason: choice("completed", "cancelled", "error"), error: str }, ["turn", "reason"]), undefined, { direction: "out" });
-
-add("person:owner", "say", "request", { oneOf: [
-  obj({ text: nonempty, kind: choice("reply", "due"), facts: strings }, ["text", "kind"]),
-  obj({ text: nonempty, kind: choice("offer", "heads_up"), facts: strings, dedupe_key: deliveryDedupeKey }, ["text", "kind"]),
-] }, accepted, { label: "回你消息", description: "Send a short message; it is acknowledged when recorded. Proactive offers may carry an opaque stable dedupe_key at initial acceptance. facts are source message or fact IDs after the flow maps worker-local numeric indices, never those indices themselves." });
-add("person:owner", "react", "request", obj({ message_id: id, emoji: nonempty }, ["message_id", "emoji"]), accepted, { description: "React to one existing message; unknown ids fail." });
-add("person:owner", "show", "request", obj({ card: CARD_SCHEMA }, ["card"]), accepted, { description: "Show a result or choice card; it is acknowledged when recorded." });
-add("person:owner", "ask", "request", obj({ title: nonempty, detail: str, human_kind: choice("question", "confirmation"), allow_custom: bool,
-  options: { type: "array", items: obj({ id: nonempty, label: nonempty }, ["id", "label"]), minItems: 1 }, expires_at: num,
-  source: obj({ word: nonempty, to: id, body_preview: str, body_full: str }, ["word", "to", "body_preview"]) }, ["title", "detail", "options", "expires_at", "source"]),
-  obj({ choice: nonempty, text: nonempty }, ["choice"]), { timeout_ms: 600_000, description: "A durable owner question. A valid answer or expiry is recorded; approval does not itself execute an action." });
-add("service:gate", "human.pending", "event", obj({}, [], true), undefined, { direction: "out", description: "Durable human request state, including approval redemption or an explicit decision not to continue." });
-
-add("screen:*", "ui.open", "request", obj({ target: choice("activity", "upcoming", "approvals", "identity", "memory", "settings", "turn"), id: str, mode: choice("perform", "suggest") }, ["target", "mode"]), obj({ opened: bool }, ["opened"]), { description: "Open or suggest a view on a named screen." });
-// The Agent system: ash holds every agent's declaration, runs their lifecycle and carries what they say to each other.
-// Discovery and communication (agent words) are for every agent; management (system words) for those granted it.
-const agentRef: JsonSchema = { type: "string", pattern: "^agent:[a-z][a-z0-9_-]{0,31}$" };
-export const AGENT_RUNTIME_SCHEMA: JsonSchema = { anyOf: [{ const: "container" }, obj({ device: { type: "string", pattern: "^device:[A-Za-z0-9_-]+$" }, kind: choice("codex", "claude", "workbuddy"), cwd: nonempty, model: nonempty, effort: nonempty }, ["device", "kind"])] };
-const agentFields: Record<string, JsonSchema> = { name: nonempty, summary: nonempty, brief: nonempty, runtime: AGENT_RUNTIME_SCHEMA, tools: strings, words: strings, every: { type: "integer", minimum: 600 } };
-const agentInfo = obj({ id: agentRef, name: str, summary: str, state: choice("idle", "working", "stopped", "error"), available: bool, main: bool, manage: bool,
-  brief: str, runtime: AGENT_RUNTIME_SCHEMA, created_by: str, tools: { anyOf: [strings, { type: "null" }] }, words: { anyOf: [strings, { type: "null" }] }, every: { anyOf: [integer, { type: "null" }] }, built_in: bool },
-  ["id", "name", "summary", "state"]);
-add("service:agents", "list", "request", empty, obj({ agents: array(agentInfo) }, ["agents"]), { label: "看有哪些帮手", description: "Every agent: id, name, what it does, and whether it is idle, working or stopped." });
-add("service:agents", "runtimes", "request", empty, obj({ runtimes: array(obj({}, [], true)) }, ["runtimes"]), { label: "查看可用运行时", description: "Online devices allowed to host agents and their installed runtimes and models. Query before creating a remote agent." });
-add("service:agents", "threads", "request", empty, obj({ threads: array(obj({}, [], true)) }, ["threads"]), { label: "查看工作串", audience: "owner" });
-add("service:agents", "thread.stop", "request", obj({ thread: id }, ["thread"]), obj({ cancelled: bool }, ["cancelled"]), { label: "停止工作串", audience: "owner" });
-add("service:agents", "describe", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { label: "看帮手", description: "One agent's declaration and state." });
+add("service:agents", "list", "request", empty, obj({ agents: array(agentInfo) }, ["agents"]),
+  { label: "在看有哪些帮手", description: "Every declared agent: id, name, what it does, whether it is idle, working or stopped, and which one is primary." });
+add("service:agents", "runtimes", "request", empty, obj({ runtimes: array(free) }, ["runtimes"]),
+  { label: "在查能在哪儿开帮手", description: "The agent runtimes available (in the main body, and on computers allowed to host agents) with their models. Query before declaring an agent that runs on a computer." });
+add("service:agents", "threads", "request", empty, obj({ threads: array(free) }, ["threads"]),
+  { callers: OWNER, label: "在看交出去的事", description: "The delegated work in flight (threads between agents)." });
+add("service:agents", "thread.stop", "request", obj({ thread: id }, ["thread"]), obj({ cancelled: bool }, ["cancelled"]),
+  { callers: OWNER, effect: "act", label: "在停下交出去的事", description: "Stop one delegated thread of work." });
+add("service:agents", "describe", "request", obj({ agent: agentRef }, ["agent"]), agentInfo,
+  { label: "在看帮手", description: "One agent's declaration (role, tools, lanes, modules, where it lives) and its state." });
 add("service:agents", "ask", "request", obj({ agent: agentRef, text: nonempty }, ["agent", "text"]), obj({ agent: agentRef, answer: str }, ["agent", "answer"]),
-  { label: "问帮手", timeout_ms: 600_000, description: "Put a question to another agent; the answer it gives in the turn that takes the question is the result." });
+  { effect: "act", timeout_ms: 600_000, label: "在问帮手", description: "Put a question to another agent; the answer it gives in the turn that takes the question is the result." });
 add("service:agents", "tell", "request", obj({ agent: agentRef, text: nonempty }, ["agent", "text"]), obj({ sent: bool, message_id: id }, ["sent", "message_id"]),
-  { label: "告诉帮手", description: "Deliver news to another agent; what it says back is passed to the sender later as a message." });
-add("service:agents", "answer", "request", obj({ in_reply_to: id, text: nonempty }, ["in_reply_to", "text"]), accepted, { audience: "owner", description: "Internal: an agent's words in a turn that answers a delivered question or news." });
+  { effect: "act", label: "在告诉帮手", description: "Deliver news to another agent; what it says back is passed to the sender later as a message." });
+add("service:agents", "answer", "request", obj({ in_reply_to: id, text: nonempty }, ["in_reply_to", "text"]), accepted,
+  { callers: ["agent"], effect: "act", label: "在回答", description: "An agent's words in a turn that answers a question or news delivered to it. Only the agent that was asked, in that turn." });
 add("service:agents", "declare", "request", obj({ id: agentRef, ...agentFields }, ["id", "name", "summary", "brief"]), agentInfo,
-  { label: "新建帮手", description: "Create a new agent from a declaration. It starts at once, in its own session and workspace." });
+  { effect: "write", label: "在新建帮手", description: "Declare a new agent: who it is, its role (brief), its tools and word policy, its lanes, which prompt modules it loads, and where it runs (native). It starts at once in its own session. " + DELEGATION_RULE });
 add("service:agents", "update", "request", obj({ agent: agentRef, ...agentFields }, ["agent"]), agentInfo,
-  { label: "调整帮手", description: "Change an agent's declaration; it applies from its next turn." });
-add("service:agents", "start", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { label: "启动帮手", description: "Let a stopped agent take turns again." });
-add("service:agents", "stop", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { label: "停下帮手", description: "Stop an agent: its current turn is cancelled and it takes no new ones; messages wait for it." });
-add("service:agents", "restart", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { label: "重启帮手", description: "Cancel an agent's current turn and reopen its session; its history is kept." });
+  { effect: "write", label: "在调整帮手", description: "Change an agent's declaration; it applies from its next turn. `primary` can be handed to another agent only through primary.set. " + DELEGATION_RULE });
+add("service:agents", "start", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在启动帮手", description: "Let a stopped agent take turns again." });
+add("service:agents", "stop", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在停下帮手", description: "Stop an agent: its current turn is cancelled and it takes no new ones; messages wait for it." });
+add("service:agents", "restart", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在重启帮手", description: "Cancel an agent's current turn and restart its process; its sessions are resumed." });
 add("service:agents", "remove", "request", obj({ agent: agentRef }, ["agent"]), obj({ removed: bool }, ["removed"]),
-  { label: "删除帮手", description: "Remove a declared agent. The main agent cannot be removed; built-in agents can only be stopped." });
-add("service:clock", "set", "request", obj({ at: num, every: { type: "integer", minimum: 60 }, to: id, word: id, body: obj({}, [], true), label: nonempty }, ["to", "word", "body", "label"]), obj({ id, next: num }, ["id", "next"]));
-// Secure vault: the agent may look, never touch. Values enter through the owner's settings route and leave only to ash's own code.
-const vaultEntry = obj({ ref: nonempty, label: nonempty, kind: choice("model", "login", "api", "other"), configured: bool, updated_at: nonnegativeSafe }, ["ref", "label", "kind", "configured"]);
-add("service:vault", "list", "request", empty, obj({ entries: { type: "array", items: vaultEntry } }, ["entries"]),
-  { label: "看保存的密钥", description: "Which credentials are saved (names and kinds only, never a value)." });
-add("service:vault", "describe", "request", obj({ ref: nonempty }, ["ref"]), vaultEntry,
-  { label: "看保存的密钥", description: "Whether one credential is saved, and what it is for. A value is never returned." });
-add("service:vault", "vault.changed", "event", obj({ ref: nonempty, action: choice("saved", "removed") }, ["ref", "action"]), undefined,
-  { direction: "out", audience: "owner", description: "A credential was saved or removed. Names only; the value is never on the ledger." });
+  { effect: "write", label: "在删除帮手", description: "Remove a declared agent. The primary agent cannot be removed; hand `primary` to another one first." });
+add("service:agents", "primary.set", "request", obj({ agent: agentRef }, ["agent"]), agentInfo,
+  { callers: OWNER, effect: "write", risk: "structure", label: "在换主 agent", description: "Make another agent the primary one: the owner's words, the notification and island replies, and the semantic layer's wake-ups go to it. Only the owner." });
+add("service:agents", "spawn", "request", obj({
+  task: nonempty, template: nonempty, runtime: AGENT_RUNTIME, model: nonempty, native: AGENT_NATIVE, tools: strings, timeout: { type: "integer", minimum: 1, maximum: 86400 },
+}, ["task"]), obj({ answer: str, agent: agentRef }, [], true),
+  { effect: "act", timeout_ms: 600_000, label: "在派临时帮手", description: "Run one task on a temporary agent: declare it, hand it the task, collect the result and delete it, in one step. A quick result is returned, a slow one as a receipt. It can never do more than you can. " + DELEGATION_RULE });
+session("session.get", "在看会话", "Which resumable session an agent holds for a lane (the opaque handle the driver gave), or null.", sessionTarget, ["agent", "key"], sessionResult, "read");
+session("session.set", "在指定会话", "Point a lane of an agent at a given session handle so the next turn resumes it; with no handle the lane starts fresh.", { ...sessionTarget, handle: nonempty }, ["agent", "key", "handle"], sessionResult, "write");
+session("session.new", "在开新会话", "Open a new session for a lane of an agent. The old one is kept in the agent's own history; the ledger still has everything that was said.", sessionTarget, ["agent", "key"], sessionResult);
+session("session.reload", "在重新载入会话", "Open a new session with the current static prompt modules (persona, rules). Done only when the agent is idle; skipped if nothing changed.", sessionTarget, ["agent", "key"], sessionResult);
+session("session.compact", "在压缩上下文", "Compact the context of a lane's session, when the agent is idle. If it is busy the answer is conflict and the hub tries again after the turn.", sessionTarget, ["agent", "key"], obj({ compacted: bool, detail: str }, ["compacted"], true));
+session("session.send", "在发起一轮", "Send messages to an idle agent and open a turn on a lane.", { ...sessionTarget, messages: { type: "array", minItems: 1, items: obj({ text: nonempty, from: id }, ["text"]) } }, ["agent", "key", "messages"], accepted);
+session("session.followup", "在排下一轮", "Queue messages for the agent's next turn on a lane, without interrupting the one running.", { ...sessionTarget, messages: { type: "array", minItems: 1, items: obj({ text: nonempty, from: id }, ["text"]) } }, ["agent", "key", "messages"], accepted);
+session("session.steer", "在插话", "Say something into the turn that is running on a lane, so the agent takes it into account now.", { ...sessionTarget, text: nonempty }, ["agent", "key", "text"], accepted);
+session("session.inject", "在注入内容", "Put content into a lane's session without starting a turn: named prompt modules, or plain text.", { ...sessionTarget, modules: strings, text: nonempty }, ["agent", "key"], accepted);
+session("session.interrupt", "在打断这一轮", "Stop the turn that is running on a lane.", sessionTarget, ["agent", "key"], obj({ interrupted: bool }, ["interrupted"]));
+session("session.restart", "在重启会话进程", "Restart the agent's process and resume its sessions (one lane, or all when key is left out).", { agent: agentRef, key: sessionKey }, ["agent"], obj({ restarted: bool }, ["restarted"]));
+add("service:agents", "configure", "request", obj({ agent: agentRef, key: sessionKey, config: free }, ["agent"]), obj({ config: free }, ["config"]),
+  { effect: "write", label: "在配置帮手", description: "Set the runtime's own configuration for an agent (model, effort level, other options the runtime reports it supports), or read it when config is left out. The runtime keeps the truth; the hub stores no copy." });
+add("service:agents", "plugins", "request", obj({ agent: agentRef, key: sessionKey, op: choice("list", "enable", "disable"), name: nonempty }, ["agent", "op"]), free,
+  { effect: "write", risk: "structure", label: "在调整帮手的插件", description: "List, enable or disable the plugins of one agent's runtime. Plugins change what the agent can do, so an agent asking for this is asked about by the owner." });
+add("service:agents", "env.changed", "event", ENV_CHANGED, undefined,
+  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); the agents module restarts what needs it. Sent by the host module; not recorded." });
+// ===================================================================================================================
+// service:clock: durable timers
+// ===================================================================================================================
+add("service:clock", "set", "request", obj({ at: num, every: { type: "integer", minimum: 60 }, to: id, word: id, body: free, label: nonempty }, ["to", "word", "body", "label"]), obj({ id, next: num }, ["id", "next"]),
+  { effect: "write", label: "在定提醒", description: "Set a timer that sends a word to a member at a time (at, Unix ms) or repeatedly (every, seconds, at least 60). Use for a future or repeating message, not for immediate delivery. Keep the returned id to cancel it." });
+add("service:clock", "cancel", "request", obj({ id }, ["id"]), obj({ cancelled: bool }, ["cancelled"]),
+  { effect: "write", label: "在取消提醒", description: "Cancel a timer by id; check `cancelled` because it may already have fired." });
+add("service:clock", "list", "request", empty, obj({ timers: array(any) }, ["timers"]),
+  { label: "在看提醒", description: "The active timers, to look at before changing them; the result is a snapshot." });
+add("service:clock", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]), undefined,
+  { direction: "in", label: "在响应唤醒闹钟", description: "The host's alarm went off (the device woke); the clock checks which timers are due. Sent by the host module." });
+
+// ===================================================================================================================
+// service:llm: the hub's small model, for the owner, agents and apps
+// ===================================================================================================================
+add("service:llm", "complete", "request", obj({
+  model: nonempty,
+  messages: { type: "array", minItems: 1, items: obj({ role: choice("system", "user", "assistant"), content: { type: "string" } }, ["role", "content"]) },
+  max_tokens: { type: "integer", minimum: 1, maximum: 8192 },
+}, ["messages"]), obj({ text: str, model: str, usage: obj({ input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe }) }, ["text"]),
+  { timeout_ms: 60_000, label: "在问小模型", description: "A short completion from the hub's small model (the model argument is optional). For organs that must judge something in code, e.g. a sensor rule. The usage is counted against the caller and its quota." });
+
+// ===================================================================================================================
+// service:persona: the approved SOUL and IDENTITY
+// ===================================================================================================================
+const personaFile = choice("SOUL.md", "IDENTITY.md");
+add("service:persona", "get", "request", obj({ file: personaFile }), obj({ files: array(obj({ file: personaFile, content: str, version: nonempty, approved_at: nonnegativeSafe }, ["file", "content", "version"])) }, ["files"]),
+  { label: "在看人格", description: "The approved versions of SOUL.md and IDENTITY.md, the only ones sessions load. Editing the files in the body changes nothing until a change is proposed and approved." });
+add("service:persona", "propose", "request", obj({ file: personaFile, content: { type: "string", minLength: 1, maxLength: 60000 }, reason: nonempty }, ["file", "content", "reason"]), obj({ proposed: bool, applied: bool }, ["proposed"]),
+  { callers: OWNER_AGENT, effect: "write", risk: "structure", label: "在提议改人格", description: "Propose a new SOUL.md or IDENTITY.md with the reason. The owner is always asked when an agent proposes; a change the owner makes takes effect at once. It shows in new sessions after the next reload." });
+
+// ===================================================================================================================
+// service:cost: usage and quota
+// ===================================================================================================================
+add("service:cost", "usage.get", "request", obj({ days: { type: "integer", minimum: 1, maximum: 90 } }), free,
+  { callers: OWNER, label: "在看用量", description: "What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls." });
+add("service:cost", "balance.get", "request", empty, free,
+  { callers: OWNER, label: "在看余额", description: "The provider account balance for the configured API key; fails rather than reporting zero when it cannot be read." });
+add("service:cost", "quota.check", "request", obj({ agent: agentRef }, ["agent"]), obj({ allowed: bool, reason: str, used: num, limit: num }, ["allowed"]),
+  { callers: KERNEL, label: "在查额度", description: "Whether an agent may open another turn under its daily quota, by the latest usage numbers. A soft limit: the numbers are only as fresh as the last poll." });
+add("service:cost", "usage.recorded", "event", obj({
+  caller: id, provider: choice("deepseek", "openrouter"), model: nonempty, input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe,
+  cost: { type: "number", minimum: 0 }, ok: bool, at: nonnegativeSafe,
+}, ["caller", "provider", "model", "input_tokens", "output_tokens", "ok", "at"]), undefined,
+  { direction: "in", label: "在记下用量", description: "One call of the hub's small model, as the llm edge reports it: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table." });
+
+// ===================================================================================================================
+// service:reflex: judgments the hub makes in small-model time
+// ===================================================================================================================
+add("service:reflex", "conversation.control", "request", obj({ message_id: id, agent: agentRef, lane: nonempty }, ["message_id", "agent"]),
+  obj({ action: choice("interrupt", "pause", "steer", "followup"), confidence: { type: "number", minimum: 0, maximum: 1 }, stage: choice("keyword", "jev") }, ["action"]),
+  { callers: KERNEL, effect: "act", timeout_ms: 8000, label: "在判断要不要打断", description: "The owner spoke while an agent was busy: judge what to do with it (stop it, pause, say it into the running turn, or wait for the next turn). Keywords first, the small model when unclear; a failed judgment means followup." });
+add("service:reflex", "task.outcome", "request", obj({ turn: id }, ["turn"]),
+  obj({ outcome: choice("delivered", "needs_reply", "needs_action_in_ash", "incomplete"), confidence: { type: "number", minimum: 0, maximum: 1 } }, ["outcome"]),
+  { callers: KERNEL, effect: "act", timeout_ms: 8000, label: "在判断结果", description: "After a turn ended normally, label how it ended from the owner's point of view, for the island and the capsule: delivered, needs a reply, needs action in Ash, or incomplete." });
+add("service:reflex", "task.stop", "request", obj({ turn: id }, ["turn"]), obj({ cancelled: bool }, ["cancelled"]),
+  { callers: OWNER, effect: "act", timeout_ms: 3000, label: "在停下任务", description: "Stop only the task the owner selected, never a newer turn." });
+add("service:reflex", "task.end", "request", obj({ turn: id, pending_ids: { type: "array", items: id, maxItems: 100, uniqueItems: true } }, ["turn", "pending_ids"]), obj({ ended: bool }, ["ended"]),
+  { callers: OWNER, effect: "act", timeout_ms: 5000, label: "在结束任务", description: "End the selected capsule interaction: stop its current turn and withdraw only the pending requests that are displayed. Never stops a newer turn." });
+
+// ===================================================================================================================
+// service:senses: the archive of what the hands sense. The rules for waking anyone are an organ's, not ours.
+// ===================================================================================================================
+const SENSE_KIND = choice("location", "activity", "steps", "health", "geofence", "calendar", "battery", "screen", "notification");
+add("service:senses", "query", "request", obj({ kind: SENSE_KIND, from: nonnegativeSafe, to: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 5000 } }, ["kind"]),
+  obj({ rows: array(free), truncated: bool }, ["rows"]),
+  { label: "在翻感知记录", description: "Archived sensor readings of one kind in a time range (Unix ms; default the last day), oldest first. Also what an organ uses to look back." });
+add("service:senses", "daily", "request", obj({ date: { type: "string", pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" } }), free,
+  { label: "在看每日统计", description: "The day's statistics from the archive (places, activity minutes, steps, health numbers) for a date (default yesterday)." });
+add("service:senses", "now", "request", empty, free,
+  { label: "在看最近读数", description: "The newest reading of each kind (location, activity, battery, ...) and how old each is. No phone call is made; it is what the archive holds." });
+const calendarEvent = obj({ id, title: str, start: num, end: num, important: bool }, ["id", "title", "start", "end"]);
+const senseText = (max: number, min = 1): JsonSchema => ({ type: "string", minLength: min, maxLength: max });
+const senseBatch = (item: JsonSchema): JsonSchema => obj({
+  batch_id: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+  items: { type: "array", items: item, minItems: 1, maxItems: 500 },
+}, ["batch_id", "items"]);
+const senseEvent = (word: string, body: JsonSchema, label: string, description: string) =>
+  add("service:senses", word, "event", body, undefined, { direction: "in", label, description });
+senseEvent("sense.calendar", obj({ kind: choice("upcoming", "changed"), event: calendarEvent }, ["kind", "event"]), "在收日程变化", "A calendar event is about to start or changed, from the hand. Archived only; not recorded in the ledger.");
+senseEvent("sense.battery", obj({ level: { type: "number", minimum: 0, maximum: 100 } }, ["level"]), "在收电量", "The battery level, from the hand. Archived only; not recorded in the ledger.");
+senseEvent("sense.screen", obj({ state: choice("on", "app_open"), away_ms: { type: "number", minimum: 0 } }, ["state", "away_ms"]), "在收屏幕状态", "The screen came on or the app was opened, with how long the owner was away. Archived only; not recorded in the ledger.");
+senseEvent("sense.notification", obj({ app: str, title: str, text: str }, ["app", "title", "text"]), "在收通知", "A notification arrived on the hand (app, title, text). Archived only; not recorded in the ledger.");
+senseEvent("sense.location", senseBatch(obj({ ts: nonnegativeSafe, lat: { type: "number", minimum: -90, maximum: 90 }, lon: { type: "number", minimum: -180, maximum: 180 },
+  accuracy_m: { type: "number", minimum: 0, maximum: 1_000_000 }, provider: senseText(32), is_mocked: bool }, ["ts", "lat", "lon", "accuracy_m", "provider"])),
+  "在收位置", "A batch of location points from the hand; a batch_id makes a re-delivered batch idempotent. Archived only; not recorded in the ledger.");
+senseEvent("sense.activity", senseBatch(obj({ ts_start: nonnegativeSafe, ts_end: nonnegativeSafe, state: choice(...ACTIVITY_STATES) }, ["ts_start", "state"])),
+  "在收运动状态", "A batch of activity segments from the hand. Archived only; not recorded in the ledger.");
+senseEvent("sense.health", senseBatch(obj({ ts: nonnegativeSafe, metric: senseText(64), value: num, unit: senseText(32, 0), source: senseText(128) }, ["ts", "metric", "value", "unit", "source"])),
+  "在收健康数据", "A batch of health readings from the hand. Archived only; not recorded in the ledger.");
+senseEvent("sense.geofence", obj({ name: senseText(64), transition: choice("enter", "exit"), ts: nonnegativeSafe }, ["name", "transition", "ts"]),
+  "在收围栏进出", "The owner entered or left a named place. Archived only; an organ that listens decides whether to wake an agent.");
+senseEvent("sense.source", obj({ source: senseText(64), state: choice("stale", "fresh"), ts: nonnegativeSafe, stale_hours: { type: "integer", minimum: 1, maximum: 720 }, summary: senseText(200), last_data_ts: nonnegativeSafe },
+  ["source", "state", "ts", "stale_hours", "summary"]),
+  "在收数据源状态", "A health source stopped bringing new readings for stale_hours (sent once), or came back. last_data_ts is its newest reading; summary is plain Chinese for the owner.");
+
+// ===================================================================================================================
+// service:directory, service:history, service:blobs: finding things out
+// ===================================================================================================================
+add("service:directory", "list", "request", obj({ member: nonempty }), obj({ members: array(obj({ id: nonempty, kind: nonempty, name: str, online: bool, words: strings }, ["id", "kind"])) }, ["members"]),
+  { label: "在查能做什么", description: "The members you can reach and the words of each that you may call (name only). Pass a member id to see just that one." });
+add("service:directory", "describe", "request", obj({ member: nonempty, word: nonempty }, ["member"]), obj({ member: nonempty, words: array(free) }, ["member", "words"]),
+  { label: "在查怎么做", description: "The full contract of a member's words you may call (description, input and result schemas, effect, risk), or of one word." });
+add("service:history", "query", "request", obj({ text: nonempty, speaker: id, lane: nonempty, thread: id, before: positiveSafe, after: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 200 } }),
+  obj({ messages: array(free), next_before: positiveSafe }, ["messages"]),
+  { label: "在翻聊天记录", description: "Search the ledger: messages by text, speaker, lane or thread, newest first. Long bodies are summaries with an attachment reference; read them with service:blobs/read." });
+add("service:history", "read", "request", obj({ from_seq: positiveSafe, to_seq: positiveSafe }, ["from_seq", "to_seq"]), obj({ messages: array(free) }, ["messages"]),
+  { label: "在读历史原文", description: "Read ledger messages by sequence range, as recorded (secret and sensitive fields masked)." });
+add("service:history", "turn", "request", obj({ turn: id }, ["turn"]), obj({ turn: id, messages: array(free), tools: array(free) }, ["turn"]),
+  { label: "在看某一轮做了什么", description: "What happened in one turn of an agent: the messages it was given, its tool calls and results (summaries), and what it said." });
+add("service:history", "activity", "request", obj({ id, offset: nonnegativeSafe }, ["id"]), obj({ items: array(free), next_offset: nullable(nonnegativeSafe) }, ["items"]),
+  { label: "在看活动详情", description: "The detail of one activity entry (a turn's tool calls), paged by offset." });
+add("service:blobs", "read", "request", obj({ hash: sha, offset: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 200000 } }, ["hash"]),
+  obj({ text: str, offset: nonnegativeSafe, next_offset: nullable(nonnegativeSafe), size: nonnegativeSafe, mime: str }, ["text", "size"]),
+  { label: "在读附件", description: "Read a text attachment of a ledger message in pieces. You can read an attachment only when you may read the message that holds it." });
+add("service:blobs", "get", "request", obj({ hash: sha }, ["hash"]), obj({ stream: nonempty, mime: nonempty, size: nonnegativeSafe }, ["stream", "mime", "size"]),
+  { label: "在取附件", description: "Get a binary attachment (an image, a file) of a ledger message as a stream reference. You can get an attachment only when you may read the message that holds it." });
+
+// ===================================================================================================================
+// service:host: what the kernel asks of the system under it (ash-host/1)
+// ===================================================================================================================
+add("service:host", "wake.at", "request", obj({ at: nonnegativeSafe }, ["at"]), empty, { callers: KERNEL, effect: "act", label: "在设唤醒闹钟", description: "Ask the host to wake the device at a time (Unix ms); only the earliest one is kept." });
+add("service:host", "wake.clear", "request", empty, empty, { callers: KERNEL, effect: "act", label: "在取消唤醒闹钟", description: "Cancel the host alarm." });
+add("service:host", "power.hold", "request", obj({ ms: { type: "integer", minimum: 1, maximum: 600000 }, reason: nonempty }, ["ms", "reason"]), empty,
+  { callers: KERNEL, effect: "act", label: "在保持唤醒", description: "Keep the device awake for a while (at most 10 minutes) for a stated reason; released by itself when the time is up." });
+add("service:host", "power.release", "request", empty, empty, { callers: KERNEL, effect: "act", label: "在放开唤醒锁", description: "Release the wake lock before its time is up." });
+add("service:host", "hands.handoff", "request", obj({ port: { type: "integer", minimum: 1, maximum: 65535 }, token: secret({ type: "string", minLength: 1 }) }, ["port", "token"]), obj({ delivered: strings }, ["delivered"]),
+  { callers: KERNEL, effect: "act", label: "在交接本机的手", description: "Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down." });
+add("service:host", "update.install", "request", obj({ version: nonempty, url: nonempty, sha256: sha }, ["version", "url", "sha256"]), empty,
+  { callers: OWNER, effect: "execute", risk: "structure", label: "在安装内核更新", description: "Have the host download and install a new kernel package (checked against sha256). Only the owner." });
+
+// ===================================================================================================================
+// app:*: the one word the hub calls on every app
+// ===================================================================================================================
+add("app:*", "ash.on_event", "request", obj({ word: nonempty, body: any, from: id, at: nonnegativeSafe }, ["word", "from", "at"]), empty,
+  { callers: KERNEL, effect: "act", label: "在把事件交给应用", description: "Deliver an event the app listens to (app.json `listens`). The hub calls this reserved tool; an app never sees it in its own list of tools." });
+
+
+// ===================================================================================================================
+// service:widgets: cards on the owner's home screen
+// ===================================================================================================================
 // Home-screen widgets: cards anyone may put on the owner's phone home screen, drawn natively from A2UI.
 const widgetCardId: JsonSchema = { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" };
 const widgetId: JsonSchema = { type: "string", minLength: 1, maxLength: 12 };
@@ -221,108 +586,120 @@ export const WIDGET_A2UI_GUIDE = "a2ui is A2UI v0.9 (basic catalog) as a flat co
   "Example: {components:[{id:'root',component:'Column',style:{background:'translucentDark',color:'white',padding:14},children:['t','l']},{id:'t',component:'Text',text:'**待办**',variant:'h3'}," +
   "{id:'l',component:'List',children:{componentId:'row',path:'/todo'}},{id:'row',component:'CheckBox',label:{path:'title'},value:{path:'done'},action:{event:{name:'toggle'}}}],data:{todo:[{id:'a',title:'买菜',done:false}]}}";
 add("service:widgets", "widget.list", "request", empty, widgetListResult,
-  { label: "看桌面小组件", effect: "read", description: "What is on the owner's phone home screen: each placed widget (the 'ash' widget, or an 'Ash 卡片' card widget with the card it shows), and every card that exists with its owner, size, expiry, event action names and the phone's last problem drawing it (null when it drew fine or has not reported)." });
+  { label: "在看桌面小组件", effect: "read", description: "What is on the owner's phone home screen: each placed widget (the 'ash' widget, or an 'Ash 卡片' card widget with the card it shows), and every card that exists with its owner, size, expiry, event action names and the phone's last problem drawing it (null when it drew fine or has not reported)." });
 add("service:widgets", "widget.card.put", "request", obj({ id: { type: "string", minLength: 1, maxLength: 64 }, title: str, size: widgetSize,
   a2ui: obj({}, [], true), ttl_min: { type: "integer", minimum: 1, maximum: 43200 } }, ["id", "title", "size", "a2ui"]),
   obj({ card: widgetCardInfo, bound_widgets: array(widgetId), phone: choice("drawn", "problem", "unknown"), problem: str, preview: widgetPreviewImage, preview_problem: str }, ["card", "bound_widgets"]),
-  { label: "更新桌面卡片", effect: "write", description: "Create or replace (same id) a card the owner can place on the phone home screen with the 'Ash 卡片' widget; widgets already showing it redraw. " +
-    "When the data belongs to an app (a todo list, health numbers…), use that app's own card instead (owner app:<id> in widget.list, drawn from the app's data and kept current; place it with widget.bind) — a copy of its data here goes stale. " +
+  { label: "在更新桌面卡片", effect: "write", description: "Create or replace (same id) a card the owner can place on the phone home screen with the 'Ash 卡片' widget; widgets already showing it redraw. " +
+    "When the data belongs to an app (a todo list, health numbers…), use that app's own card instead (owner app:<id> in widget.list, drawn from the app's data and kept current; the owner places it on the home screen) — a copy of its data here goes stale. " +
     "id: lowercase letters, digits, . _ - (at most 64); title: at most 40 characters. The card belongs to whoever created it: only its creator or the owner may replace or remove it. size is the intended widget size (2x2 small, 4x2 wide, 4x4 large). " +
     "ttl_min: after this many minutes the card shows as expired until updated. Invalid cards are refused with the component, property and reason. " +
     "The result says whether the phone drew it (phone: drawn), could not (phone: problem, with problem), or did not answer in time (unknown); a later problem (e.g. an image that failed to load) reaches you as widget.problem. " +
     "When the phone can draw it, the result also carries a preview image of the card as the home screen shows it (at the widget's size, in the phone's current dark or light theme): look at it, and fix cut-off text, overflow and empty lists before telling the owner it is done. widget.card.preview shows it again later. " + WIDGET_A2UI_GUIDE });
 add("service:widgets", "widget.card.preview", "request", obj({ id: widgetCardId }, ["id"]),
   obj({ card: widgetCardInfo, preview: widgetPreviewImage, preview_problem: str, fresh: bool, note: str }, ["card", "fresh"]),
-  { label: "看桌面卡片的样子", effect: "read", description: "Look at a card again: the phone draws it as the home-screen widget would (its size on this phone, in the current dark or light theme) and returns the picture as an image you can see, or says why it cannot. Use it after the owner changes theme, after an app's card refreshed, or to check a card you did not just put. fresh: false means the phone did not answer in time and the image is the last one it drew." });
+  { label: "在看桌面卡片的样子", effect: "read", description: "Look at a card again: the phone draws it as the home-screen widget would (its size on this phone, in the current dark or light theme) and returns the picture as an image you can see, or says why it cannot. Use it after the owner changes theme, after an app's card refreshed, or to check a card you did not just put. fresh: false means the phone did not answer in time and the image is the last one it drew." });
 add("service:widgets", "widget.card.get", "request", obj({ id: widgetCardId }, ["id"]),
   obj({ card: widgetCardInfo, a2ui: obj({}, [], true), feedback: array(obj({ ts: nonnegativeSafe, feedback: nonempty, action: nonempty, card_updated_at: nonnegativeSafe, component: str, item: str },
     ["ts", "feedback", "action", "card_updated_at"])), preview: widgetPreviewImage, preview_problem: str, note: str }, ["card", "a2ui", "feedback"]),
-  { label: "看桌面卡片的内容", effect: "read", description: "Read one card back: what it says (its a2ui as it was put), size, owner, last update, the owner's answers recorded on it (feedback: what a feedback button said and when; card_updated_at tells which version of the card was answered), and the picture of how the home screen shows it now (the same image as widget.card.preview; preview_problem says why there is none). Use it to see what you showed before and how it was received; widget.list only gives titles." });
+  { label: "在看桌面卡片的内容", effect: "read", description: "Read one card back: what it says (its a2ui as it was put), size, owner, last update, the owner's answers recorded on it (feedback: what a feedback button said and when; card_updated_at tells which version of the card was answered), and the picture of how the home screen shows it now (the same image as widget.card.preview; preview_problem says why there is none). Use it to see what you showed before and how it was received; widget.list only gives titles." });
 add("service:widgets", "widget.card.validate", "request", obj({ a2ui: obj({}, [], true) }, ["a2ui"]),
   obj({ valid: bool, problem: str, components: { type: "integer", minimum: 0 }, levels: { type: "integer", minimum: 0 }, actions: strings }, ["valid"]),
-  { label: "检查桌面卡片", effect: "read", description: "Check a card's a2ui exactly as widget.card.put would, without saving or showing anything: valid, or the problem (which component, which property, why). levels is how deep it nests against Android's limit. Same format as widget.card.put." });
+  { label: "在检查桌面卡片", effect: "read", description: "Check a card's a2ui exactly as widget.card.put would, without saving or showing anything: valid, or the problem (which component, which property, why). levels is how deep it nests against Android's limit. Same format as widget.card.put." });
 add("service:widgets", "widget.card.remove", "request", obj({ id: widgetCardId }, ["id"]), obj({ removed: bool }, ["removed"]),
-  { label: "移除桌面卡片", effect: "write", description: "Remove a card you created (the owner may remove any). Widgets that showed it ask the owner to pick another card." });
-add("service:widgets", "widget.bind", "request", obj({ widget: widgetId, card: widgetCardId }, ["widget", "card"]), obj({ widget: widgetId, card: widgetCardId }, ["widget", "card"]),
-  { label: "选小组件显示的卡片", effect: "write", description: "Make one placed 'Ash 卡片' widget (an id from widget.list) show an existing card. The owner normally picks the card when placing the widget." });
+  { label: "在移除桌面卡片", effect: "write", description: "Remove a card you created (the owner may remove any). Widgets that showed it ask the owner to pick another card." });
 add("service:widgets", "widget.tap", "request", obj({ card: widgetCardId, action: { type: "string", minLength: 1, maxLength: 64 }, component: { type: "string", minLength: 1, maxLength: 200 },
   checked: bool, value: { type: "array", items: str, maxItems: 100 } }, ["card"]), accepted,
-  { audience: "owner", label: "转达小组件上的点击", effect: "write", description: "The phone reports that the owner tapped, toggled or chose something on a card. Owner only." });
-add("service:widgets", "widget.placed", "request", obj({ widgets: { type: "array", items: placedWidget, maxItems: 64 }, rendered: { type: "array", items: widgetRendered, maxItems: 200 } }), accepted,
-  { audience: "owner", label: "记下放好的小组件", effect: "write", description: "The phone reports which Ash widgets are on its home screen, and which cards it could or could not draw. Owner only." });
+  { callers: OWNER, label: "在转达小组件上的点击", effect: "write", description: "The owner tapped, toggled or chose something on a card (sent from the phone as the owner). Owner only; the card's creator is then told by widget.action." });
+add("service:widgets", "widget.placed", "event", obj({ widgets: { type: "array", items: placedWidget, maxItems: 64 } }, ["widgets"]), undefined,
+  { direction: "in", label: "在记下放好的小组件", description: "The phone reports which Ash widgets are on its home screen. Sent by the hands module from the hand's event; not recorded." });
+add("service:widgets", "widget.bind", "event", obj({ widget: widgetId, card: widgetCardId }, ["widget", "card"]), undefined,
+  { direction: "in", label: "在记下小组件选的卡片", description: "The owner picked which card one placed 'Ash 卡片' widget shows. Sent by the hands module from the hand's event; not recorded." });
+add("service:widgets", "widget.rendered", "event", obj({
+  widgets: { type: "array", items: placedWidget, maxItems: 64 }, rendered: { type: "array", items: widgetRendered, maxItems: 200 },
+}, ["rendered"]), undefined,
+  { direction: "in", label: "在记下卡片画出来没有", description: "What a channel reports after being asked to show widget state: which widgets are placed and which cards it drew, with the problem or a preview picture. Turned from the channel's present result by the human module; not recorded." });
 add("service:widgets", "widget.action", "event", obj({ card: widgetCardId, action: nonempty, owner: id, title: str, component: str, item: str, checked: bool, value: strings,
   context: obj({}, [], true) }, ["card", "action", "owner"]), undefined,
-  { direction: "out", description: "The owner tapped, toggled or chose something on a home-screen card. owner is the card's creator, who decides what it means; component is the element, item the list item's key, checked / value the new state. " +
+  { direction: "out", label: "在转达小组件上的点击", description: "The owner tapped, toggled or chose something on a home-screen card. owner is the card's creator, who decides what it means; component is the element, item the list item's key, checked / value the new state. " +
     "On an app's card (owner app:<id>) the tap goes to the app's own action tool, which changes the app's data; otherwise the tap itself does nothing else." });
 add("service:widgets", "widget.problem", "event", obj({ card: widgetCardId, owner: id, title: str, problem: nonempty }, ["card", "owner", "problem"]), undefined,
-  { direction: "out", description: "The phone could not fully draw a home-screen card (problem says what and why); the card's creator should fix it." });
+  { direction: "out", label: "在转达卡片画不出来", description: "The phone could not fully draw a home-screen card (problem says what and why); the card's creator should fix it." });
+
+// ===================================================================================================================
+// service:pulse: Ash's own card, the window through which it speaks first
+// ===================================================================================================================
 // Pulse: Ash's own home-screen card as the window through which it speaks first. Only exists while an "Ash 卡片" widget is placed.
 const pulseClock: JsonSchema = { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" };
 const pulseDays: JsonSchema = { anyOf: [choice("daily", "weekdays", "weekends"), { type: "array", items: { type: "integer", minimum: 0, maximum: 6 }, minItems: 1, maxItems: 7 }] };
 const pulseSlot = obj({ time: { anyOf: [pulseClock, obj({ at: positiveSafe }, ["at"])] }, days: pulseDays }, ["time"]);
 export const PULSE_EVENTS = ["geofence_enter", "geofence_exit", "approval_waiting", "app_event", "calendar_soon", "source_stalled"] as const;
 const pulseEvent = obj({ event: choice(...PULSE_EVENTS), min_gap_min: { type: "integer", minimum: 1, maximum: 1440 } }, ["event"]);
-const pulseWhy = choice("schedule", "event", "review");
-const pulseNoteKind = choice("pulse", "review", "gap");
+const pulseWhy = choice("schedule", "event");
+const pulseNoteKind = choice("pulse", "gap");
 const pulseEntry = obj({ id: positiveSafe, ts: nonnegativeSafe, kind: nonempty }, ["id", "ts", "kind"], true);
 add("service:pulse", "pulse.get", "request", empty,
-  obj({ active: bool, reason: str, enabled: bool, schedule: array(obj({}, [], true)), events: array(pulseEvent), review_time: pulseClock,
+  obj({ active: bool, reason: str, enabled: bool, schedule: array(obj({}, [], true)), events: array(pulseEvent),
     budget: obj({ per_day: positiveSafe, today_count: nonnegativeSafe, left: nonnegativeSafe }, ["per_day", "today_count", "left"]),
-    next_wakes: array(nonnegativeSafe), history: array(pulseEntry), gaps: array(pulseEntry), guidance: obj({}, [], true) }, ["active", "enabled", "schedule", "events", "budget", "history", "guidance"], true),
-  { label: "看主动更新的安排", effect: "read", description: "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, the events you watch, today's wake count against the daily budget, the next scheduled wakes, the latest history entries, gaps you noted, and the version info of your own guidance file PULSE.md." });
-add("service:pulse", "pulse.set", "request", obj({ schedule: { type: "array", items: pulseSlot, maxItems: 48 }, events: { type: "array", items: pulseEvent, maxItems: 12 }, review_time: pulseClock,
-    guidance: { type: "string", minLength: 1, maxLength: 20000 }, reason: { type: "string", minLength: 1, maxLength: 500 } }, ["reason"]),
-  obj({ changed: strings, next_wakes: array(nonnegativeSafe), guidance_version: nonnegativeSafe }, ["changed"], true),
-  { label: "改主动更新的安排", effect: "write", description: "Change your own pulse and say why (reason is required and is kept in the history). Any of: schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers), events (the events to watch, replaces the list: geofence_enter, geofence_exit, approval_waiting, app_event, calendar_soon, source_stalled, each with min_gap_min between two wakes of that kind, default 60), review_time ('HH:MM': when ash checks that today's self-summary was recorded, default 21:00), guidance (the full new text of PULSE.md, written through service:self so it keeps versions and can be rolled back with service:self rollback). Other fields are refused." });
+    next_wakes: array(nonnegativeSafe), history: array(pulseEntry), gaps: array(pulseEntry) }, ["active", "enabled", "schedule", "events", "budget", "history"], true),
+  { label: "在看主动更新的安排", effect: "read", description: "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, the events you watch, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted." });
+add("service:pulse", "pulse.set", "request", obj({ schedule: { type: "array", items: pulseSlot, maxItems: 48 }, events: { type: "array", items: pulseEvent, maxItems: 12 },
+    reason: { type: "string", minLength: 1, maxLength: 500 } }, ["reason"]),
+  obj({ changed: strings, next_wakes: array(nonnegativeSafe) }, ["changed"], true),
+  { label: "在改主动更新的安排", effect: "write", description: "Change your own pulse and say why (reason is required and is kept in the history). Any of: schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers), events (the events to watch, replaces the list: geofence_enter, geofence_exit, approval_waiting, app_event, calendar_soon, source_stalled, each with min_gap_min between two wakes of that kind, default 60). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself." });
 add("service:pulse", "pulse.history", "request", obj({ limit: { type: "integer", minimum: 1, maximum: 100 }, before: positiveSafe }),
   obj({ entries: array(pulseEntry), next_before: positiveSafe }, ["entries"]),
-  { label: "看主动更新的记录", effect: "read", description: "Page through your pulse history, newest first: wakes (why, when), what you did (pulse.note), reviews, the owner's feedback on your cards, changes to schedule or guidance with their reasons, skipped wakes and why. limit (default 20), before: an entry id from next_before to read older ones." });
+  { label: "在看主动更新的记录", effect: "read", description: "Page through your pulse history, newest first: wakes (why, when), what you did (pulse.note), the owner's feedback on your cards, changes to the schedule with their reasons, skipped wakes and why. limit (default 20), before: an entry id from next_before to read older ones." });
 add("service:pulse", "pulse.note", "request", obj({ did: nonempty, why: str, kind: pulseNoteKind, data_used: array(nonempty) }, ["did"]),
   obj({ recorded: bool, id: positiveSafe }, ["recorded", "id"]),
-  { label: "记下这次做了什么", effect: "write", description: "Record what you did on this wake and why (did, why, data_used: what you looked at). kind: pulse (default) for an ordinary wake, review for your daily self-summary, gap for something you wanted to know or do but could not get; gaps are collected so the missing source can be added. Nothing here ever reaches the owner." });
+  { label: "在记下这次做了什么", effect: "write", description: "Record what you did on this wake and why (did, why, data_used: what you looked at). kind: pulse (default) for an ordinary wake, gap for something you wanted to know or do but could not get; gaps are collected so the missing source can be added. Nothing here ever reaches the owner." });
 add("service:pulse", "pulse.fire", "request", obj({ why: pulseWhy }),
   obj({ fired: bool, reason: str }, ["fired"]),
-  { label: "试一次主动更新", effect: "write", description: "Wake yourself now as a pulse (why defaults to schedule) to try your guidance and cards; it does not use the daily budget. Needs the pulse to be active and switched on." });
+  { label: "在试一次主动更新", effect: "write", description: "Wake yourself now as a pulse (why defaults to schedule) to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on." });
 add("service:pulse", "pulse.switch", "request", obj({ enabled: bool }, ["enabled"]), obj({ enabled: bool }, ["enabled"]),
-  { audience: "owner", label: "开关主动更新", effect: "write", description: "Owner only: switch the whole pulse on or off. Off keeps PULSE.md, history and feedback." });
+  { callers: OWNER, label: "在开关主动更新", effect: "write", description: "Owner only: switch the whole pulse on or off. Off keeps PULSE.md, history and feedback." });
 add("service:pulse", "pulse.due", "request", obj({ kind: choice("wake", "floor"), at: nonnegativeSafe }, ["kind", "at"]), accepted,
-  { audience: "owner", label: "到点了", effect: "write", description: "Internal: the clock reports one of the pulse's own timers." });
+  { callers: KERNEL, label: "在响应到点的主动更新", effect: "write", description: "Internal: the clock reports one of the pulse's own timers, and the pulse wakes the agent. Only the hub itself calls this." });
+
+// ===================================================================================================================
+// service:apps: independent apps (contract ash-app/1)
+// ===================================================================================================================
 // Independent apps (contract ash-app/1): discovery, install with the owner's approval of what an app needs, and grants.
-const appId: JsonSchema = { type: "string", pattern: "^[a-z][a-z0-9-]{0,47}$" };
+const appId: JsonSchema = { type: "string", pattern: APP_NAME_PATTERN };
 const appInfo = obj({ id: appId, name: str, version: str, summary: str, role: str, publisher: str, enabled: bool, granted: bool, running: bool,
   needs: array(obj({}, [], true)), surfaces: array(obj({}, [], true)), events: strings, tools: strings, error: str,
   cards: array(obj({ id: str, title: str, size: str, card: widgetCardId, problem: str }, ["id", "title", "size", "card"])) }, ["id", "name", "version", "enabled", "granted", "running"], true);
 add("service:apps", "apps.list", "request", empty, obj({ apps: array(appInfo) }, ["apps"]),
-  { label: "看有哪些应用", description: "Every app found in the container (/root/apps/<id>/app.json): name, version, whether the owner installed (granted) it and whether it is running." });
+  { label: "在看有哪些应用", description: "Every app found in the container (/root/apps/<id>/app.json): name, version, whether the owner installed (granted) it and whether it is running." });
 add("service:apps", "apps.describe", "request", obj({ id: appId }, ["id"]), appInfo,
-  { label: "看应用详情", description: "One app: what it needs from ash (needs), its screens (surfaces), events and tools." });
+  { label: "在看应用详情", description: "One app: what it needs from ash (needs), its screens (surfaces), events and tools." });
 add("service:apps", "apps.install", "request", obj({ id: appId }, ["id"]), appInfo,
-  { risk: "structure", effect: "execute", label: "安装应用", description: "Install an app from /root/apps/<id>/ (ash's own, or one you wrote): it is checked first as apps.validate does, " +
+  { risk: "structure", effect: "execute", label: "在安装应用", description: "Install an app from /root/apps/<id>/ (ash's own, or one you wrote): it is checked first as apps.validate does, " +
     "and a failing app is refused with the problems (error.detail.problems) before anyone is asked. Then the owner approves, on one card, everything it needs (needs); " +
     "an app you wrote is shown as written by you, not published. Then its grants are stored and it starts as member app:<id>. Installing again after editing restarts it with the new files." });
 add("service:apps", "apps.enable", "request", obj({ id: appId }, ["id"]), appInfo,
-  { risk: "structure", effect: "execute", label: "重新启用应用", description: "Start an installed app that was turned off, within the grants the owner already gave. An agent's request asks the owner." });
+  { risk: "structure", effect: "execute", label: "在重新启用应用", description: "Start an installed app that was turned off, within the grants the owner already gave. An agent's request asks the owner." });
 add("service:apps", "apps.disable", "request", obj({ id: appId }, ["id"]), appInfo,
-  { risk: "structure", effect: "write", label: "停用应用", description: "Stop an app; its grants are kept so it can be turned on again." });
+  { risk: "structure", effect: "write", label: "在停用应用", description: "Stop an app; its grants are kept so it can be turned on again." });
 add("service:apps", "apps.revoke", "request", obj({ id: appId, need: nonempty }, ["id"]), appInfo,
-  { risk: "structure", effect: "write", label: "收回应用的权限", description: "Take back one need (need: a member id such as device:phone, or notify / widgets / card), or every grant when need is left out, which stops the app." });
+  { risk: "structure", effect: "write", label: "在收回应用的权限", description: "Take back one need (need: a member id such as device:<hand_id>, or notify / widgets / card), or every grant when need is left out, which stops the app." });
 add("service:apps", "apps.refresh", "request", empty, obj({ apps: array(appInfo) }, ["apps"]),
-  { label: "查找新应用", description: "Read /root/apps again: new apps appear, removed ones stop." });
+  { label: "在查找新应用", description: "Read /root/apps again: new apps appear, removed ones stop." });
 // Running apps: restart after editing, read what the server said, clear its data, remove it. No approval: they stay
 // within what the owner already granted, or narrow it.
 add("service:apps", "apps.restart", "request", obj({ id: appId }, ["id"]), obj({ id: appId, running: bool, problems: array(obj({}, [], true)) }, ["id", "running"], true),
-  { effect: "execute", label: "重启应用", description: "Restart an installed app's server so edits to its files (server.mjs, tools, app.json cards) take effect. It is checked first as apps.validate does: " +
+  { effect: "act", label: "在重启应用", description: "Restart an installed app's server so edits to its files (server.mjs, tools, app.json cards) take effect. It is checked first as apps.validate does: " +
     "a failing app is not restarted and the problems come back (error.detail.problems). If app.json's needs changed, use apps.install instead (the owner approves them). Pages need no restart." });
 add("service:apps", "apps.logs", "request", obj({ id: appId, lines: { type: "integer", minimum: 1, maximum: 400 } }, ["id"]),
   obj({ id: appId, running: bool, lines: strings, last_exit: { anyOf: [obj({ ts: nonnegativeSafe, code: { anyOf: [{ type: "integer" }, { type: "null" }] }, signal: { anyOf: [str, { type: "null" }] }, reason: str }, ["ts", "reason"], true), { type: "null" }] }, error: str },
     ["id", "running", "lines", "last_exit"]),
-  { label: "看应用日志", description: "An app's recent output: what its server wrote to stderr, protocol errors (anything but MCP on stdout), and Ash's notes on starts, exits and restarts (newest last, default 100 lines, at most 400). " +
+  { label: "在看应用日志", description: "An app's recent output: what its server wrote to stderr, protocol errors (anything but MCP on stdout), and Ash's notes on starts, exits and restarts (newest last, default 100 lines, at most 400). " +
     "last_exit says how the server last ended (exit code or signal); error is why it is not running, if Ash knows." });
 add("service:apps", "apps.reset", "request", obj({ id: appId }, ["id"]), obj({ id: appId, cleared: str }, ["id", "cleared"], true),
-  { effect: "write", label: "清空应用数据", description: "Empty the app's data folder (app.json data_dir, e.g. /root/apps/<id>/data) and restart it, so it starts over with no data; its cards redraw. " +
+  { effect: "write", label: "在清空应用数据", description: "Empty the app's data folder (app.json data_dir, e.g. /root/apps/<id>/data) and restart it, so it starts over with no data; its cards redraw. " +
     "Only for an app that declares data_dir. The owner's data is gone afterwards: do it only when the owner wants it, or for an app you are still building." });
 add("service:apps", "apps.remove", "request", obj({ id: appId, keep_data: bool }, ["id"]), obj({ id: appId, removed: bool, kept: { anyOf: [str, { type: "null" }] } }, ["id", "removed", "kept"]),
-  { effect: "write", label: "卸载应用", description: "Uninstall an app: stop it, drop everything the owner granted it and its home-screen cards, and delete its folder /root/apps/<id>/. " +
+  { effect: "write", label: "在卸载应用", description: "Uninstall an app: stop it, drop everything the owner granted it and its home-screen cards, and delete its folder /root/apps/<id>/. " +
     "keep_data: true keeps the folder (its data and files) so it can be installed again as it was. Ash's own apps cannot be removed (they come back): disable them instead." });
 // Writing apps: the contract to read, a skeleton to start from, and a check that says exactly what is wrong.
 const appProblem = obj({ level: choice("error", "warning"), where: str, problem: str, fix: str }, ["level", "where", "problem"]);
@@ -331,14 +708,14 @@ const appTool = obj({ name: { type: "string", pattern: "^[a-z][a-z0-9_.-]{0,63}$
 const appSurface = obj({ id: { type: "string", pattern: "^[a-z][a-z0-9-]{0,31}$" }, title: { type: "string", minLength: 1, maxLength: 20 } }, ["id", "title"]);
 add("service:apps", "apps.contract", "request", empty,
   obj({ contract: str, doc: str, doc_path: str, schema: obj({}, [], true), example: obj({ path: str, files: obj({}, [], true) }, ["path", "files"]) }, ["contract", "doc", "schema", "example"], true),
-  { label: "看应用契约", description: "The ash-app/1 contract for writing an app, in full (doc, markdown): app.json fields, how ash starts the server and talks to it, " +
+  { label: "在看应用契约", description: "The ash-app/1 contract for writing an app, in full (doc, markdown): app.json fields, how ash starts the server and talks to it, " +
     "pages (ui:// resources), tools, needs, events, entry cards. Also the app.json JSON Schema and a small runnable example app (hello: one page, one tool) with its files. " +
     "The same doc and example are in the container at doc_path and example.path." });
 add("service:apps", "apps.scaffold", "request", obj({ id: appId, name: { type: "string", minLength: 1, maxLength: 40 }, summary: { type: "string", minLength: 1, maxLength: 200 },
   role: { type: "string", minLength: 1, maxLength: 200 },
   surfaces: { type: "array", items: appSurface, minItems: 1, maxItems: 16 }, tools: { type: "array", items: appTool, minItems: 1, maxItems: 32 } }, ["id", "name"]),
   obj({ id: appId, path: str, files: strings, next: str }, ["id", "path", "files", "next"], true),
-  { effect: "write", label: "写应用骨架", description: "Write a new app's skeleton into /root/apps/<id>/ (app.json, a dependency-free server.mjs, one ui/<page>.html per surface, " +
+  { effect: "write", label: "在写应用骨架", description: "Write a new app's skeleton into /root/apps/<id>/ (app.json, a dependency-free server.mjs, one ui/<page>.html per surface, " +
     "shared ui/app.css and ui/app.js, icon.png). It runs as it is: a small working list in data.json with tools <id>.list, <id>.add, <id>.done (mark done/undone), <id>.remove, " +
     "a home-screen card (app.json cards: tool <id>.card draws it from the data, a tick on it calls <id>.card.tap) and a first page with the list and done/undone toggles. " +
     "Change them to what the app is about; tools you name besides those answer with a placeholder until you write them in server.mjs. " +
@@ -348,258 +725,32 @@ add("service:apps", "apps.scaffold", "request", obj({ id: appId, name: { type: "
     "No approval is needed: it only writes files. Then edit, apps.validate, and apps.install (the owner approves what it needs)." });
 add("service:apps", "apps.validate", "request", obj({ id: appId, path: { type: "string", minLength: 1, maxLength: 300 } }),
   obj({ id: str, path: str, ok: bool, problems: array(appProblem), tools: strings, surfaces: strings }, ["path", "ok", "problems", "tools", "surfaces"], true),
-  { label: "检查应用", description: "Check an app folder the way install will: app.json against the contract (each missing or wrong field by its path), " +
+  { label: "在检查应用", description: "Check an app folder the way install will: app.json against the contract (each missing or wrong field by its path), " +
     "the icon file, then a trial start of its server (it must start and speak MCP over stdio), its tools (names, input schemas) and every page " +
     "(each surface's ui:// resource must be served as HTML). Give id (the folder /root/apps/<id>) or path (/root/apps/<folder>). " +
     "ok is true when nothing would stop it from installing and opening; warnings are worth fixing but do not block. Nothing is installed or changed." });
-add("service:cost", "usage.recorded", "event", obj({ scope: choice("chat", "mind", "background", "title", "compaction", "review", "progress", "other"), provider: str, model: str,
-  input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe, cache_read_tokens: nonnegativeSafe, cache_write_tokens: nonnegativeSafe,
-  cost_usd: { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] }, cost_source: { anyOf: [str, { type: "null" }] }, ms: nonnegativeSafe, ok: bool, at: nonnegativeSafe },
-["scope", "provider", "model", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_usd", "cost_source", "ms", "ok"]), undefined,
-{ direction: "out", audience: "owner", description: "One model call as the DSH side measured it, priced from the installed model catalog; cost_usd is null when no price is known, never zero." });
-add("service:cost", "usage.get", "request", obj({ days: { type: "integer", minimum: 1, maximum: 90 } }), obj({}, [], true),
-  { audience: "owner", label: "看用量", description: "What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls." });
-add("service:cost", "balance.get", "request", empty, obj({}, [], true),
-  { audience: "owner", label: "看余额", description: "The provider account balance for the configured API key; fails rather than reporting zero when it cannot be read." });
-add("service:clock", "cancel", "request", obj({ id }, ["id"]), obj({ cancelled: bool }, ["cancelled"]));
-add("service:clock", "list", "request", empty, obj({ timers: array(any) }, ["timers"]));
-add("service:clock", "clock.fired", "event", obj({ timer_id: id, scheduled_at: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-  outcome: choice("dispatched", "skipped", "failed"), reason: str, request_id: id }, ["timer_id", "scheduled_at", "outcome"]), undefined,
-{ direction: "out", description: "Durable scheduled occurrence outcome; dispatched records router acceptance, not external completion." });
-add("service:post", "deliver", "request", obj({ message_id: id, kind: choice("reply", "offer", "heads_up", "approval", "due"), dedupe_key: deliveryDedupeKey }, ["message_id", "kind"]), obj({ channel: choice("inapp", "notification", "held", "dropped") }, ["channel"]), { audience: "owner" });
-add("service:post", "visible", "event", empty, undefined, { audience: "owner", description: "Presence from the authenticated screen only." });
-add("service:post", "hidden", "event", empty, undefined, { audience: "owner", description: "The authenticated screen left the foreground; deliveries notify again at once." });
-add("service:post", "post.changed", "event", obj({ held: { type: "integer", minimum: 0 } }, ["held"]), undefined, { direction: "out", audience: "owner", label: "更新待送达消息", description: "Authoritative current held-delivery count for the owner; never infer a count from deliver results." });
-add("service:post", "post.delivery", "event", obj({ message_id: id, state: choice("held", "released", "dropped") }, ["message_id", "state"]), undefined,
-  { direction: "out", audience: "owner", label: "更新消息是否可见", description: "Per-message chat visibility for a new offer or heads-up; released is in-app visibility, not a host notification." });
 
-/** Control frames do not have ledger seq or advance the stream cursor. */
-export const POST_DELIVERY_SNAPSHOT_SCHEMA_V2: JsonSchema = obj({
-  at_seq: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-  items: { type: "array", maxItems: 1000, items: obj({
-    message_id: id, state: choice("held", "released", "dropped"),
-    version_seq: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-  }, ["message_id", "state", "version_seq"]) },
-}, ["at_seq", "items"]);
+add("service:apps", "apps.surface", "request", obj({ id: appId, surface: { type: "string", pattern: "^[a-z][a-z0-9-]{0,31}$" } }, ["id", "surface"]),
+  obj({ id: appId, surface: str, mime: nonempty, html: str }, ["id", "surface", "mime"]),
+  { label: "在取应用页面", description: "The page resource of one of an app's surfaces (the ui:// resource its app.json lists), for a channel to show. Pages talk to the app through the bridge, not through this word." });
+add("service:apps", "apps.icon", "request", obj({ id: appId }, ["id"]), obj({ id: appId, mime: nonempty, data: str }, ["id", "mime", "data"]),
+  { label: "在取应用图标", description: "The icon file of an app (base64 in data), for a channel to show in its list of apps." });
 
-export function postDeliverySnapshotErrors(value: unknown): string[] {
-  if (!matchesSchema(POST_DELIVERY_SNAPSHOT_SCHEMA_V2, value)) return ["invalid snapshot shape"];
-  const snapshot = value as { at_seq: number; items: { message_id: string; version_seq: number }[] };
-  if (new Set(snapshot.items.map((item) => item.message_id)).size !== snapshot.items.length) return ["duplicate message_id"];
-  if (snapshot.items.some((item) => item.version_seq > snapshot.at_seq)) return ["version_seq exceeds at_seq"];
-  return [];
-}
-const gateRisk = choice("outward", "structure");
-const gateRule = obj({ id, subject: nonempty, device_id: id, capability_id: id, to: id, word: id, object_pattern: nonempty,
-  risk: choice("none", "outward", "structure"), contract_fingerprint: sha, created_at: nonnegativeSafe, expires_at: nonnegativeSafe, revoked_at: nonnegativeSafe },
-["id", "subject", "to", "word", "object_pattern", "risk", "contract_fingerprint", "created_at", "expires_at"]);
-// A word whose effect is not read is gated even when its legacy risk says none.
-const gateCurrentHistory = obj({ id, request_id: id, ask_id: id, subject: nonempty, to: id, word: id, risk: choice("none", "outward", "structure"),
-  decision: choice("once", "always", "deny", "timeout", "cancelled", "rule", "review", "carry", "device_full"), at: nonnegativeSafe, rule_id: id,
-  reason: { type: "string", maxLength: 500 }, label: { type: "string", maxLength: 120 }, source: { const: "current" } },
-["id", "request_id", "decision", "at", "source"]);
-const gateLegacyScope: JsonSchema = { type: "string", pattern: "^(\\*|device:[A-Za-z0-9_-]+/(\\*|[A-Za-z0-9_.-]+))$" };
-const gateLegacyHistory = obj({ id, subject: nonempty, to: id, word: id, risk: gateRisk,
-  decision: choice("legacy_unresolved", "legacy_approved", "legacy_denied", "legacy_expired", "legacy_cancelled",
-    "legacy_access_imported", "legacy_access_expired", "legacy_access_invalid"), at: nonnegativeSafe,
-  legacy_scope: gateLegacyScope, source: { const: "legacy" } }, ["id", "decision", "at", "source"]);
-const gateAccessScope: JsonSchema = { type: "string", pattern: "^device:[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$" };
-const gateAccessItem = obj({ id, member: { type: "string", pattern: "^agent:[A-Za-z0-9_-]+$" }, scope: gateLegacyScope,
-  source: choice("current", "legacy"), created_at: nonnegativeSafe, expires_at: nonnegativeSafe, revoked_at: nonnegativeSafe },
-["id", "member", "scope", "source", "created_at", "expires_at"]);
-// A current case always names its accepted request; a migrated row is never an actionable ask.
-add("service:gate", "rules.list", "request", obj({ before: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 100 } }),
-  obj({ rules: { type: "array", items: gateRule, maxItems: 100 }, next_before: positiveSafe, mode: choice("auto", "always") }, ["rules"]), { audience: "owner" });
-add("service:gate", "rules.revoke", "request", obj({ id }, ["id"]), obj({ revoked: bool }, ["revoked"]), { audience: "owner", risk: "structure", effect: "structure" });
-add("service:gate", "history", "request", obj({ before: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 1000 } }),
-  obj({ items: { type: "array", items: { oneOf: [gateCurrentHistory, gateLegacyHistory] }, maxItems: 1000 }, next_before: positiveSafe }, ["items"]), { audience: "owner" });
-// Evidence of every approval decision, for the owner and for an agent helping to look into one.
-const gateEvidence = obj({ request_id: id, at: nonnegativeSafe, requester: str, member: str, word: str, label: str, effect: str, turn: str,
-  content: str, facts: any, review: any, card: any, decision: str, decided_by: str, reason: str, rule_id: str, answered_at: any,
-  executed: any }, ["request_id", "at", "requester", "member", "word"], true);
-add("service:gate", "audit", "request", obj({ request_id: id, requester: str, word: str, decision: str, before: positiveSafe,
-  limit: { type: "integer", minimum: 1, maximum: 50 } }), obj({ entries: array(gateEvidence), next_before: any }, ["entries"]),
-  { label: "查审批记录", description: "Approval evidence, newest first: what was asked, the facts the reviewer saw and its verdict, the card shown, the owner's answer, and whether the action then ran." });
-// Changing approval rules always asks the owner when an agent asks for it; it is never covered by a rule, the mode or the reviewer.
-add("service:gate", "rules.set", "request", obj({ agent: { type: "string", pattern: "^agent:[a-z][a-z0-9_-]{0,31}$" }, member: id, word: id,
-  target: nonempty, days: { type: "integer", minimum: 1, maximum: 30 } }, ["agent", "member", "word"]), obj({ id, expires_at: nonnegativeSafe }, ["id", "expires_at"]),
-  { audience: "owner", risk: "structure", effect: "structure", label: "新增审批规则",
-    description: "Allow one agent to use one outside capability without asking, for up to 30 days, optionally only for one target (site:<host>, a calendar id, a recipient id, browse)." });
-add("service:gate", "mode.set", "request", obj({ mode: choice("auto", "always") }, ["mode"]), obj({ mode: choice("auto", "always") }, ["mode"]),
-  { audience: "owner", risk: "structure", effect: "structure", label: "改审批档位",
-    description: "Switch the approval mode: auto asks only when an outside action needs it; always asks about every outside action that is not a read." });
-add("service:gate", "access.list", "request", obj({ before: positiveSafe, limit: { type: "integer", minimum: 1, maximum: 100 } }),
-  obj({ items: { type: "array", items: gateAccessItem, maxItems: 100 }, next_before: positiveSafe }, ["items"]), { audience: "owner" });
-add("service:gate", "access.grant", "request", obj({ member: { type: "string", pattern: "^agent:[A-Za-z0-9_-]+$" }, scope: gateAccessScope }, ["member", "scope"]),
-  obj({ id, member: { type: "string", pattern: "^agent:[A-Za-z0-9_-]+$" }, scope: gateAccessScope, expires_at: nonnegativeSafe }, ["id", "member", "scope", "expires_at"]),
-  { audience: "owner", risk: "structure", effect: "structure" });
-add("service:gate", "access.revoke", "request", obj({ id }, ["id"]), obj({ revoked: bool }, ["revoked"]),
-  { audience: "owner", risk: "structure", effect: "structure" });
-add("service:gate", "gate.asked", "event", obj({ request_id: id, ask_id: id, risk: choice("none", "outward", "structure"), to: id, word: id,
-  expires_at: nonnegativeSafe }, ["request_id", "ask_id", "risk", "to", "word", "expires_at"]), undefined, { direction: "out" });
-// by review: the reviewer judged the action reversible or already asked for; carry: the same thing was allowed minutes ago.
-add("service:gate", "gate.passed", "event", obj({ request_id: id, by: choice("rule", "answer", "review", "carry", "device_full"), rule_id: id, ask_id: id,
-  reason: { type: "string", minLength: 1, maxLength: 500 } }, ["request_id", "by"]), undefined, { direction: "out" });
-add("service:gate", "gate.denied", "event", obj({ request_id: id, by: choice("answer", "timeout"), ask_id: id },
-  ["request_id", "by"]), undefined, { direction: "out" });
+// ===================================================================================================================
+// the list
+// ===================================================================================================================
+/** Every service word, owner word, agent word and event, in the order written above. */
+export const WORD_CONTRACTS: readonly WordContract[] = Object.freeze(entries.map((entry) => Object.freeze(entry)));
 
-add("service:self", "read", "request", obj({ path: selfPathRequest }, ["path"]), obj({ content: str, hash: sha, version: integer }, ["content", "hash"]));
-add("service:self", "write", "request", obj({ path: selfPathRequest, content: str, why: str, expected_hash: { anyOf: [sha, { type: "null" }] } }, ["path", "content", "why", "expected_hash"]), obj({ hash: sha, version: integer }, ["hash"]), { label: "改资料", description: "Write a managed file with its exact baseline hash; null only creates a new file." });
-add("service:self", "append", "request", obj({ path: selfPathRequest, text: str }, ["path", "text"]), obj({ hash: sha }, ["hash"]), { label: "记日志", description: "Atomically append to any allowed dated log." });
-add("service:self", "apply_plan", "request", obj({ path: selfPathRequest, expected_hash: sha, edits: array(edit) }, ["path", "expected_hash", "edits"]), obj({ applied: integer, hash: sha }, ["applied", "hash"]));
-add("service:self", "rollback", "request", obj({ path: selfPathRequest, to_ts: num, expected_hash: sha }, ["path", "to_ts", "expected_hash"]), empty, { risk: "structure", effect: "write" });
-add("service:self", "history", "request", obj({ path: selfPathRequest }, ["path"]), obj({ versions: array(any) }, ["versions"]));
-add("service:self", "self.changed", "event", obj({ path: selfPath, by: id, summary: str, version: integer }, ["path", "by", "summary"]), undefined, { direction: "out" });
+/** The member a concrete id belongs to in the list: every agent id is `agent:*`, every app `app:*`. */
+const contractMember = (member: string): string => (AGENT_ID.test(member) ? "agent:*" : member.startsWith("app:") ? "app:*" : member);
 
-const calendarEvent = obj({ id, title: str, start: num, end: num, important: bool }, ["id", "title", "start", "end"]);
-add("service:senses", "sense.calendar", "event", obj({ kind: choice("upcoming", "changed"), event: calendarEvent }, ["kind", "event"]), undefined, { audience: "owner" });
-add("service:senses", "sense.battery", "event", obj({ level: { type: "number", minimum: 0, maximum: 100 } }, ["level"]), undefined, { audience: "owner" });
-add("service:senses", "sense.screen", "event", obj({ state: choice("on", "app_open"), away_ms: { type: "number", minimum: 0 } }, ["state", "away_ms"]), undefined, { audience: "owner" });
-add("service:senses", "sense.notification", "event", obj({ app: str, title: str, text: str }, ["app", "title", "text"]), undefined, { audience: "owner" });
-// Batched facts from the phone's sensing companion. A batch_id makes a redelivered batch idempotent; time is epoch milliseconds.
-export const SENSE_BATCH_MAX = 500;
-export const ACTIVITY_STATES = ["still", "walking", "running", "cycling", "in_vehicle"] as const;
-const senseText = (max: number, min = 1): JsonSchema => ({ type: "string", minLength: min, maxLength: max });
-const senseBatch = (item: JsonSchema): JsonSchema => obj({
-  batch_id: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
-  items: { type: "array", items: item, minItems: 1, maxItems: SENSE_BATCH_MAX },
-}, ["batch_id", "items"]);
-add("service:senses", "sense.location", "event", senseBatch(obj({ ts: nonnegativeSafe, lat: { type: "number", minimum: -90, maximum: 90 },
-  lon: { type: "number", minimum: -180, maximum: 180 }, accuracy_m: { type: "number", minimum: 0, maximum: 1_000_000 }, provider: senseText(32), is_mocked: bool },
-  ["ts", "lat", "lon", "accuracy_m", "provider"])), undefined, { audience: "owner" });
-add("service:senses", "sense.activity", "event", senseBatch(obj({ ts_start: nonnegativeSafe, ts_end: nonnegativeSafe, state: choice(...ACTIVITY_STATES) },
-  ["ts_start", "state"])), undefined, { audience: "owner" });
-add("service:senses", "sense.health", "event", senseBatch(obj({ ts: nonnegativeSafe, metric: senseText(64), value: num, unit: senseText(32, 0), source: senseText(128) },
-  ["ts", "metric", "value", "unit", "source"])), undefined, { audience: "owner" });
-add("service:senses", "sense.geofence", "event", obj({ name: senseText(64), transition: choice("enter", "exit"), ts: nonnegativeSafe }, ["name", "transition", "ts"]),
-  undefined, { audience: "owner" });
-add("service:senses", "sense.source", "event", obj({ source: senseText(64), state: choice("stale", "fresh"), ts: nonnegativeSafe,
-  stale_hours: { type: "integer", minimum: 1, maximum: 720 }, summary: senseText(200), last_data_ts: nonnegativeSafe },
-  ["source", "state", "ts", "stale_hours", "summary"]), undefined,
-  { audience: "owner", description: "A health source on the phone stopped bringing new readings for stale_hours (sent once), or they came back. last_data_ts is its newest reading; summary is plain Chinese for the owner." });
-add("service:reflex", "reflex.judged", "event", obj({ message_id: id, stage: choice("keyword", "jev"), intent: str, confidence: { type: "number", minimum: 0, maximum: 1 }, acted: bool,
-  fallback: choice("timeout", "unavailable", "invalid", "error"), fallback_ms: { type: "integer", minimum: 0 } }, ["message_id", "stage", "intent", "confidence", "acted"]), undefined,
-  { direction: "out", description: "One reflex decision. fallback says why JEV was asked but the keyword rule decided." });
-add("service:reflex", "task.stop", "request", obj({ turn: id }, ["turn"]), obj({ cancelled: bool }, ["cancelled"]),
-  { audience: "owner", timeout_ms: 3000, description: "Stop only the owner's explicitly selected current task, never a newer turn." });
-add("service:reflex", "task.end", "request", obj({ turn: id, pending_ids: { type: "array", items: id, maxItems: 100, uniqueItems: true } }, ["turn", "pending_ids"]),
-  obj({ ended: bool }, ["ended"]), { audience: "owner", timeout_ms: 5000, description: "End the selected capsule interaction: stop its current turn and withdraw only the explicitly displayed pending requests. Never stop a newer turn." });
-add("service:reflex", "before_turn", "request", obj({ turn: id }, ["turn"]), obj({ captured: bool,
-  captures: array(obj({ route: id, state: { type: "object" } }, ["route", "state"])) }, ["captured"]),
-  { audience: "owner", timeout_ms: 10000, description: "Internal bounded pre-run capture and execution-screen judgment for peripheral decision routes." });
-add("service:reflex", "surface.get", "request", obj({}), obj({ home_visible: bool, page_live: bool, visibility_epoch: nonnegativeSafe, virtual_available: bool },
-  ["home_visible", "page_live", "visibility_epoch"]), { audience: "owner", timeout_ms: 2000 });
-add("service:reflex", "screen.get", "request", obj({}), obj({ foreground_package: str, state_epoch: nonnegativeSafe,
-  virtual_generation: nonnegativeSafe, virtual_owner_turn: str, virtual_open: bool },
-  ["foreground_package", "state_epoch", "virtual_generation", "virtual_owner_turn", "virtual_open"]), { audience: "owner", timeout_ms: 3000 });
-add("service:reflex", "screen.return", "request", obj({ expected_package: str, expected_state_epoch: nonnegativeSafe, decision_id: id },
-  ["expected_package", "expected_state_epoch", "decision_id"]), obj({ acted: bool }, ["acted"]), { audience: "owner", timeout_ms: 3000 });
-add("service:reflex", "virtual.close", "request", obj({ expected_generation: nonnegativeSafe, owner_turn: id, decision_id: id },
-  ["expected_generation", "owner_turn", "decision_id"]), obj({ acted: bool }, ["acted"]), { audience: "owner", timeout_ms: 10000 });
-const decisionMeta = { decision_id: id, route: id, route_version: positiveSafe, trigger_id: id };
-add("service:reflex", "decision.started", "event", obj({ ...decisionMeta, evidence_ids: array(id), state_fingerprint: sha },
-  ["decision_id", "route", "route_version", "trigger_id", "evidence_ids", "state_fingerprint"]), undefined, { direction: "out" });
-add("service:reflex", "decision.judged", "event", obj({ ...decisionMeta, outcome: { type: "object" }, stage: str,
-  confidence: { type: "number", minimum: 0, maximum: 1 }, fallback: str, latency_ms: nonnegativeSafe },
-  ["decision_id", "route", "route_version", "trigger_id", "outcome", "stage", "latency_ms"]), undefined, { direction: "out" });
-add("service:reflex", "decision.applied", "event", obj({ ...decisionMeta, outcome: { type: "object" }, acted: bool, skipped: str, effects: array(str) },
-  ["decision_id", "route", "route_version", "trigger_id", "acted"]), undefined, { direction: "out" });
-add("service:work", "run", "request", obj({ flow: workName }, ["flow"]), obj({ run: workRunId }, ["run"]), { audience: "owner" });
-add("service:work", "runs", "request", obj({ flow: workName, limit: { type: "integer", minimum: 1, maximum: 100 } }),
-  obj({ runs: { type: "array", items: workRunInfo, maxItems: 100 } }, ["runs"]), { audience: "owner" });
-add("service:work", "run.start", "event", obj({ run: workRunId, flow: workName, trigger: choice("manual", "cooldown", "hourly", "event") }, ["run", "flow", "trigger"]), undefined, { direction: "out" });
-add("service:work", "run.end", "event", obj({ run: workRunId, outcome: choice("done", "no_change", "failed"), detail: workReason }, ["run", "outcome", "detail"]), undefined, { direction: "out" });
-add("service:work", "run.step", "event", obj({ run: workRunId, step: workName, state: choice("started", "done", "failed", "skipped") }, ["run", "step", "state"]), undefined,
-  { direction: "out", description: "Pure-code step lifecycle for a background run; metadata only, never step content." });
-
-/** JSON Schema checks the item shape; this enforces the temporal invariant on readback. */
-export function workRunsResultErrors(value: unknown): string[] {
-  const schema = wordContract("service:work", "runs")?.result_schema;
-  if (!schema || !matchesSchema(schema, value)) return ["invalid runs result shape"];
-  const runs = (value as { runs: { state: string; started_at: number; ended_at: number | null }[] }).runs;
-  return runs.flatMap((run, index) => run.state === "running"
-    ? (run.ended_at === null ? [] : [`runs[${index}]: running has ended_at`])
-    : (run.ended_at !== null && run.ended_at >= run.started_at ? [] : [`runs[${index}]: terminal ended_at invalid`]));
-}
-
-/** The run identity is the ledger turn; callers must not prepend another r_. */
-export function workRunTurn(run: string): string {
-  if (!matchesSchema(workRunId, run)) throw new TypeError("invalid work run id");
-  return run;
-}
-
-const worker = (name: string, input: JsonSchema, normal: JsonSchema) => add(`worker:${name}`, name, "request", obj({ input, run: id }, ["input", "run"]), workerResult(normal), { audience: "owner", description: "One tool-free model judgment with validated structured output." });
-worker("extract", obj({ chunk: array(message), summary: str, known: strings }, ["chunk", "summary", "known"]), obj({ claims: array(claim) }, ["claims"]));
-worker("verify_claims", obj({ claims: array(claim), evidence: array(message) }, ["claims", "evidence"]), obj({ verdicts: array(obj({ i: integer, lens: choice("refute", "grounded"), pass: bool, confidence: { type: "number", minimum: 0, maximum: 1 }, why: str }, ["i", "lens", "pass", "confidence", "why"])) }, ["verdicts"]));
-worker("reconcile", obj({ file: choice("MEMORY.md", "USER.md"), numbered: str, claims: array(claim) }, ["file", "numbered", "claims"]), obj({ edits: array(edit) }, ["edits"]));
-worker("verify_plan", obj({ file: choice("MEMORY.md", "USER.md"), before: str, edits: array(edit), evidence: array(message) }, ["file", "before", "edits"]), obj({ verdicts: array(obj({ i: integer, lens: choice("evidence", "temporal", "preservation"), pass: bool, why: str }, ["i", "lens", "pass", "why"])) }, ["verdicts"]));
-worker("proactive", obj({ prefs: str, recent: array(message), facts: array(obj({ n: integer, text: str }, ["n", "text"])), upcoming: array(any), delivered: array(any) }, ["prefs", "recent", "facts", "upcoming", "delivered"]), obj({ suggestion: obj({ kind: choice("offer", "heads_up"), title: str, text: str, urgency: choice("regular", "high"), facts: array(integer) }, ["kind", "title", "text", "urgency", "facts"]) }, ["suggestion"]));
-worker("opener", obj({ away_ms: num, last_topic: str, pending: array(any), changes: array(any) }, ["away_ms", "last_topic", "pending", "changes"]), obj({ speak: bool, why: str, hint: str }, ["speak", "why"]));
-
-// Management bodies retain the current extension payloads until the edge migrates.
-for (const [word, input, result] of [
-  ["settings.get", empty, obj({}, [], true)], ["settings.set", obj({}, [], true), obj({}, [], true)],
-  ["plugins.list", empty, obj({}, [], true)], ["plugins.op", { oneOf: [
-    obj({ op: choice("enable", "disable"), name: nonempty }, ["op", "name"]),
-    obj({ op: { const: "plugin" }, id: nonempty, enabled: bool }, ["op", "id", "enabled"]),
-  ] }, obj({}, [], true)],
-  ["gateway.state", empty, obj({}, [], true)], ["gateway.op", { oneOf: [
-    obj({ op: { const: "approve" }, request_id: nonempty,
-      permissions: array(choice("chat", "read_status", "cancel_own_task", "request_sensitive_action", "expose_capability", "web_ui")) },
-    ["op", "request_id", "permissions"]),
-    obj({ op: { const: "reject" }, request_id: nonempty }, ["op", "request_id"]),
-    obj({ op: { const: "revoke" }, device: { type: "string", pattern: "^device:[A-Za-z0-9_-]+$" } }, ["op", "device"]),
-    obj({ op: { const: "sync" } }, ["op"]),
-    // A short-lived one-time code a new browser or computer presents; the phone still asks the owner before anything is granted.
-    obj({ op: { const: "ticket" } }, ["op"]),
-  ] }, obj({}, [], true)],
-  ["model.set", obj({ provider: nonempty, model: nonempty }, ["provider", "model"]),
-    obj({ provider: nonempty, model: nonempty, restart_required: bool }, ["provider", "model", "restart_required"])],
-] as [string, JsonSchema, JsonSchema][]) add("service:admin", word, "request", input, result, { audience: "owner", ...(word === "plugins.op" || word === "gateway.op" ? { risk: "structure" as const, effect: "structure" as const } : { risk: "none" as const }), description: "Local owner administration; never available to a remote screen." });
-add("service:admin", "pause", "request", { oneOf: [empty, obj({ by: id }, ["by"]) ] },
-  obj({ paused: { const: true } }, ["paused"]), { audience: "owner", description: "Durably pause activity; a trusted local reflex may cite one authenticated owner message once." });
-add("service:admin", "resume", "request", obj({ confirmed: { const: true } }, ["confirmed"]),
-  obj({ paused: { const: false } }, ["paused"]), { audience: "owner", description: "Resume only after explicit confirmation on a verified local owner screen." });
-
-export const WORD_CONTRACTS: readonly WordContract[] = Object.freeze(entries);
-/** An agent member id: agent:main is the one the owner talks with; the others are declared. */
-export const AGENT_ID = /^agent:[a-z][a-z0-9_-]{0,31}$/;
+/** The contract of a word on a member (an agent id finds the `agent:*` words). */
 export function wordContract(member: string, word: string): WordContract | undefined {
-  // Every agent speaks the same words; they are written once under the main agent.
-  return WORD_CONTRACTS.find((item) => item.word === word && (item.member === member || (item.member === "screen:*" && /^screen:[^:]+$/.test(member)) ||
-    (item.member === "agent:main" && AGENT_ID.test(member))));
+  const key = contractMember(member);
+  return WORD_CONTRACTS.find((item) => item.member === key && item.word === word);
 }
-export function deviceWordSpec(capability: { name: string; description: string; input_schema: JsonSchema; result_schema?: JsonSchema; risk: "none" | "outward" | "structure"; effect?: WordEffect; label: string }): WordSpec {
-  if (typeof capability.name !== "string" || !capability.name.trim() || typeof capability.description !== "string" || !capability.description.trim() || typeof capability.label !== "string" || !capability.label.trim() || !["none", "outward", "structure"].includes(capability.risk)) throw new TypeError("device capability needs valid name, description, risk and label");
-  if (capability.effect !== undefined && !isWordEffect(capability.effect)) throw new TypeError("device capability effect must be read, act, write, send, execute or structure");
-  if (!capability.input_schema || typeof capability.input_schema !== "object" || Array.isArray(capability.input_schema) || capability.input_schema.type !== "object") throw new TypeError("device capability needs an object input schema");
-  // Full externally supplied JSON Schemas must be compiled by a standards-compliant validator at registration.
-  return { word: capability.name, kind: "request", description: capability.description, input_schema: capability.input_schema, result_schema: capability.result_schema ?? obj({}, [], true), risk: capability.risk, ...(capability.effect ? { effect: capability.effect } : {}), label: capability.label, audience: "all" };
-}
-
-/** Cross-field checks that JSON Schema alone cannot express for a choice card. */
-export function cardErrors(card: Card): string[] {
-  if (!matchesSchema(CARD_SCHEMA, card)) return ["card schema mismatch"];
-  if (card.type !== "options") return [];
-  const ids = card.options.map((option) => option.id);
-  return [
-    ...(new Set(ids).size === ids.length ? [] : ["duplicate option id"]),
-    ...(ids.includes("__custom") ? ["reserved option id"] : []),
-  ];
-}
-
-/** Static shape only; pending/expiry/first-answer checks belong to the router transaction. */
-export function optionReplyErrors(body: { text?: unknown; in_reply_to?: unknown; option_id?: unknown }): string[] {
-  const hasReply = body.in_reply_to !== undefined;
-  const hasOption = body.option_id !== undefined;
-  if (hasReply !== hasOption) return ["in_reply_to and option_id must appear together"];
-  if (hasReply && (typeof body.in_reply_to !== "string" || !body.in_reply_to || typeof body.option_id !== "string" || !body.option_id || typeof body.text !== "string")) return ["invalid option reply"];
-  return [];
-}
-
-/** Cross-field checks a phone sense body needs beyond its schema: an activity segment cannot end before it starts. */
-export function senseBodyErrors(word: string, body: Record<string, unknown>): string[] {
-  if (word !== "sense.activity" || !Array.isArray(body.items)) return [];
-  return (body.items as { ts_start?: unknown; ts_end?: unknown }[]).flatMap((item, index) =>
-    typeof item.ts_end === "number" && typeof item.ts_start === "number" && item.ts_end < item.ts_start ? [`items[${index}]: ends before it starts`] : []);
-}
+/** All words of one member (use the id, or the starred form). */
+export const wordsOf = (member: string): WordContract[] => WORD_CONTRACTS.filter((item) => item.member === contractMember(member));
+/** The services that have words, in the order they are written in this file. */
+export const SERVICE_NAMES: readonly string[] = Object.freeze([...new Set(WORD_CONTRACTS.map((item) => item.member).filter((member) => member.startsWith("service:")))]);

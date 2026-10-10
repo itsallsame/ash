@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { Ledger } from "../../src/world/ledger";
 import { WorldMembers } from "../../src/world/member";
 import { RouterError, WorldRouter, type TrustedRouteContext } from "../../src/world/router";

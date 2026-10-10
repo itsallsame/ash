@@ -7,7 +7,7 @@ import {
   type PostDeliverySnapshotV2, type ScreenRegistration, type SendRequestV2, type SendResultV2,
   type StreamPageEndV2,
 } from "./api";
-import { postDeliverySnapshotErrors } from "./words";
+import { postDeliverySnapshotErrors } from "./legacy/words";
 
 export type StreamFrameV2 =
   | { type: "scope"; scope: string }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { matchesSchema } from "../../../sdk/src/schema";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { WidgetsMember, type WidgetState } from "../../src/members/widgets";
 import { Ledger } from "../../src/world/ledger";
 import { WorldMembers } from "../../src/world/member";

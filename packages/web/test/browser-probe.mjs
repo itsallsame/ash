@@ -12,7 +12,7 @@ import { WorldMembers } from "../../core/src/world/member.ts";
 import { EdgeRouter, startEdgeServer } from "../../core/src/server.ts";
 import { PostPresenceMember } from "../../core/src/members/post.ts";
 import { AgentStatus } from "../../core/src/members/agent-status.ts";
-import { wordContract } from "../../sdk/src/words.ts";
+import { wordContract } from "../../sdk/src/legacy/words.ts";
 
 const directory = mkdtempSync(join(tmpdir(), "ash-ui-browser-"));
 const ledger = await Ledger.open(join(directory, "ledger.db"));

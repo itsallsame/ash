@@ -1,4 +1,5 @@
 import { LIMITS, type LinkChannel, type StreamFrame } from "../../sdk/src/link";
+import type { ErrorCode } from "../../sdk/src/message";
 import { newId } from "./codec";
 
 const SLICE = 0x8000;
@@ -85,7 +86,7 @@ export class StreamReceiver {
   /** Forgets everything half-received (the connection is gone). */
   reset(): void { this.open.clear(); }
 
-  private fail(sid: string, code: string, message: string): void {
+  private fail(sid: string, code: ErrorCode, message: string): void {
     this.open.delete(sid);
     this.o.send({ t: "stream", sid, op: "error", code, message });
     this.o.onBroken?.(sid, code, message);

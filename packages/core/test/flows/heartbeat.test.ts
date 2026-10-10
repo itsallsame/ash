@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { heartbeatFlow } from "../../src/flows/heartbeat";
 import { createSelfMember } from "../../src/members/self";
 import { WorkMember } from "../../src/members/work";

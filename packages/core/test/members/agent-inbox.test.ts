@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { eventually, STUCK_MS } from "../fixtures/wait";
 import type { Message } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { createAgentMember, type AgentTurnInput, type AgentTurnRunner } from "../../src/members/agent";
 import { DEFAULT_TURN_TEXT_BUDGET, TurnTextBudgetError, renderTurnBatch } from "../../src/members/agent-render";
 import { Ledger } from "../../src/world/ledger";

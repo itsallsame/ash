@@ -1,7 +1,7 @@
 // Pure ledger projection. _records contains only selected display-safe facts,
 // never tool arguments, raw results, credentials, or stream control frames.
 import { isMessageSummaryV2 } from "../../sdk/src/api.ts";
-import { postDeliverySnapshotErrors } from "../../sdk/src/words.ts";
+import { postDeliverySnapshotErrors } from "../../sdk/src/legacy/words.ts";
 import { faceForStatus } from "./presence.js";
 import { activityAction, activityResult, activityText, ActivitySteps } from "../../sdk/src/activity.ts";
 

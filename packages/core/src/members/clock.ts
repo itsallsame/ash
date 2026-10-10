@@ -1,6 +1,6 @@
 import type { ClockFiredBodyV2, Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
 import { matchesSchema } from "../../../sdk/src/schema";
-import { AGENT_ID, wordContract } from "../../../sdk/src/words";
+import { AGENT_ID, wordContract } from "../../../sdk/src/legacy/words";
 import type { Member } from "../world/member";
 import type { Ledger, RequestContextSnapshot } from "../world/ledger";
 import { ClockJournal, type ClockFire, type ClockPayload, type ClockTimer } from "../world/clock-journal";

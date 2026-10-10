@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { GateHistoryItemV2, GateRuleItemV2 } from "../src/api";
 import { matchesSchema } from "../src/schema";
-import { deviceWordSpec, wordContract, wordEffect, WORD_CONTRACTS } from "../src/words";
+import { deviceWordSpec, wordContract, wordEffect, WORD_CONTRACTS } from "../src/legacy/words";
 
 const rule: GateRuleItemV2 = { id: "rule_1", subject: "agent:main", device_id: "device:isolated",
   capability_id: "message.send", to: "device:isolated", word: "message.send", object_pattern: "550e8400-e29b-41d4-a716-446655440000",

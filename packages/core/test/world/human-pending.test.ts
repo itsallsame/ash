@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { eventually, STUCK_MS } from "../fixtures/wait";
 import type { Message } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { AgentMcpServer } from "../../src/agent-mcp/server";
 import { OwnerMember } from "../../src/members/owner";
 import { GateMember } from "../../src/members/gate";

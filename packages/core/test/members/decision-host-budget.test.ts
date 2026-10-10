@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 import { HostDeviceLink } from "../../src/host-v2";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 
 test("decision RPC budgets cover native settling/acknowledgment and still honor cancellation", async () => {
   const host = createServer((req, res) => {

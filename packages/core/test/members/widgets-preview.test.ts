@@ -11,7 +11,7 @@ import { OwnerMember } from "../../src/members/owner";
 import { Ledger } from "../../src/world/ledger";
 import { WorldMembers } from "../../src/world/member";
 import { WorldRouter, type TrustedRouteContext } from "../../src/world/router";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import { matchesSchema } from "../../../sdk/src/schema";
 
 const agent: TrustedRouteContext = { member: "agent:main", transport: "agent", transportPrincipal: "agent:main", local: true, remote: false, ownerProxy: false };

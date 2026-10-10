@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { serviceLabel } from "../../../sdk/src/labels";
-import { WORD_CONTRACTS, wordContract, wordEffect } from "../../../sdk/src/words";
+import { WORD_CONTRACTS, wordContract, wordEffect } from "../../../sdk/src/legacy/words";
 import { MAIN_RULES } from "../../src/workers/rules.generated";
 import { HEARTBEAT_TEMPLATE, PULSE_TEMPLATE } from "../../src/prompts/persona.generated";
 // @ts-expect-error plain ESM plugin shipped beside the package

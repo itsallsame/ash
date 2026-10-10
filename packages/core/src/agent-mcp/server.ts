@@ -7,7 +7,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListResourcesRequestSchema, ListResourceTemplatesRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
-import { AGENT_ID, AGENT_RUNTIME_SCHEMA } from "../../../sdk/src/words";
+import { AGENT_ID, AGENT_RUNTIME_SCHEMA } from "../../../sdk/src/legacy/words";
 import { DEVICE_WORDS, deviceToolName } from "../../../sdk/src/device-words";
 import type { Ledger } from "../world/ledger";
 import type { WorldMembers } from "../world/member";

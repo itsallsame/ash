@@ -1,5 +1,5 @@
 import type { Message, ResponseBody, WordSpec, WorkerName, WorkerRequest } from "../../../sdk/src/api";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 import type { Member, WorldMembers } from "../world/member";
 import type { RouteHandlerContext } from "../world/router";
 import { compileWorker } from "./compile";

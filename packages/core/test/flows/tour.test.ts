@@ -8,7 +8,7 @@ import { WorkMember } from "../../src/members/work";
 import { Ledger } from "../../src/world/ledger";
 import { WorldMembers } from "../../src/world/member";
 import { WorldRouter } from "../../src/world/router";
-import { wordContract } from "../../../sdk/src/words";
+import { wordContract } from "../../../sdk/src/legacy/words";
 
 const dayMs = 86_400_000;
 const wait = async (done: () => boolean) => {
