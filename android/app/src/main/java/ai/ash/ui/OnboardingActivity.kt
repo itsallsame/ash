@@ -46,7 +46,9 @@ class OnboardingActivity : Activity() {
     private val reader = Executors.newSingleThreadExecutor { Thread(it, "ash-onboarding-read").apply { isDaemon = true } }
     private val skipped = mutableSetOf<OnboardingStep>()
     private var loaded: Loaded? = null
-    private var loading = false
+    /** A read is under way (set on the main thread, cleared by the reading thread whatever happens). */
+    @Volatile private var loading = false
+    private val tick = Runnable { reload() }
     private var startsTried = 0
     private var lastStart = 0L
     /** While the kernel package downloads or waits for the owner's confirmation: what to say. */
@@ -110,7 +112,7 @@ class OnboardingActivity : Activity() {
     }
 
     override fun onPause() {
-        ui.removeCallbacksAndMessages(null)
+        ui.removeCallbacks(tick)
         super.onPause()
     }
 
@@ -126,15 +128,17 @@ class OnboardingActivity : Activity() {
 
     /** Reads the kernel package and `config.status` (which may wait on Health Connect, so not on the main thread). */
     private fun reload() {
-        ui.removeCallbacksAndMessages(null)
+        ui.removeCallbacks(tick)
         if (!loading) {
             loading = true
             reader.execute {
-                val read = runCatching { Loaded(KernelLauncher.state(this), items()) }.getOrNull()
-                ui.post { loading = false; if (read != null && !isDestroyed) { loaded = read; keepKernelUp(read.kernel); render() } }
+                try {
+                    val read = runCatching { Loaded(KernelLauncher.state(this), items()) }.getOrNull()
+                    ui.post { if (read != null && !isDestroyed) { loaded = read; keepKernelUp(read.kernel); render() } }
+                } finally { loading = false }
             }
         }
-        ui.postDelayed(::reload, 1000)
+        ui.postDelayed(tick, 1000)
     }
 
     /** `config.status`, the keep-alive switches the phone keeps, and whether Ash may bring its accessibility back by itself. */

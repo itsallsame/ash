@@ -18,14 +18,19 @@ object OnboardingPlan {
     private const val GRANTED = "granted"
     private const val UNSUPPORTED = "unsupported"
 
-    /** Step 3 (the system's two special accesses, plus the grant that lets Ash bring the first back after an upgrade). */
-    private val SCREEN_ACCESS = listOf("accessibility", "notification_listener", "screen_recovery")
+    /** Step 3: the system's two special accesses. */
+    private val SCREEN_ACCESS = listOf("accessibility", "notification_listener")
+    /**
+     * The grant that lets Ash bring the accessibility service back after an upgrade. It is shown in step 3 but never holds
+     * the step: an ordinary owner cannot give it (it takes a computer or Shizuku).
+     */
+    private const val RECOVERY_GRANT = "screen_recovery"
     /** Step 4 (optional by nature: Ash works without the senses). */
     private val SENSES = listOf("location", "location_background", "activity_recognition", "health")
 
     /** The step an item belongs to; everything else the owner sets is step 2. */
     fun stepOf(item: String): OnboardingStep = when (item) {
-        in SCREEN_ACCESS -> OnboardingStep.SCREEN_ACCESS
+        in SCREEN_ACCESS, RECOVERY_GRANT -> OnboardingStep.SCREEN_ACCESS
         in SENSES -> OnboardingStep.SENSES
         else -> OnboardingStep.PERMISSIONS
     }
@@ -39,7 +44,7 @@ object OnboardingPlan {
     fun complete(step: OnboardingStep, kernel: KernelState, rows: List<Row>): Boolean = when (step) {
         OnboardingStep.KERNEL -> kernel == KernelState.BOUND
         OnboardingStep.DONE -> false
-        else -> rows(step, kernel, rows).all(::done)
+        else -> rows(step, kernel, rows).all { done(it) || it.item == RECOVERY_GRANT }
     }
 
     /** The first step that is not over and not skipped; [OnboardingStep.DONE] when none is left. */

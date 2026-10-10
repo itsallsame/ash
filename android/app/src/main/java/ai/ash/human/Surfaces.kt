@@ -1,6 +1,7 @@
 package ai.ash.human
 
 import ai.ash.host.AppState
+import ai.ash.host.BackgroundLaunch
 import ai.ash.host.HandRuntime
 import ai.ash.host.Present
 import ai.ash.host.TaskStatus
@@ -53,9 +54,8 @@ internal object Surfaces {
 internal class HomeLauncher(private val ctx: Context) : ChatBridge.ChatUi {
     override fun bringToFront(): Boolean {
         if (AppState.homeVisible) return true
-        return try {
-            ctx.startActivity(Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
-            true
-        } catch (_: Exception) { false }
+        // From the background the system drops the start unless Ash is exempt; then a notice the owner taps brings it up (and this is not yet "in front").
+        return BackgroundLaunch.start(ctx, Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            "Ash 想让你看一下", "点这里回到 Ash") == BackgroundLaunch.Route.DIRECT
     }
 }

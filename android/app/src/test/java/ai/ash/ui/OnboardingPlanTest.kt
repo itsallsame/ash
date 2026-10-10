@@ -33,10 +33,11 @@ class OnboardingPlanTest {
         assertEquals(DONE, step())
     }
 
-    @Test fun keepAliveSwitchesAreStepTwoAndRecoveryGrantIsStepThree() {
+    @Test fun keepAliveSwitchesAreStepTwoAndRecoveryGrantIsShownInStepThreeButDoesNotHoldIt() {
         assertEquals(PERMISSIONS, step(rows = rows("autostart")))
         assertEquals(PERMISSIONS, step(rows = rows("recents_lock")))
-        assertEquals(SCREEN_ACCESS, step(rows = rows("screen_recovery")))
+        assertEquals(DONE, step(rows = rows("screen_recovery")))
+        assertEquals(SCREEN_ACCESS, step(rows = rows("screen_recovery", "accessibility")))
     }
 
     @Test fun whatThePhoneCannotHaveDoesNotHoldTheGuide() {

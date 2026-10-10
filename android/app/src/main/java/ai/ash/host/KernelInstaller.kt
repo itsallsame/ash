@@ -30,7 +30,6 @@ object KernelInstaller {
 
     /** The package's address; empty when this build has none (then the owner installs the kernel package another way). */
     val url: String get() = BuildConfig.KERNEL_APK_URL
-    private val sha256: String get() = BuildConfig.KERNEL_APK_SHA256
 
     val configured: Boolean get() = url.startsWith("https://")
 
@@ -66,13 +65,13 @@ object KernelInstaller {
                 }
             } }
         } finally { conn.disconnect() }
-        check(part.renameTo(target) || target.exists()) { "could not keep the download" }
+        target.delete()
+        check(part.renameTo(target)) { "could not keep the download" }
         return target
     }
 
     /** Why [apk] must not be installed, or null when it may be. */
     fun problem(ctx: Context, apk: File): String? {
-        if (sha256.isNotEmpty() && !sha256.equals(sha256Of(apk), ignoreCase = true)) return "下载的内核包校验不通过"
         val info = ctx.packageManager.getPackageArchiveInfo(apk.path, SIGNERS) ?: return "下载的文件不是安装包"
         if (info.packageName != KernelLauncher.PACKAGE) return "下载的不是内核包"
         val mine = ctx.packageManager.getPackageInfo(ctx.packageName, SIGNERS)
@@ -86,12 +85,6 @@ object KernelInstaller {
     fun sameSigners(a: List<ByteArray>, b: List<ByteArray>): Boolean {
         fun digests(l: List<ByteArray>) = l.map { MessageDigest.getInstance("SHA-256").digest(it).toList() }.toSet()
         return a.isNotEmpty() && digests(a) == digests(b)
-    }
-
-    private fun sha256Of(file: File): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input -> val buf = ByteArray(64 * 1024); while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) } }
-        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** Hands [apk] to the system installer; its answer comes to [KernelInstallReceiver]. */

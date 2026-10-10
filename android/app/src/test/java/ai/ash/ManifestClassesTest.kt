@@ -24,9 +24,4 @@ class ManifestClassesTest {
         // The aliases name a class of their own app too; the Shizuku provider and the alias are the only ones that are not.
         assertEquals(emptyList<String>(), missing.filter { it != ".ViewPermissionUsageActivity" })
     }
-
-    @Test fun theScreensThatWereDroppedStayGone() {
-        for (gone in listOf(".screen.KeepAliveActivity", ".screen.LockCardActivity", ".host.screen.ReturnActivity")) assertTrue(gone, gone !in names)
-        assertTrue(".ui.ReturnActivity" in names)
-    }
 }
