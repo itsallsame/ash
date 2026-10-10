@@ -1,0 +1,11 @@
+{
+  "t": "event",
+  "ch": "device",
+  "id": "e1",
+  "word": "sense.location",
+  "body": {
+    "lat": 1,
+    "lon": 2
+  },
+  "at": 1760000000000
+}

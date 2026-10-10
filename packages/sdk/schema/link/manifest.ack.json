@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 manifest.ack frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "manifest.ack"
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "rejected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "t",
+    "rev",
+    "accepted",
+    "rejected"
+  ],
+  "additionalProperties": false
+}

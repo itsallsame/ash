@@ -1,0 +1,6 @@
+{
+  "t": "agent",
+  "id": "g2",
+  "outbound_result": "agent_tell",
+  "ok": true
+}

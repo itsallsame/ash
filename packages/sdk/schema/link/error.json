@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 error frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "error"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "t",
+    "code",
+    "message"
+  ],
+  "additionalProperties": false
+}

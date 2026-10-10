@@ -1,0 +1,6 @@
+{
+  "t": "agent",
+  "id": "g1",
+  "op": "interrupt",
+  "event": "ended"
+}

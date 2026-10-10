@@ -1,0 +1,26 @@
+{
+  "t": "hello",
+  "protocol": "ash-link/1",
+  "hand": {
+    "kind": "phone",
+    "name": "Phone",
+    "version": "0.4.0",
+    "platform": "android-35",
+    "public_key": "MFkwEwYHKoZIzj0CAQ"
+  },
+  "sig": "c2ln",
+  "features": [],
+  "channels": {
+    "device": {},
+    "human": {
+      "label": "Phone chat",
+      "surfaces": [
+        "chat",
+        "notification",
+        "island",
+        "widget",
+        "status"
+      ]
+    }
+  }
+}

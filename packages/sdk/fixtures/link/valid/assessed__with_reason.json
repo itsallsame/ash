@@ -1,0 +1,6 @@
+{
+  "t": "assessed",
+  "id": "a1",
+  "risk": "outward",
+  "why": "writes outside the work directory"
+}

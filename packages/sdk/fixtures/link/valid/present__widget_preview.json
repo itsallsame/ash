@@ -1,0 +1,13 @@
+{
+  "t": "present",
+  "ch": "human",
+  "id": "p7",
+  "surface": "widget",
+  "op": "preview",
+  "body": {
+    "card": {
+      "id": "c"
+    },
+    "size": "2x2"
+  }
+}

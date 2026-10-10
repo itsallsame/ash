@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 manifest frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "manifest"
+    },
+    "ch": {
+      "const": "device"
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "word": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "required": [
+          "word",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "t",
+    "ch",
+    "rev",
+    "capabilities",
+    "events"
+  ],
+  "additionalProperties": false
+}

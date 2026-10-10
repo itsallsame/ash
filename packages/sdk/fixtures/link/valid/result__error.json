@@ -1,0 +1,9 @@
+{
+  "t": "result",
+  "id": "c1",
+  "ok": false,
+  "error": {
+    "code": "cancelled",
+    "message": "cancelled by the kernel"
+  }
+}

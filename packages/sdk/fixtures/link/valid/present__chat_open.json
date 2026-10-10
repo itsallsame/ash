@@ -1,0 +1,10 @@
+{
+  "t": "present",
+  "ch": "human",
+  "id": "p9",
+  "surface": "chat",
+  "op": "open",
+  "body": {
+    "target": "settings"
+  }
+}

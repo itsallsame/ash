@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 ping frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "ping"
+    },
+    "at": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "t",
+    "at"
+  ],
+  "additionalProperties": false
+}

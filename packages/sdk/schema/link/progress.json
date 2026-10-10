@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 progress frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "progress"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "t",
+    "id",
+    "text"
+  ],
+  "additionalProperties": false
+}

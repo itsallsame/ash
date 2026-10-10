@@ -1,0 +1,18 @@
+{
+  "t": "welcome",
+  "hand_id": "Ab3xYz",
+  "session": "s_1",
+  "heartbeat_ms": 30000,
+  "channels": {
+    "device": {
+      "accepted": true
+    },
+    "human": {
+      "client": "client:Xy1",
+      "local": true
+    },
+    "agent": {
+      "accepted": true
+    }
+  }
+}

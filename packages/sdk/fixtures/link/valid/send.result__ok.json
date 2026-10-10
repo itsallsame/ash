@@ -1,0 +1,10 @@
+{
+  "t": "send.result",
+  "id": "s1",
+  "ok": true,
+  "message": {
+    "id": "m1",
+    "seq": 42
+  },
+  "duplicate": false
+}

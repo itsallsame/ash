@@ -1,0 +1,11 @@
+{
+  "t": "result",
+  "id": "c1",
+  "ok": true,
+  "content": [
+    {
+      "type": "text",
+      "text": "done"
+    }
+  ]
+}

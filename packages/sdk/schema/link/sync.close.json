@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 sync.close frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "sync.close"
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "t",
+    "sid"
+  ],
+  "additionalProperties": false
+}
