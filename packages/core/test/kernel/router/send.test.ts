@@ -286,7 +286,7 @@ test("a failing listener does not fail the sender", async () => {
 // ---- restart -------------------------------------------------------------------------------------------------------
 test("recover: dispatched requests become interrupted and their agent is told, nothing is replayed; waiting_owner is left", async () => {
   const w = world();
-  const t = fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 300 })], () => new Promise(() => {}));
+  const t = fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 5000 })], () => new Promise(() => {}));
   w.registry.add(t);
   void call(w, "service:t", "w", { a: 1 });
   await flush();
@@ -312,7 +312,7 @@ test("recover: dispatched requests become interrupted and their agent is told, n
 
 test("recover: a requester that is not an agent is not messaged", async () => {
   const w = world();
-  w.registry.add(fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 300 })], () => new Promise(() => {})));
+  w.registry.add(fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 5000 })], () => new Promise(() => {})));
   void call(w, "service:t", "w", {}, service("clock"));
   await flush();
   w.router.recover();
