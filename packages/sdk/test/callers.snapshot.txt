@@ -164,6 +164,7 @@
 * person:owner/typing  kernel  event-out
 * person:owner/widget.rendered  kernel  event-out
 * service:agents/usage.recorded  kernel  event-out
+* service:llm/usage.recorded  kernel  event-out
 * service:widgets/widget.action  kernel  event-out
 * person:owner/widget.preview  kernel
 * service:widgets/widget.state  kernel  event-out

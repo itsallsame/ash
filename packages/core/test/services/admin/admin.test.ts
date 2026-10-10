@@ -62,6 +62,7 @@ test("settings are plain key-value; set announces the keys, never the values; nu
   assert.deepEqual(ev.body, { keys: ["delivery.quiet_hours", "semantic.reload_time", "flag"], by: "person:owner" });
   assert.ok(!JSON.stringify(ev).includes("23:00"));
 
+  assert.deepEqual(s.service.settings(), { "delivery.quiet_hours": "23:00-07:00", flag: true, "semantic.reload_time": "04:00" }, "other modules read the same settings through the method");
   await call(s.service, owner, "settings.set", { flag: null });
   assert.equal((await call(s.service, owner, "settings.get")).settings.flag, undefined);
   assert.equal(await code(call(s.service, owner, "settings.set", { "Bad Key": 1 })), "bad_request");

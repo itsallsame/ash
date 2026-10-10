@@ -207,3 +207,25 @@ test("stopAll through the service's runtime leaves nothing registered", async ()
   assert.ok(Date.now() - started < 3000);
   assert.equal(w.registry.find("app:fixture", "fixture.list"), null);
 });
+
+test("installBuiltinOrgans: each organ is copied the first time and never over what the agent has made of it since", async () => {
+  const { installBuiltinOrgans } = await import("../../../src/edges/apps");
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "organs-"));
+  try {
+    mkdirSync(join(dir, "src", "b-organ"), { recursive: true });
+    mkdirSync(join(dir, "src", "a-organ", "lib"), { recursive: true });
+    writeFileSync(join(dir, "src", "a-organ", "app.json"), "one");
+    writeFileSync(join(dir, "src", "a-organ", "lib", "rules.mjs"), "rules");
+    writeFileSync(join(dir, "src", "b-organ", "app.json"), "two");
+    writeFileSync(join(dir, "src", "not-a-folder.txt"), "x");
+    assert.deepEqual(installBuiltinOrgans(join(dir, "src"), join(dir, "apps")), ["a-organ", "b-organ"]);
+    assert.equal(readFileSync(join(dir, "apps", "a-organ", "lib", "rules.mjs"), "utf8"), "rules");
+    writeFileSync(join(dir, "apps", "a-organ", "app.json"), "changed by the agent");
+    installBuiltinOrgans(join(dir, "src"), join(dir, "apps"));
+    assert.equal(readFileSync(join(dir, "apps", "a-organ", "app.json"), "utf8"), "changed by the agent");
+    assert.deepEqual(installBuiltinOrgans(join(dir, "nowhere"), join(dir, "apps")), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

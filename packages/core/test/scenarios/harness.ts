@@ -25,14 +25,12 @@ import type { CallFrame, CapabilitySpec, HandKind, HelloChannels, ManifestAckFra
 import { base64url, deviceId, handId } from "../../../sdk/src/ids";
 import type { Message, Reply } from "../../../sdk/src/message";
 import { standardAction } from "../../../sdk/src/namespaces";
-import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage as HubDriverMessage } from "../../../sdk/src/driver";
+import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage } from "../../../sdk/src/driver";
 import { startHub, type Hub } from "../../src/next";
 import { FakeHost } from "../fixtures/host";
 import { eventually } from "../fixtures/wait";
 
-/** A message as the hub's driver contract gives it (SPEC-08 §1.2, with `text`), plus `body`, the form the scenarios read it in. */
-export type DriverMessage = HubDriverMessage & { body: { text: string; thread?: string } };
-const shaped = (m: HubDriverMessage): DriverMessage => ({ ...m, body: { text: m.text, ...(m.thread ? { thread: m.thread } : {}) } });
+export type { DriverMessage };
 
 export const OWNER = "person:owner";
 export const MAIN = "agent:main";
@@ -64,11 +62,11 @@ export const toOwner = (word: string, from?: string) => (m: Message): boolean =>
 /** The approval card: the gate asks the owner. */
 export const isApprovalAsk = (m: Message): boolean => m.kind === "request" && m.from === GATE && m.to === OWNER && m.word === "ask";
 
-export const ownerMessage = (text: string) => (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && textOf(m) === text;
+export const ownerMessage = (text: string) => (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && m.text === text;
 /** The gate telling the agent that asked: an `agent:<x>/tell` from `service:gate` (BUILD-PROGRESS §7, decision 4). */
 export const fromGate = (m: DriverMessage): boolean => m.from === GATE && m.word === "tell";
 /** A background `tell` whose text names this id (a `pending_id`, a `setup_id`). */
-export const tellAbout = (id: string) => (m: DriverMessage): boolean => m.word === "tell" && JSON.stringify(m.body).includes(id);
+export const tellAbout = (id: string) => (m: DriverMessage): boolean => m.word === "tell" && m.text.includes(id);
 
 // --- identities (a hand proves itself by signing the challenge, SPEC-03 §2.2) --------------------------------------------
 
@@ -292,20 +290,18 @@ export class ScriptedDriver {
         await this.lines.get(agent)?.close();
         this.lines.delete(agent);
       },
-      send: async (agent, key, raw) => {
-        const batch = raw.map(shaped);
+      send: async (agent, key, batch) => {
         this.deliveries.push({ via: "send", agent, key, messages: batch });
         this.begin(safe, agent, key, batch);
       },
-      followup: async (agent, key, raw) => {
-        const batch = raw.map(shaped);
+      followup: async (agent, key, batch) => {
         this.deliveries.push({ via: "followup", agent, key, messages: batch });
         const slot = `${agent}/${key}`;
         if (this.running.has(slot)) this.queued.set(slot, [...(this.queued.get(slot) ?? []), batch]);
         else this.begin(safe, agent, key, batch);
       },
       steer: async (agent, key, text) => {
-        this.deliveries.push({ via: "steer", agent, key, messages: [shaped({ id: `steer-${++this.serial}`, from: OWNER, word: "say", lane: key, at: Date.now(), text })] });
+        this.deliveries.push({ via: "steer", agent, key, messages: [{ id: `steer-${++this.serial}`, from: OWNER, word: "say", lane: key, at: Date.now(), text }] });
         const run = this.running.get(`${agent}/${key}`);
         run?.record.steers.push(text);
         return run !== undefined;
@@ -373,7 +369,7 @@ export function byOwnerText(handlers: Record<string, TurnScript>): TurnScript {
   return async (turn) => {
     for (const message of turn.messages) {
       if (message.from !== OWNER) continue;
-      const handler = handlers[textOf(message)];
+      const handler = handlers[message.text];
       if (handler) return handler(turn);
     }
   };

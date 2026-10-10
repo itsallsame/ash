@@ -350,3 +350,19 @@ test("an event for a lane the declaration does not have is ignored", async () =>
   await settle();
   assert.deepEqual(f.router.says(), []);
 });
+
+test("policyOf and currentTurn: the declaration's limits for the router and the tool surface, and the turn an agent is in", async () => {
+  const f = fixture();
+  await f.start();
+  await f.service("declare", decl("agent:b", { tools: ["human_say"], words: ["service:clock/*"] }));
+  assert.deepEqual(f.agents.policyOf(M), { tools: null, words: null });
+  assert.deepEqual(f.agents.policyOf("agent:b"), { tools: ["human_say"], words: ["service:clock/*"] });
+  assert.equal(f.agents.policyOf("agent:nobody"), null);
+
+  assert.equal(f.agents.currentTurn(M), null);
+  f.driver().report({ event: "turn.started", agent: M, key: "back", turn: "t7", ids: [] });
+  assert.equal(f.agents.currentTurn(M), "t7");
+  assert.equal(f.agents.currentTurn("agent:b"), null);
+  f.driver().report({ event: "turn.ended", agent: M, key: "back", turn: "t7", outcome: "completed" });
+  assert.equal(f.agents.currentTurn(M), null);
+});

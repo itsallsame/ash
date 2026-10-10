@@ -1,35 +1,34 @@
 /**
  * The new hub's assembly point (ASH-HUB §7.1 rule 4: the one place that imports every module and only creates and wires
- * them). Every scenario in `test/scenarios/` reaches the hub through `startHub` and the one port it opens (`/link`, `/mcp`).
+ * them). Every scenario in `test/scenarios/` reaches the hub through `startHub` and the one port it opens (`/link`, `/mcp`,
+ * the web page).
  *
  * Order: host boot, ledger, vault, kernel (registry, redact, gate, router), services, edges, then everybody into the
  * registry, then start (the port first, because the agents are given the tool address on it).
  */
-import { spawn as nodeSpawn } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { complete as piComplete } from "@mariozechner/pi-ai";
 import type { AgentDriverFactory } from "../../sdk/src/driver";
-import type { HostEvent } from "../../sdk/src/host";
 import { MAIN_BODY_ID } from "../../sdk/src/ids";
-import { WordError, type Caller, type Message, type WordResult } from "../../sdk/src/message";
-import type { Member } from "../../sdk/src/word";
-import { wordsOf } from "../../sdk/src/words";
+import { WordError, type Caller } from "../../sdk/src/message";
 import { createAgents, bodyFileWriter, fileTemplates } from "./edges/agents";
-import { createDshDriver, type DriverProcess, type SpawnFn } from "./edges/agents/dsh";
-import { createApps, hostLauncher, type AppLauncher } from "./edges/apps";
+import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
+import { createRemoteDrivers } from "./edges/agents/remote";
+import { createApps, installBuiltinOrgans } from "./edges/apps";
 import { createLocalBody, mainBodyKind } from "./edges/body/local";
-import { prootCommand, runInProot } from "./edges/body/proot";
-import { HostClient, loadHostBoot, readHostEvents, type HostOptional } from "./edges/host";
-import { createLlm, type Complete } from "./edges/llm";
+import { createHostService, HostClient, loadHostBoot } from "./edges/host";
+import { createLlm } from "./edges/llm";
+import { createReviewer } from "./edges/llm/review";
 import { createLlmService } from "./edges/llm/service";
 import { createLinkServer } from "./edges/link-server";
+import { createLinkControl } from "./edges/link-server/control/words";
 import { Devices } from "./edges/link-server/hands/devices";
 import { createBodies, splitBodyCapabilities } from "./edges/link-server/hands/bodies";
 import { HandRegistry } from "./edges/link-server/hands/registry";
 import { createHuman, summaryRequest } from "./edges/link-server/human";
+import { staticWeb } from "./edges/link-server/web";
 import { createToolsEdge, TOOL_NAMES, toolWords } from "./edges/tools";
 import { createGate, GateStore } from "./kernel/gate";
 import { Ledger } from "./kernel/ledger";
@@ -46,6 +45,7 @@ import { createDirectoryService } from "./services/directory";
 import { createGateService } from "./services/gate";
 import { createHistoryService } from "./services/history";
 import { createJev, createReflexService } from "./services/reflex";
+import { createSemantic } from "./services/semantic";
 import { createSensesService } from "./services/senses";
 import { createVaultService } from "./services/vault";
 import { createWidgetsService } from "./services/widgets";
@@ -75,41 +75,21 @@ export interface HubOptions {
 }
 
 export interface Hub {
-  /** `http://127.0.0.1:<port>`. `/link` (WebSocket, `ash-link/1`) and `/mcp` hang off it. */
+  /** `http://127.0.0.1:<port>`. `/link` (WebSocket, `ash-link/1`), `/mcp` and the web page hang off it. */
   url: string;
+  /** Stops the hub; the second call waits for the first. */
   stop(): Promise<void>;
+  /** Resolves when the hub has stopped, whoever asked for it (`stop()`, or the host's `lifecycle.stop`). The entry program waits for it, then exits. */
+  closed: Promise<void>;
 }
 
 const log = (...args: unknown[]): void => console.error("[hub]", ...args.map((a) => (a instanceof Error ? a.message : a)));
 const service = (member: string): Caller => ({ member, via: "service", local: true });
-const SKILLS_AGENTS = fileURLToPath(new URL("../../ash-skills/agents", import.meta.url));
+const SKILLS = fileURLToPath(new URL("../../ash-skills/", import.meta.url));
+const PERSONA = ["SOUL", "IDENTITY", "PULSE"] as const;
 
 function hubVersion(): string {
   try { return String((JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown }).version ?? "dev"); } catch { return "dev"; }
-}
-
-/** `service:host`: the host client's calls as words (HUB-MODULES §2.8). The host module has no member of its own yet. */
-function hostMember(host: HostClient): Member {
-  const done = <R>(r: HostOptional<R>): WordResult => {
-    if (!r.supported) throw new WordError("unavailable", "the host does not offer this");
-    return { data: (r.result ?? {}) as object };
-  };
-  return {
-    id: "service:host", kind: "service", name: "host",
-    words: () => wordsOf("service:host"),
-    async handle(msg: Message): Promise<WordResult> {
-      const b = (msg.body ?? {}) as Record<string, any>;
-      switch (msg.word) {
-        case "wake.at": return done(await host.wakeAt(b.at));
-        case "wake.clear": return done(await host.wakeClear());
-        case "power.hold": return done(await host.powerHold(b.ms, b.reason));
-        case "power.release": return done(await host.powerRelease());
-        case "hands.handoff": return done(await host.handsHandoff(b.port, b.token));
-        case "update.install": return done(await host.updateInstall(b.version, b.url, b.sha256));
-        default: throw new WordError("not_found", `service:host has no word ${msg.word}`);
-      }
-    },
-  };
 }
 
 export async function startHub(opts: HubOptions): Promise<Hub> {
@@ -128,41 +108,33 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   let vault: Vault;
   try { vault = openVault({ file: join(opts.dataDir, "vault.json"), sealKey: secrets.sealKey, now }); } catch (error) { ledger.close(); throw error; }
 
-  // 4. kernel
+  // 4. kernel. The gate needs the hands and the main body, the router needs the agents and the apps: they come later.
+  const late: { hands?: HandRegistry; body?: ReturnType<typeof createLocalBody>; gateService?: ReturnType<typeof createGateService>; apps?: ReturnType<typeof createApps>; agents?: ReturnType<typeof createAgents> } = {};
   const registry = createRegistry();
   const redact = createRedact();
   const store = new GateStore(ledger, now);
-  const late: { hands?: HandRegistry; body?: ReturnType<typeof createLocalBody>; gateService?: ReturnType<typeof createGateService>; apps?: ReturnType<typeof createApps>; agents?: ReturnType<typeof createAgents> } = {};
+  const llm = createLlm({
+    key: (ref) => vault.use(ref),
+    report: (usage) => void router.send({ to: "service:cost", kind: "event", word: "usage.recorded", body: usage }, service("service:llm"))
+      .then((reply) => { if (!reply.ok) log(`usage.recorded: ${reply.error.code}`); }, (error) => log("usage.recorded failed", error)),
+    ...(opts.llm ? { baseUrl: opts.llm.baseUrl } : {}),
+  });
+  const review = createReviewer({ llm });
   const gate = createGate({
     tier: (target) => late.hands!.tier(target),
     mode: () => store.mode(),
     assess: (req) => (req.to === MAIN_BODY_ID ? late.body!.assess(req) : late.hands!.assess(req)),
-    // The review model is not wired yet (no module holds its prompt): every judgement goes to the owner.
-    review: async () => "ask",
+    review,
   }, store, { now });
-  const agentPolicy = (id: string) => {
-    const decl = late.agents?.manager.runs.get(id)?.spec.decl;
-    return decl ? { tools: decl.tools ?? null, words: decl.words ?? null } : null;
-  };
   const router = createRouter({
     ledger, registry, gate, redact, store, now,
     onParked: (pending) => late.gateService!.issueCard(pending),
     onError: (where, error) => log(where, error),
-    agentPolicy, toolWords,
+    agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords,
     appGranted: (app, to, word) => late.apps!.runtime.granted(app, to, word),
   });
 
   // 5. services
-  const llmBase = opts.llm?.baseUrl.replace(/\/+$/, "");
-  const llm = createLlm({
-    key: (ref) => vault.use(ref),
-    report: (usage) => void router.send({ to: "service:cost", kind: "event", word: "usage.recorded", body: usage }, service("service:cost"))
-      .then((reply) => { if (!reply.ok) log(`usage.recorded: ${reply.error.code}`); }, (error) => log("usage.recorded failed", error)),
-    ...(llmBase ? {
-      complete: ((model, context, options) => (piComplete as unknown as Complete)({ ...model, baseUrl: llmBase }, context, options)) as Complete,
-      fetch: ((url: URL, init?: RequestInit) => fetch(new URL(`${url.pathname}${url.search}`, llmBase), init)) as typeof fetch,
-    } : {}),
-  });
   const blobs = createBlobsService(ledger);
   const gateService = late.gateService = createGateService({
     store, gate, send: (msg, caller, o) => router.send(msg, caller, o), redeem: (id, caller, o) => router.redeem(id, caller, o),
@@ -171,12 +143,16 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const clock = createClockService({ ledger, router, now });
   const senses = createSensesService({ dataDir: opts.dataDir, now });
   const cost = createCostService({ ledger, now });
-  const reflex = createReflexService({ ledger, router, jev: createJev({ post: (req) => llm.post("service:reflex", req) }) });
+  const reflex = createReflexService({ ledger, router, registry, jev: createJev({ post: (req) => llm.post("service:reflex", req) }) });
   const history = createHistoryService({ ledger });
   const admin = createAdminService({ ledger, router, registry, version: hubVersion(), now, startedAt });
   const widgets = createWidgetsService({ ledger, router, now });
-  const directory = createDirectoryService({ registry, agentPolicy, toolWords, appGranted: (app, member, word) => late.apps!.runtime.granted(app, member, word) });
+  const directory = createDirectoryService({ registry, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords, appGranted: (app, member, word) => late.apps!.runtime.granted(app, member, word) });
   const vaultService = createVaultService({ vault, ledger, router });
+  const semantic = createSemantic({
+    ledger, router, now, log,
+    templates: Object.fromEntries(PERSONA.map((name) => [`${name}.md`, readFileSync(join(SKILLS, "persona", `${name}.template.md`), "utf8")])) as never,
+  });
 
   // 6. edges
   const isolation = spec.isolation;
@@ -193,56 +169,46 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
       return reply.result;
     },
   });
-  const devices = new Devices({ hands, router, bodies, now });
   const link = createLinkServer({ hands, hostClient: host, ...(opts.port ? { port: opts.port } : {}), log });
+  const linkControl = createLinkControl({
+    db: ledger.db(), router, link, hands, vault, now, log,
+    identity: { key: () => host.identityKey(), sign: (data) => host.identitySign(data) },
+  });
+  const devices = new Devices({ hands, router, bodies, gateway: linkControl.pairing, now });
+  linkControl.bindDevices(devices);
+  const remote = createRemoteDrivers({ router, log });
+  link.onChannel("agent", remote.attach);
 
   let url = "";
-  const tools = createToolsEdge({
-    router, registry, ledger, now, log,
-    agentPolicy,
-    currentTurn: (id) => { for (const lane of late.agents?.manager.liveOf(id)?.lanes.values() ?? []) if (lane.turn) return lane.turn; return null; },
-  });
-  const spawn: SpawnFn = (argv, o) => {
-    const stdio = ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"];
-    if (isolation.kind === "proot") return runInProot(isolation.proot, argv, { ...(o.cwd ? { workdir: o.cwd } : {}), ...(o.env ? { env: o.env } : {}), stdio }) as unknown as DriverProcess;
-    if (isolation.kind === "native") {
-      const cwd = join(isolation.native.workspace, o.cwd ?? "");
-      mkdirSync(cwd, { recursive: true });
-      return nodeSpawn(isolation.native.dsh_bin, argv.slice(1), { cwd, env: { ...process.env, DSH_HOME: isolation.native.dsh_home, ...o.env }, stdio }) as unknown as DriverProcess;
-    }
-    throw new WordError("unavailable", `the ${isolation.kind} main body cannot run an agent yet`);
-  };
+  const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id) => late.agents?.currentTurn(id) ?? null });
   const drivers: Record<string, AgentDriverFactory> = {
-    dsh: (report) => createDshDriver({ report, spawn, writeFile: bodyFileWriter(router), readBlob: (ref) => ledger.blob.get(ref) }),
+    dsh: (report) => createDshDriver({ report, spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), readBlob: (ref) => ledger.blob.get(ref) }),
+    ...remote.factories,
     ...opts.drivers,
   };
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
-    templates: fileTemplates(SKILLS_AGENTS),
+    templates: fileTemplates(join(SKILLS, "agents")),
     tools: (agent, allowed) => ({ mcp_url: `${url}/mcp`, token: tools.issueToken(agent), allowed: allowed ?? [...TOOL_NAMES] }),
   });
-  const launcher: AppLauncher | null = isolation.kind === "native" ? hostLauncher(join(isolation.native.workspace, "apps")) : isolation.kind === "proot" ? {
-    root: join(isolation.proot.rootfs, "root", "apps"), agentRoot: "/root/apps",
-    spawn: (app, dir, env) => {
-      const run = prootCommand(isolation.proot, [app.server.command, ...(app.server.args ?? [])], { workdir: `/root/apps/${dir.split("/").pop()}`, env: { ...(app.server.env ?? {}), ...env } });
-      return { command: run.command, args: run.args, env: run.env };
-    },
-  } : null;
-  const apps = late.apps = createApps({ router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log });
-  const llmService = createLlmService(llm);
-  const settings = (): Record<string, unknown> => Object.fromEntries(
-    (ledger.db().prepare("SELECT key, value FROM kv WHERE key LIKE 'setting.%'").all() as { key: string; value: string }[]).map((r) => [r.key.slice("setting.".length), JSON.parse(r.value)]));
+  const launcher = body.appLauncher();
+  const apps = late.apps = createApps({
+    router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log,
+    ...(launcher ? { builtinApps: installBuiltinOrgans(join(SKILLS, "organs"), launcher.root) } : {}),
+  });
   const human = createHuman({
-    router, ledger, settings, primary: () => agents.primary(), now, log,
+    router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
     summarize: async (steps) => { try { return (await llm.complete("person:owner", summaryRequest(steps))).text.trim() || null; } catch { return null; } },
   });
+  const hostService = createHostService({ client: host, router, onStop: (deadline) => stop(deadline), log });
   link.onChannel("human", human.attach);
   link.mount("/mcp", tools.handler);
+  link.mount("/", staticWeb(), { relay: true });
 
   // 7. everybody into the registry
   for (const member of [
-    blobs, gateService, clock, senses, cost, reflex, history, admin, widgets, directory, vaultService,
-    body, devices, bodies, human.member, agents.service, apps.service, llmService, hostMember(host),
+    blobs, gateService, clock, senses, cost, reflex, history, admin, widgets, directory, vaultService, ...semantic.members,
+    body, devices, bodies, linkControl.member, human.member, agents.service, apps.service, createLlmService(llm), hostService.member,
   ]) registry.add(member);
 
   // 8. start. The agents are told the tool address, so the port opens first; the registry already holds the services
@@ -250,19 +216,24 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   let stopping: Promise<void> | null = null;
   let stopHeartbeat: () => void = () => {};
   let events: { close(): void } | null = null;
+  let closed!: () => void;
+  const done = new Promise<void>((resolve) => { closed = resolve; });
+  // Everything that makes work stops first (no new connections, no timers, no agents, no apps); the ledger is closed last.
   const stop = (deadline = now() + 5000): Promise<void> => stopping ??= (async () => {
     events?.close();
     stopHeartbeat();
     await link.stop();
-    await agents.stopAll();
-    await apps.stopAll(deadline);
+    semantic.stop();
+    linkControl.stop();
     clock.stop();
     gateService.stop();
+    await agents.stopAll();
+    await apps.stopAll(deadline);
     human.close();
     tools.close();
     await body.close();
     ledger.close();
-  })();
+  })().finally(closed);
 
   try {
     const { port } = await link.start();
@@ -272,6 +243,8 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     gateService.start();
     clock.start();
     widgets.start();
+    await linkControl.start();
+    await semantic.start();
     await apps.start();
     await host.lifecycleReady(hubVersion(), port);
     stopHeartbeat = host.startHeartbeat(() => ({ text: "running", state: "running" }));
@@ -279,18 +252,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     await stop().catch(() => {});
     throw error;
   }
+  events = hostService.listen(opts.stdin ?? process.stdin);
 
-  events = readHostEvents(opts.stdin ?? process.stdin, async (event: HostEvent) => {
-    const send = async (to: string, word: string, body: object) => {
-      const reply = await router.send({ to, kind: "event", word, body }, service("service:host"));
-      if (!reply.ok) log(`${word} to ${to}: ${reply.error.code}: ${reply.error.message}`);
-    };
-    switch (event.event) {
-      case "wake.fired": await send("service:clock", "wake.fired", { at: event.at }); return;
-      case "env.changed": { const { event: _name, ...rest } = event; await send("service:agents", "env.changed", rest); return; }
-      case "lifecycle.stop": await stop(event.deadline); return;
-    }
-  }, log);
-
-  return { url, stop: () => stop() };
+  return { url, stop: () => stop(), closed: done };
 }

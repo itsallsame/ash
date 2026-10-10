@@ -113,7 +113,8 @@ export class HubRouter implements Router {
   recover(): void {
     const { ledger } = this.deps;
     for (const r of ledger.unfinished()) {
-      if (r.state !== "dispatched") continue;
+      // A request this process is handling now is not one the last process left behind (the hub may take calls while it starts).
+      if (r.state !== "dispatched" || this.inflight.has(r.id)) continue;
       ledger.setRequest(r.id, "interrupted");
       const error = errorBody("result_unknown", "内核重启，结果不确定，请先查再决定要不要重做");
       ledger.append({ from: r.to, to: r.from, kind: "response", word: r.word, body: { ok: false, error }, reply_to: r.id });

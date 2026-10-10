@@ -20,6 +20,18 @@ test("step 1: the shape of the message and the caller", async () => {
   assert.equal((await bad({ to: "service:x", kind: "request", word: "w", body: {} }, { member: "agent:main", via: "robot", local: false })).code, "unauthorized");
 });
 
+test("step 1: the owner may act as the hub's own code (via service), no other member may take a way in that does not match its kind", async () => {
+  const w = world();
+  const t = fake("service:t", [word("service:t", "w")]);
+  w.registry.add(t);
+  const as = (member: string, via: string) => ({ member, via, local: true });
+  assert.ok((await w.router.send({ to: "service:t", kind: "request", word: "w", body: {} }, as("person:owner", "service") as any)).ok);
+  assert.equal(failure(await w.router.send({ to: "service:t", kind: "request", word: "w", body: {} }, as("agent:main", "service") as any)).code, "unauthorized");
+  assert.equal(failure(await w.router.send({ to: "service:t", kind: "request", word: "w", body: {} }, as("service:clock", "human") as any)).code, "unauthorized");
+  assert.equal(failure(await w.router.send({ to: "service:t", kind: "request", word: "w", body: {} }, as("person:owner", "agent") as any)).code, "unauthorized");
+  assert.equal(t.calls.length, 1);
+});
+
 test("step 2: the sender and the turn are the caller's; the origin is what the caller carries", async () => {
   const w = world();
   const t = fake("service:t", [word("service:t", "w", { effect: "write" })]);
@@ -288,8 +300,8 @@ test("recover: dispatched requests become interrupted and their agent is told, n
   const w = world();
   const t = fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 5000 })], () => new Promise(() => {}));
   w.registry.add(t);
-  void call(w, "service:t", "w", { a: 1 });
-  await flush();
+  // What the last process left behind: a request in the ledger that nobody here is handling.
+  w.ledger.append({ from: "agent:main", to: "service:t", kind: "request", word: "w", body: { a: 1 } }, { request: { state: "dispatched", deadline: 9e12 } });
   const parked = w.ledger.append({ from: "agent:main", to: DEVICE, kind: "request", word: "message.send", body: {} }, { request: { state: "waiting_owner", deadline: 9e12 } });
   const open = w.ledger.unfinished();
   assert.deepEqual(open.map((r) => r.state).sort(), ["dispatched", "waiting_owner"]);
@@ -299,7 +311,7 @@ test("recover: dispatched requests become interrupted and their agent is told, n
   assert.deepEqual(after.map((r) => r.id), [parked.id], "only the waiting one is still open");
   const request = open.find((r) => r.state === "dispatched")!;
   assert.equal(w.ledger.request(request.id)?.state, "interrupted");
-  assert.equal(t.calls.length, 1, "not replayed");
+  assert.equal(t.calls.length, 0, "not replayed");
   assert.equal(w.main.inbox.length, 1);
   assert.match((w.main.inbox[0]!.body as any).text, /结果不确定/);
   assert.equal(w.main.inbox[0]!.reply_to, request.id);
@@ -313,11 +325,29 @@ test("recover: dispatched requests become interrupted and their agent is told, n
 test("recover: a requester that is not an agent is not messaged", async () => {
   const w = world();
   w.registry.add(fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 5000 })], () => new Promise(() => {})));
-  void call(w, "service:t", "w", {}, service("clock"));
-  await flush();
+  w.ledger.append({ from: "service:clock", to: "service:t", kind: "request", word: "w", body: {} }, { request: { state: "dispatched", deadline: 9e12 } });
   w.router.recover();
   await flush();
   assert.equal(w.main.inbox.length, 0);
   assert.equal(w.ledger.unfinished().length, 0);
+});
+
+test("recover: a request this process is handling now is not one the last process left behind", async () => {
+  const w = world();
+  let finish!: () => void;
+  const t = fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 5000 })], () => new Promise((resolve) => { finish = () => resolve({ data: { done: true } }); }));
+  w.registry.add(t);
+  const live = call(w, "service:t", "w", { a: 1 });
+  await flush();
+  const old = w.ledger.append({ from: "agent:main", to: "service:t", kind: "request", word: "w", body: { a: 2 } }, { request: { state: "dispatched", deadline: 9e12 } });
+  const mine = w.ledger.unfinished().find((r) => r.id !== old.id)!;
+  w.router.recover();
+  await flush();
+  assert.equal(w.ledger.request(old.id)?.state, "interrupted", "the leftover one is interrupted");
+  assert.equal(w.ledger.request(mine.id)?.state, "dispatched", "the one in progress here is left alone");
+  assert.equal(w.main.inbox.length, 1, "and only the leftover one's requester is told");
+  finish();
+  assert.ok((await live).ok);
+  assert.equal(w.ledger.request(mine.id)?.state, "done");
 });
 void BODY;

@@ -45,6 +45,8 @@ export interface LlmOptions {
   /** Tests only: a stand-in for fetch, used by post(). */
   fetch?: typeof fetch;
   clock?: { now(): number };
+  /** Send every call to this address instead of the providers' own (a model server of the owner's, a fake in tests). No trailing slash needed. */
+  baseUrl?: string;
 }
 export interface Llm {
   complete(caller: string, request: LlmRequest): Promise<LlmResult>;
@@ -103,7 +105,9 @@ function checkNumbers(request: { max_tokens?: number; timeout_ms?: number }): vo
 interface Tally { provider: Provider; model: string; key: string | null; input: number; output: number; cost?: number }
 
 export function createLlm(options: LlmOptions): Llm {
-  const call = options.complete ?? (piComplete as unknown as Complete);
+  const base = options.baseUrl?.replace(/\/+$/, "");
+  const complete = options.complete ?? (piComplete as unknown as Complete);
+  const call: Complete = base ? (model, context, o) => complete({ ...model, baseUrl: base }, context, o) : complete;
   const doFetch = options.fetch ?? fetch;
   const clock = options.clock ?? { now: () => Date.now() };
 
@@ -182,7 +186,7 @@ export function createLlm(options: LlmOptions): Llm {
         const apiKey = need(tally);
         const timeoutMs = Math.min(request.timeout_ms ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
         return bounded(timeoutMs, async (signal) => {
-          const response = await doFetch(url, { method: "POST", signal, redirect: "error",
+          const response = await doFetch(base ? `${base}${url.pathname}${url.search}` : url, { method: "POST", signal, redirect: "error",
             headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${apiKey}` }, body: payload });
           const text = await response.text();
           if (!response.ok) throw new LlmError("failed", `the provider answered HTTP ${response.status}`);

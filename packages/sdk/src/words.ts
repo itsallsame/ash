@@ -544,7 +544,7 @@ add("service:host", "power.release", "request", empty, empty, { callers: KERNEL,
 add("service:host", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]), undefined,
   { callers: KERNEL, direction: "out", label: "在转达唤醒闹钟", description: "The host's alarm went off (the device woke): the host module passes it on to service:clock." });
 add("service:host", "env.changed", "event", ENV_CHANGED, undefined,
-  { callers: KERNEL, direction: "out", label: "在转达环境变化", description: "The network or the power state changed: the host module passes it on to service:agents (and service:link once it exists)." });
+  { callers: KERNEL, direction: "out", label: "在转达环境变化", description: "The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay)." });
 add("service:host", "hands.handoff", "request", obj({ port: { type: "integer", minimum: 1, maximum: 65535 }, token: secret({ type: "string", minLength: 1 }) }, ["port", "token"]), obj({ delivered: strings }, ["delivered"]),
   { callers: KERNEL, effect: "act", label: "在交接本机的手", description: "Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down." });
 add("service:host", "update.install", "request", obj({ version: nonempty, url: nonempty, sha256: sha }, ["version", "url", "sha256"]), empty,
@@ -642,6 +642,8 @@ add("person:owner", "widget.rendered", "event", WIDGET_RENDERED, undefined,
   { callers: KERNEL, direction: "out", label: "在记下卡片画出来没有", description: "The human module passes on what a channel reported after showing widget state, for service:widgets." });
 add("service:agents", "usage.recorded", "event", USAGE_RECORDED, undefined,
   { callers: KERNEL, direction: "out", label: "在记下用量", description: "An agent driver's model usage, passed to service:cost." });
+add("service:llm", "usage.recorded", "event", USAGE_RECORDED, undefined,
+  { callers: KERNEL, direction: "out", label: "在记下用量", description: "One call of the hub's small model (the approval review, JEV, the progress summary, service:llm/complete), passed to service:cost under the caller's name." });
 add("service:widgets", "widget.action", "event", obj({ card: widgetCardId, action: nonempty, owner: id, title: str, component: str, item: str, checked: bool, value: strings,
   context: obj({}, [], true) }, ["card", "action", "owner"]), undefined,
   { direction: "out", label: "在转达小组件上的点击", description: "The owner tapped, toggled or chose something on a home-screen card. owner is the card's creator, who decides what it means; component is the element, item the list item's key, checked / value the new state. " +

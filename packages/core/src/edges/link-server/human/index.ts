@@ -7,7 +7,7 @@
  *         notification / island / status / widget / chat pages: `present` frames to the channels that declared the surface
  *   words say, show, react, ask, open (the contracts of sdk/words.ts)
  *
- * Cards on the home screen: `service:widgets` sends the event `person:owner/widget.state` with the whole state; it is
+ * Cards on the home screen: `service:widgets` sends the event `widget.state` (to `person:owner`) with the whole state; it is
  * presented to every channel that declared `widget`, and what a channel reports becomes `widget.rendered`. A channel that
  * has just connected is given the current state from `service:widgets/widget.list`.
  *

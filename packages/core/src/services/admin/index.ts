@@ -98,7 +98,8 @@ export class AdminService implements Member {
   }
 
   // ---- settings ----
-  private settings(keys: unknown): Record<string, unknown> {
+  /** The hub's settings by name (all of them, or just the named ones). For modules that read them at assembly (the human edge). */
+  settings(keys?: unknown): Record<string, unknown> {
     const rows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE ? ESCAPE '\\' ORDER BY key").all(`${SETTING_PREFIX.replace(/[\\%_]/g, "\\$&")}%`) as { key: string; value: string }[];
     const all = Object.fromEntries(rows.map((r) => [r.key.slice(SETTING_PREFIX.length), JSON.parse(r.value)]));
     return Array.isArray(keys) ? Object.fromEntries(keys.filter((k) => Object.hasOwn(all, k)).map((k) => [k, all[k]])) : all;

@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `2f40f85e847ce32a`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `7b7cf1e26dc2c4d2`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -15,7 +15,7 @@
 - [`service:agents`](#serviceagents) (31)
 - [`service:apps`](#serviceapps) (16)
 - [`service:clock`](#serviceclock) (4)
-- [`service:llm`](#servicellm) (1)
+- [`service:llm`](#servicellm) (2)
 - [`service:persona`](#servicepersona) (2)
 - [`service:widgets`](#servicewidgets) (13)
 - [`service:pulse`](#servicepulse) (7)
@@ -205,6 +205,7 @@
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
 | `complete` | owner, agent, app | read / none | timeout 60s | model, messages*, max_tokens | 在问小模型 | A short completion from the hub's small model (the model argument is optional). For organs that must judge something in code, e.g. a sensor rule. The usage is counted against the caller and its quota. |
+| `usage.recorded` | kernel | read / none | event out | caller*, provider*, model*, input_tokens*, output_tokens*, cost, ok*, at* | 在记下用量 | One call of the hub's small model (the approval review, JEV, the progress summary, service:llm/complete), passed to service:cost under the caller's name. |
 
 ## `service:persona`
 
@@ -312,7 +313,7 @@
 | `power.hold` | kernel | act / none | - | ms*, reason* | 在保持唤醒 | Keep the device awake for a while (at most 10 minutes) for a stated reason; released by itself when the time is up. |
 | `power.release` | kernel | act / none | - | - | 在放开唤醒锁 | Release the wake lock before its time is up. |
 | `wake.fired` | kernel | read / none | event out | at* | 在转达唤醒闹钟 | The host's alarm went off (the device woke): the host module passes it on to service:clock. |
-| `env.changed` | kernel | read / none | event out | what*, network*, online*, saver* | 在转达环境变化 | The network or the power state changed: the host module passes it on to service:agents (and service:link once it exists). |
+| `env.changed` | kernel | read / none | event out | what*, network*, online*, saver* | 在转达环境变化 | The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay). |
 | `hands.handoff` | kernel | act / none | - | port*, token* (secret) | 在交接本机的手 | Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down. |
 | `update.install` | owner | execute / structure | - | version*, url*, sha256* | 在安装内核更新 | Have the host download and install a new kernel package (checked against sha256). Only the owner. |
 
