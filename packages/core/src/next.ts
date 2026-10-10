@@ -162,7 +162,8 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const blobs = createBlobsService(ledger);
   const gateService = late.gateService = createGateService({
     store, gate, send: (msg, caller, o) => router.send(msg, caller, o), redeem: (id, caller, o) => router.redeem(id, caller, o),
-    contractOf: (member, word) => registry.find(member, word)?.contract ?? null, onError: (where, error) => log(where, error),
+    contractOf: (member, word) => registry.find(member, word)?.contract ?? null, nameOf: (id) => registry.get(id)?.name ?? null,
+    onError: (where, error) => log(where, error),
   });
   const clock = createClockService({ ledger, router, now });
   const senses = createSensesService({ dataDir, now });

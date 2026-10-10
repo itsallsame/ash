@@ -7,10 +7,14 @@ const SEND = word(DEVICE, "message.send", { effect: "act", risk: "outward", labe
   input_schema: { type: "object", properties: { text: { type: "string" }, token: secret({ type: "string" }) }, additionalProperties: false } });
 const BASH = word(BODY, "workspace.bash", { effect: "execute", risk: "structure", label: { doing: "在跑命令" } });
 
+const PHONE_NAME = "手机 · Xiaomi M2006J10C";
+const AGENT_NAME = "ash";
+
 function setup(options: Parameters<typeof world>[0] = {}) {
   const w = world(options);
-  const phone = fake(DEVICE, [SEND], (msg) => ({ data: { sent: (msg.body as any).text } }));
-  const computer = fake(BODY, [BASH], () => ({ data: { exit: 0 } }));
+  const phone = fake(DEVICE, [SEND], (msg) => ({ data: { sent: (msg.body as any).text } }), { name: PHONE_NAME });
+  const computer = fake(BODY, [BASH], () => ({ data: { exit: 0 } }), { name: "电脑" });
+  w.main.name = AGENT_NAME;
   w.registry.add(phone); w.registry.add(computer);
   const ask = (text = "hi", extra: Record<string, unknown> = {}, opts?: any) => w.router.send({ to: DEVICE, kind: "request", word: "message.send", body: { text, ...extra } }, agent(), opts);
   const gateCall = (wd: string, body: unknown, caller: any = agent()) => w.router.send({ to: "service:gate", kind: "request", word: wd, body }, caller);
@@ -228,13 +232,29 @@ test("an approval nobody carried out expires with the sweep too, and its request
   assert.deepEqual(s.store.expireDue(), []);
 });
 
-test("the card names the effect and the risk", async () => {
+test("the card reads in names and labels: no ids, no word, no effect or risk codes", async () => {
   const s = setup();
+  await s.ask("x", {}, { approval: { purpose: "自动化测试" } });
+  await flush();
+  const card = s.owner.cards[0]!.msg.body as any;
+  assert.equal(card.title, "需要你确认：在发消息");
+  assert.match(card.detail, /^ash 想对「手机 · Xiaomi M2006J10C」做这件事：在发消息。/);
+  for (const text of [card.title, card.detail]) {
+    assert.doesNotMatch(text, /agent:|device:|body:|service:|person:/, "no member ids");
+    assert.doesNotMatch(text, /message\.send/, "no word");
+    assert.doesNotMatch(text, /\b(act|outward|structure|execute|effect|risk)\b|效果|风险/, "no effect or risk codes");
+  }
+  assert.match(card.detail, /目的：自动化测试/);
+  assert.equal(card.source.word, "message.send", "the details keep the raw word");
+  assert.equal(card.source.to, DEVICE);
+});
+
+test("a member that is gone falls back to its id on the card, and nothing breaks", async () => {
+  const s = setup();
+  s.registry.remove(s.main.id);
   await s.ask("x");
   await flush();
-  const detail = (s.owner.cards[0]!.msg.body as any).detail as string;
-  assert.match(detail, /在发消息/);
-  assert.match(detail, /效果 act，风险 outward/);
+  assert.match((s.owner.cards[0]!.msg.body as any).detail, /^agent:main 想对「手机 · Xiaomi M2006J10C」做这件事：在发消息。/);
 });
 
 test("ask: 「以后都可以」 writes a rule, and the same agent is then let through without a card", async () => {
@@ -392,11 +412,11 @@ test("attachments: only the owner and the two sides of a message can read what i
 
 test("a member that has a cardDetail adds that to the card, and a cardDetail that fails does not stop the question", async () => {
   const s = setup();
-  s.registry.add(fake(DEVICE, [SEND], () => ({ data: {} }), { cardDetail: (msg: any) => `会用到：通知权限（${msg.body.text}）` }));
+  s.registry.add(fake(DEVICE, [SEND], () => ({ data: {} }), { name: PHONE_NAME, cardDetail: (msg: any) => `会用到：通知权限（${msg.body.text}）` }));
   const id = success(await s.ask("安装")).pending_id;
   await flush();
   const detail = (s.owner.cards[0]!.msg.body as any).detail as string;
-  assert.match(detail, /想对 .* 做「message\.send」/);
+  assert.match(detail, /^ash 想对「手机 · Xiaomi M2006J10C」做这件事：在发消息。/);
   assert.match(detail, /\n会用到：通知权限（安装）$/);
   assert.equal(s.store.getPending(id)?.detail, "会用到：通知权限（安装）");
 

@@ -106,7 +106,7 @@ export function world(options: WorldOptions = {}) {
   });
   const svc = createGateService({
     store, gate, send: (m, c, o) => router.send(m, c, o), redeem: (id, c, o) => router.redeem(id, c, o),
-    contractOf: (member, w) => registry.find(member, w)?.contract ?? null, onError: (where, error) => errors.push({ where, error }),
+    contractOf: (member, w) => registry.find(member, w)?.contract ?? null, nameOf: (id) => registry.get(id)?.name ?? null, onError: (where, error) => errors.push({ where, error }),
   });
   services.push(svc);
   const ownerMember = fakeOwner();

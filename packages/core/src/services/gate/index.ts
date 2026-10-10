@@ -29,6 +29,8 @@ export interface GateServiceDeps {
   redeem(pendingId: string, redeemer: Caller, opts?: SendOptions): Promise<Reply>;
   /** The contract of a word, for rules (the registry's `find`). */
   contractOf(member: string, word: string): WordContract | null;
+  /** The name a person reads for a member (the registry's `name`), or null when it is gone. The card falls back to the id. */
+  nameOf?(id: string): string | null | undefined;
   onError?(where: string, error: unknown): void;
   /** How often waiting questions are checked for their time (ms). Default 30 s. */
   sweepMs?: number;
@@ -88,6 +90,11 @@ export function createGateService(deps: GateServiceDeps): GateService {
     tellOriginator(p, `你的${what(p)}超时没有得到主人回答，按拒绝处理。需要的话请重新提出。`);
   };
 
+  /** What the owner reads for a member: its name; the id only when the member is gone (or has no name). */
+  function nameOf(id: string): string {
+    try { return deps.nameOf?.(id)?.trim() || id; } catch { return id; }
+  }
+
   function issueCard(p: PendingRecord): void {
     if (p.state !== "waiting") return;
     const controller = new AbortController();
@@ -96,7 +103,9 @@ export function createGateService(deps: GateServiceDeps): GateService {
     const options = [{ id: "once", label: "可以" }, ...(p.offer_always ? [{ id: "always", label: "以后都可以" }] : []), { id: "deny", label: "不行" }];
     const body = {
       title: `需要你确认：${p.label ?? p.word}`,
-      detail: [p.review_reason ? `审核：${p.review_reason}` : "", `${p.originator} 想对 ${p.to} 做「${p.word}」（${p.label ?? p.word}；效果 ${p.effect}，风险 ${p.risk}）。${p.purpose ? `目的：${p.purpose}` : ""}`.trim(), p.detail].filter(Boolean).join("\n"),
+      // Only words a person reads: names, not ids; the contract's label, not the word. The effect and the risk are left out: their codes
+      // mean nothing to the owner, and what matters (why it is risky) is the review's reason on the first line.
+      detail: [p.review_reason ? `审核：${p.review_reason}` : "", `${nameOf(p.originator)} 想对「${nameOf(p.to)}」做这件事：${p.label ?? p.word}。${p.purpose ? `目的：${p.purpose}` : ""}`.trim(), p.detail].filter(Boolean).join("\n"),
       human_kind: "question", options, expires_at: p.expires_at,
       source: { word: p.word, to: p.to, body_preview: preview.slice(0, 300), ...(preview.length > 300 ? { body_full: preview } : {}) },
     };
