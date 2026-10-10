@@ -3,11 +3,13 @@
  * The host's `isolation.kind` picks the implementation (SPEC-07 §2.2):
  * - `proot`: the Ubuntu root is read and written from the host side with `packages/workspace`; commands run inside the
  *   container through proot.
- * - `native`: no container; a directory on this machine and its shell (development machines, the fake host).
+ * - `native`: no container; a directory on this machine and its shell (development machines, the fake host). The directory
+ *   stands for the container's root: a path on this body means the same thing in both forms (`/root/work`, `/root/agents/x`
+ *   are `<workspace>/root/work`, ...), and a relative one starts at `/root/work`. Only the body knows this translation.
  */
 import { spawn as spawnProcess, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { HostIsolation, HostNetwork } from "../../../../sdk/src/host";
 import { MAIN_BODY_ID } from "../../../../sdk/src/ids";
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
@@ -123,8 +125,8 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     if (workspace) return workspace;
     const isolation = o.isolation;
     if (isolation.kind === "native") {
-      mkdirSync(isolation.native.workspace, { recursive: true });
-      return workspace = new Workspace({ root: isolation.native.workspace, ownership: "own", exec: o.exec, streams: o.streams });
+      mkdirSync(join(isolation.native.workspace, PROOT_WORKDIR), { recursive: true });
+      return workspace = new Workspace({ root: isolation.native.workspace, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", exec: o.exec, streams: o.streams });
     }
     if (isolation.kind !== "proot") throw new WordError("unavailable", `The ${isolation.kind} main body is not supported yet`);
     const proot = isolation.proot;
@@ -153,9 +155,10 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
         }) as ChildProcessWithoutNullStreams;
       }
       if (isolation.kind === "native") {
-        // The development form: the program runs straight on this machine, its place under the workspace. `dsh` is the
-        // runtime the host names (its binary, home and patch file); any other program runs as written.
-        const cwd = join(isolation.native.workspace, opts.cwd ?? "");
+        // The development form: the program runs straight on this machine, its place under the workspace (the path on the
+        // body, as in the container: absolute from the root, relative from the work directory). `dsh` is the runtime the
+        // host names (its binary, home and patch file); any other program runs as written.
+        const cwd = join(isolation.native.workspace, isAbsolute(opts.cwd ?? "") ? "" : PROOT_WORKDIR, opts.cwd ?? "");
         mkdirSync(cwd, { recursive: true });
         const runtime = argv[0] === "dsh";
         const { dsh_bin, dsh_home, dsh_patch } = isolation.native;
@@ -168,7 +171,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     appLauncher() {
       if (isolation.kind === "native") {
         return {
-          root: join(isolation.native.workspace, "apps"),
+          root: join(isolation.native.workspace, "root", "apps"), agentRoot: "/root/apps",
           spawn: (app, dir, env) => ({
             command: app.server.command, args: app.server.args ?? [], cwd: dir,
             env: { HOME: process.env.HOME ?? "/root", PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: process.env.TMPDIR ?? "/tmp", LANG: "C.UTF-8", TERM: "dumb", ...(app.server.env ?? {}), ...env },

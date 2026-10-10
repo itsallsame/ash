@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ENV_GRACE_MS } from "../../../src/edges/agents/modules";
+import { ENV_GRACE_MS, type OwnerChannel } from "../../../src/edges/agents/modules";
 import { caller, dummy, fixture, settle, waitFor, type FakeDriver, type FakeRegistry } from "./helpers";
 
 const M = "agent:main";
@@ -119,6 +119,28 @@ test("environment: coarse facts about who is here, in the agent's own view; the 
   f.registry.add(dummy("device:Zzzzzzzzzzzzzzzzzzzzzz", "Phone", ["screen.tap"]));
   await turn(f, "f");
   assert.equal(injects(d).length, 3);
+});
+
+test("environment: 「主人在哪」 names each open channel, local or remote, being looked at or not; no channel, no line; the hash follows it", async () => {
+  const open: OwnerChannel[] = [];
+  const f = fixture({ channels: () => open });
+  await f.start();
+  const d = f.driver();
+  const envs = () => d.of("inject").filter((c) => c[2] === "front").map((c) => (c[3] as any).modules.find((m: any) => m.id === "environment")).filter(Boolean);
+  await turn(f, "a");
+  assert.ok(!/主人在哪/.test(envs()[0].content), "nobody connected: the line is left out");
+
+  open.push({ client: "client:a", kind: "web", label: "Mac Chrome", local: false, visible: false }, { client: "client:b", kind: "app", label: "Find X8", local: true, visible: true });
+  await turn(f, "b");
+  assert.match(envs()[1].content, /^主人在哪：手机 App（本机，正在看）；网页 Mac Chrome（远程，不在看）$/m);
+  assert.notEqual(envs()[1].version, envs()[0].version);
+
+  await turn(f, "c");
+  assert.equal(envs().length, 2, "the same channels, the same content: no new injection");
+  open[0]!.visible = true;
+  open[1]!.visible = false;
+  await turn(f, "d");
+  assert.match(envs()[2].content, /^主人在哪：手机 App（本机，不在看）；网页 Mac Chrome（远程，正在看）$/m);
 });
 
 test("environment is filtered by what the agent may reach: a restricted agent does not see hands, bodies or apps it has no words for", async () => {

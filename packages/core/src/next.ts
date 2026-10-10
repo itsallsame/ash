@@ -131,7 +131,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   try { vault = openVault({ file: join(dataDir, "vault.json"), sealKey: secrets.sealKey, now }); } catch (error) { ledger.close(); throw error; }
 
   // 4. kernel. The gate needs the hands and the main body, the router needs the agents and the apps: they come later.
-  const late: { hands?: HandRegistry; body?: ReturnType<typeof createLocalBody>; gateService?: ReturnType<typeof createGateService>; apps?: ReturnType<typeof createApps>; agents?: ReturnType<typeof createAgents> } = {};
+  const late: { hands?: HandRegistry; body?: ReturnType<typeof createLocalBody>; gateService?: ReturnType<typeof createGateService>; apps?: ReturnType<typeof createApps>; agents?: ReturnType<typeof createAgents>; human?: ReturnType<typeof createHuman> } = {};
   const registry = createRegistry();
   const redact = createRedact();
   const store = new GateStore(ledger, now);
@@ -217,6 +217,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
     templatesDir: join(SKILLS, "agents"),
     rules: (decl) => (decl.primary ? MAIN_RULES : AGENT_RULES),
+    channels: () => late.human?.channels() ?? [],
     tools: (agent, lanes, allowed) => ({ mcp_url: `${url}/mcp`, tokens: tools.issueTokens(agent, lanes), allowed: allowed ?? [...TOOL_NAMES] }),
     revokeTools: (agent) => tools.revoke(agent),
     started: (agent) => tools.catchUp(agent),
@@ -228,7 +229,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log, contract: { doc: APP_CONTRACT_DOC },
     ...(launcher ? { builtinApps: [...installBuiltinOrgans(join(SKILLS, "organs"), launcher.root), ...installBuiltinOrgans(FIRST_PARTY_APPS, launcher.root)] } : {}),
   });
-  const human = createHuman({
+  const human = late.human = createHuman({
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
     summarize: createSummarizer({ llm }),
   });

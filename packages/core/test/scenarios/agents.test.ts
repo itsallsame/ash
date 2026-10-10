@@ -223,3 +223,18 @@ test("S046: the owner talks to a sub-agent directly; in that turn it may answer 
   const answer = await owner.seen(toOwner("say", HELPER), "the helper answering the owner");
   assert.equal(textOf(answer), "我是帮手，听到了");
 });
+
+test("HUB-MODULES §2.5: the owner's channels reach the agent's environment (「主人在哪」), and what the owner is looking at follows", async (t) => {
+  const s = await startScenario(t);
+  s.driver.script((turn) => { turn.say("在"); });
+  const owner = await s.human();
+  owner.presence({ visible: true });
+  const environmentOf = (match: RegExp) => s.driver.injections.flatMap((i) => i.modules).find((m) => m.id === "environment" && match.test(m.content));
+
+  accepted(await owner.say("你好"));
+
+  await eventually(() => environmentOf(/主人在哪：手机 App（本机，正在看）/), "the line in the environment the agent was given");
+  owner.presence({ visible: false });
+  accepted(await owner.say("还在吗"));
+  await eventually(() => environmentOf(/主人在哪：手机 App（本机，不在看）/), "the environment changed with the owner's attention");
+});

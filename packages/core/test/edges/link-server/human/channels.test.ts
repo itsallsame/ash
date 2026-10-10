@@ -155,3 +155,19 @@ test("a channel that connects with the widget surface is given the current state
   await eventually(() => hub.mini.sent.some((s) => s.msg.word === "widget.rendered"), "what it drew goes on");
   assert.equal(chatOnly.presents.length, 0);
 });
+
+test("channels(): the open channels, with what the agents' environment needs, and the owner looking at one; a closed channel is gone", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  assert.deepEqual(hub.human.channels(), []);
+  const phone = await Channel.open(hub, { label: "手机 · 对话" });
+  const web = await Channel.openRemote(hub, { label: "网页 Mac Chrome" });
+  phone.presence({ visible: true });
+  await eventually(() => hub.human.channels().find((c) => c.client === phone.clientId)?.visible, "the phone visible");
+
+  const channels = hub.human.channels();
+  assert.deepEqual(channels.find((c) => c.client === phone.clientId), { client: phone.clientId, kind: "app", label: "手机 · 对话", local: true, visible: true });
+  assert.deepEqual(channels.find((c) => c.client === web.clientId), { client: web.clientId, kind: "web", label: "网页 Mac Chrome", local: false, visible: false });
+
+  web.client.stop();
+  await eventually(() => hub.human.channels().length === 1, "the web channel gone");
+});

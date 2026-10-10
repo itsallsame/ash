@@ -151,11 +151,15 @@ test("isolation native (development machine, fake host): body:main is a director
     assert.equal((await ask(body, "workspace.bash", { command: "sh run.sh && pwd", workdir: "a" })).data.exit_code, 0);
     const read = await ask(body, "workspace.read", { path: "a/out.txt" });
     assert.equal(read.data.text, "native 2");
-    assert.equal(read.data.path, join(await realpath(workspace), "a", "out.txt"));
-    await writeFile(join(workspace, "blob.bin"), Buffer.from([0, 1, 2]));
+    assert.equal(read.data.path, "/root/work/a/out.txt", "paths are the body's, as in the container: relative starts at /root/work");
+    assert.equal(await readFile(join(workspace, "root", "work", "a", "out.txt"), "utf8"), "native 2\n");
+    await writeFile(join(workspace, "root", "work", "blob.bin"), Buffer.from([0, 1, 2]));
     assert.equal((await ask(body, "workspace.read", { path: "blob.bin" })).data.stream, "st_1");
     assert.equal((await ask(body, "body.info", {})).data.ownership, "own");
-    await assert.rejects(ask(body, "workspace.read", { path: "../escape" }), (e: any) => e.code === "forbidden");
+    // The container's view: an absolute path starts at the workspace, and nothing gets out of it.
+    await ask(body, "workspace.write", { path: "/root/agents/x/AGENTS.md", content: "hi" });
+    assert.equal(await readFile(join(workspace, "root", "agents", "x", "AGENTS.md"), "utf8"), "hi");
+    await assert.rejects(ask(body, "workspace.read", { path: "../../../../../../etc/hostname" }), (e: any) => e.code === "not_found", "`..` stops at the root: the host's /etc is not reachable");
     assert.equal(await body.assess({ word: "workspace.write", body: { path: "n.txt", content: "" } }), "none");
   } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
 });
@@ -171,11 +175,17 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
   const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-spawn-"));
   try {
     const native = createLocalBody({ isolation: { kind: "native", native: { workspace: join(dir, "ws"), dsh_bin: process.execPath, dsh_home: join(dir, "dsh") } } });
-    const child = native.spawn(["dsh", "-e", "process.stdout.write(process.cwd() + '|' + process.env.DSH_HOME + '|' + process.env.EXTRA)"], { cwd: "agents/main", env: { EXTRA: "x" } });
+    const child = native.spawn(["dsh", "-e", "process.stdout.write(process.cwd() + '|' + process.env.DSH_HOME + '|' + process.env.EXTRA)"], { cwd: "/root/agents/main", env: { EXTRA: "x" } });
     let out = "";
     child.stdout.on("data", (chunk) => { out += chunk; });
     await new Promise((resolve) => child.on("close", resolve));
-    assert.equal(out, `${await realpath(join(dir, "ws", "agents", "main"))}|${join(dir, "dsh")}|x`);
+    assert.equal(out, `${await realpath(join(dir, "ws", "root", "agents", "main"))}|${join(dir, "dsh")}|x`);
+    // A relative place starts at the work directory, as in the container.
+    const relative = native.spawn(["dsh", "-e", "process.stdout.write(process.cwd())"], { cwd: "sub" });
+    let where = "";
+    relative.stdout.on("data", (chunk) => { where += chunk; });
+    await new Promise((resolve) => relative.on("close", resolve));
+    assert.equal(where, await realpath(join(dir, "ws", "root", "work", "sub")));
     // Only `dsh` means the host's runtime: another program runs as written, without the runtime's home.
     const plain = native.spawn([process.execPath, "-e", "process.stdout.write(String(process.env.DSH_HOME) + '|' + process.env.EXTRA)"], { env: { EXTRA: "y" } });
     let plainOut = "";
@@ -183,7 +193,8 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
     await new Promise((resolve) => plain.on("close", resolve));
     assert.equal(plainOut, `${process.env.DSH_HOME}|y`);
     const launcher = native.appLauncher()!;
-    assert.equal(launcher.root, join(dir, "ws", "apps"));
+    assert.equal(launcher.root, join(dir, "ws", "root", "apps"));
+    assert.equal(launcher.agentRoot, "/root/apps", "the agent sees the same path in both forms");
     const run = launcher.spawn({ server: { command: "node", args: ["server.mjs"], env: { A: "1" } } } as never, join(launcher.root, "notes"), { ASH_X: "y" });
     assert.deepEqual([run.command, run.args, run.cwd, run.env.A, run.env.ASH_X], ["node", ["server.mjs"], join(launcher.root, "notes"), "1", "y"]);
 

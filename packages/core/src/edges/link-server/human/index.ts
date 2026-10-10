@@ -59,6 +59,8 @@ export interface HumanEdge {
   /** For `link.onChannel("human", …)`. */
   attach: ChannelAttach;
   clients(): ClientInfo[];
+  /** The channels open now, as little as the agents' environment needs (「主人在哪」): which kind, what it is called, local or not, being looked at or not. */
+  channels(): { client: string; kind: ClientInfo["channel"]; label: string; local: boolean; visible: boolean }[];
   /** Brings a channel (default: the one the owner is on) to the front, e.g. after an authorization page. */
   focus(client?: string): Promise<PresentResult>;
   close(): void;
@@ -241,6 +243,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
   return {
     member, attach,
     clients: () => clients.info(),
+    channels: () => clients.all().map((c) => ({ client: c.client, kind: c.channel, label: c.label, local: c.local, visible: c.visible })),
     async focus(client) {
       const c = client ? clients.get(client) : clients.current();
       return c ? presenter.send(c, { surface: "chat", op: "focus", body: {} }) : { ok: false, error: { code: "offline", message: "the owner has no channel open" } };
