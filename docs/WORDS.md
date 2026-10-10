@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `217afb34725d185c`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `aceae00e6b85a518`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -168,7 +168,7 @@
 | `configure` | owner, agent, app | write / none | - | agent*, key, config | 在配置帮手 | Set the runtime's own configuration for an agent (model, effort level, other options the runtime reports it supports), or read it when config is left out. The runtime keeps the truth; the hub stores no copy. |
 | `plugins` | owner, agent, app | write / structure | - | agent*, key, op*, name | 在调整帮手的插件 | List, enable or disable the plugins of one agent's runtime. Plugins change what the agent can do, so an agent asking for this is asked about by the owner. |
 | `env.changed` | kernel | read / none | event in | what*, network*, online*, saver* | 在处理网络变化 | The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); when the proxy is a different one, the agents module restarts at once the agents running on this phone (they are told the turn was cut off; their waiting messages go to the new process). Sent by the host module; not recorded. |
-| `usage.recorded` | kernel | read / none | event out | caller*, provider*, model*, input_tokens*, output_tokens*, cost, ok*, at* | 在记下用量 | An agent driver's model usage, passed to service:cost. |
+| `usage.recorded` | kernel | read / none | event out | caller*, provider*, model*, input_tokens*, output_tokens*, cache_read_tokens, cost, ok*, at* | 在记下用量 | An agent driver's model usage, passed to service:cost. |
 
 ## `service:apps`
 
@@ -205,7 +205,7 @@
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
 | `complete` | owner, agent, app | read / none | timeout 60s | model, messages*, max_tokens | 在问小模型 | A short completion from the hub's small model (the model argument is optional). For organs that must judge something in code, e.g. a sensor rule. The usage is counted against the caller and its quota. |
-| `usage.recorded` | kernel | read / none | event out | caller*, provider*, model*, input_tokens*, output_tokens*, cost, ok*, at* | 在记下用量 | One call of the hub's small model (the approval review, JEV, the progress summary, service:llm/complete), passed to service:cost under the caller's name. |
+| `usage.recorded` | kernel | read / none | event out | caller*, provider*, model*, input_tokens*, output_tokens*, cache_read_tokens, cost, ok*, at* | 在记下用量 | One call of the hub's small model (the approval review, JEV, the progress summary, service:llm/complete), passed to service:cost under the caller's name. |
 
 ## `service:persona`
 
@@ -251,7 +251,7 @@
 | `usage.get` | owner | read / none | - | days | 在看用量 | What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls. |
 | `balance.get` | owner | read / none | - | - | 在看余额 | The provider account balance for the configured API key; fails rather than reporting zero when it cannot be read. |
 | `quota.check` | kernel | read / none | - | agent* | 在查额度 | Whether an agent may open another turn under its daily quota, by the latest usage numbers. A soft limit: the numbers are only as fresh as the last poll. |
-| `usage.recorded` | kernel | read / none | event in | caller*, provider*, model*, input_tokens*, output_tokens*, cost, ok*, at* | 在记下用量 | One model call, as the llm edge reports it for the hub's small models or an agent driver reports it for an agent: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table. |
+| `usage.recorded` | kernel | read / none | event in | caller*, provider*, model*, input_tokens*, output_tokens*, cache_read_tokens, cost, ok*, at* | 在记下用量 | One model call, as the llm edge reports it for the hub's small models or an agent driver reports it for an agent: who called, which model, tokens in and out (cache_read_tokens: the cached part of the input, priced apart), the cost in US dollars when a price is known (the cost service prices the models it has rates for when none is given) (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table. |
 
 ## `service:reflex`
 

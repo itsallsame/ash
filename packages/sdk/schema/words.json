@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "217afb34725d185c1e3a7d771909692db94cb5dc285099ffa9d258438d838980",
+ "hash": "aceae00e6b85a518d0a5079d774c6ee9885d179946aef5a7247f45b9f45573f6",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -6582,6 +6582,11 @@
       "minimum": 0,
       "maximum": 9007199254740991
      },
+     "cache_read_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
      "cost": {
       "type": "number",
       "minimum": 0
@@ -8594,6 +8599,11 @@
       "maximum": 9007199254740991
      },
      "output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "cache_read_tokens": {
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
@@ -10744,7 +10754,7 @@
    "word": "usage.recorded",
    "kind": "event",
    "direction": "in",
-   "description": "One model call, as the llm edge reports it for the hub's small models or an agent driver reports it for an agent: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table.",
+   "description": "One model call, as the llm edge reports it for the hub's small models or an agent driver reports it for an agent: who called, which model, tokens in and out (cache_read_tokens: the cached part of the input, priced apart), the cost in US dollars when a price is known (the cost service prices the models it has rates for when none is given) (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -10766,6 +10776,11 @@
       "maximum": 9007199254740991
      },
      "output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "cache_read_tokens": {
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991

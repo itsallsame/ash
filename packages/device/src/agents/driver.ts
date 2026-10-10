@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AgentDriver, AgentEvent, AgentStartSpec, AgentState, AgentStatus, DriverMessage, PromptModule, RuntimeInfo, TurnOutcome } from "../../../sdk/src/driver";
 import { WordError } from "../../../sdk/src/message";
+import { localStamp } from "../../../sdk/src/time";
 import { redactText } from "../redact";
 import { TOOL_SURFACE, type Kind } from "./info";
 import type { AgentEvent as SessionEvent, AgentSession, OpenOptions } from "./types";
@@ -100,7 +101,7 @@ interface Proc {
 
 const modulesText = (modules: PromptModule[]): string | undefined => (modules.length ? modules.map((m) => m.content).join("\n\n---\n\n") : undefined);
 const envelope = (m: DriverMessage) =>
-  `[ash] ${new Date(m.at).toISOString()} · ${m.origin?.label ?? m.from} · lane ${m.lane} · ${m.word} · id ${m.id}${m.thread ? ` · thread ${m.thread}` : ""}`;
+  `[ash] ${localStamp(m.at)} · ${m.origin?.label ?? m.from} · lane ${m.lane} · ${m.word} · id ${m.id}${m.thread ? ` · thread ${m.thread}` : ""}`;
 /** These runtimes take text only: an attachment is named, with the ref that tells the owner's side what it is. */
 const render = (held: string[], batch: DriverMessage[]): string => [
   ...held,

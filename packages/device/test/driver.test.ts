@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentStartSpec, DriverMessage } from "../../sdk/src/driver";
 import { WordError } from "../../sdk/src/message";
+import { localStamp } from "../../sdk/src/time";
 import { createComputerDriver, type ComputerDriver } from "../src/agents/driver";
 import { abilitiesOf, KINDS, type Kind } from "../src/agents/info";
 import { CodexSession } from "../src/agents/codex";
@@ -73,8 +74,8 @@ test("send puts the envelope in front of each message, opens a turn, and a runni
   const sent = r.sessions[0]!.sent;
   assert.equal(sent.length, 1);
   assert.equal(sent[0]!.text, [
-    "[ash] 2026-10-10T08:00:00.000Z · person:owner · lane front · say · id m1 · thread th1\nhello\n[attachment name=\"a b.png\" type=image/png ref=blob1]",
-    "[ash] 2026-10-10T08:00:00.000Z · phone · lane front · tell · id m2\nand this",
+    `[ash] ${localStamp(Date.UTC(2026, 9, 10, 8))} · person:owner · lane front · say · id m1 · thread th1\nhello\n[attachment name=\"a b.png\" type=image/png ref=blob1]`,
+    `[ash] ${localStamp(Date.UTC(2026, 9, 10, 8))} · phone · lane front · tell · id m2\nand this`,
   ].join("\n\n"));
   assert.deepEqual(r.named("turn.started").map((e) => [e.key, e.ids]), [["front", ["m1", "m2"]]]);
   await assert.rejects(r.driver.send("agent:main", "front", [message("m3", "again")]), refused("conflict"));

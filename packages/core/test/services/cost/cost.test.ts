@@ -39,15 +39,34 @@ test("usage.recorded events land in the usage table", async () => {
 
 test("an unknown cost stays unknown: NULL in the table, counted as unpriced, never added as 0", async () => {
   const f = setup();
-  await f.record({});                      // no cost field at all
-  await f.record({ cost: "free" });        // not a number: same thing
-  await f.record({ cost: 0.5 });
+  await f.record({ model: "mystery-1" });                 // no cost field, and no rates for the model
+  await f.record({ model: "mystery-1", cost: "free" });   // not a number: same thing
+  await f.record({ model: "mystery-1", cost: 0.5 });
   assert.deepEqual(f.ledger.db().prepare("SELECT cost FROM cost_usage ORDER BY id").all().map((r) => r.cost), [null, null, 0.5]);
   const today = (await f.call("usage.get")).data as any;
   assert.equal(today.periods.today.calls, 3);
   assert.equal(today.periods.today.cost_usd, 0.5);
   assert.equal(today.periods.today.unpriced_calls, 2);
   assert.deepEqual(today.recent.map((c: any) => c.cost_usd), [0.5, null, null]);
+});
+
+test("a call without a stated cost is priced from the published DeepSeek rates; a stated cost and an unknown model are left alone", async () => {
+  const f = setup();
+  const offPeak = Date.UTC(2026, 9, 10, 12, 0, 0);   // Saturday
+  const peak = Date.UTC(2026, 9, 12, 7, 0, 0);       // Monday 07:00 UTC
+  // the case that was 36 unpriced calls: DSH's provider id and the current Flash model
+  await f.record({ provider: "deepseek-official", model: "deepseek-flash", at: offPeak, input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000 });
+  await f.record({ provider: "deepseek-official", model: "deepseek-flash", at: peak, input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000 });
+  await f.record({ provider: "deepseek-official", model: "deepseek-v4-pro", at: offPeak, input_tokens: 1_000_000, output_tokens: 0 });
+  await f.record({ provider: "deepseek", model: "deepseek-flash", at: offPeak, input_tokens: 1_000_000, output_tokens: 0, cost: 9 });   // the reporter's own price stays
+  await f.record({ provider: "openrouter", model: "deepseek-flash", at: offPeak });                                                    // not DeepSeek's price list
+  const costs = f.ledger.db().prepare("SELECT cost FROM cost_usage ORDER BY id").all().map((r) => r.cost as number | null);
+  const close = (a: number | null, b: number) => assert.ok(a !== null && Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
+  close(costs[0]!, 0.15 + 0.6 + 0.003);
+  close(costs[1]!, 0.3 + 1.2 + 0.006);
+  close(costs[2]!, 0.66);
+  assert.equal(costs[3], 9);
+  assert.equal(costs[4], null);
 });
 
 test("usage.get totals the periods, by caller and by day, and keeps older calls out of the short ones", async () => {
