@@ -4,34 +4,31 @@ ash 是运行在 Android 手机上的常驻个人 Agent。ash core 管理消息�
 
 当前代码包含：
 
-- 单一 `agent:main` 的对话、状态、后台流程、记忆文件与活动记录；
-- 手机感官、通知、审批、定时唤醒与本地暂停；
-- 浏览器界面、网关配对与笔记本设备能力；
-- DSH 的五个 ash 工具（`ash_describe`、`ash_send`、`ash_say`、`ash_react`、`ash_show`）及受控的原生读写/搜索工具。
+- 中枢（`packages/core`）：账本、成员、路由、关口、定时、感知、语义层，所有进出都变成消息；
+- 手机宿主、手 App、网页和电脑程序经 `ash-link/1` 连进同一个端口，agent 由 DSH 驱动并经 MCP 使用中枢的工具；
+- 审批、定时唤醒、应用（器官）与本地暂停。
 
 这些是代码能力清单，不代表真机回归和最终体验验收已经完成。进度以项目验收记录为准。
 
 ## 运行结构
 
 ```text
-Android App（Kotlin）
-  ├─ 前台服务、系统感官、通知、闹钟、Keystore、设备能力
-  ├─ APK 静态资源中的 WebView 界面 ── 本机原生桥 ──┐
-  └─ 宿主 HTTP 桥 127.0.0.1:4710 ────────────────┤
-                                                   ▼
-ash core（Node，单进程）
-  ├─ ash-api/2：账本、成员、消息路由、关口、时钟、投递、后台流程
-  ├─ 本机边缘 API 127.0.0.1:4700
-  ├─ DSH 绑定 ── 原样的 DSH core
-  └─ 网关出站连接 ── 配对浏览器 / 笔记本设备
+Android 宿主 ai.ash.kernel（Kotlin）：装运行环境、起进程并监管、签名、唤醒、保活
+  └─ 启动 ash core（Node，单进程；ash-host/1：host.json + 环境变量 + 标准输入事件）
+       ├─ 内核：账本、注册表、路由、关口、脱敏、保险箱
+       ├─ 边缘：/link 连接服务端、工具面（MCP）、DSH 驱动、主 body、应用、宿主、小模型
+       ├─ 服务：时钟、语义层、历史、设备目录、卡片、管理、用量、感知、反射
+       └─ 网关出站连接 ── 配对浏览器 / 电脑程序
+手 App ai.ash.agent、网页、电脑程序 ═ ash-link/1 ═ 本机端口
 ```
 
 Android WebView 从 APK 加载静态界面，通过原生桥访问 Core；远程浏览器通过网关使用同一界面。设备能力经过成员与审批链路，不直接展开成一批 Agent 工具。详细结构见 [架构说明](docs/ARCHITECTURE.md)。
 
 | 目录 | 内容 |
 |---|---|
-| `packages/sdk` | `ash-api/2` 类型、word 目录与客户端 |
-| `packages/core` | 世界层、成员、后台流程、边缘 API 和界面 |
+| `packages/sdk` | 契约：类型、JSON Schema、一致性样例 |
+| `packages/core` | 中枢：内核、边缘、服务（结构见 `docs/ARCHITECTURE.md`） |
+| `packages/link`、`packages/workspace`、`packages/device` | 连接协议实现、文件与命令操作、电脑程序 |
 | `packages/web` | 网页界面（Core 当静态文件发，Android 打包进 APK） |
 | `packages/ash-skills` | 人格模板、首次见面与其他技能 |
 | `packages/android-compat` | Android 上运行原样 DSH 的适配 |
@@ -52,7 +49,7 @@ npm run build:payload
 cd android && ./gradlew :app:assembleDebug
 ```
 
-`npm test` 中依赖已安装 DSH 的场景，设置 `ASH_TEST_DSH_ROOT` 指向发布包根目录后运行；未设置时这些场景会明确跳过。浏览器 E2E 需先安装 Playwright Chromium。APK 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。
+`npm test` 跑全部单元测试和中枢场景测试。浏览器 E2E 需先安装 Playwright Chromium。APK 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。
 
 ## 来源与许可
 
