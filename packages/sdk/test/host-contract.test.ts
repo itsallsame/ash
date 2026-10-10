@@ -23,7 +23,7 @@ const full: HostSpec = {
 const keys: Record<keyof HostSpec, true> = { contract: true, host: true, platform: true, dirs: true, isolation: true, network: true, endpoint: true, capabilities: true, secure_storage: true, dev: true };
 
 describe("host.json schema", () => {
-  it("is the checked-in packages/sdk/schema/host.json (regenerate with tools/gen-host-schema.mjs)", () => {
+  it("is the checked-in packages/sdk/schema/host.json (regenerate with npm run gen:host-schema)", () => {
     const file = readFileSync(fileURLToPath(new URL("../schema/host.json", import.meta.url)), "utf8");
     assert.equal(file, `${JSON.stringify(HOST_SPEC_SCHEMA, null, 2)}\n`);
   });

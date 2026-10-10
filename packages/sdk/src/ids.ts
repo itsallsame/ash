@@ -29,10 +29,10 @@ export const BODY_ID_PATTERN = `^body:(main|${HAND})$`;
 export const APP_ID_PATTERN = "^app:[a-z][a-z0-9-]{0,47}$";
 export const CLIENT_ID_PATTERN = "^client:[A-Za-z0-9_-]{1,64}$";
 export const HAND_ID_PATTERN = `^${HAND}$`;
-/** The agent name without its `agent:` prefix. */
-export const AGENT_NAME_PATTERN = "^[a-z][a-z0-9_-]{0,31}$";
 /** The app id without its `app:` prefix, as app.json writes it. */
 export const APP_NAME_PATTERN = "^[a-z][a-z0-9-]{0,47}$";
+/** The name of an app tool (an MCP tool of the app's server), which is also the word it speaks. */
+export const TOOL_NAME_PATTERN = "^[a-z][a-z0-9_.-]{0,63}$";
 /** An opaque, stable key (1..128 characters) a sender picks to keep a repeat from counting twice: `batch_id`, `dedupe_key`. */
 export const DEDUPE_KEY_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$";
 /** The id of one page (surface) of an app. */
