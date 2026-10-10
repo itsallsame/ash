@@ -5,10 +5,10 @@ import android.content.Intent
 import android.os.Bundle
 
 /**
- * The screen helper opens this when it is done in the system's settings for Ash (the keep-alive switches): it joins
+ * The keep-alive flow opens this when it is done in the system's settings (the keep-alive switches): it joins
  * Ash's task, which comes back to the front as the owner left it, and closes at once, so the page the flow was started
  * from is in front again with its result. Ash's launcher entry would not do: HomeActivity is singleTask, and starting
- * it closes every page above it. It shows nothing and does nothing else; only Ash's own apps may open it.
+ * it closes every page above it. It shows nothing and does nothing else; it is not exported.
  */
 class ReturnActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {

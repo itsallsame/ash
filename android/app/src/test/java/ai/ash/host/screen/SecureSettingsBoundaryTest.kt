@@ -7,12 +7,12 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Ash holds WRITE_SECURE_SETTINGS for one thing: bringing its screen helper's accessibility service back. Android grants
+ * Ash holds WRITE_SECURE_SETTINGS for one thing: bringing its accessibility service back. Android grants
  * it whole, so the boundary is kept here, in code: one file writes secure settings, only the accessibility keys, only
  * the helper's own entry, and nothing the agent can call reaches it.
  */
 class SecureSettingsBoundaryTest {
-    private val sources = listOf("src/main/java", "../screen/src/main/java", "../bridge/src/main/java")
+    private val sources = listOf("src/main/java")
         .map(::File).filter { it.isDirectory }.flatMap { dir -> dir.walk().filter { it.extension == "kt" || it.extension == "java" }.toList() }
     private val write = Regex("""Settings\.(Secure|Global)\.put\w*\(|\.putString\(\s*resolver|content://settings/(secure|global)""")
 
@@ -30,20 +30,21 @@ class SecureSettingsBoundaryTest {
     }
 
     @Test fun noAgentCapabilityReachesRecovery() {
-        val tools = sources.filter { f -> f.path.contains("/host/cap/") || f.path.contains("/screen/src/") }
+        val tools = sources.filter { f -> f.path.contains("/host/cap/") || f.path.contains("/ai/ash/screen/") || f.path.contains("/ai/ash/senses/") }
         // A call or an import, not a mention in a comment.
         val use = Regex("""ScreenRecovery\.|import\s+ai\.ash\.host\.screen\.ScreenRecovery""")
         assertFalse(tools.filter { use.containsMatchIn(it.readText()) }.map { it.name }.toString(), tools.any { use.containsMatchIn(it.readText()) })
     }
 
-    @Test fun onlyTheHelpersEntryIsTakenOutAndPutBack() {
-        val list = "com.other/.Reader:ai.ash.screen/ai.ash.screen.a11y.A11yService:com.third/.Svc"
-        assertEquals(listOf("ai.ash.screen/ai.ash.screen.a11y.A11yService"), ScreenRecovery.Services.helpers(list))
-        val without = ScreenRecovery.Services.withoutHelper(list)
+    @Test fun onlyAshsEntryIsTakenOutAndPutBack() {
+        val pkg = "ai.ash.agent"
+        val list = "com.other/.Reader:ai.ash.agent/ai.ash.screen.a11y.A11yService:com.third/.Svc"
+        assertEquals(listOf("ai.ash.agent/ai.ash.screen.a11y.A11yService"), ScreenRecovery.Services.helpers(list, pkg))
+        val without = ScreenRecovery.Services.withoutHelper(list, pkg)
         assertEquals("com.other/.Reader:com.third/.Svc", without)
-        assertEquals("com.other/.Reader:com.third/.Svc:ai.ash.screen/ai.ash.screen.a11y.A11yService", ScreenRecovery.Services.withHelperBack(without, list))
-        // Never adds the helper unless the owner had it on; a look-alike package is not the helper.
-        assertEquals("com.other/.Reader", ScreenRecovery.Services.withHelperBack("com.other/.Reader", "com.other/.Reader"))
-        assertEquals(emptyList<String>(), ScreenRecovery.Services.helpers("ai.ash.screenfake/.X"))
+        assertEquals("com.other/.Reader:com.third/.Svc:ai.ash.agent/ai.ash.screen.a11y.A11yService", ScreenRecovery.Services.withHelperBack(without, list, pkg))
+        // Never adds Ash's entry unless the owner had it on; a look-alike package is not Ash.
+        assertEquals("com.other/.Reader", ScreenRecovery.Services.withHelperBack("com.other/.Reader", "com.other/.Reader", pkg))
+        assertEquals(emptyList<String>(), ScreenRecovery.Services.helpers("ai.ash.agentfake/.X", pkg))
     }
 }

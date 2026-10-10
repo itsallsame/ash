@@ -7,7 +7,7 @@ import ai.ash.host.TaskFrame
 import ai.ash.host.TaskStatus
 import ai.ash.host.screen.ScreenBridge
 
-/** The task island over other apps. The screen helper draws it; Ash tells it what to show (see [ScreenBridge]). */
+/** The task island over other apps. The screen side draws it; Ash tells it what to show (see [ScreenBridge]). */
 object TaskCapsule {
     private const val PREFS = "ash_island"
     /** The island is on screen for the owner now: what it shows needs no notification. */

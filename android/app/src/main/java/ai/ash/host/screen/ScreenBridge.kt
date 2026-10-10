@@ -1,189 +1,84 @@
 package ai.ash.host.screen
 
-import ai.ash.BuildConfig
-import ai.ash.bridge.Bridge
-import ai.ash.bridge.IAshHost
-import ai.ash.bridge.IScreenBridge
 import ai.ash.host.TaskStatus
 import ai.ash.host.cap.CapResult
 import ai.ash.host.cap.Capability
+import ai.ash.screen.ScreenCapabilities
+import ai.ash.screen.ScreenHost
+import ai.ash.screen.ScreenLink
+import ai.ash.screen.a11y.A11yService
+import ai.ash.screen.island.NativeIsland
 import ai.ash.ui.HomeActivity
-import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.content.ServiceConnection
-import android.content.pm.PackageManager
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
-import android.util.Log
-import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
 
 /**
- * Ash's end of the bridge to its screen helper (ai.ash.screen): the app that holds the accessibility service and draws
- * the task island. The helper's tools join the phone's manifest while it is connected; the island is told what to
- * show, and the owner's actions on it come back here. Ash only binds to a helper signed like itself.
+ * The rest of Ash's face to the screen abilities (the accessibility service's tools and the task island), which live in
+ * this same app: the tools join the phone's manifest, the island is told what to show, and the owner's actions on it
+ * come back here.
  */
 object ScreenBridge {
-    private const val TAG = "ash.screen"
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var app: Context? = null
-    @Volatile private var bridge: IScreenBridge? = null
-    @Volatile private var status = JSONObject()
-    @Volatile private var tools: List<Capability> = emptyList()
-    private var bound = false
     private var lastIsland = ""
-
-    private val connection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            val peer = IScreenBridge.Stub.asInterface(service)
-            Thread({
-                try {
-                    if (peer.protocol() != Bridge.PROTOCOL) { Log.w(TAG, "screen helper speaks another protocol"); return@Thread }
-                    bridge = peer
-                    peer.attach(host)
-                    refresh(peer)
-                    main.post { lastIsland = ""; TaskStatus.refresh() }
-                } catch (e: Exception) { Log.w(TAG, "screen helper did not answer", e) }
-            }, "ash-screen-connect").start()
-        }
-        override fun onServiceDisconnected(name: ComponentName) { lost(); main.removeCallbacks(stillWaiting); main.postDelayed(stillWaiting, retryMs) }
-        override fun onBindingDied(name: ComponentName) { lost(); main.post { unbind(); connect() } }
-    }
-
-    private val host = object : IAshHost.Stub() {
-        override fun islandAction(action: String) {
-            if (!Bridge.sameSigner(app ?: return, android.os.Binder.getCallingUid())) return
-            val a = runCatching { JSONObject(action) }.getOrNull() ?: return
-            main.post { act(a) }
-        }
-        override fun changed(next: String) {
-            if (!Bridge.sameSigner(app ?: return, android.os.Binder.getCallingUid())) return
-            val value = runCatching { JSONObject(next) }.getOrNull() ?: return
-            val toolsChanged = value.optBoolean("accessibility") != status.optBoolean("accessibility")
-            status = value
-            if (toolsChanged) bridge?.let { peer -> Thread({ runCatching { refresh(peer) } }, "ash-screen-refresh").start() }
-            main.post { TaskStatus.refresh() }
-        }
-    }
 
     fun start(ctx: Context) {
         app = ctx.applicationContext
-        // Installed, updated or removed later: connect again.
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_PACKAGE_ADDED); addAction(Intent.ACTION_PACKAGE_REPLACED); addAction(Intent.ACTION_PACKAGE_REMOVED)
-            addDataScheme("package")
-        }
-        ctx.applicationContext.registerReceiver(object : BroadcastReceiver() {
-            override fun onReceive(c: Context, intent: Intent) {
-                if (intent.data?.schemeSpecificPart == Bridge.SCREEN_PACKAGE) main.post { unbind(); connect() }
-            }
-        }, filter)
-        main.post { connect() }
+        ScreenLink.app = app
+        main.post { lastIsland = ""; TaskStatus.refresh() }
         ScreenRecovery.start(ctx)
     }
 
-    /** Binds to the helper when it is installed and signed like Ash. */
-    fun connect() {
-        val ctx = app ?: return
-        // An isolated test build never takes over the owner's helper.
-        if (bound || BuildConfig.ISOLATED_PROBE || !trusted(ctx)) return
-        val intent = Intent().setClassName(Bridge.SCREEN_PACKAGE, Bridge.SCREEN_SERVICE)
-        bound = runCatching { ctx.bindService(intent, connection, Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT) }.getOrDefault(false)
-        if (!bound) Log.w(TAG, "could not bind the screen helper")
-        main.removeCallbacks(stillWaiting)
-        main.postDelayed(stillWaiting, retryMs)
-    }
+    /** The accessibility service came or went, or the island appeared or left. */
+    fun changed() { main.post { TaskStatus.refresh() } }
 
-    // bindService answers true even when a maker's ROM then refuses to start the helper (ColorOS「关联启动」off): the
-    // binding stays pending forever and no connection ever comes. Unconnected after a while: bind again, backing off.
-    private var retryMs = FIRST_RETRY_MS
-    private val stillWaiting = Runnable {
-        if (bridge != null || app == null) { retryMs = FIRST_RETRY_MS; return@Runnable }
-        Log.w(TAG, "screen helper not connected after ${retryMs / 1000} s; binding again")
-        retryMs = minOf(retryMs * 2, MAX_RETRY_MS)
-        unbind(); connect()
-    }
-    private const val FIRST_RETRY_MS = 10_000L
-    private const val MAX_RETRY_MS = 300_000L
-    private fun unbind() {
-        if (bound) runCatching { app?.unbindService(connection) }
-        bound = false; lost()
-    }
-    /** Binds again after the helper was stopped (bindService gave up when the system refused to start it). */
-    fun rebind() { main.post { unbind(); connect() } }
-    private fun lost() {
-        bridge = null; status = JSONObject(); tools = emptyList()
-        main.post { TaskStatus.refresh() }
-    }
+    // ---- what Ash asks of the screen side ----
 
-    private fun refresh(peer: IScreenBridge) {
-        status = JSONObject(peer.status())
-        val list = JSONArray(peer.manifest())
-        tools = (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { RemoteTool(it) } +
-            if (status.optBoolean("screenshot")) listOf(ScreenshotTool) else emptyList()
-    }
-
-    // ---- what Ash asks of the helper ----
-
-    /** Installed and signed like Ash (another app under the helper's name is never used). */
-    fun trusted(ctx: Context): Boolean = installedVersion(ctx) > 0 &&
-        ctx.packageManager.checkSignatures(ctx.packageName, Bridge.SCREEN_PACKAGE) == PackageManager.SIGNATURE_MATCH
-    fun installedVersion(ctx: Context): Long = runCatching {
-        val info = ctx.packageManager.getPackageInfo(Bridge.SCREEN_PACKAGE, 0)
-        if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
-    }.getOrDefault(0L)
-    /** Not installed, or older than the one Ash carries. */
-    fun needsInstall(ctx: Context): Boolean = installedVersion(ctx) < BuildConfig.SCREEN_VERSION_CODE || !trusted(ctx)
-
-    fun connected() = bridge != null
-    /** The helper's accessibility switch is on in system settings (whether or not its service is running). */
+    /** The accessibility switch is on in system settings (whether or not the service is running). */
     fun switchedOn(ctx: Context): Boolean = android.provider.Settings.Secure.getString(ctx.contentResolver,
-        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any { it.startsWith("${Bridge.SCREEN_PACKAGE}/") }
-    /** The helper's accessibility service is on: Ash can see and operate the screen. */
-    fun accessibility() = connected() && status.optBoolean("accessibility")
-    /** The island can be drawn (the helper's accessibility service, or its overlay permission). */
-    fun islandReady() = connected() && status.optBoolean("island_ready")
-    fun islandShown() = connected() && status.optBoolean("island_shown")
-    /** The helper draws the resident entry (island v2). */
-    fun islandResident() = connected() && status.optBoolean("island_resident")
-    fun tools(): List<Capability> = tools
+        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any { it.startsWith("${ctx.packageName}/") }
+    /** The accessibility service is on: Ash can see and operate the screen. */
+    fun accessibility() = A11yService.instance != null
+    /** The island can be drawn (the accessibility service, or the overlay permission). */
+    fun islandReady() = app?.let { NativeIsland.ready(it) } ?: false
+    fun islandShown() = NativeIsland.showing()
+    /** The resident entry (island v2) is drawn by this app. */
+    fun islandResident() = true
+
+    private val tools: List<Capability> by lazy { ScreenCapabilities.list.map { ScreenTool(it) } }
+    fun tools(): List<Capability> = tools +
+        if (A11yService.instance != null && A11yService.canScreenshot) listOf(ScreenshotTool) else emptyList()
 
     fun call(name: String, args: JSONObject): CapResult {
-        val peer = bridge ?: return CapResult.fail("$name is not available right now: the screen helper is not connected")
-        return try { CapResult.fromJson(JSONObject(Bridge.read(peer.call(name, args.toString())))) }
-        catch (e: Exception) { Log.w(TAG, "$name over the bridge failed", e); CapResult.fail("$name failed: the screen helper did not answer") }
+        val ctx = app ?: return CapResult.fail("$name is not available right now: Ash has not started")
+        return ScreenHost.run(ctx, name, args)
     }
-    fun screenState(settle: Boolean): JSONObject =
-        bridge?.let { runCatching { JSONObject(it.screenState(settle)) }.getOrNull() } ?: JSONObject()
+    fun screenState(settle: Boolean): JSONObject = ScreenHost.screenState(settle)
 
     /** Ash's own input to other apps (opening an app, a key) passes under the island; refused while the owner types. */
-    fun <T> withTouchPassthrough(action: () -> T): T {
-        val peer = bridge ?: return action()
-        val token = UUID.randomUUID().toString()
-        val refused = try { peer.guard(token) } catch (_: Exception) { return action() }
-        if (refused.isNotEmpty()) throw IllegalStateException(refused)
-        try { return action() } finally { runCatching { peer.release(token) } }
-    }
+    fun <T> withTouchPassthrough(action: () -> T): T = if (app == null) action() else NativeIsland.withTouchPassthrough(action)
 
-    /** What the island shows. Sent when it changes, and once more after a reconnect. */
+    /** What the island shows. Sent when it changes, and once more after a restart of the screen service. */
     fun island(model: JSONObject?, ashInFront: Boolean) {
+        val ctx = app ?: return
         val state = JSONObject().put("show", model != null).put("ash_in_front", ashInFront).apply { if (model != null) put("model", model) }.toString()
         if (state == lastIsland) return
-        val peer = bridge ?: return
-        try { peer.island(state); lastIsland = state } catch (e: Exception) { Log.w(TAG, "island state not delivered", e) }
+        lastIsland = state
+        ScreenLink.island(ctx, state)
     }
 
     // ---- what the owner did on the island ----
 
+    /** One action from the island: {action, turn?, request?, ...}; a request id asks for a result. */
+    fun islandAction(a: JSONObject) { main.post { act(a) } }
+
     private fun act(a: JSONObject) {
         val request = a.optString("request")
         val reply: (Boolean, String) -> Unit = { ok, message ->
-            if (request.isNotEmpty()) runCatching { bridge?.islandResult(JSONObject().put("request", request).put("ok", ok).put("message", message).toString()) }
+            if (request.isNotEmpty()) ScreenLink.result(JSONObject().put("request", request).put("ok", ok).put("message", message).toString())
         }
         when (a.optString("action")) {
             "dismiss" -> TaskStatus.dismiss(a.optString("turn"))
@@ -195,13 +90,13 @@ object ScreenBridge {
         }
     }
 
-    /** One of the helper's tools, as listed in its manifest: Ash's capability that calls it over the bridge. */
-    private class RemoteTool(spec: JSONObject) : Capability {
-        override val name: String = spec.getString("name")
-        override val description: String = spec.optString("description")
-        override val schema: JSONObject = spec.optJSONObject("input_schema") ?: JSONObject().put("type", "object")
-        override val confirm: Boolean = spec.optBoolean("confirm")
-        override fun available(ctx: Context) = connected()
-        override fun run(ctx: Context, args: JSONObject) = call(name, args)
+    /** One of the screen tools, as Ash's capability: it runs through [ScreenHost] (the island steps aside for it). */
+    private class ScreenTool(private val real: Capability) : Capability {
+        override val name: String = real.name
+        override val description: String = real.description
+        override val schema: JSONObject = real.schema
+        override val confirm: Boolean = real.confirm
+        override fun available(ctx: Context) = real.available(ctx)
+        override fun run(ctx: Context, args: JSONObject) = ScreenHost.run(ctx, name, args)
     }
 }

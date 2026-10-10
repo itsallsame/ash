@@ -10,7 +10,7 @@ import android.util.Base64
 import org.json.JSONObject
 import java.io.File
 
-/** screen.screenshot: the helper captures (screen.capture), Ash writes the file, with its own storage access. */
+/** screen.screenshot: the screen side captures (screen.capture), Ash writes the file, with its own storage access. */
 internal object ScreenshotTool : Capability {
     override val name = "screen.screenshot"
     override val description = "Save a full-resolution PNG screenshot of the phone's screen to a file and return its path (the image itself is " +
@@ -20,7 +20,7 @@ internal object ScreenshotTool : Capability {
         "path" to prop("string", "optional absolute file path to write (parent directories are created)"),
         "display" to prop("integer", "display id to capture (default 0 = the main screen)"),
     )
-    override fun available(ctx: Context) = ScreenBridge.connected()
+    override fun available(ctx: Context) = ScreenBridge.accessibility()
 
     override fun run(ctx: Context, args: JSONObject): CapResult {
         val captured = ScreenBridge.call("screen.capture", JSONObject().put("display", args.optInt("display", 0)))
