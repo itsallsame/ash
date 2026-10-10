@@ -474,14 +474,17 @@ export class AppRuntime {
   /**
    * The hub's own organs are installed without a card: the owner's hub is installing its own parts. The release decides, but
    * only while the folder is exactly the release (`builtinExact`): then the grants follow its app.json (version, needs,
-   * listens). What the agent wrote into a built-in app never widens anything: a folder it changed keeps the grants it has (and
-   * gets a first grant only when it has none). Whether the app is switched on stays the owner's. An app the owner installed
+   * listens). What the agent wrote into a built-in app never widens anything: a folder it changed keeps the grants it has, and
+   * gets no first grant (that goes through apps.install). Whether the app is switched on stays the owner's. An app the owner installed
    * by hand under the same id is left alone.
    */
   seedBuiltin(id: string): void {
     const manifest = this.manifest(id);
     if (!manifest) { this.log("builtin app not found", id); return; }
     const had = this.grants.get(id);
+    // A folder that is not the release gets nothing from its own app.json, not even a first grant: what the agent wrote
+    // there goes through apps.install and the owner's card like any app.
+    if (!had && this.options.builtinExact && !this.options.builtinExact.has(id)) { this.log("builtin app not granted: the folder is not the release", id); return; }
     if (had) {
       const same = (items: readonly unknown[]) => JSON.stringify(items.map((item) => JSON.stringify(item)).sort());
       if (!had.builtin || !this.options.builtinExact?.has(id)) return;
