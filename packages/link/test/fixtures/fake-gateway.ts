@@ -256,16 +256,27 @@ export class FakeGateway {
     return endpoint;
   }
 
-  /** An HTTP request of a browser through the tunnel (the owner should answer, not leave it hanging). */
-  async httpRequest(from: string): Promise<Frame> {
+  /** A browser's HTTP request through the tunnel, as the relay sends it (head, body pieces, end), and the owner's answer put back together. */
+  browserHttp(from: string, o: { method?: string; path?: string; headers?: [string, string][]; body?: Uint8Array; abortAfterMs?: number } = {}): Promise<{ status?: number; headers?: [string, string][]; body: Buffer; ended: boolean; error?: string; bodyFrames: number }> {
     const sid = randomBytes(9).toString("base64url");
-    const answer = new Promise<Frame>((resolve) => {
-      const owner = this.owner!;
-      const listener = (data: unknown) => { const f = JSON.parse(String(data)); if (f.t === "tun" && f.sid === sid) { owner.off("message", listener); resolve(f); } };
+    const owner = this.owner!;
+    const out = { body: Buffer.alloc(0), ended: false, bodyFrames: 0 } as { status?: number; headers?: [string, string][]; body: Buffer; ended: boolean; error?: string; bodyFrames: number };
+    const done = new Promise<typeof out>((resolve) => {
+      const listener = (data: unknown) => {
+        const f = JSON.parse(String(data));
+        if (f.t !== "tun" || f.sid !== sid) return;
+        if (f.op === "http.head") { out.status = f.status; out.headers = f.headers; }
+        else if (f.op === "http.body") { out.bodyFrames++; out.body = Buffer.concat([out.body, Buffer.from(f.data, "base64url")]); }
+        else if (f.op === "http.end") { out.ended = true; owner.off("message", listener); resolve(out); }
+        else if (f.op === "http.error") { out.error = f.message; owner.off("message", listener); resolve(out); }
+      };
       owner.on("message", listener);
     });
-    this.toOwner({ t: "tun", op: "http.req", sid, method: "GET", path: "/", headers: [], from });
-    this.toOwner({ t: "tun", op: "http.reqend", sid });
-    return answer;
+    this.toOwner({ t: "tun", op: "http.req", sid, method: o.method ?? "GET", path: o.path ?? "/", headers: o.headers ?? [], from });
+    const body = o.body ?? new Uint8Array();
+    for (let i = 0; i < body.length; i += 100_000) this.toOwner({ t: "tun", op: "http.reqbody", sid, data: Buffer.from(body.subarray(i, i + 100_000)).toString("base64url") });
+    if (o.abortAfterMs !== undefined) setTimeout(() => this.toOwner({ t: "tun", op: "http.abort", sid }), o.abortAfterMs);
+    else this.toOwner({ t: "tun", op: "http.reqend", sid });
+    return done;
   }
 }

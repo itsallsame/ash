@@ -6,7 +6,7 @@
  * `mount`. Connections that arrive through the relay come in through `acceptGateway`.
  */
 import { randomBytes } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { handId } from "../../../../sdk/src/ids";
 import { CLOSE_CODES, type HandKind, type HelloFrame, type LinkChannel } from "../../../../sdk/src/link";
@@ -62,8 +62,13 @@ export interface HubLinkServer {
   /** Opens the port on 127.0.0.1, makes the local token and tells the host both. */
   start(): Promise<Started>;
   stop(): Promise<void>;
-  /** Routes `path` and everything under it to [handler]; `/` takes what no other mount does. `/link` is not available. */
-  mount(path: string, handler: HttpHandler): void;
+  /**
+   * Routes `path` and everything under it to [handler]; `/` takes what no other mount does. `/link` is not available.
+   * Only a mount made with `relay: true` (the static web page) can be reached by a browser through the relay; `/mcp` is not.
+   */
+  mount(path: string, handler: HttpHandler, opts?: { relay?: boolean }): void;
+  /** A browser's HTTP request that came through the relay, served by the mount it would reach here; 404 for any mount that is not for the relay. */
+  relayHttp(request: RelayedRequest): Promise<RelayedResponse>;
   /** Gives a channel to the module that owns it. `device` belongs to the hand registry. */
   onChannel(channel: Exclude<LinkChannel, "device">, attach: ChannelAttach): void;
   /**
@@ -79,6 +84,13 @@ export interface HubLinkServer {
   observe(listener: (event: LinkEvent) => void): () => void;
 }
 
+export interface RelayedRequest { method: string; path: string; headers: [string, string][]; body: Uint8Array; signal?: AbortSignal }
+export interface RelayedResponse { status: number; headers: [string, string][]; body: AsyncIterable<Uint8Array> | Uint8Array }
+
+/** Request headers that describe the hop, not the request. */
+const HOP_HEADERS = new Set(["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "expect", "content-length", "te", "trailer"]);
+const notFound = (): RelayedResponse => ({ status: 404, headers: [["content-type", "application/json"]], body: Buffer.from('{"error":"not_found"}') });
+
 /** Marks a socket as one the relay vouches for; only `acceptGateway` makes one. */
 class FromGateway { constructor(readonly from: string, readonly humanOnly: boolean) {} }
 
@@ -89,7 +101,7 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
   const { hands, hostClient } = options;
   const log = options.log ?? (() => {});
   const channels = new Map<Exclude<LinkChannel, "device">, ChannelAttach>();
-  const mounts = new Map<string, HttpHandler>();
+  const mounts = new Map<string, { handler: HttpHandler; relay: boolean }>();
   /** Whether each handshake came over the local link, until its session is made (the server hands the same `hello` object on). */
   const locals = new WeakMap<HelloFrame, boolean>();
   const open = new Map<string, LinkConnection>();
@@ -97,6 +109,7 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
   const tell = (event: LinkEvent) => { for (const l of listeners) try { l(event); } catch (error) { log("observer failed", error); } };
   let token = "";
   let http: Server | null = null;
+  let port = 0;
 
   async function authenticate(hello: HelloFrame, ctx: AuthContext): Promise<AuthResult> {
     const relay = ctx.meta instanceof FromGateway ? ctx.meta : null;
@@ -131,7 +144,8 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
       return {
         ok: true, hand_id: id,
         channels: {
-          device: hand.lend ? { accepted: true } : { accepted: false, reason: "the owner has not allowed this device to lend capabilities" },
+          // The device channel carries the manifest, which a body needs even when the hand itself lends nothing.
+          device: hand.lend || hands.isBound(id) ? { accepted: true } : { accepted: false, reason: "the owner has not allowed this device to lend capabilities or serve as a body" },
           human,
           agent: hand.local_agents && hand.kind === "computer" ? { accepted: true } : { accepted: false, reason: "the owner has not allowed this computer to run local agents" },
         },
@@ -169,6 +183,7 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
     kernel: options.kernel ?? { id: "ash-hub", version: MCP_SERVER_VERSION },
     authenticate,
     log,
+    refused: ({ code, reason, meta }) => tell({ type: "refused", ...(meta instanceof FromGateway ? { hand: meta.from } : {}), via: meta instanceof FromGateway ? "gateway" : "local", code, reason }),
     onSession(session) {
       const ctx: ChannelContext = { handId: session.handId, hello: session.hello, local: locals.get(session.hello) ?? false };
       const parts: SessionHandlers[] = [];
@@ -187,10 +202,11 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
 
   const route = (req: IncomingMessage, res: ServerResponse) => {
     const path = new URL(req.url ?? "/", "http://link.invalid").pathname;
-    const match = [...mounts.keys()].filter((m) => m === "/" || path === m || path.startsWith(`${m}/`)).sort((a, b) => b.length - a.length)[0];
+    const match = mountFor(path);
     if (!match) { res.writeHead(404).end(); return; }
-    mounts.get(match)!(req, res);
+    mounts.get(match)!.handler(req, res);
   };
+  const mountFor = (path: string) => [...mounts.keys()].filter((m) => m === "/" || path === m || path.startsWith(`${m}/`)).sort((a, b) => b.length - a.length)[0];
 
   const self: HubLinkServer = {
     async start() {
@@ -199,7 +215,7 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
       http = server;
       link.attach(server);
       await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(options.port ?? 0, "127.0.0.1", resolve); });
-      const port = (server.address() as AddressInfo).port;
+      port = (server.address() as AddressInfo).port;
       try {
         await hostClient.handsHandoff(port, token);
       } catch (error) {
@@ -212,14 +228,38 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
       link.close();
       const server = http;
       http = null;
+      port = 0;
       if (!server) return;
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
-    mount(path, handler) {
+    mount(path, handler, opts) {
       if (!path.startsWith("/") || path === "/link" || path.startsWith("/link/")) throw new Error(`cannot mount ${path}`);
       if (mounts.has(path)) throw new Error(`${path} is already mounted`);
-      mounts.set(path, handler);
+      mounts.set(path, { handler, relay: opts?.relay === true });
+    },
+    async relayHttp(request) {
+      // The path is made plain first, so `/link/../mcp` is judged as `/mcp`.
+      let target: URL;
+      try { target = new URL(request.path, "http://link.invalid"); } catch { return notFound(); }
+      const match = mountFor(target.pathname);
+      if (!match || !mounts.get(match)!.relay || !port) return notFound();
+      const headers: Record<string, string | string[]> = {};
+      for (const [name, value] of request.headers) {
+        const key = name.toLowerCase();
+        if (HOP_HEADERS.has(key)) continue;
+        const had = headers[key];
+        headers[key] = had === undefined ? value : Array.isArray(had) ? [...had, value] : [had, value];
+      }
+      if (request.body.byteLength) headers["content-length"] = String(request.body.byteLength);
+      const res = await new Promise<IncomingMessage>((resolve, reject) => {
+        const out = httpRequest({ host: "127.0.0.1", port, method: request.method, path: target.pathname + target.search, headers, signal: request.signal }, resolve);
+        out.once("error", reject);
+        out.end(request.body.byteLength ? Buffer.from(request.body) : undefined);
+      });
+      const pairs: [string, string][] = [];
+      for (const [name, value] of Object.entries(res.headers)) for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) pairs.push([name, v]);
+      return { status: res.statusCode ?? 502, headers: pairs, body: res };
     },
     onChannel(channel, attach) {
       if (channels.has(channel)) throw new Error(`the ${channel} channel already has an owner`);

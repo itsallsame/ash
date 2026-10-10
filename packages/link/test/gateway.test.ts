@@ -132,15 +132,15 @@ test("a browser stream is handed over with its path; nothing is answered until t
   assert.equal(browsers.length, 0);
 });
 
-test("a browser stream nobody handles is refused, and a web page request is answered rather than left hanging", async (t) => {
+test("a browser stream nobody handles is refused, and an HTTP request is answered with an error rather than left hanging", async (t) => {
   const { gw, relay } = await setup(t, { claimed: true }, { handlers: {} });
   relay.start();
   assert.ok(await relay.waitConnected(5000));
   const stream = gw.openBrowser("browser1", "/link");
   await eventually(() => stream.closedWith, "the refusal");
   assert.equal(stream.closedWith!.code, 4404);
-  const answer = await gw.httpRequest("browser1");
-  assert.equal(answer.op, "http.error");
+  const answer = await gw.browserHttp("browser1");
+  assert.match(answer.error!, /does not serve web pages/);
 });
 
 test("pairing: a ticket is registered by its hash, a request arrives, approval and permission changes are signed with the next grant version", async (t) => {
@@ -179,4 +179,47 @@ test("a dropped connection is made again by itself, and stop ends it", async (t)
   assert.deepEqual(connection, [true, false, true]);
   relay.stop();
   await eventually(() => !relay.connected, "stopping");
+});
+
+test("a browser's HTTP request arrives whole and the answer goes back as head, body pieces and end", async (t) => {
+  const seen: { from: string; method: string; path: string; headers: [string, string][]; body: string }[] = [];
+  const big = Buffer.alloc(600_000, 7);
+  const { gw, relay } = await setup(t, { claimed: true }, {
+    handlers: {
+      http: async (req) => {
+        seen.push({ from: req.from, method: req.method, path: req.path, headers: req.headers, body: Buffer.from(req.body).toString() });
+        if (req.path === "/big") return { status: 200, headers: [["content-type", "application/octet-stream"]], body: big };
+        if (req.path === "/stream") return { status: 200, headers: [], body: (async function* () { yield Buffer.from("one "); yield Buffer.from("two"); })() };
+        if (req.path === "/boom") throw new Error("handler broke");
+        return { status: 201, headers: [["x-seen", "yes"]], body: Buffer.from("made") };
+      },
+    },
+  });
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+
+  const posted = await gw.browserHttp("browser1", { method: "POST", path: "/api/x?y=1", headers: [["content-type", "text/plain"]], body: Buffer.from("a".repeat(250_000)) });
+  assert.deepEqual([posted.status, posted.headers, posted.body.toString(), posted.ended], [201, [["x-seen", "yes"]], "made", true]);
+  assert.deepEqual([seen[0]!.from, seen[0]!.method, seen[0]!.path, seen[0]!.body.length], ["browser1", "POST", "/api/x?y=1", 250_000]);
+  assert.deepEqual(seen[0]!.headers, [["content-type", "text/plain"]]);
+
+  const large = await gw.browserHttp("browser1", { path: "/big" });
+  assert.ok(large.body.equals(big), "all of it, in order");
+  assert.ok(large.bodyFrames >= 3, "in pieces of at most 256 KiB");
+
+  assert.equal((await gw.browserHttp("browser1", { path: "/stream" })).body.toString(), "one two");
+  assert.match((await gw.browserHttp("browser1", { path: "/boom" })).error!, /could not answer/);
+});
+
+test("a browser that goes away mid-request stops the work", async (t) => {
+  let signal: AbortSignal | undefined;
+  const { gw, relay } = await setup(t, { claimed: true }, { handlers: { http: async (req) => { signal = req.signal; return { status: 200, headers: [], body: Buffer.from("x") }; } } });
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+  const aborted = gw.browserHttp("browser1", { abortAfterMs: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(signal, undefined, "an aborted request is never run");
+  void aborted;
+  const tooBig = await gw.browserHttp("browser1", { method: "POST", body: Buffer.alloc(9 * 1024 * 1024) });
+  assert.match(tooBig.error!, /too large/);
 });

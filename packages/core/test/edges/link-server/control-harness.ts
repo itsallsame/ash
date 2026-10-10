@@ -7,6 +7,7 @@ import { connect, createServer } from "node:net";
 import { base64url, handId } from "../../../../sdk/src/ids";
 import type { HandKind } from "../../../../sdk/src/link";
 import { WordError, type HandleContext, type Message } from "../../../../sdk/src/message";
+import type { CapabilitySpec } from "../../../../sdk/src/link";
 import { HandClient } from "../../../../link/src/hand";
 import { Endpoint, FakeGateway, connectorOver } from "../../../../link/test/fixtures/fake-gateway";
 import { createLinkControl, type LinkControl, type LinkControlDeps } from "../../../src/edges/link-server/control/words";
@@ -63,7 +64,7 @@ export interface World {
   /** The error code of a refused call. */
   refused(word: string, body?: unknown, ctx?: HandleContext): Promise<string>;
   /** A device that the owner paired (`lend`: may lend capabilities), known to the relay with [permissions]. It speaks `ash-link/1` on every tunnel the hub opens to it. */
-  device(o: { name: string; kind?: HandKind; permissions: string[]; lend?: boolean; local_agents?: boolean; web_ui?: boolean; online?: boolean }): Promise<{ identity: Identity; clients: HandClient[]; id: string }>;
+  device(o: { capabilities?: CapabilitySpec[]; name: string; kind?: HandKind; permissions: string[]; lend?: boolean; local_agents?: boolean; web_ui?: boolean; online?: boolean }): Promise<{ identity: Identity; clients: HandClient[]; id: string }>;
   tell(): { to: string; text: string }[];
   events(word: string): any[];
   /** Cloudflare and the sign-in's return port, when the world was asked for them. */
@@ -97,7 +98,7 @@ export async function startWorld(t: { after(fn: () => unknown): void }, o: { gat
     if (!await control.gateway.connected(5000)) throw new Error("the hub did not connect to the fake relay");
   }
 
-  const identities = new Map<string, { identity: Identity; kind: HandKind; name: string; clients: HandClient[] }>();
+  const identities = new Map<string, { identity: Identity; kind: HandKind; name: string; clients: HandClient[]; capabilities?: CapabilitySpec[] }>();
   gw.onDeviceStream = (id, endpoint: Endpoint) => {
     const who = identities.get(id);
     if (!who) return endpoint.close(4404, "no such device");
@@ -110,6 +111,7 @@ export async function startWorld(t: { after(fn: () => unknown): void }, o: { gat
     who.clients.push(client);
     endpoint.onClose(() => client.stop());
     client.start();
+    if (who.capabilities) void client.ready().then(() => client.setManifest(who.capabilities!)).catch(() => {});
   };
 
   const call = async (word: string, body: unknown, ctx: HandleContext) => ((await control.member.handle(msg("service:link", word, body), ctx)) as { data: any } | void)?.data;
@@ -124,7 +126,7 @@ export async function startWorld(t: { after(fn: () => unknown): void }, o: { gat
       const identity = await newIdentity();
       const kind = d.kind ?? "computer";
       hub.hands.register({ id: identity.handId, name: d.name, kind, public_key: identity.publicKey, paired_by: "gateway", lend: d.lend ?? true, local_agents: d.local_agents ?? false, web_ui: d.web_ui ?? false });
-      const who = { identity, kind, name: d.name, clients: [] as HandClient[] };
+      const who = { identity, kind, name: d.name, clients: [] as HandClient[], capabilities: d.capabilities };
       identities.set(identity.handId, who);
       gw.setDevice(identity.handId, { name: d.name, permissions: d.permissions, online: d.online ?? true });
       return { identity, clients: who.clients, id: identity.handId };

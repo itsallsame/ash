@@ -60,6 +60,8 @@ export interface LinkServerOptions {
   onSession(session: LinkSession): SessionHandlers | void;
   clock?: Clock;
   log?(message: string, error?: unknown): void;
+  /** A connection was closed because of its protocol version, before [authenticate] was asked. [meta] is what was passed to [LinkServer.accept]. */
+  refused?(info: { code: number; reason: string; meta?: unknown }): void;
 }
 
 export class LinkError extends Error {
@@ -138,7 +140,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
         // A hand of another protocol version must hear 4008 even if its hello is shaped differently.
         const v = bad.value as { t?: unknown; protocol?: unknown } | undefined;
         if (phase === "hello" && v?.t === "hello" && typeof v.protocol === "string" && v.protocol !== LINK_PROTOCOL) {
-          conn.close(CLOSE_CODES.unsupported, `unsupported protocol ${v.protocol.slice(0, 40)}`);
+          refuse(`unsupported protocol ${v.protocol.slice(0, 40)}`);
           return true;
         }
       },
@@ -151,6 +153,10 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
         }
       },
     });
+    const refuse = (reason: string) => {
+      options.refused?.({ code: CLOSE_CODES.unsupported, reason, meta: ctx.meta });
+      conn.close(CLOSE_CODES.unsupported, reason);
+    };
     conns.add(conn);
     socket.on("message", (data: unknown, isBinary?: boolean) => conn.receive(data, isBinary));
     socket.on("close", (code: number, reason: unknown) => conn.remoteClosed(code, String(reason ?? "")));
@@ -161,7 +167,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     async function authenticate(hello: HelloFrame): Promise<void> {
       phase = "authenticating";
       clock.clearTimer(helloTimer);
-      if (hello.protocol !== LINK_PROTOCOL) return conn.close(CLOSE_CODES.unsupported, `unsupported protocol ${hello.protocol.slice(0, 40)}`);
+      if (hello.protocol !== LINK_PROTOCOL) return refuse(`unsupported protocol ${hello.protocol.slice(0, 40)}`);
       let verdict: AuthResult;
       try {
         verdict = await options.authenticate(hello, { nonce, headers: ctx.headers ?? {}, meta: ctx.meta });

@@ -6,13 +6,14 @@
  * Which device gets a tunnel: the relay holds one permission, `expose_capability`, for everything that is not the web
  * page, and at pairing the hub grants it when any of lending capabilities, serving as a body or running local agents is
  * allowed. So "has `expose_capability`" is the relay's word for "has a non-web permission". The kernel's own record
- * decides again at the handshake; this module only avoids opening tunnels that would be turned away.
+ * decides which channels open at the handshake (lend, body, local agents); this module only skips devices it has no record of
+ * or that are revoked. It also carries a browser's HTTP request for the web page to the link server (`relayHttp`).
  */
 import { createHash } from "node:crypto";
 import { WordError } from "../../../../../sdk/src/message";
 import type { Db } from "../../../kernel/ledger";
 import type { Vault } from "../../../kernel/types";
-import { Relay, RelayError, type BrowserOpen, type RelayDevice, type RelayOptions, type RelayPairRequest } from "../../../../../link/src/gateway";
+import { Relay, RelayError, type BrowserOpen, type RelayDevice, type RelayHttpRequest, type RelayHttpResponse, type RelayOptions, type RelayPairRequest } from "../../../../../link/src/gateway";
 import type { LinkSocket } from "../../../../../link/src/socket";
 import type { Devices, PairKind, PairingGateway, RelayPermission } from "../hands/devices";
 import type { HandRegistry } from "../hands/registry";
@@ -30,7 +31,7 @@ export interface OwnerIdentity {
 
 export interface GatewayControlDeps {
   db: Db;
-  link: Pick<HubLinkServer, "acceptGateway">;
+  link: Pick<HubLinkServer, "acceptGateway" | "relayHttp">;
   hands: Pick<HandRegistry, "get">;
   vault: Pick<Vault, "use">;
   identity: OwnerIdentity;
@@ -157,6 +158,7 @@ export class GatewayControl {
         devices: (list) => this.reconcile(list),
         pairRequest: (request) => this.pairRequest(request),
         browser: (open) => this.browser(open),
+        http: (request) => this.web(request),
       },
     };
     return (this.d.relay ?? ((o) => new Relay(o)))(options);
@@ -198,15 +200,13 @@ export class GatewayControl {
     return true;
   }
 
-  /** True when the relay knows the device. */
-  knows(handId: string): boolean { return Boolean(this.relay?.devices().some((d) => d.id === handId)); }
-
   // ---- tunnels -------------------------------------------------------------------------------------------------------------
 
   private reachable(device: RelayDevice): boolean {
     if (device.revoked || !device.online || !device.permissions.includes("expose_capability")) return false;
+    // Which channels open is for the handshake to judge (lend, body, local agents).
     const hand = this.d.hands.get(device.id);
-    return Boolean(hand && !hand.revoked_at && (hand.lend || hand.local_agents));
+    return Boolean(hand && !hand.revoked_at);
   }
 
   /** The relay's device list was read: every device that is online and may be reached has a tunnel. */
@@ -247,6 +247,15 @@ export class GatewayControl {
     try { pathname = new URL(open.path, "http://browser.invalid").pathname; } catch { /* refused below */ }
     if (pathname !== "/link") return open.reject(4404, "path_not_allowed");
     this.d.link.acceptGateway(open.accept(), open.from, { humanOnly: true });
+  }
+
+  /** A browser's request for the web page: the same rule as the web socket, the device must be one the owner allowed web access. */
+  private async web(request: RelayHttpRequest): Promise<RelayHttpResponse> {
+    const hand = this.d.hands.get(request.from);
+    if (!hand || hand.revoked_at || !hand.web_ui) {
+      return { status: 403, headers: [["content-type", "application/json"]], body: Buffer.from('{"error":"forbidden","message":"web access is not allowed for this device"}') };
+    }
+    return this.d.link.relayHttp(request);
   }
 
   // ---- pairing -------------------------------------------------------------------------------------------------------------

@@ -32,7 +32,7 @@ export interface PairingGateway {
    * The relay only knows `expose_capability` (it keeps the tunnel from reaching a device that may not be reached). It is held
    * while the device may lend capabilities, serve as a body or run local agents, and not otherwise.
    */
-  setExpose?(handId: string, allow: boolean): Promise<void>;
+  setExpose(handId: string, allow: boolean): Promise<void>;
 }
 
 /** A new device asked to pair with a code (the relay tells the kernel). */
@@ -197,7 +197,7 @@ export class Devices implements Member {
     const exposed = hand.lend || hand.local_agents || this.d.bodies.isBound(hand.id);
     if (input.body !== undefined && input.body !== this.d.bodies.isBound(hand.id)) await this.bindBody(hand.id, input.body);
     const exposing = (access.lend ?? hand.lend) || (access.local_agents ?? hand.local_agents) || this.d.bodies.isBound(hand.id);
-    if (exposing !== exposed && hand.paired_by === "gateway") await this.d.gateway?.setExpose?.(hand.id, exposing);
+    if (exposing !== exposed && hand.paired_by === "gateway") await this.d.gateway?.setExpose(hand.id, exposing);
     // A connection is judged once, at the handshake: when a permission changes the connection ends and the hand is judged again when it returns.
     if (hand.paired_by === "gateway" && PERMISSIONS.some((key) => access[key] !== undefined && access[key] !== hand[key])) this.d.hands.disconnect(hand.id, "permissions changed");
     return this.info(this.hand(deviceId(hand.id)));

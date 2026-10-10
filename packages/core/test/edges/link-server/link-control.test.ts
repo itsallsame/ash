@@ -5,7 +5,7 @@ import { HandClient } from "../../../../link/src/hand";
 import { connectorOver } from "../../../../link/test/fixtures/fake-gateway";
 import { eventually } from "../../fixtures/wait";
 import { agent, msg, owner, startWorld } from "./control-harness";
-import { connect, connected, newIdentity } from "./harness";
+import { cap, connect, connected, newIdentity } from "./harness";
 
 const sha256b64u = (text: string) => createHash("sha256").update(text).digest("base64url");
 
@@ -30,12 +30,24 @@ test("a device that comes online later is reached when the relay says so", async
   await eventually(() => w.hub.hands.online(mac.id), "the Mac after coming online");
 });
 
-test("the hub's own record still decides: a device the relay would let through but the owner never allowed to lend or run agents gets no tunnel", async (t) => {
+test("the hub's own record still decides what opens: a device that may neither lend nor serve as a body gets no device channel", async (t) => {
   const w = await startWorld(t);
-  const mac = await w.device({ name: "Mac", permissions: ["expose_capability"], lend: false, local_agents: false });
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  assert.equal(w.gw.streams.size, 0);
+  const mac = await w.device({ name: "Mac", permissions: ["expose_capability"], lend: false, local_agents: false, capabilities: [cap("workspace.bash"), cap("body.info"), cap("x.mac.hello")] });
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(w.hub.hands.online(mac.id), false);
+  assert.ok(!w.hub.registry.members.has(`device:${mac.id}`) && !w.hub.registry.members.has(`body:${mac.id}`));
+});
+
+test("a computer the owner allowed only as a body connects through the relay: body:<id> appears and device:<id> does not", async (t) => {
+  const w = await startWorld(t);
+  const mac = await w.device({ name: "Mac", permissions: ["expose_capability"], lend: false, capabilities: [cap("workspace.bash"), cap("body.info"), cap("x.mac.hello")] });
+  w.hub.bodies.bound.add(mac.id);
+  w.gw.setDevice(mac.id, { online: false });
+  w.gw.setDevice(mac.id, { online: true });
+  await eventually(() => w.hub.registry.members.has(`body:${mac.id}`), "the body");
+  assert.ok(!w.hub.registry.members.has(`device:${mac.id}`), "it lends nothing");
+  assert.deepEqual(w.hub.registry.members.get(`body:${mac.id}`)!.words().map((x) => x.word).sort(), ["body.info", "workspace.bash"]);
+  assert.equal(w.hub.hands.online(mac.id), true);
 });
 
 test("a permission taken away at the relay ends the tunnel and it is not opened again; given back, it is", async (t) => {
@@ -215,11 +227,24 @@ test("diagnose names what is wrong: a refused handshake with its meaning, a hand
   assert.equal(await w.refused("diagnose", { hand: "x".repeat(22) }), "not_found");
 });
 
+test("a hand of another protocol version is reported as a failed handshake (4008)", async (t) => {
+  const w = await startWorld(t, { gateway: false });
+  const { WebSocket } = await import("ws");
+  const ws = new WebSocket(w.hub.url, { headers: { authorization: `Bearer ${w.hub.token}` } });
+  const closed = new Promise<number>((resolve) => ws.on("close", (code) => resolve(code)));
+  ws.on("message", () => ws.send(JSON.stringify({ t: "hello", protocol: "ash-link/9", hand: { kind: "phone", name: "Old", version: "1", platform: "x" }, features: [], channels: { device: {} } })));
+  assert.equal(await closed, 4008);
+  await eventually(() => w.events("handshake_failed").length > 0, "the failure to be reported");
+  assert.equal(w.events("handshake_failed")[0].code, 4008);
+  assert.match((await w.link("diagnose", {})).findings.find((f: any) => f.code === "handshake.4008").message, /protocol version/);
+});
+
 test("diagnose finds a device that may be reached but has no tunnel; the relay down is a problem", async (t) => {
   const w = await startWorld(t);
-  const mac = await w.device({ name: "Mac", permissions: ["expose_capability"], lend: false, local_agents: false });
+  // The relay lets this one through but the hub has no record of it, so no tunnel is opened.
+  w.gw.setDevice("stranger-device-0000000", { permissions: ["expose_capability"], online: true });
   await new Promise((resolve) => setTimeout(resolve, 60));
-  const report = await w.link("diagnose", { hand: mac.id });
+  const report = await w.link("diagnose", {});
   assert.ok(report.findings.some((f: any) => f.code === "tunnel.missing"), "online and allowed at the relay, no tunnel");
 
   await w.gw.stop();
@@ -298,4 +323,49 @@ test("the words are the contract's, every one, and agents may use them", async (
     assert.ok(words.includes(word), word);
   }
   assert.deepEqual(await w.link("list", {}, agent), { connections: [] });
+});
+
+test("a browser reaches the static web page through the relay, and nothing else: /mcp and other mounts are not served, tricks are judged by the plain path", async (t) => {
+  const w = await startWorld(t);
+  const identity = await newIdentity();
+  w.hub.hands.register({ id: identity.handId, name: "Chrome", kind: "browser", public_key: identity.publicKey, paired_by: "gateway", web_ui: true });
+  const guest = await newIdentity();
+  w.hub.hands.register({ id: guest.handId, name: "Guest", kind: "browser", public_key: guest.publicKey, paired_by: "gateway", web_ui: false });
+  const revoked = await newIdentity();
+  w.hub.hands.register({ id: revoked.handId, name: "Gone", kind: "browser", public_key: revoked.publicKey, paired_by: "gateway", web_ui: true });
+  w.hub.hands.revoke(revoked.handId);
+
+  const seen: { method?: string; url?: string; body: string; type?: string }[] = [];
+  const big = Buffer.alloc(700_000, 1);
+  w.hub.server.mount("/", (req, res) => {
+    const parts: Buffer[] = [];
+    req.on("data", (c) => parts.push(c));
+    req.on("end", () => {
+      seen.push({ method: req.method, url: req.url, body: Buffer.concat(parts).toString(), type: req.headers["content-type"] });
+      if (req.url === "/big") return void res.writeHead(200, { "content-type": "application/octet-stream" }).end(big);
+      res.writeHead(200, { "content-type": "text/html", "set-cookie": "a=b" }).end("<h1>ash</h1>");
+    });
+  }, { relay: true });
+  w.hub.server.mount("/mcp", (_req, res) => void res.writeHead(200).end("tools"));
+  w.hub.server.mount("/internal", (_req, res) => void res.writeHead(200).end("not for the relay"));
+
+  const page = await w.gw.browserHttp(identity.handId, { path: "/" });
+  assert.deepEqual([page.status, page.body.toString(), page.ended], [200, "<h1>ash</h1>", true]);
+  assert.ok(page.headers!.some(([k, v]) => k === "content-type" && v === "text/html"));
+  const post = await w.gw.browserHttp(identity.handId, { method: "POST", path: "/assets/app.js?v=2", headers: [["content-type", "application/json"], ["host", "evil.example"]], body: Buffer.from('{"a":1}') });
+  assert.equal(post.status, 200);
+  assert.deepEqual(seen.at(-1), { method: "POST", url: "/assets/app.js?v=2", body: '{"a":1}', type: "application/json" });
+  assert.ok((await w.gw.browserHttp(identity.handId, { path: "/big" })).body.equals(big));
+
+  const before = seen.length;
+  for (const path of ["/mcp", "/mcp/x", "/internal", "/link/../mcp", "/%2e%2e/mcp", "/a/../../mcp"]) {
+    const answer = await w.gw.browserHttp(identity.handId, { path });
+    assert.equal(answer.status, 404, path);
+    assert.ok(!answer.body.toString().includes("tools"), path);
+  }
+  assert.equal(seen.length, before, "none of them reached the page's handler either");
+
+  for (const id of [guest.handId, revoked.handId, "unknown-device-000000000"]) {
+    assert.equal((await w.gw.browserHttp(id, { path: "/" })).status, 403, id);
+  }
 });

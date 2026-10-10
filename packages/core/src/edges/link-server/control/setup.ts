@@ -99,8 +99,6 @@ interface Login { verifier: string; state: string; used: boolean; server: Server
 
 export class RelaySetup {
   private login: (Login & { id: string }) | null = null;
-  /** Credentials seen by the running setups, so nothing that reaches a result can contain one. */
-  private readonly secrets = new Set<string>();
   private readonly cf: CloudflareEndpoints;
   private readonly now: () => number;
   private readonly request: typeof fetch;
@@ -186,9 +184,6 @@ export class RelaySetup {
   /** Closes the listener. */
   stop(): void { this.closeLogin(); }
 
-  /** True while the sign-in listener is open (it exists only while a setup waits for the owner). */
-  get listening(): boolean { return this.login !== null; }
-
   // ---- state -------------------------------------------------------------------------------------------------------------
 
   private rows(): { setup_id: string; initiator: string; state: SetupState; reason: string | null }[] {
@@ -211,7 +206,7 @@ export class RelaySetup {
     if (this.login?.id === id && state !== "waiting_login") this.closeLogin();
     this.tell(id, state, reason);
   }
-  private fail(id: string, reason: string): void { this.move(id, "failed", this.scrub(reason)); }
+  private fail(id: string, reason: string): void { this.move(id, "failed", reason.slice(0, 300)); }
   private alive(id: string): void {
     const state = this.row(id).state;
     if (state === "failed") throw new Failure(this.row(id).reason ?? "cancelled");
@@ -236,12 +231,6 @@ export class RelaySetup {
     setTimeout(() => login.server.closeAllConnections(), 250).unref();
   }
 
-  /** Text that may reach a result: any credential this module has seen is removed. */
-  private scrub(text: string): string {
-    let out = text;
-    for (const secret of this.secrets) if (secret.length >= 8) out = out.split(secret).join("***");
-    return out.slice(0, 300);
-  }
   private reason(error: unknown): string {
     if (error instanceof Failure) return error.message;
     this.d.log?.("relay setup failed", error);
@@ -266,7 +255,6 @@ export class RelaySetup {
     }
     try {
       await this.exchange({ grant_type: "authorization_code", code, redirect_uri: login.redirect, code_verifier: login.verifier });
-      await this.account(await this.accessToken());
     } catch (error) {
       html(500, "授权没有完成", "回到 Ash 查看原因。");
       return this.fail(id, this.reason(error));
@@ -290,8 +278,6 @@ export class RelaySetup {
     }
     const access = answer.access_token, refresh = answer.refresh_token;
     if (typeof access !== "string" || !access) throw new Failure("Cloudflare gave no access token");
-    this.secrets.add(access);
-    if (typeof refresh === "string") this.secrets.add(refresh);
     const previous = this.stored();
     const keep = typeof refresh === "string" ? refresh : previous?.refresh_token;
     this.d.vault.set(CLOUDFLARE_REF, JSON.stringify({
@@ -310,8 +296,6 @@ export class RelaySetup {
   private async accessToken(): Promise<string> {
     const token = this.stored();
     if (!token) throw new Failure("there is no Cloudflare sign-in; start again");
-    this.secrets.add(token.access_token);
-    if (token.refresh_token) this.secrets.add(token.refresh_token);
     if (token.expires_at - 60_000 > this.now()) return token.access_token;
     if (!token.refresh_token) throw new Failure("the Cloudflare sign-in has expired; start again");
     return this.exchange({ grant_type: "refresh_token", refresh_token: token.refresh_token });
@@ -331,7 +315,6 @@ export class RelaySetup {
     token = await this.accessToken();
     const scripts = await this.api<{ id?: string }[]>(token, "GET", `/accounts/${account}/workers/scripts`);
     const secret = b64u(randomBytes(32));
-    this.secrets.add(secret);
     await this.upload(token, account, script, source, secret, !scripts.some((s) => s.id === script));
     this.alive(id);
     await this.api(token, "POST", `/accounts/${account}/workers/scripts/${script}/subdomain`, { enabled: true, previews_enabled: false });
