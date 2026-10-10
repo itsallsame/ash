@@ -17,6 +17,7 @@
     "test:smoke": "node --expose-internals --import tsx --test packages/sdk/test/*.test.ts packages/link/test/*.test.ts packages/workspace/test/*.test.ts packages/core/test/edges/*/*.test.ts packages/core/test/kernel/*/*.test.ts packages/core/test/services/*/*.test.ts packages/ash-cost/test/*.test.ts packages/dsh-ash-control/test/*.test.ts",
     "typecheck": "npm run -s gen:ui && npm run -s gen:worker-rules && npm run -s gen:persona && npm run -s gen:apps && npm run -s gen:widget-cards && tsc --noEmit -p .",
     "test": "npm run -s gen:ui && npm run -s gen:worker-rules && npm run -s gen:persona && npm run -s gen:apps && npm run -s gen:widget-cards && node --expose-internals --import tsx --test packages/*/test/*.test.ts packages/core/test/arch/*.test.ts packages/core/test/edges/*/*.test.ts packages/core/test/kernel/*/*.test.ts packages/core/test/services/*/*.test.ts packages/core/test/fixtures/*.test.ts packages/core/test/flows/*.test.ts packages/core/test/members/*.test.ts packages/core/test/world/*.test.ts packages/web/test/*.test.js",
+    "test:scenarios": "node --import tsx --test packages/core/test/scenarios/*.test.ts",
     "test:ui:e2e": "npm run -s build:core && playwright test packages/web/test/e2e",
     "test:arch:final": "node --import tsx tools/arch-gate.ts",
     "test:originality": "node --test tools/originality.test.mjs",
