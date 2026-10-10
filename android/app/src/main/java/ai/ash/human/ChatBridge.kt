@@ -27,18 +27,13 @@ import java.util.concurrent.TimeoutException
 class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val log: (String) -> Unit = {}) {
     /** The app's connection, human channel side. */
     interface Uplink {
-        /** Sends one frame as it is; false when it was not sent ([refusalCode] and [refusal] say why). */
-        fun send(frame: JSONObject): Boolean
-        /** The error code (SPEC-02 §7) of the last refusal: `offline`, `bad_request`, `too_large`. */
-        val refusalCode: String
-        val refusal: String
+        /** Sends one frame as it is; null when it was sent, otherwise why not. */
+        fun send(frame: JSONObject): LinkClient.Refusal?
     }
 
     /** The app's [LinkClient] as the page's way up; [client] is asked each time, so it may be made after the bridge. */
     class LinkUplink(private val client: () -> LinkClient) : Uplink {
         override fun send(frame: JSONObject) = client().sendHumanFrame(frame)
-        override val refusalCode get() = client().lastRefusalCode
-        override val refusal get() = client().lastRefusal
     }
 
     /** What the chat page needs from the screen. */
@@ -96,10 +91,11 @@ class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val l
             asked[frame.optString("id")]?.complete(outcomeOf(frame))
             return
         }
-        if (!link.send(frame)) {
-            val reason = link.refusal.take(200).ifEmpty { "not sent" }
+        val refused = link.send(frame)
+        if (refused != null) {
+            val reason = refused.message.take(200).ifEmpty { "not sent" }
             log("a $type frame from the chat page was not sent: $reason")
-            val error = JSONObject().put("t", "error").put("code", link.refusalCode).put("message", reason)
+            val error = JSONObject().put("t", "error").put("code", refused.code).put("message", reason)
             (frame.opt("id") ?: frame.opt("sid")).let { if (it is String && it.isNotEmpty() && it.length <= 128) error.put("id", it) }
             toPage(error)
             return

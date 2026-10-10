@@ -9,11 +9,6 @@ import org.json.JSONObject
  * which agent, is sent by the chat page itself as `presence {typing, agent}`, through [ChatBridge].
  */
 class Presence(private val client: LinkClient, private val visible: () -> Boolean) {
-    /** The chat page came to the front or went away. */
-    fun changed() = tell(visible())
-
-    /** The human channel opened: say where the owner is. */
-    fun opened() = tell(visible())
-
-    private fun tell(visible: Boolean) { client.presence(JSONObject().put("visible", visible)) }
+    /** Says whether the chat page is in front now (call it when that changes, and when the human channel opens). */
+    fun tell() { client.presence(JSONObject().put("visible", visible())) }
 }

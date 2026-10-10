@@ -244,37 +244,32 @@ class LinkClient(private val o: LinkOptions) {
 
     fun closeSync(sid: String) = post { if (syncs.remove(sid) != null) liveConn()?.send(JSONObject().put("t", "sync.close").put("sid", sid)) }
 
+    /** Why a frame was not sent: an error code of SPEC-02 §7 (`offline`, `bad_request`, `too_large`) and the reason. */
+    class Refusal(val code: String, val message: String)
+
     /**
      * Sends one human-channel frame as it is (the chat page's `send`, `sync`, `sync.close`, `presence` and `stream`, SPEC-05 §4.1),
-     * after checking it against the protocol like every frame. False when it was not sent: the human channel is not open now,
-     * or the frame breaks the protocol ([lastRefusal] says how); the page is then told with an `error` frame.
+     * after checking it against the protocol like every frame. Null when it was handed to the link; otherwise the reason it was
+     * not: the human channel is not open now, or the frame breaks the protocol. The page is then told with an `error` frame.
      */
-    fun sendHumanFrame(frame: JSONObject): Boolean {
+    fun sendHumanFrame(frame: JSONObject): Refusal? {
         val type = codec.typeOf(frame)
         val text = try {
             when {
                 type == null || type !in HUMAN_FRAMES -> throw IllegalArgumentException("not a human channel frame")
                 type == "stream" && frame.optString("op") == "open" && frame.optString("ch") != "human" ->
                     throw IllegalArgumentException("a stream from the chat page must be on the human channel")
-                state != State.READY || !humanOpen() -> throw IllegalArgumentException("the human channel is not open")
+                state != State.READY || !humanOpen() -> return Refusal("offline", "the human channel is not open")
             }
             codec.encode(frame)
         } catch (e: IllegalArgumentException) {
-            refuse(if (state == State.READY && humanOpen()) "bad_request" else "offline", e.message); return false
+            return Refusal("bad_request", e.message.orEmpty())
         } catch (e: FrameCodec.FrameTooLarge) {
-            refuse("too_large", e.message); return false
+            return Refusal("too_large", e.message.orEmpty())
         }
         post { liveConn()?.sendText(text) }
-        return true
+        return null
     }
-
-    /** Why the last [sendHumanFrame] refused: an error code of SPEC-02 §7 and the reason. */
-    @Volatile var lastRefusal: String = ""
-        private set
-    @Volatile var lastRefusalCode: String = "bad_request"
-        private set
-
-    private fun refuse(code: String, why: String?) { lastRefusalCode = code; lastRefusal = why.orEmpty() }
 
     /** `{visible?, typing?, agent?}` (SPEC-03 §5.3). */
     fun presence(state: JSONObject) = post { if (humanOpen()) liveConn()?.send(JSONObject(state.toString()).put("t", "presence").put("ch", "human")) }
@@ -721,7 +716,7 @@ class LinkClient(private val o: LinkOptions) {
         /** A stream sender waits while more than this many bytes sit in the socket's queue (OkHttp closes the socket at 16 MiB). */
         private const val QUEUE_HIGH_WATER = 1L shl 20
         /** What the chat page may send up (SPEC-03 §5, §3.4). */
-        private val HUMAN_FRAMES = setOf("send", "sync", "sync.close", "presence", "present.result", "stream")
+        private val HUMAN_FRAMES = setOf("send", "sync", "sync.close", "presence", "stream")
 
         fun newId(prefix: String): String = prefix + UUID.randomUUID()
     }

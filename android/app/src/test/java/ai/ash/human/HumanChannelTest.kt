@@ -65,7 +65,7 @@ class HumanChannelTest {
                     channelEvents.add(open)
                     val grant = welcome?.optJSONObject("channels")?.optJSONObject("human")
                     bridge.linkChanged(open, grant?.optString("client"), grant?.optBoolean("local") ?: false)
-                    if (open) presence.opened()
+                    if (open) presence.tell()
                 }
             },
             surfaces = channel.surfaces,
@@ -97,7 +97,7 @@ class HumanChannelTest {
         awaitTrue("the handler heard it stay closed") { channelEvents.toList() == listOf(false) }
         // Nothing can be sent up the channel.
         link.client.presence(JSONObject().put("visible", true))
-        assertFalse(link.client.sendHumanFrame(sendFrame("s1")))
+        assertEquals("offline", link.client.sendHumanFrame(sendFrame("s1"))!!.code)
         Thread.sleep(100)
         assertTrue(conn.framesOf("presence").isEmpty())
     }
@@ -183,7 +183,7 @@ class HumanChannelTest {
             if (op == "preview") PresentOutcome(true, ai.ash.widget.PreviewPlan.imagePart(byteArrayOf(1, 2, 3), 720, 385, true, 363.2f, 192.6f) { "AQID:${body.getString("size")}" })
             else PresentOutcome(false)
         }
-        conn.present("p1", "widget", "preview", JSONObject().put("card", JSONObject().put("id", "weather")).put("size", "4x2"))
+        conn.present("p1", "widget", "preview", JSONObject().put("card", "weather").put("size", "4x2"))
         val part = conn.presentResult("p1").getJSONObject("data")
         assertEquals("image", part.getString("type")); assertEquals("image/png", part.getString("mime")); assertEquals("AQID:4x2", part.getString("b64"))
         assertEquals("dark", part.getString("theme")); assertEquals(363, part.getJSONObject("dp").getInt("width"))
@@ -386,7 +386,7 @@ class HumanChannelTest {
         val first = conn.awaitFrame("presence")
         assertEquals("human", first.getString("ch")); assertTrue(first.getBoolean("visible"))
         visible = false
-        presence.changed()
+        presence.tell()
         awaitTrue("a second presence") { conn.framesOf("presence").size == 2 }
         assertFalse(conn.framesOf("presence")[1].getBoolean("visible"))
         // After a reconnect the new connection is told again.

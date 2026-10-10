@@ -51,14 +51,13 @@ class HumanSendTest {
         catch (e: HumanSend.Refused) { assertEquals("bad_request", e.code); assertTrue(e.final) }
     }
 
-    @Test fun theReplyToAWaitedWordIsReadWhetherItIsTheReplyOrTheResponseMessageThatCarriesIt() {
+    @Test fun theResponseToAWaitedWordIsTheReplyItself() {
         val reply = JSONObject().put("ok", true).put("result", JSONObject().put("data", JSONObject().put("ended", true)))
-        val bare = JSONObject().put("response", reply)
-        val message = JSONObject().put("response", JSONObject().put("kind", "response").put("from", "service:reflex").put("body", reply))
-        for (sent in listOf(bare, message)) {
-            assertTrue(HumanSend.reply(sent)!!.getBoolean("ok"))
-            assertTrue(HumanSend.data(sent)!!.getBoolean("ended"))
-        }
+        val sent = JSONObject().put("response", reply)
+        assertTrue(HumanSend.reply(sent)!!.getBoolean("ok"))
+        assertTrue(HumanSend.data(sent)!!.getBoolean("ended"))
+        // A response message wrapping the reply is not a reply.
+        assertNull(HumanSend.data(JSONObject().put("response", JSONObject().put("kind", "response").put("body", reply))))
         val failed = JSONObject().put("response", JSONObject().put("ok", false).put("error", JSONObject().put("code", "denied").put("message", "n")))
         assertNull(HumanSend.data(failed))
         assertNull(HumanSend.reply(JSONObject()))

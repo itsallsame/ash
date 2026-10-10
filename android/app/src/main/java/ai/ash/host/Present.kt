@@ -22,6 +22,8 @@ object Present {
     private const val ACTION = "action:"
     private const val CONSUMED = "consumed:"
     private const val RETIRED = "retired:"
+    /** Who a retired presentation's reply goes to: a reply typed into the conversation notification still counts after it left it. */
+    private const val TARGET = "target:"
     private const val AT = "at:"
     private val kinds = setOf("reply", "approval", "due", "offer", "heads_up")
     private val choices = setOf("once", "always", "deny")
@@ -66,9 +68,10 @@ object Present {
             }
             if (if (question) ids.size > 8 else !PresentRoutes.notificationOptionsValid(ids.toList())) return refuse("bad_request", "invalid_options")
             if ((record.opt("reply_to") as? String).isNullOrBlank() || !record.has("expires_at")) return refuse("bad_request", "reply_route_required")
-            // The target comes from the delivery service, never from a notification intent.
-            if (!PresentRoutes.member.matches(record.opt("reply_target") as? String ?: "")) return refuse("bad_request", "ask_sender_required")
-        } else if (record.has("options") || record.has("reply_target") || record.has("human_kind") || record.has("allow_custom")) return refuse("bad_request", "unexpected_reply_route")
+        } else if (record.has("options") || record.has("human_kind") || record.has("allow_custom")) return refuse("bad_request", "unexpected_reply_route")
+        // Every notification says who its answer or reply goes to (the ask's sender, or the agent that spoke); it comes from
+        // the delivery service, never from a notification intent.
+        if (!PresentRoutes.member.matches(record.opt("reply_target") as? String ?: "")) return refuse("bad_request", "reply_target_required")
         if (record.has("reply_to") && (record.opt("reply_to") as? String).isNullOrBlank()) return refuse("bad_request", "invalid_reply_to")
         if (record.has("alert") && (kind != "reply" || record.opt("alert") !in setOf("quiet", "strong"))) return refuse("bad_request", "invalid_alert")
         if (record.has("expires_at") && positiveSafeInteger(record.opt("expires_at")) == null) return refuse("bad_request", "invalid_expiry")
@@ -102,12 +105,18 @@ object Present {
     /** Caller holds serial so a later render cannot overtake the cancellation. */
     private fun retireLocked(ctx: Context, id: String): Boolean {
         val chat = item(ctx, id)?.optString("kind")?.let(PresentChat::isChat) == true
-        val stored = prefs(ctx).edit().remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true).commit()
+        val stored = retire(ctx, prefs(ctx).edit(), id).commit()
         if (!stored) return false
         Notifications.hidePresent(ctx, id)
         cancelExpiry(ctx, id)
         if (chat) refreshChatLocked(ctx, ring = false)
         return true
+    }
+
+    /** Retires [id] in [edit], keeping where its reply would go. */
+    private fun retire(ctx: Context, edit: android.content.SharedPreferences.Editor, id: String): android.content.SharedPreferences.Editor {
+        item(ctx, id)?.optString("reply_target")?.takeIf { it.isNotEmpty() }?.let { edit.putString(TARGET + id, it) }
+        return edit.remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true)
     }
 
     fun hide(ctx: Context, id: String): Boolean = serial.run { retireLocked(ctx, id) }
@@ -127,7 +136,7 @@ object Present {
 
     private fun clearChatLocked(ctx: Context) {
         val edit = prefs(ctx).edit()
-        for (id in chatIds(ctx)) edit.remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true)
+        for (id in chatIds(ctx)) retire(ctx, edit, id)
         edit.commit()
         Notifications.presentChat(ctx, emptyList(), ring = false)
     }
@@ -142,7 +151,7 @@ object Present {
         val (keep, drop) = PresentChat.split(live.map { it.first to it.third })
         if (drop.isNotEmpty()) {
             val edit = prefs(ctx).edit()
-            for (id in drop) edit.remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true)
+            for (id in drop) retire(ctx, edit, id)
             edit.commit()
         }
         val byId = live.associateBy { it.first }
@@ -175,7 +184,7 @@ object Present {
         serial.run {
             // A reply typed into the conversation notification still counts after its message was cleared from it.
             val record = item(ctx, id) ?: if (replyText != null && prefs(ctx).getBoolean(RETIRED + id, false))
-                JSONObject().put("id", id).put("kind", "reply") else return
+                JSONObject().put("id", id).put("kind", "reply").put("reply_target", prefs(ctx).getString(TARGET + id, null) ?: return) else return
             if (expired(record) || prefs(ctx).getBoolean(CONSUMED + id, false)) return
             val route = try { when (record.optString("kind")) {
                 "approval" -> {
@@ -188,7 +197,7 @@ object Present {
                     }
                 }
                 "reply", "offer", "heads_up" -> {
-                    PresentRoutes.reply(replyText ?: return)
+                    PresentRoutes.reply(record.getString("reply_target"), replyText ?: return)
                 }
                 else -> return
             } } catch (_: IllegalArgumentException) { return }

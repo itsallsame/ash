@@ -47,12 +47,14 @@ class PresentRouteTest {
         }
     }
 
-    @Test fun directNotificationReplyAlwaysTargetsTheAgent() {
-        val route = PresentRoutes.reply("  Hello  ")
-        assertEquals("agent:main", route.to)
+    @Test fun directNotificationReplyGoesToTheAgentThePresentationNamed() {
+        val route = PresentRoutes.reply("agent:writer", "  Hello  ")
+        assertEquals("agent:writer", route.to)
         assertEquals("request", route.kind)
         assertEquals("say", route.word)
         assertEquals("Hello", route.text)
-        assertThrows(IllegalArgumentException::class.java) { PresentRoutes.reply("   ") }
+        assertThrows(IllegalArgumentException::class.java) { PresentRoutes.reply("agent:writer", "   ") }
+        assertThrows(IllegalArgumentException::class.java) { PresentRoutes.reply("not a member", "Hello") }
+        assertThrows(IllegalArgumentException::class.java) { PresentRoutes.reply("", "Hello") }
     }
 }

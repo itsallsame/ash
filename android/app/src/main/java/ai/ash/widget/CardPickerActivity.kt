@@ -58,7 +58,6 @@ class CardPickerActivity : Activity() {
     }
 
     private fun owner(member: String): String = when {
-        member == "agent:main" -> "来自 Ash"
         member == "person:owner" -> "来自你"
         else -> "来自 ${member.substringAfter(':')}"
     }

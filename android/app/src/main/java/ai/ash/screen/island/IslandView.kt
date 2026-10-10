@@ -44,6 +44,8 @@ internal data class IslandModel(
     val interactive: Boolean = true, val actionable: Boolean = true,
     /** A message is on its way: the composer waits. */
     val busy: Boolean = false,
+    /** There is an agent to talk to (or a question waiting for its answer); without one the composer is not offered. */
+    val canSend: Boolean = true,
 )
 
 /** The reference's KIND table (island.html), one row per card type. */
@@ -252,6 +254,7 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
     // foot
     // CSS keeps fractional px and Android lays out whole ones; rounding this padding down keeps the rows below within
     // half a px of the reference instead of drifting by a dp.
+    private val inputRow = LinearLayout(ctx)
     private val foot = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, (IslandSpec.FOOT_PAD_TOP * d).toInt(), 0, 0) }
     private val divider = View(ctx).apply { setBackgroundColor(IslandTokens.COLOR_DIVIDER) }
     val input = EditText(ctx).apply {
@@ -331,7 +334,7 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
         actionBar.addView(primary, LinearLayout.LayoutParams(-1, px(IslandTokens.TYPE_PRIMARY_BUTTON_HEIGHT)))
         card.addView(actionBar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = gap })
         // foot: divider is the border-top of .foot
-        val inputRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        inputRow.apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         inputRow.addView(input, LinearLayout.LayoutParams(0, px(IslandSpec.INPUT_HEIGHT), 1f))
         inputRow.addView(sendButton, LinearLayout.LayoutParams(px(IslandSpec.INPUT_HEIGHT), px(IslandSpec.INPUT_HEIGHT)).apply { leftMargin = px(IslandSpec.FOOT_INPUT_GAP) })
         foot.addView(notice, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(IslandSpec.FOOT_GAP) })
@@ -491,6 +494,7 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
         notice.text = next.notice
         stopLink.visibility = if (k.run && next.canStop) View.VISIBLE else View.GONE
         usable(stopLink, next.interactive)
+        inputRow.visibility = if (next.canSend) View.VISIBLE else View.GONE
         input.isEnabled = !next.busy; usable(sendButton, !next.busy)
         input.hint = next.placeholder
         // The shell is always laid out as tall as this content's card, so opening it lays nothing out.

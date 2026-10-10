@@ -73,7 +73,7 @@ object TaskStatus {
         val frame = model.frame
         // Between tasks, and once the owner has seen what a task left, the island is the resident entry (if kept).
         val island = model.island(now, TaskCapsule.residentOn(ctx))
-        if (island != TaskStatusModel.Island.TASK) { if (island == TaskStatusModel.Island.RESIDENT) TaskCapsule.resident() else TaskCapsule.hide() }
+        if (island != TaskStatusModel.Island.TASK) { if (island == TaskStatusModel.Island.RESIDENT) TaskCapsule.resident(model.frame?.agent?.isNotEmpty() == true) else TaskCapsule.hide() }
         if (!model.active() || frame == null) {
             ctx.getSystemService(NotificationManager::class.java).cancel(ID); lastNotification = null; return
         }
@@ -171,7 +171,8 @@ object TaskStatus {
     /** Same authenticated phone-owner path as notification replies; stable client id makes retries safe. */
     fun sendInput(text: String, clientId: String, done: (Boolean, String) -> Unit) { main.post {
         val ctx = app
-        val target = model.frame?.agent ?: "agent:main"
+        val target = model.frame?.agent.orEmpty()
+        if (target.isEmpty()) { done(false, "还没有可对话的 Ash，稍后再试"); return@post }
         if (ctx == null || text.isBlank() || text.length > 4000 || ctx.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked) {
             done(false, "暂时不能发送，请解锁后重试"); return@post
         }

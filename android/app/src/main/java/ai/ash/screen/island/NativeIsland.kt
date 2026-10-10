@@ -366,6 +366,7 @@ internal object NativeIsland : IslandView.Actions {
         val base = IslandModel(kind = model.optString("kind"), form = form, elapsedSec = model.optLong("elapsed"), activity = model.optString("activity"),
             body = IslandText.plain(model.optString("reply")), canStop = model.optBoolean("canStop"), interactive = interactive,
             pager = pager, notice = notice.ifEmpty { model.optString("notice") }, busy = sending,
+            canSend = model.optBoolean("canSend", true) || answering() != null,
             placeholder = if (answering() != null) IslandKind.of("ask").placeholder.orEmpty()
                 else if (resident()) IslandKind.of("resident").placeholder.orEmpty() else "回复 Ash…")
         val shown = when {

@@ -29,9 +29,11 @@ object PresentRoutes {
         return PresentRoute(replyTarget, "response", "ask", replyTo = replyTo, choice = choice)
     }
 
-    fun reply(text: String): PresentRoute {
+    /** A reply typed into a notification goes to [target], the agent that spoke (given by the presentation). */
+    fun reply(target: String, text: String): PresentRoute {
+        require(member.matches(target)) { "reply target missing" }
         val trimmed = text.trim()
         require(trimmed.isNotEmpty()) { "reply is empty" }
-        return PresentRoute("agent:main", "request", "say", text = trimmed)
+        return PresentRoute(target, "request", "say", text = trimmed)
     }
 }

@@ -44,14 +44,8 @@ internal object HumanSend {
 
     fun send(ctx: Context, request: JSONObject): JSONObject = send(Link.get(ctx).client, request)
 
-    /**
-     * The reply to a word sent with `wait`: `{ok, result?: {data?, content?}, error?}` (SPEC-01 §3), or null when the
-     * kernel gave none in time. A `response` may be that reply itself or the response message that carries it as `body`.
-     */
-    fun reply(sent: JSONObject): JSONObject? {
-        val response = sent.optJSONObject("response") ?: return null
-        return if (response.has("ok")) response else response.optJSONObject("body")
-    }
+    /** The reply to a word sent with `wait`: the `response` of the `send.result`, `{ok, result?: {data?, content?}, error?}` (SPEC-01 §3); null when the kernel gave none in time. */
+    fun reply(sent: JSONObject): JSONObject? = sent.optJSONObject("response")
 
     /** `result.data` of [reply], if the reply is a success. */
     fun data(sent: JSONObject): JSONObject? = reply(sent)?.takeIf { it.optBoolean("ok") }?.optJSONObject("result")?.optJSONObject("data")

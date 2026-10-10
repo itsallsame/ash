@@ -186,7 +186,7 @@ class HomeActivity : Activity() {
         super.onResume()
         ai.ash.host.AppState.homeVisible = true
         HandRuntime.appOpened(this)
-        Link.get(this).presence.changed()
+        Link.get(this).presence.tell()
         // In front, the app may start the kernel service; do it when the kernel has not handed over a connection.
         if (!KernelLauncher.connected(this)) KernelLauncher.start(this)
     }
@@ -194,7 +194,7 @@ class HomeActivity : Activity() {
     override fun onPause() {
         ai.ash.host.AppState.homeVisible = false
         HandRuntime.appLeft()
-        Link.get(this).presence.changed()
+        Link.get(this).presence.tell()
         super.onPause()
     }
 

@@ -100,17 +100,14 @@ object WidgetHost {
     }
 
     /**
-     * One card drawn as a picture now (`widget` `preview`, body `{card, size}`): [card] is the id of a card in the last state or
-     * the card itself, [size] a widget size name (`2x2`, `4x2`, `4x4`). The result is one image part. Call off the main thread.
+     * One card drawn as a picture now (`widget` `preview`, body `{card, size?}`): `card` is the id of a card in the last state, `size`
+     * a widget size name (`2x2`, `4x2`, `4x4`; the card's own by default). The result is one image part. Call off the main thread.
      */
     fun preview(ctx: Context, body: JSONObject): PresentOutcome {
         val app = ctx.applicationContext
-        val size = body.opt("size") as? String ?: return PresentOutcome(false, null, "bad_request", "size must be a widget size name")
-        val card = when (val given = body.opt("card")) {
-            is String -> state(app)?.cards?.get(given)
-            is JSONObject -> runCatching { WidgetPlan.parseState(JSONObject().put("cards", JSONArray().put(given))).cards.values.firstOrNull() }.getOrNull()
-            else -> null
-        } ?: return PresentOutcome(false, null, "not_found", "the phone does not have that card")
+        val card = (body.opt("card") as? String)?.let { state(app)?.cards?.get(it) }
+            ?: return PresentOutcome(false, null, "not_found", "the phone does not have that card")
+        val size = body.opt("size") as? String ?: card.size
         val drawn = CountDownLatch(1)
         var result: PreviewResult? = null
         main.post {

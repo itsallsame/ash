@@ -84,7 +84,7 @@ object Link {
         private fun humanChannelChanged(open: Boolean, welcome: JSONObject?) {
             val grant = welcome?.optJSONObject("channels")?.optJSONObject("human")
             chat.linkChanged(open, grant?.optString("client"), grant?.optBoolean("local") ?: false)
-            if (open) { presence.opened(); Present.flushAsync(ctx) }
+            if (open) { presence.tell(); Present.flushAsync(ctx) }
             TaskStatus.refresh()
         }
 
