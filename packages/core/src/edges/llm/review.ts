@@ -66,18 +66,20 @@ export function parseDecision(text: string): ReviewDecision {
   if (Object.keys(item).some((key) => key !== "decision" && key !== "reason")) throw new TypeError("verdict has unexpected fields");
   if (item.decision !== "allow" && item.decision !== "ask" && item.decision !== "deny") throw new TypeError("verdict decision must be allow, ask or deny");
   if (typeof item.reason !== "string" || !item.reason.trim()) throw new TypeError("verdict needs a reason");
-  return { verdict: item.decision, reason: item.reason.trim().slice(0, MAX_REASON_CHARS) };
+  return { verdict: item.decision, reason: item.reason.replace(/\s+/g, " ").trim().slice(0, MAX_REASON_CHARS) };
 }
 
 export function createReviewer(options: ReviewerOptions): Reviewer {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return async (req, contract) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const bodyText = JSON.stringify(req.body) ?? "null";
       if (bodyText.length > MAX_BODY_CHARS) {
-        return { verdict: "deny", reason: `命令太长（${bodyText.length} 字），审不了。请先用 workspace.write 把脚本写成文件，再执行那个文件。` };
+        const how = contract.effect === "execute" ? "请先用 workspace.write 把脚本写成文件，再执行那个文件。" : "请拆成几次小的请求。";
+        return { verdict: "deny", reason: `内容太长（${bodyText.length} 字），审不了。${how}` };
       }
+      // A long request takes the model longer to read: one more second for every 4000 characters.
+      const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS + Math.floor(bodyText.length / 4000) * 1000;
       const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("review timed out")), timeoutMs); });
       const asking = options.llm.complete(REVIEW_CALLER, {
         ...(options.model === undefined ? {} : { model: options.model }),

@@ -28,7 +28,8 @@ export const isPayment = (contract: WordContract, body?: unknown): boolean =>
   || (contract.word === "browser.click" && PAYMENT.test(String((body as { label?: unknown } | null)?.label ?? "")));
 
 export const ASSESS_MS = 10_000;
-export const REVIEW_MS = 5_000;
+/** The outer limit on the review model; the reviewer gives itself less, more for a long request. */
+export const REVIEW_MS = 30_000;
 /** The default time a question to the owner stays open. */
 export const DEFAULT_TTL_MINUTES = 10;
 export const RULE_DAYS = 30;
