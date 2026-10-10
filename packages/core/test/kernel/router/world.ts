@@ -8,6 +8,7 @@ import { createRedact } from "../../../src/kernel/redact";
 import { createRegistry } from "../../../src/kernel/registry";
 import { createRouter } from "../../../src/kernel/router";
 import { createGateService } from "../../../src/services/gate";
+import { createNameOf } from "../../../src/services/gate/names";
 import type { Caller, GateDeps } from "../../../src/kernel/types";
 import { after } from "node:test";
 import { openLedger } from "../ledger/helpers";
@@ -65,6 +66,8 @@ export function fakeAgent(name = "main") {
 }
 
 export interface WorldOptions {
+  /** The names hands were paired with (the hand id, without the `device:` prefix), known while they are offline. */
+  handNames?: Record<string, string>;
   review?: "allow" | "ask" | "hang" | { verdict: "allow" | "ask" | "deny"; reason?: string };
   tiers?: Record<string, "ask" | "full">;
   assess?: (msg: Message) => Promise<"none" | "outward" | "structure" | null>;
@@ -106,7 +109,10 @@ export function world(options: WorldOptions = {}) {
   });
   const svc = createGateService({
     store, gate, send: (m, c, o) => router.send(m, c, o), redeem: (id, c, o) => router.redeem(id, c, o),
-    contractOf: (member, w) => registry.find(member, w)?.contract ?? null, onError: (where, error) => errors.push({ where, error }),
+    contractOf: (member, w) => registry.find(member, w)?.contract ?? null, nameOf: createNameOf({
+      memberName: (id) => registry.get(id)?.name, handName: (hand) => options.handNames?.[hand],
+      mainAgentName: () => registry.get("agent:main")?.name,
+    }), onError: (where, error) => errors.push({ where, error }),
   });
   services.push(svc);
   const ownerMember = fakeOwner();
