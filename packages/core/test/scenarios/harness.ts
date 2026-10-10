@@ -25,11 +25,14 @@ import type { CallFrame, CapabilitySpec, HandKind, HelloChannels, ManifestAckFra
 import { base64url, deviceId, handId } from "../../../sdk/src/ids";
 import type { Message, Reply } from "../../../sdk/src/message";
 import { standardAction } from "../../../sdk/src/namespaces";
-import {
-  startHub, type AgentDriver, type AgentDriverFactory, type AgentEvent, type AgentStartSpec, type DriverMessage, type Hub,
-} from "../../src/next";
+import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage as HubDriverMessage } from "../../../sdk/src/driver";
+import { startHub, type Hub } from "../../src/next";
 import { FakeHost } from "../fixtures/host";
 import { eventually } from "../fixtures/wait";
+
+/** A message as the hub's driver contract gives it (SPEC-08 §1.2, with `text`), plus `body`, the form the scenarios read it in. */
+export type DriverMessage = HubDriverMessage & { body: { text: string; thread?: string } };
+const shaped = (m: HubDriverMessage): DriverMessage => ({ ...m, body: { text: m.text, ...(m.thread ? { thread: m.thread } : {}) } });
 
 export const OWNER = "person:owner";
 export const MAIN = "agent:main";
@@ -260,11 +263,28 @@ export class ScriptedDriver {
 
   private driver(report: (event: AgentEvent) => void): AgentDriver {
     const safe = (event: AgentEvent) => { try { report(event); } catch { /* the hub is gone */ } };
+    const handles = new Map<string, string>();
+    const handleOf = (agent: string, key: string) => handles.get(`${agent}/${key}`) ?? null;
+    const open = (agent: string, key: string) => { const handle = `h_${++this.serial}`; handles.set(`${agent}/${key}`, handle); safe({ event: "handle.updated", agent, key, handle }); return handle; };
     return {
+      info: { kind: "dsh", models: [], abilities: { resume: true, steer: true, inject_live: true, images: false, compact: false, configure: [], plugins: false, mcp: true, system_prompt: "inject", credentials: false, usage: false } },
+      status: () => ({ state: "running" }),
+      restart: async () => {},
+      session: {
+        get: handleOf,
+        set: async (agent, key, handle) => { handles.set(`${agent}/${key}`, handle); },
+        new: async (agent, key) => ({ handle: open(agent, key) }),
+        reload: async (agent, key) => ({ handle: open(agent, key) }),
+        compact: async () => ({ compacted: false }),
+      },
+      inject: async () => {},
+      configure: async () => ({}),
+      plugins: async () => ({}),
       start: async (agent, spec) => {
         this.starts.push({ agent, spec });
         await this.lines.get(agent)?.close();
         this.lines.set(agent, new ToolLine(spec.tools));
+        for (const key of spec.lanes) if (!spec.sessions[key]) open(agent, key);
       },
       stop: async (agent, reason) => {
         this.stops.push({ agent, reason });
@@ -272,19 +292,23 @@ export class ScriptedDriver {
         await this.lines.get(agent)?.close();
         this.lines.delete(agent);
       },
-      send: async (agent, key, batch) => {
+      send: async (agent, key, raw) => {
+        const batch = raw.map(shaped);
         this.deliveries.push({ via: "send", agent, key, messages: batch });
         this.begin(safe, agent, key, batch);
       },
-      followup: async (agent, key, batch) => {
+      followup: async (agent, key, raw) => {
+        const batch = raw.map(shaped);
         this.deliveries.push({ via: "followup", agent, key, messages: batch });
         const slot = `${agent}/${key}`;
         if (this.running.has(slot)) this.queued.set(slot, [...(this.queued.get(slot) ?? []), batch]);
         else this.begin(safe, agent, key, batch);
       },
       steer: async (agent, key, text) => {
-        this.deliveries.push({ via: "steer", agent, key, messages: [{ id: `steer-${++this.serial}`, from: OWNER, word: "say", lane: key, at: Date.now(), body: { text } }] });
-        this.running.get(`${agent}/${key}`)?.record.steers.push(text);
+        this.deliveries.push({ via: "steer", agent, key, messages: [shaped({ id: `steer-${++this.serial}`, from: OWNER, word: "say", lane: key, at: Date.now(), text })] });
+        const run = this.running.get(`${agent}/${key}`);
+        run?.record.steers.push(text);
+        return run !== undefined;
       },
       interrupt: async (agent, key) => {
         this.interrupts.push({ agent, key });
