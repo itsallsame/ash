@@ -26,9 +26,11 @@ test("shouldRecord: whatever has an effect is, whoever asks", () => {
   }
 });
 
-test("shouldRecord: anything with the owner in it", () => {
+test("shouldRecord: what the owner sends from a channel; a service reading on the owner's behalf is not", () => {
   assert.equal(shouldRecord(m("person:owner", "service:cost"), read, owner), true);
-  assert.equal(shouldRecord(m("service:cost", "person:owner"), read, service("cost")), true);
+  assert.equal(shouldRecord(m("person:owner", "service:widgets"), read, { ...owner, via: "service" }), false);
+  assert.equal(shouldRecord(m("service:widgets", "person:owner"), read, service("widgets")), false);
+  assert.equal(shouldRecord(m("service:gate", "person:owner"), word("person:owner", "ask", { effect: "act" }), service("gate")), true);
 });
 
 test("shouldRecord: an event only when the contract says record: true; sense.* is not", () => {

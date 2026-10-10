@@ -354,7 +354,15 @@
         "body": {
           "type": "object",
           "properties": {
-            "target": {}
+            "target": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            }
           },
           "required": [
             "target"
