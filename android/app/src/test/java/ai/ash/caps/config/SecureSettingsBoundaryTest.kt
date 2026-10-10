@@ -9,7 +9,7 @@ import java.io.File
 /**
  * Ash holds WRITE_SECURE_SETTINGS for one thing: bringing its accessibility service back. Android grants
  * it whole, so the boundary is kept here, in code: one file writes secure settings, only the accessibility keys, only
- * the helper's own entry, and nothing the agent can call reaches it.
+ * Ash's own accessibility entry, and the only capability that reaches it is the gated config.accessibility.enable.
  */
 class SecureSettingsBoundaryTest {
     private val sources = listOf("src/main/java")
@@ -29,11 +29,24 @@ class SecureSettingsBoundaryTest {
         assertTrue(recovery.contains("val key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES"))
     }
 
-    @Test fun noAgentCapabilityReachesRecovery() {
-        val tools = sources.filter { f -> f.path.contains("/host/cap/") || f.path.contains("/ai/ash/screen/") || f.path.contains("/ai/ash/senses/") }
+    @Test fun onlyOneCapabilityReachesRecoveryAndItIsGated() {
+        // Outside caps/config nothing names it; inside, only the capability config.accessibility.enable (and the screens the owner uses) do.
+        val tools = sources.filter { f -> f.path.contains("/ai/ash/caps/") && !f.path.contains("/ai/ash/caps/config/") }
         // A call or an import, not a mention in a comment.
-        val use = Regex("""ScreenRecovery\.|import\s+ai\.ash\.host\.screen\.ScreenRecovery""")
+        val use = Regex("""ScreenRecovery\.|import\s+ai\.ash\.caps\.config\.ScreenRecovery""")
         assertFalse(tools.filter { use.containsMatchIn(it.readText()) }.map { it.name }.toString(), tools.any { use.containsMatchIn(it.readText()) })
+        val inside = sources.filter { it.path.contains("/ai/ash/caps/config/") && Regex("""ScreenRecovery\.enable""").containsMatchIn(it.readText()) }.map { it.name }.toSet()
+        assertEquals(setOf("ConfigCapabilities.kt"), inside)
+        // Writing a secure setting is a structural change: the kernel's gate asks the owner.
+        assertEquals("structure", ai.ash.caps.Capabilities.byName.getValue("config.accessibility.enable").risk)
+    }
+
+    @Test fun enablingAddsOnlyAshsOwnEntry() {
+        val own = "ai.ash.agent/ai.ash.caps.screen.A11yService"
+        assertEquals("com.other/.Reader:$own", ScreenRecovery.Services.withHelperAdded("com.other/.Reader", own))
+        assertEquals(own, ScreenRecovery.Services.withHelperAdded("", own))
+        // Once is enough.
+        assertEquals("com.other/.Reader:$own", ScreenRecovery.Services.withHelperAdded("com.other/.Reader:$own", own))
     }
 
     @Test fun onlyAshsEntryIsTakenOutAndPutBack() {

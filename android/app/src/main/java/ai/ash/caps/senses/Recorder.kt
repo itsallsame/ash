@@ -52,8 +52,8 @@ object Recorder {
             // Android 12+ refuses a foreground service started from the background unless the app is exempt (the
             // battery exemption is one). The owner's tap on a notification is always allowed.
             Log.w(TAG, "could not start recording", e)
-            offerResume(ctx, "Ash 感知需要你点一下才能开始记录")
-            "the system did not let recording start from the background (${e.javaClass.simpleName}); a notification asks the owner to tap it. Allowing Ash 感知 to ignore battery optimisation avoids this"
+            offerResume(ctx, "Ash 需要你点一下才能开始记录")
+            "the system did not let recording start from the background (${e.javaClass.simpleName}); a notification asks the owner to tap it. Allowing Ash to ignore battery optimisation avoids this"
         }
     }
 
@@ -132,7 +132,7 @@ class RecordingService : Service() {
         val stop = PendingIntent.getService(this, 1, Intent(this, RecordingService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
         val open = PendingIntent.getActivity(this, 2, Intent(this, SetupActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val n = Notification.Builder(this, Recorder.CHANNEL).setSmallIcon(R.drawable.ic_stat_senses).setOngoing(true)
-            .setContentTitle("Ash 感知正在记录位置与运动")
+            .setContentTitle("Ash 正在记录位置与运动")
             .setContentText("移动时每 ${config.intervalMin} 分钟一个位置，静止时不取位置；只存在本机")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "停止记录", stop).build())
@@ -145,7 +145,7 @@ class RecordingService : Service() {
             catch (e: Exception) { Log.w("ash.senses", "foreground type $types refused", e) }
         }
         Recorder.lastProblem = "the system refused the recording service (location and activity permissions)"
-        Recorder.offerResume(this, "Ash 感知没能开始记录")
+        Recorder.offerResume(this, "Ash 没能开始记录")
         return false
     }
 
@@ -260,7 +260,7 @@ internal class Sampler(private val ctx: Context) {
         // A point every interval, still or not: the owner's day must read as a continuous track (one every 30 minutes
         // by default). Movement starting or stopping adds points in between.
         fixNow(if (force) "start" else "interval")
-        SenseLink.flush()
+        SenseSync.flush()
     }
 
     private fun onSteps(s: StepSample) {
@@ -296,7 +296,7 @@ internal class Sampler(private val ctx: Context) {
             .put("speed", guess.speed ?: JSONObject.NULL).put("basis", guess.basis).toString()).apply()
         // Movement started or stopped: where.
         if (before != null && (before == ActivityState.STILL) != (changed == ActivityState.STILL)) fixNow(if (changed == ActivityState.STILL) "stopped" else "moving")
-        SenseLink.flush()
+        SenseSync.flush()
     }
 
     private fun fixNow(reason: String) {
@@ -314,7 +314,7 @@ internal class Sampler(private val ctx: Context) {
         store.addFix(fix)
         if (!fix.mocked) geofences(fix, config)
         evaluate()
-        SenseLink.flush()
+        SenseSync.flush()
     }
 
     /**

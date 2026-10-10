@@ -145,7 +145,7 @@ class ConsoleActivity : Activity() {
         val times = r.history(this).takeLast(3).reversed().joinToString("、") { java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.CHINA).format(java.util.Date(it)) }
         recoveryState.text = buildString {
             append(if (!r.granted(this@ConsoleActivity)) "未授权（见上方「无障碍自动恢复」）。" else if (r.enabled(this@ConsoleActivity)) "已开启。" else "已关闭。")
-            append("只做一件事：屏幕助手的无障碍开关开着、但它被系统停掉时，把它重新拉起来；你关掉的开关不会去开。")
+            append("只做一件事：Ash 的无障碍开关开着、但它被系统停掉时，把它重新拉起来；你关掉的开关不会去开。")
             append(if (times.isEmpty()) "还没有恢复过。" else "最近恢复：$times。")
         }
         recoveryToggle.text = if (r.enabled(this)) "关闭自动恢复" else "开启自动恢复"

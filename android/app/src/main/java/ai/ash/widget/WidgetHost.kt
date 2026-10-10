@@ -1,5 +1,6 @@
 package ai.ash.widget
 
+import ai.ash.caps.Events
 import ai.ash.link.HumanSend
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
@@ -199,16 +200,19 @@ object WidgetHost {
         prefs(ctx).edit().putString(LOCAL + widgetId, card).commit()
         CardWidgetProvider.update(ctx, AppWidgetManager.getInstance(ctx), widgetId)
         val app = ctx.applicationContext
+        // A device event: queued, and sent again after a reconnect until the kernel has it. The phone keeps the pick either way.
         Thread({
-            send(app, "widget.bind", JSONObject().put("widget", widgetId.toString()).put("card", card)) { ok, why ->
-                if (!ok) Log.w(TAG, "bind not confirmed ($why); the phone keeps the pick")
-            }
+            runCatching { Events.emit(app, "widget.bind", JSONObject().put("widget", widgetId.toString()).put("card", card)) }
+                .onFailure { Log.w(TAG, "bind not queued: ${it.message}") }
         }, "ash-widget-bind").start()
     }
 
     fun reportPlaced(ctx: Context) {
         val app = ctx.applicationContext
-        Thread({ send(app, "widget.placed", JSONObject().put("widgets", placed(app))) { _, _ -> } }, "ash-widgets-placed").start()
+        Thread({
+            runCatching { Events.emit(app, "widget.placed", JSONObject().put("widgets", placed(app))) }
+                .onFailure { Log.w(TAG, "placed not queued: ${it.message}") }
+        }, "ash-widgets-placed").start()
     }
 
     /** A button on a widget drawn before the full card format: only the event name. */
@@ -270,7 +274,8 @@ object WidgetHost {
     private fun send(ctx: Context, word: String, body: JSONObject, done: (Boolean, String) -> Unit) {
         val result = runCatching {
             // TODO(T11b-2): widget.tap is a human channel `send`; until then HumanSend fails.
-            // TODO(T11c): widget.placed and widget.bind are device-channel events (Link.emit), not human sends; they go through HumanSend only until then.
+            // widget.placed and widget.bind are device events (Events.emit). What still comes here as widget.placed, the report of
+            // what a card drew, is a human-channel present result and goes with the rest of T11b-2.
             val out = HumanSend.send(JSONObject().put("to", "service:widgets").put("kind", "request").put("word", word)
                 .put("body", body).put("wait", true).put("client_id", "widget:${UUID.randomUUID()}"))
             val reply = out.optJSONObject("reply")?.optJSONObject("body")

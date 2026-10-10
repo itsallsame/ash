@@ -1,9 +1,7 @@
 package ai.ash.caps
 
-import ai.ash.caps.decision.ScreenDecisionHost
-import ai.ash.caps.CapResult
-import ai.ash.caps.CapabilityPolicies
-import ai.ash.host.screen.ScreenBridge
+import ai.ash.caps.decision.Decision
+import ai.ash.caps.senses.SenseSync
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,43 +17,23 @@ import ai.ash.link.Part
  * [assess] run on the link's worker threads, so a capability that waits on the main thread (the island's touch
  * passthrough waits for it up to a second) never blocks it.
  */
-class DeviceCalls(ctx: Context) : HandHandlers {
-    private val decisions = ScreenDecisionHost(ctx)
+class DeviceCalls(private val ctx: Context) : HandHandlers {
+    override fun call(call: CallRequest, ctx: CallContext): CallOutcome =
+        outcomeOf(Decision.call(this.ctx, call.capability, call.args, call.turn.orEmpty()))
 
-    override fun call(call: CallRequest, ctx: CallContext): CallOutcome = outcomeOf(run(call))
-
-    private fun run(call: CallRequest): CapResult {
-        val args = call.args
-        if (call.capability.startsWith("decision.")) return decide(call.capability, args)
-        val run = { decisions.call(call.capability, args, call.turn.orEmpty()) }
-        // Ash's own input to other apps passes under the island, and is refused while the owner is typing.
-        return if (call.capability in TOUCH_PASSTHROUGH) {
-            try { ScreenBridge.withTouchPassthrough(run) } catch (e: IllegalStateException) { CapResult.fail(e.message ?: "owner_input_busy") }
-        } else run()
-    }
-
-    private fun decide(name: String, args: JSONObject): CapResult = when (name) {
-        "decision.surface" -> CapResult.json(decisions.surface(args))
-        "decision.screen" -> CapResult.json(decisions.snapshot())
-        "decision.return" -> CapResult.json(decisions.returnToAsh(args))
-        "decision.virtual_close" -> CapResult.json(decisions.closeVirtual(args))
-        else -> CapResult.fail("the phone has no capability $name")
-    }
+    /** The kernel is there (again): sense batches it never acknowledged are offered once more. */
+    override fun welcome(welcome: JSONObject) { SenseSync.pull() }
 
     override fun assess(capability: String, args: JSONObject): Assessment = assessmentFor(capability)
 
     override fun log(message: String, error: Throwable?) { android.util.Log.w("ash.link", message, error) }
 
     companion object {
-        /** The phone's risks are fixed per capability (Ash's policy); a capability it does not know is the riskiest. */
+        /** The phone's risks are fixed per capability (its declaration); a capability it does not know is the riskiest. */
         fun assessmentFor(capability: String): Assessment {
-            val policy = CapabilityPolicies.byName[capability]
-                ?: return if (capability.startsWith("decision.")) Assessment("none") else Assessment("structure", "unknown capability")
-            return Assessment(policy.risk)
+            val declared = Capabilities.byName[capability] ?: return Assessment("structure", "unknown capability")
+            return Assessment(declared.risk)
         }
-
-        /** Ash's own input to other apps passes under the island. */
-        private val TOUCH_PASSTHROUGH = setOf("apps.open", "settings.open", "intent.view", "input.key")
 
         /** Failures a capability reports as plain text, and the unified error code (SPEC-02 §7) each one is. */
         private val CODES = setOf("cancelled", "timeout", "unavailable", "not_found", "forbidden", "bad_request", "failed")

@@ -12,7 +12,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import org.json.JSONObject
 
-/** The helper's shared state: its store, the owner's settings, and what the system has granted it. */
+/** The senses' shared state: its store, the owner's settings, and what the system has granted it. */
 object Senses {
     @Volatile private var app: Context? = null
     @Volatile private var storeInstance: SenseStore? = null

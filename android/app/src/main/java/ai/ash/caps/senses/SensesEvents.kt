@@ -3,7 +3,7 @@ package ai.ash.caps.senses
 import org.json.JSONObject
 
 /**
- * The batches the senses helper pushes, checked before they go to the core as events. The words and bodies are a
+ * The batches the senses push, checked before they go to the core as events. The words and bodies are a
  * contract with the core:
  *
  * - sense.location {batch_id, items: [{ts, lat, lon, accuracy_m, provider, is_mocked?}]}

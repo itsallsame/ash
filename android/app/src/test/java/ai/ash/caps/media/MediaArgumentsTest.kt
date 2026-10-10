@@ -130,30 +130,27 @@ class MediaArgumentsTest {
         assertEquals(120, MediaArguments.safeName("y".repeat(300)).length)
     }
 
-    @Test fun containerPathsMapToThePhone() {
+    @Test fun containerPathsMapSharedStorageToThePhone() {
         val base = Files.createTempDirectory("ash-paths").toFile()
         try {
-            val rootfs = File(base, "ubuntu").apply { File(this, "root/work").mkdirs() }
-            val tmp = File(base, "tmp").apply { mkdirs() }
             val storage = File(base, "storage").apply { File(this, "DCIM").mkdirs() }.path
-            val paths = ContainerPaths(rootfs, tmp, storage)
-            assertEquals(File(rootfs, "root/work/a.jpg").canonicalFile, paths.toHost("/root/work/a.jpg"))
-            assertEquals(File(rootfs, "root/a.jpg").canonicalFile, paths.toHost("/root/work/../a.jpg"))
-            assertEquals(File(tmp, "x.png").canonicalFile, paths.toHost("/tmp/x.png"))
+            val paths = ContainerPaths(storage)
             assertEquals(File(storage, "DCIM/p.jpg").canonicalFile, paths.toHost("/sdcard/DCIM/p.jpg"))
             assertEquals(File(storage, "DCIM/p.jpg").canonicalFile, paths.toHost("$storage/DCIM/p.jpg"))
+            // Nothing but shared storage crosses by path: the container's own files, /tmp and system paths do not.
+            assertNull(paths.toHost("/root/work/a.jpg"))
+            assertNull(paths.toHost("/tmp/x.png"))
             assertNull(paths.toHost("/proc/self/environ"))
             assertNull(paths.toHost("/../../etc/passwd"))
+            assertNull(paths.toHost("/sdcard/../secret"))
             assertNull(paths.toHost("relative.jpg"))
-            // A link inside the container that points out of it is refused, not followed.
+            // A link in shared storage that points out of it is refused, not followed.
             val outside = File(base, "secret").apply { writeText("x") }
-            Files.createSymbolicLink(File(rootfs, "root/work/link").toPath(), outside.toPath())
-            assertNull(paths.toHost("/root/work/link"))
+            Files.createSymbolicLink(File(storage, "DCIM/link").toPath(), outside.toPath())
+            assertNull(paths.toHost("/sdcard/DCIM/link"))
 
-            assertEquals("/root/work/media/1-a.jpg", paths.toAgent(File(rootfs, "root/work/media/1-a.jpg")))
             assertEquals("$storage/DCIM/p.jpg", paths.toAgent(File(storage, "DCIM/p.jpg")))
             assertNull(paths.toAgent(outside))
-            assertEquals(File(rootfs, "root/work/media"), paths.exchange)
         } finally {
             base.deleteRecursively()
         }

@@ -1,7 +1,9 @@
 package ai.ash.caps.vscreen
 
+import ai.ash.caps.result
+import ai.ash.caps.Risk
+import ai.ash.caps.Effect
 import ai.ash.caps.shell.ShizukuState
-import ai.ash.caps.vscreen.VScreenClient
 import ai.ash.caps.system.Apps
 import ai.ash.caps.system.Clip
 import ai.ash.ui.VScreenPreview
@@ -26,8 +28,10 @@ object VScreenCapabilities {
 
     private const val NEEDS = "Requires Shizuku running with ash authorized (Android 10+)."
 
-    private fun vcap(name: String, description: String, schema: JSONObject = schema(), body: (Context, JSONObject) -> CapResult) =
-        Cap(name, "$description $NEEDS", schema, availableIf = ::ready, body = body)
+    private fun vcap(
+        name: String, description: String, schema: JSONObject = schema(), effect: String, risk: String, label: String,
+        result: JSONObject? = null, body: (Context, JSONObject) -> CapResult,
+    ) = Cap(name, "$description $NEEDS", schema, availableIf = ::ready, effect = effect, risk = risk, label = label, result = result, body = body)
 
     private fun fail(r: JSONObject) = CapResult.fail(r.optString("error", "virtual screen error"))
 
@@ -55,6 +59,8 @@ object VScreenCapabilities {
             "short_edge" to prop("integer", "Short side in pixels, rounded to a multiple of 144 (288..1440, default 720). Larger means sharper but screenshots above 1280 px are downscaled."),
             "dpi" to prop("integer", "Density (default 320; lower shows more content, higher makes it bigger)."),
         ),
+        effect = Effect.ACT, risk = Risk.STRUCTURE, label = "在创建虚拟屏",
+        result = result("displayId:integer!", "width:integer", "height:integer", "dpi:integer", "reused:boolean")
     ) { ctx, args ->
         val short = args.optInt("short_edge", 720).coerceIn(288, 1440)
         val long = short * 16 / 9
@@ -77,6 +83,8 @@ object VScreenCapabilities {
     private val status = vcap(
         "vscreen.status",
         "Report whether the virtual screen exists, its display id, size and dpi, and whether it has rendered a frame.",
+        effect = Effect.READ, risk = Risk.NONE, label = "在看虚拟屏状态",
+        result = result("running:boolean!", "displayId:integer", "width:integer", "height:integer", "dpi:integer")
     ) { ctx, _ ->
         if (!VScreenClient.running()) {
             return@vcap CapResult.json(JSONObject().put("running", false).put("displayId", -1))
@@ -84,6 +92,7 @@ object VScreenCapabilities {
         val r = VScreenClient.call(ctx, "status", timeoutMs = 5000, start = false)
         if (!r.optBoolean("ok")) return@vcap fail(r)
         r.remove("ok"); r.remove("id"); r.remove("build")
+        if (!r.has("running")) r.put("running", true)
         CapResult.json(r)
     }
 
@@ -94,6 +103,8 @@ object VScreenCapabilities {
             "(e.g. com.android.settings) or an app label as shown in the launcher (e.g. \"Settings\"). If the app is already " +
             "open on the owner's screen Android may bring that existing window instead. Wait a moment, then vscreen.see.",
         schema("app" to prop("string", "Package name or launcher label of the app.", required = true)),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在虚拟屏里打开应用",
+        result = result("package:string", "component:string")
     ) { ctx, args ->
         needScreen(ctx)?.let { return@vcap it }
         val app = try { Apps.resolve(ctx, args.optString("app")) } catch (e: Exception) { return@vcap CapResult.fail(e.message ?: "unknown app") }
@@ -107,6 +118,7 @@ object VScreenCapabilities {
         "vscreen.see",
         "Screenshot of the virtual screen (JPEG, long side at most 1280 px). The caption gives the screen size and the " +
             "factor to convert image pixels into the screen coordinates used by vscreen.tap/swipe (1 with the default size).",
+        effect = Effect.READ, risk = Risk.NONE, label = "在看虚拟屏"
     ) { ctx, _ ->
         needScreen(ctx)?.let { return@vcap it }
         val r = VScreenClient.call(ctx, "see", JSONObject().put("maxSide", 1280).put("quality", 80), 15_000)
@@ -129,6 +141,7 @@ object VScreenCapabilities {
             "x" to prop("number", "X in virtual-screen pixels.", required = true),
             "y" to prop("number", "Y in virtual-screen pixels.", required = true),
         ),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在点虚拟屏"
     ) { ctx, args ->
         if (!args.has("x") || !args.has("y")) return@vcap CapResult.fail("x and y are required")
         needScreen(ctx)?.let { return@vcap it }
@@ -145,6 +158,7 @@ object VScreenCapabilities {
             "y2" to prop("number", "End Y.", required = true),
             "duration_ms" to prop("integer", "Duration in ms (default 300; longer is slower, 1000+ acts like a drag)."),
         ),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在滑动虚拟屏"
     ) { ctx, args ->
         for (k in listOf("x1", "y1", "x2", "y2")) if (!args.has(k)) return@vcap CapResult.fail("$k is required")
         needScreen(ctx)?.let { return@vcap it }
@@ -168,6 +182,7 @@ object VScreenCapabilities {
             "key" to prop("string", "Key name, or a numeric KeyEvent keycode.", required = true),
             "long_press" to prop("boolean", "Long-press instead of a short press."),
         ),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在虚拟屏按键"
     ) { ctx, args ->
         val k = args.optString("key").trim().lowercase(Locale.ROOT)
         val code = KEYS[k] ?: k.toIntOrNull() ?: return@vcap CapResult.fail("unknown key \"$k\"; use one of ${KEYS.keys.joinToString(", ")} or a keycode number")
@@ -180,6 +195,7 @@ object VScreenCapabilities {
         "Type text into the focused field of the virtual screen (tap the field first). ASCII is typed as key input; " +
             "text with other characters (e.g. Chinese, emoji) is put on the clipboard and pasted, replacing the owner's clipboard content.",
         schema("text" to prop("string", "Text to type.", required = true)),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在虚拟屏输入"
     ) { ctx, args ->
         val text = args.optString("text")
         if (text.isEmpty()) return@vcap CapResult.fail("text is required")
@@ -195,6 +211,7 @@ object VScreenCapabilities {
     private val close = vcap(
         "vscreen.close",
         "Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call when the task is done.",
+        effect = Effect.ACT, risk = Risk.STRUCTURE, label = "在关闭虚拟屏"
     ) { ctx, _ ->
         if (!VScreenClient.running()) return@vcap CapResult.text("No virtual screen was open.")
         VScreenPreview.hide()

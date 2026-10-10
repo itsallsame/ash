@@ -3,7 +3,7 @@ package ai.ash.caps.senses
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** The words the helper pushes to Ash, and the batches that carry them. */
+/** The words the senses push to Ash, and the batches that carry them. */
 object Batches {
     const val LOCATION = "sense.location"
     const val ACTIVITY = "sense.activity"

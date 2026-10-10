@@ -1,6 +1,6 @@
 package ai.ash.caps.senses.health
 
-import ai.ash.caps.senses.SenseLink
+import ai.ash.caps.senses.SenseSync
 import ai.ash.caps.senses.HealthRow
 import ai.ash.caps.senses.SenseError
 import ai.ash.caps.senses.Senses
@@ -197,7 +197,7 @@ object XiaomiScaleSource {
         if (rows.isEmpty()) return
         val added = Senses.store.addHealth(rows)
         prefs(ctx).edit().remove("problem").apply()
-        if (added > 0) { Log.i(TAG, "scale: $added weigh-in(s)"); SenseLink.flush() }
+        if (added > 0) { Log.i(TAG, "scale: $added weigh-in(s)"); SenseSync.flush() }
     }
 
     /**
@@ -228,7 +228,7 @@ object XiaomiScaleSource {
 
     /** The scale's stored weigh-ins in [range]. Throws [SenseError] when no scale is set up, or for other metrics. */
     fun read(ctx: Context, metrics: List<String>, range: LongRange, max: Int): List<HealthRow> {
-        if (!configured(ctx)) throw SenseError("source_unavailable", "no Xiaomi scale is set up (the owner adds it on Ash 感知's setup page)")
+        if (!configured(ctx)) throw SenseError("source_unavailable", "no Xiaomi scale is set up (the owner adds it on the senses setup page)")
         if ("weight" !in metrics) throw SenseError("source_unavailable", "the Xiaomi scale only measures weight")
         return Senses.store.health(range, "weight", XiaomiScale.SOURCE, max)
     }

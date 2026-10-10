@@ -1,5 +1,8 @@
 package ai.ash.caps.senses
 
+import ai.ash.caps.result
+import ai.ash.caps.Risk
+import ai.ash.caps.Effect
 import ai.ash.caps.Cap
 import ai.ash.caps.CapResult
 import ai.ash.caps.Capability
@@ -12,7 +15,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The helper's tools, as Ash lists them for its agents. Reads answer from what was recorded or from the sources right
+ * The senses' tools, as Ash lists them for its agents. Reads answer from what was recorded or from the sources right
  * now; anything that changes what is recorded goes through Ash's approval (Ash sets each tool's policy). A tool that
  * cannot answer says why with a code; it never makes data up.
  */
@@ -37,7 +40,9 @@ object SenseCapabilities {
             schema(
                 "accuracy" to prop("string", "high (GPS), balanced (default) or low (network)", enum = SenseConfig.ACCURACIES),
                 "timeout_s" to prop("integer", "Seconds to wait for a fix (5 to 120, default 30)"),
-            )) { ctx, args ->
+            ),
+            effect = Effect.READ, risk = Risk.NONE, label = "在看手机位置",
+            result = result("ts:integer", "lat:number!", "lon:number!", "accuracy_m:number", "provider:string", "age_s:integer", "source:string", "accuracy_met:boolean")) { ctx, args ->
             SenseArgs.only(args, setOf("accuracy", "timeout_s"))
             val accuracy = args.opt("accuracy") as? String ?: Senses.config(ctx).accuracy
             if (accuracy !in SenseConfig.ACCURACIES) throw SenseError.badArgs("accuracy must be one of ${SenseConfig.ACCURACIES.joinToString()}")
@@ -53,18 +58,22 @@ object SenseCapabilities {
                         .put("provider_notes", LocationPolicy.explainAll(a.reasons, timeout.toLong()))
                 })
         },
-        Cap("location.track", "Turn location and motion recording on or off. While on, the companion app keeps a notification with a stop button, takes a point when movement starts or stops and every interval_min minutes (still or moving), and pushes new points to Ash. Errors: permission_denied.",
+        Cap("location.track", "Turn location and motion recording on or off. While on, Ash keeps a notification with a stop button, takes a point when movement starts or stops and every interval_min minutes (still or moving), and pushes new points to Ash. Errors: permission_denied.",
             schema(
                 "on" to prop("boolean", "true to record, false to stop", required = true),
                 "interval_min" to prop("integer", "Minutes between points (${SenseConfig.MIN_INTERVAL} to ${SenseConfig.MAX_INTERVAL}, default 30)"),
-            )) { ctx, args ->
+            ),
+            effect = Effect.WRITE, risk = Risk.NONE, label = "在开关位置记录",
+            result = result("recording:boolean")) { ctx, args ->
             SenseArgs.only(args, setOf("on", "interval_min"))
             val c = JSONObject().put("recording", SenseArgs.bool(args, "on"))
             if (args.has("interval_min")) c.put("interval_min", args.get("interval_min"))
             configure(ctx, c)
         },
         Cap("location.history", "Recorded location points in a time range (default: the last 24 hours), thinned evenly to max_points.",
-            schema(*range("24 hours"), "max_points" to prop("integer", "At most this many points (1 to 5000, default 500)"))) { ctx, args ->
+            schema(*range("24 hours"), "max_points" to prop("integer", "At most this many points (1 to 5000, default 500)")),
+            effect = Effect.READ, risk = Risk.NONE, label = "在看位置记录",
+            result = result("points:array")) { ctx, args ->
             SenseArgs.only(args, setOf("from", "to", "max_points"))
             val r = SenseArgs.range(args, now(), DAY)
             val max = SenseArgs.limit(args, "max_points", 500, 5000)
@@ -73,14 +82,18 @@ object SenseCapabilities {
             CapResult.json(JSONObject().put("from", r.first).put("to", r.last + 1).put("recording", Senses.config(ctx).recording)
                 .put("total", all.size).put("returned", points.size).put("points", JSONArray().apply { points.forEach { put(it.toJson()) } }))
         },
-        Cap("activity.current", "What the owner is doing now (still, walking, running, cycling, in_vehicle) and since when, from step cadence and location speed. Needs recording on. Errors: not_recording.") { ctx, args ->
+        Cap("activity.current", "What the owner is doing now (still, walking, running, cycling, in_vehicle) and since when, from step cadence and location speed. Needs recording on. Errors: not_recording.",
+            effect = Effect.READ, risk = Risk.NONE, label = "在看运动状态",
+            result = result("state:string!", "since:integer")) { ctx, args ->
             SenseArgs.only(args, emptySet())
             if (!Senses.config(ctx).recording) throw SenseError("not_recording", "motion is only followed while recording is on (location.track or sense.configure)")
             val current = Recorder.sampler?.current() ?: Senses.store.openSegment()?.toJson()?.let { JSONObject().put("state", it.getString("state")).put("since", it.getLong("ts_start")) }
-            CapResult.json(current ?: JSONObject().put("state", JSONObject.NULL).put("reason", "recording just started: no motion data yet"))
+            CapResult.json(current ?: throw SenseError("no_data", "recording just started: no motion data yet"))
         },
         Cap("activity.history", "Recorded activity segments (still, walking, running, cycling, in_vehicle) in a time range (default: the last 24 hours), with minutes per state.",
-            schema(*range("24 hours"))) { ctx, args ->
+            schema(*range("24 hours")),
+            effect = Effect.READ, risk = Risk.NONE, label = "在看运动记录",
+            result = result("segments:array!")) { ctx, args ->
             SenseArgs.only(args, setOf("from", "to"))
             val r = SenseArgs.range(args, now(), DAY)
             val segs = Senses.store.segments(r)
@@ -93,20 +106,22 @@ object SenseCapabilities {
                 .put("segments", JSONArray().apply { segs.forEach { put(it.toJson()) } })
                 .put("minutes", JSONObject().apply { minutes.forEach { (k, v) -> put(k, Math.round(v * 10) / 10.0) } }))
         },
-        Cap("sensors.steps", "Steps today from the phone's step counter. A complete count needs recording on since midnight; otherwise `complete` is false and `since` says from when it counts. Errors: permission_denied, source_unavailable.") { ctx, args ->
+        Cap("sensors.steps", "Steps today from the phone's step counter. A complete count needs recording on since midnight; otherwise `complete` is false and `since` says from when it counts. The count is `steps`. Errors: permission_denied, source_unavailable, no_data (no reading yet today).",
+            effect = Effect.READ, risk = Risk.NONE, label = "在看今日步数",
+            result = result("steps:integer!", "complete:boolean", "since:integer")) { ctx, args ->
             SenseArgs.only(args, emptySet())
             val now = StepReader.read(ctx)
             if (Senses.config(ctx).recording) Senses.store.addSteps(now)
             val dayStart = SenseArgs.startOfDay(now.ts)
             val snaps = listOfNotNull(Senses.store.stepsBefore(dayStart)) + Senses.store.steps(dayStart..now.ts) + now
             val today = StepMath.today(snaps.distinct(), dayStart, now.ts)
-            val o = JSONObject().put("counter", now.counter).put("ts", now.ts)
-            if (today == null || (today.steps == 0L && !today.complete)) o.put("steps_today", JSONObject.NULL).put("complete", false)
-                .put("reason", "no earlier step-counter reading today: turn recording on to count from midnight")
-            else o.put("steps_today", today.steps).put("since", today.since).put("complete", today.complete)
-            CapResult.json(o)
+            if (today == null || (today.steps == 0L && !today.complete))
+                throw SenseError("no_data", "no earlier step-counter reading today: turn recording on to count from midnight")
+            CapResult.json(JSONObject().put("counter", now.counter).put("ts", now.ts).put("steps", today.steps).put("since", today.since).put("complete", today.complete))
         },
-        Cap("health.sources", "Health data sources and their state: Health Connect (installed, which permissions granted), Gadgetbridge (installed, export folder granted, newest export file, recognised metrics) and xiaomi_scale (a Xiaomi scale the owner set up: configured or not, its last weigh-in). For each set-up source: latest_data_ts, the time of its newest actual reading (not the export file's time: Gadgetbridge can rewrite the file with nothing new from the watch), latest_data_age_h, and stale (true when older than stale_hours; null when not checked), with stale_summary in plain Chinese for the owner. Ash is also told once by a sense.source event when a source goes stale, and when it comes back.") { ctx, args ->
+        Cap("health.sources", "Health data sources and their state: Health Connect (installed, which permissions granted), Gadgetbridge (installed, export folder granted, newest export file, recognised metrics) and xiaomi_scale (a Xiaomi scale the owner set up: configured or not, its last weigh-in). For each set-up source: latest_data_ts, the time of its newest actual reading (not the export file's time: Gadgetbridge can rewrite the file with nothing new from the watch), latest_data_age_h, and stale (true when older than stale_hours; null when not checked), with stale_summary in plain Chinese for the owner. Ash is also told once by a sense.source event when a source goes stale, and when it comes back.",
+            effect = Effect.READ, risk = Risk.NONE, label = "在看健康数据来源",
+            result = result("sources:array!")) { ctx, args ->
             SenseArgs.only(args, emptySet())
             CapResult.json(JSONObject().put("sources", HealthHub.sources(ctx)))
         },
@@ -116,7 +131,9 @@ object SenseCapabilities {
                 *range("7 days"),
                 "sources" to arrayProp("Sources to read (default: all)", JSONObject().put("type", "string").put("enum", JSONArray(HealthHub.SOURCES))),
                 "max_rows" to prop("integer", "At most this many rows (1 to 20000, default 2000)"),
-            )) { ctx, args ->
+            ),
+            effect = Effect.READ, risk = Risk.NONE, label = "在读健康数据",
+            result = result("rows:array!")) { ctx, args ->
             SenseArgs.only(args, setOf("metrics", "from", "to", "sources", "max_rows"))
             val metrics = SenseArgs.metrics(args)
             val r = SenseArgs.range(args, now(), 7 * DAY)
@@ -129,7 +146,9 @@ object SenseCapabilities {
             schema(
                 "period" to prop("string", "day (default) or week (the 7 days ending with date)", enum = listOf("day", "week")),
                 "date" to prop("string", "YYYY-MM-DD (default: today)"),
-            )) { ctx, args ->
+            ),
+            effect = Effect.READ, risk = Risk.NONE, label = "在看健康汇总",
+            result = result("stale_sources:array")) { ctx, args ->
             SenseArgs.only(args, setOf("period", "date"))
             val (period, r) = SenseArgs.summaryRange(args, now())
             val reading = HealthHub.read(ctx, HealthMetric.names, r, HealthHub.SOURCES, 200_000)
@@ -138,15 +157,18 @@ object SenseCapabilities {
                 .apply { if (reading.errors.length() > 0) put("source_errors", reading.errors) }
                 .apply { if (stale.length() > 0) put("stale_sources", stale) })
         },
-        Cap("health.sync", "Ask Gadgetbridge to fetch new data from the watch and export its database now, and wait (up to 90 s) for the export. Needs Gadgetbridge's Intent API enabled. Errors: source_unavailable, timeout.") { ctx, args ->
+        Cap("health.sync", "Ask Gadgetbridge to fetch new data from the watch and export its database now, and wait (up to 90 s) for the export. Needs Gadgetbridge's Intent API enabled. Errors: source_unavailable, timeout.",
+            effect = Effect.ACT, risk = Risk.NONE, label = "在让手表同步健康数据") { ctx, args ->
             SenseArgs.only(args, emptySet())
             val result = GadgetbridgeSource.sync(ctx)
             if (Senses.config(ctx).recording) ai.ash.caps.senses.health.HealthImport.run(ctx)
             CapResult.json(result)
         },
-        Cap("sense.status", "The companion app's state: recording on/off and its settings, permissions granted, location on, each location provider (present, enabled, why unusable), the last location attempt (provider, accuracy, fix age, or each provider's failure), how background recording asks (one provider, or all after repeated failures), batches waiting for Ash, stored rows per kind.") { ctx, args ->
+        Cap("sense.status", "The sensing state: recording on/off and its settings, permissions granted, location on, each location provider (present, enabled, why unusable), the last location attempt (provider, accuracy, fix age, or each provider's failure), how background recording asks (one provider, or all after repeated failures), batches waiting for Ash, stored rows per kind.",
+            effect = Effect.READ, risk = Risk.NONE, label = "在看感知记录状态",
+            result = result("recording:boolean")) { ctx, args ->
             SenseArgs.only(args, emptySet())
-            CapResult.json(SenseLink.status(ctx).put("stored", Senses.store.counts()))
+            CapResult.json(SenseSync.status(ctx).put("stored", Senses.store.counts()))
         },
         Cap("sense.configure", "Change what is recorded: recording on/off, interval_min, accuracy (high|balanced|low), retention_days, geofences (named circles; crossing one is reported to Ash), stale_hours (per health source, hours without a new reading before it counts as stale; 0 = not checked; defaults health_connect 12, gadgetbridge 12, xiaomi_scale 0). Only the given keys change. Errors: permission_denied, bad_args.",
             schema(
@@ -158,13 +180,17 @@ object SenseCapabilities {
                 "stale_hours" to JSONObject().put("type", "object").put("description", "Hours per source (0 to ${SenseConfig.MAX_STALE_HOURS}; 0 = not checked); only the sources given change")
                     .put("properties", JSONObject().apply { for (k in SenseConfig.STALE_DEFAULTS.keys) put(k, JSONObject().put("type", "integer")) })
                     .put("additionalProperties", false),
-            )) { ctx, args -> configure(ctx, args) },
+            ),
+            effect = Effect.WRITE, risk = Risk.NONE, label = "在改感知记录设置",
+            result = result("recording:boolean")) { ctx, args -> configure(ctx, args) },
         Cap("sense.delete", "Delete recorded rows of a kind (location, activity, steps, health, all) in a time range (default: everything), including rows not yet delivered to Ash.",
             schema(
                 "kind" to prop("string", "What to delete", required = true, enum = SenseArgs.DELETE_KINDS),
                 "from" to prop("string", "Start: ISO-8601 date/time or epoch ms (default: the beginning)"),
                 "to" to prop("string", "End: ISO-8601 date/time or epoch ms (default: now and later)"),
-            )) { ctx, args ->
+            ),
+            effect = Effect.WRITE, risk = Risk.STRUCTURE, label = "在删除感知记录",
+            result = result("deleted:integer")) { ctx, args ->
             SenseArgs.only(args, setOf("kind", "from", "to"))
             val kind = SenseArgs.deleteKind(args)
             val r = SenseArgs.deleteRange(args)
@@ -187,7 +213,7 @@ object SenseCapabilities {
         val before = Senses.config(ctx)
         val next = SenseConfig.apply(before, args)
         if (next.recording && !before.recording && !Senses.locationPermission(ctx))
-            throw SenseError("permission_denied", "location permission is not granted to Ash 感知: the owner grants it on its setup page")
+            throw SenseError("permission_denied", "location permission is not granted to Ash: the owner grants it on the senses setup page")
         val warnings = JSONArray()
         if (next.recording && !Senses.backgroundLocation(ctx)) warnings.put("background location is not allowed: no points while the phone is locked (set location to 「始终允许」)")
         if (next.recording && !Senses.locationOn(ctx)) warnings.put("location_off: location is turned off; points start once it is on")

@@ -9,7 +9,7 @@ import android.provider.Settings
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
-import ai.ash.host.screen.ScreenBridge
+import ai.ash.caps.screen.Screen
 
 /**
  * Brings Ash's accessibility service back after the system stopped the service (a maker's background
@@ -54,13 +54,38 @@ object ScreenRecovery {
     private fun check() {
         val ctx = app ?: return
         main.postDelayed(::check, CHECK_MS)
-        val down = ScreenBridge.switchedOn(ctx) && !ScreenBridge.accessibility()
+        val down = Screen.switchedOn(ctx) && !Screen.accessibility()
         val now = System.currentTimeMillis()
         if (!down) { downSince = 0; return }
         if (downSince == 0L) { downSince = now; return }
         if (now - downSince < DOWN_MS || !enabled(ctx) || !granted(ctx)) return
         if (now - (history(ctx).lastOrNull() ?: 0L) < GAP_MS) return
         Thread({ recover(ctx) }, "ash-screen-recovery").start()
+    }
+
+    enum class Enable { ALREADY_ON, ENABLED, NOT_PERMITTED }
+
+    /**
+     * Turns the service on when asked to (`config.accessibility.enable`; the kernel's gate asks the owner first). Unlike
+     * [recover] it also puts Ash's entry in the enabled list when it is not there, which is what an upgrade does to it.
+     * Only Ash's own entry is added or toggled, as everywhere in this file.
+     */
+    fun enable(ctx: Context): Enable {
+        if (Screen.accessibility()) return Enable.ALREADY_ON
+        if (!granted(ctx)) return Enable.NOT_PERMITTED
+        val resolver = ctx.contentResolver
+        val key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        val services = Settings.Secure.getString(resolver, key).orEmpty()
+        if (Services.helpers(services, ctx.packageName).isNotEmpty()) {
+            recover(ctx)
+        } else {
+            val own = android.content.ComponentName(ctx, ai.ash.caps.screen.A11yService::class.java).flattenToString()
+            try {
+                Settings.Secure.putString(resolver, key, Services.withHelperAdded(services, own))
+                Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+            } catch (e: SecurityException) { Log.w(TAG, "accessibility enable not permitted", e); return Enable.NOT_PERMITTED }
+        }
+        return Enable.ENABLED
     }
 
     private fun recover(ctx: Context) {
@@ -91,6 +116,8 @@ object ScreenRecovery {
         fun helpers(list: String, pkg: String) = entries(list).filter { it.startsWith("$pkg/") }
         fun withoutHelper(list: String, pkg: String) = (entries(list) - helpers(list, pkg).toSet()).joinToString(":")
         /** [now] with Ash's entries from [before] back at its end; nothing is added unless it was there before. */
+        /** [list] with Ash's entry [own] at its end (nothing else changes). */
+        fun withHelperAdded(list: String, own: String) = (entries(list) + own).distinct().joinToString(":")
         fun withHelperBack(now: String, before: String, pkg: String) = (entries(now) + helpers(before, pkg)).distinct().joinToString(":")
     }
 

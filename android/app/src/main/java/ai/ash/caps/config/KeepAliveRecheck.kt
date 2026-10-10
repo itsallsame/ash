@@ -25,7 +25,7 @@ object KeepAliveRecheck {
     /**
      * [previous]: the install seen last time (null on the very first start, which the first-launch guide covers).
      * [batteryExempt]: what Android says of Ash's battery exemption. [makerSwitches]: the phone keeps switches of its
-     * own. [oneTap]: the screen helper can run the one-tap fix now.
+     * own. [oneTap]: the accessibility service can run the one-tap fix now.
      */
     fun plan(previous: Install?, now: Install, batteryExempt: Boolean, makerSwitches: Boolean, oneTap: Boolean): Plan {
         if (previous == null || previous == now) return Plan(false, Offer.NONE)

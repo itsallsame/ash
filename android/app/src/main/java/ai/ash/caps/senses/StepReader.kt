@@ -14,7 +14,7 @@ object StepReader {
 
     /** The counter now. Throws [SenseError]. */
     fun read(ctx: Context, timeoutMs: Long = 5_000): StepSample {
-        if (!Senses.activityRecognition(ctx)) throw SenseError("permission_denied", "the physical-activity permission is not granted to Ash 感知 (open its setup page)")
+        if (!Senses.activityRecognition(ctx)) throw SenseError("permission_denied", "the physical-activity permission is not granted to Ash (open the senses setup page)")
         val sm = ctx.getSystemService(SensorManager::class.java)
         val sensor = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) ?: throw SenseError("source_unavailable", "this phone has no step counter")
         var value = -1L

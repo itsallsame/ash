@@ -218,46 +218,34 @@ object MediaArguments {
 }
 
 /**
- * Paths as the agent's container sees them and as the phone does. The container's root is ubuntu/ under the container
- * directory; /tmp is its own tmp/; the phone's shared storage is bound at /sdcard and at its own path (launch.ts).
+ * Paths as the agent's container sees them and as the phone does, for the one place both see: shared storage, which the
+ * container has at /sdcard and at its own path. Files outside it do not cross by path; they would have to be handed over
+ * through the hub, which this app does not do yet.
  */
-class ContainerPaths(val rootfs: File, val tmp: File, val storage: String = SHARED_STORAGE) {
-    /** The phone file behind a container path, or null when it is not one the agent may hand over. */
+class ContainerPaths(val storage: String = SHARED_STORAGE) {
+    /** The phone file behind a container path in shared storage, or null when it is not one. */
     fun toHost(path: String): File? {
         if (!path.startsWith("/") || path.contains('\u0000')) return null
         val normal = normalize(path) ?: return null
         val host = when {
             normal == "/sdcard" || normal.startsWith("/sdcard/") -> File(storage + normal.removePrefix("/sdcard"))
             normal == storage || normal.startsWith("$storage/") -> File(normal)
-            normal == "/tmp" || normal.startsWith("/tmp/") -> File(tmp, normal.removePrefix("/tmp").trimStart('/'))
-            listOf("/proc", "/dev", "/sys").any { normal == it || normal.startsWith("$it/") } -> return null
-            else -> File(rootfs, normal.trimStart('/'))
+            else -> return null
         }
-        // Symbolic links inside the container point at container paths, which mean something else on the phone:
-        // the resolved file has to stay where the agent's own files are.
+        // A link in shared storage that points out of it is not followed.
         val real = runCatching { host.canonicalFile }.getOrNull() ?: return null
-        val allowed = listOf(rootfs, tmp, File(storage)).mapNotNull { runCatching { it.canonicalFile }.getOrNull() }
-        return real.takeIf { r -> allowed.any { r.path == it.path || r.path.startsWith(it.path + File.separator) } }
+        val root = runCatching { File(storage).canonicalFile }.getOrNull() ?: return null
+        return real.takeIf { r -> r.path == root.path || r.path.startsWith(root.path + File.separator) }
     }
 
-    /** The container path of a phone file in the container's root or in shared storage, or null. */
+    /** The container path of a phone file in shared storage, or null. */
     fun toAgent(file: File): String? {
         val p = file.absolutePath
-        val root = rootfs.absolutePath
-        return when {
-            p == root -> "/"
-            p.startsWith("$root/") -> p.removePrefix(root)
-            p == storage || p.startsWith("$storage/") -> p
-            else -> null
-        }
+        return p.takeIf { it == storage || it.startsWith("$storage/") }
     }
-
-    /** Where Ash hands phone files to the agent: its workspace's media/ folder. */
-    val exchange: File get() = File(rootfs, EXCHANGE.trimStart('/'))
 
     companion object {
         const val SHARED_STORAGE = "/storage/emulated/0"
-        const val EXCHANGE = "/root/work/media"
 
         /** Collapses "." and ".." without touching the file system; null when it climbs above the root. */
         fun normalize(path: String): String? {

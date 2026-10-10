@@ -29,7 +29,7 @@ import kotlin.reflect.KClass
  */
 object HealthConnectSource {
     const val PROVIDER = "com.google.android.apps.healthdata"
-    /** Reading while the helper is not in front (Android 15 / newer Health Connect). */
+    /** Reading while Ash is not in front (Android 15 / newer Health Connect). */
     const val BACKGROUND = "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
 
     val RECORDS: Map<String, KClass<out Record>> = linkedMapOf(
@@ -113,7 +113,7 @@ object HealthConnectSource {
         if (wanted.isEmpty()) throw SenseError("source_unavailable", "Health Connect has none of ${metrics.joinToString()} (spo2 is read from Gadgetbridge)")
         val granted = runBlocking { client.permissionController.getGrantedPermissions() }
         val allowed = wanted.filter { permission(it) in granted }
-        if (allowed.isEmpty()) throw SenseError("permission_denied", "Health Connect has not granted Ash 感知 ${wanted.joinToString()} (open its setup page)")
+        if (allowed.isEmpty()) throw SenseError("permission_denied", "Health Connect has not granted Ash ${wanted.joinToString()} (open its setup page)")
         val filter = TimeRangeFilter.between(Instant.ofEpochMilli(range.first), Instant.ofEpochMilli(range.last))
         val out = mutableListOf<HealthRow>()
         try {
@@ -128,7 +128,7 @@ object HealthConnectSource {
                 }
             }
         } catch (e: SecurityException) {
-            val background = if (BACKGROUND !in granted) " Reading while Ash 感知 is in the background needs Health Connect's background-read permission." else ""
+            val background = if (BACKGROUND !in granted) " Reading while Ash is in the background needs Health Connect's background-read permission." else ""
             throw SenseError("permission_denied", "Health Connect refused the read: ${e.message}.$background")
         } catch (e: IllegalStateException) {
             throw SenseError("source_unavailable", "Health Connect could not be read: ${e.message}")

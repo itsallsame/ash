@@ -2,7 +2,7 @@ package ai.ash.caps.senses
 
 import org.json.JSONObject
 
-/** The health measures the helper reads, each in one unit. */
+/** The health measures the senses read, each in one unit. */
 object HealthMetric {
     val units = linkedMapOf(
         "steps" to "count",

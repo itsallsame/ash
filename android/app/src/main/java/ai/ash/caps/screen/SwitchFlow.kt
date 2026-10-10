@@ -1,6 +1,5 @@
 package ai.ash.caps.screen
 
-import ai.ash.caps.screen.KeepAliveSwitches
 import ai.ash.caps.screen.KeepAliveSwitches.Item
 import ai.ash.caps.screen.KeepAliveSwitches.Kind
 import ai.ash.caps.screen.KeepAliveSwitches.Outcome
@@ -13,7 +12,7 @@ import ai.ash.caps.screen.KeepAliveSwitches.Target
  * a fixed screen to wait for, a label to find by its exact text, and one tap on that label's own row.
  *
  *  1. Settings → 「应用」 → 「自启动」 (the list of apps).
- *  2. For each app, its row, found by the app's exact name (「Ash」 is never 「Ash 感知」):
+ *  2. For each app, its row, found by the app's exact name (「Ash」 is never 「Ash 内核」):
  *     - ColorOS 15: the row has the app's one switch, and a subtitle saying what it covers (「开机自启动、后台自启动」,
  *       「后台自启动」, with 「已禁止」 when off). The switch is turned on if off and read again; the subtitle afterwards
  *       says which of 开机自启动 / 后台自启动 it turned on.
@@ -29,7 +28,8 @@ import ai.ash.caps.screen.KeepAliveSwitches.Target
  */
 class SwitchFlow(
     private val ui: SwitchUi,
-    packages: List<String>,
+    /** The apps whose rows are looked for: the only ones the flow touches. */
+    targets: List<Target>,
     private val stepMs: Long = 5_000,
     totalMs: Long = 150_000,
     private val maxScrolls: Int = 40,
@@ -54,7 +54,7 @@ class SwitchFlow(
         val covers: Set<Kind> get() = AUTOSTART.filter { subtitle.contains(it.label) }.toSet().ifEmpty { AUTOSTART.toSet() }
     }
 
-    private val targets: List<Target> = packages.distinct().mapNotNull { KeepAliveSwitches.target(it) }
+    private val targets: List<Target> = targets.distinctBy { it.pkg }
     private val items = mutableListOf<Item>()
     private val deadline = ui.now() + totalMs
     private var step = ""
@@ -314,7 +314,7 @@ class SwitchFlow(
         if (front.isNotEmpty() && !allowedPackage(front)) throw Abort("前台是 $front，不是系统设置")
     }
 
-    /** Elements whose whole text (or description) is [label]: 「Ash」 never matches 「Ash 感知」 or 「Ash 屏幕助手」. */
+    /** Elements whose whole text (or description) is [label]: 「Ash」 never matches 「Ash 内核」 or 「Ash 应用」. */
     private fun exact(root: UiNode, label: String): List<UiNode> =
         root.findByText(label).filter { (it.text == label || it.description == label) && allowedPackage(it.packageName) }
 

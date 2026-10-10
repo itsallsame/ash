@@ -2,23 +2,21 @@ package ai.ash.caps.config
 
 import ai.ash.caps.screen.KeepAliveSwitches
 import ai.ash.caps.screen.KeepAliveSwitches.Report
-import ai.ash.caps.config.PhoneMaker
-import ai.ash.caps.config.Permissions
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
-import ai.ash.host.screen.ScreenBridge
+import ai.ash.caps.screen.Screen
 
 /**
  * 「帮我打开」: on ColorOS Ash's accessibility service turns on, in the system's settings, the switches that keep Ash
- * alive. Only the owner's tap starts it — on the keep-alive entry, or on 「确定」 when Ash asks once
- * after an upgrade (Permissions.recheckAfterUpgrade); it is not a tool in the phone's manifest, so no agent can. Anything short of a clean run falls back to the written guidance.
+ * alive. The owner's tap starts it here — on the keep-alive entry, or on 「确定」 when Ash asks once after an upgrade
+ * (Permissions.recheckAfterUpgrade) — and an agent can ask for the same run through `config.keepalive.fix` (a structural
+ * change, so the kernel's gate asks the owner first). Both run [KeepAliveFix]. Anything short of a clean run falls back
+ * to the written guidance.
  */
 object KeepAliveFlow {
     private val running = AtomicBoolean(false)
@@ -28,7 +26,7 @@ object KeepAliveFlow {
     private val keys = mapOf(KeepAliveSwitches.ASH_PACKAGE to "autostart")
 
     /** The flow needs Ash's accessibility service on, on a phone whose settings it knows. */
-    fun available(ctx: Context): Boolean = PhoneMaker.current == PhoneMaker.COLOROS && ScreenBridge.accessibility()
+    fun available(ctx: Context): Boolean = PhoneMaker.current == PhoneMaker.COLOROS && Screen.accessibility()
 
     /**
      * Asks the owner, then runs; [guidance] is the old way (written steps), used when this cannot be offered or does not
@@ -46,20 +44,15 @@ object KeepAliveFlow {
     private fun start(a: Activity, guidance: () -> Unit) {
         if (!running.compareAndSet(false, true)) return
         val ctx = a.applicationContext
-        val asked = KeepAliveSwitches.targets.filter { installed(ctx, it.pkg) }
+        val asked = KeepAliveFix.targets(ctx, emptyList())
         Thread({
-            val report = try { run(asked) } finally { running.set(false) }
+            val report = try { run(ctx, asked) } finally { running.set(false) }
             main.post { finish(a, asked, report, guidance) }
         }, "ash-keepalive-switches").start()
     }
 
-    private fun installed(ctx: Context, pkg: String) = runCatching { ctx.packageManager.getPackageInfo(pkg, 0) }.isSuccess
-
-    private fun run(asked: List<KeepAliveSwitches.Target>): Report? {
-        val args = JSONObject().put("packages", JSONArray(asked.map { it.pkg }))
-        val result = ScreenBridge.call(KeepAliveSwitches.CAPABILITY, args)
-        return (result.data as? JSONObject)?.takeIf { result.ok }?.let { Report.fromJson(it) }
-    }
+    /** The run's report; null when it could not run (the accessibility service is off, or another run is going). */
+    private fun run(ctx: Context, asked: List<KeepAliveSwitches.Target>): Report? = runCatching { KeepAliveFix.run(ctx, asked) }.getOrNull()
 
     private fun finish(a: Activity, asked: List<KeepAliveSwitches.Target>, report: Report?, guidance: () -> Unit) {
         if (report == null || report.outcome == KeepAliveSwitches.Outcome.UNSUPPORTED) {

@@ -3,7 +3,7 @@ package ai.ash.caps.senses.health
 import ai.ash.caps.senses.HealthRow
 import ai.ash.caps.senses.SenseError
 import ai.ash.caps.senses.Senses
-import ai.ash.caps.senses.SenseLink
+import ai.ash.caps.senses.SenseSync
 import ai.ash.caps.senses.AlarmReceiver
 import ai.ash.caps.senses.Batches
 import ai.ash.caps.senses.HealthFreshness
@@ -63,7 +63,7 @@ object HealthHub {
         val outcome = HealthFreshness.step(previous, checks, config::staleHours, now, zone)
         if (outcome.states != previous) prefs.edit().putString(FRESHNESS, JSONObject(outcome.states as Map<*, *>).toString()).apply()
         for (e in outcome.events) Senses.store.enqueue(Batches.SOURCE, e, now)
-        if (outcome.events.isNotEmpty()) SenseLink.flush()
+        if (outcome.events.isNotEmpty()) SenseSync.flush()
     }
 
     /** Reads each source; a source that fails is reported, not hidden. Throws when none answered. */
@@ -121,7 +121,7 @@ object HealthImport {
                 catch (e: Exception) { Log.w("ash.senses", "health import from $s", e); errors.put(s, e.toString()) }
             }
             prefs.edit().putLong("health_imported_to", now).putString("health_import_errors", errors.toString()).putInt("health_import_added", added).apply()
-            if (added > 0) SenseLink.flush()
+            if (added > 0) SenseSync.flush()
         }
     }
 }

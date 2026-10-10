@@ -26,7 +26,7 @@ data class Segment(val id: Long, val start: Long, val end: Long?, val state: Str
 data class Batch(val id: String, val word: String, val body: JSONObject, val created: Long, val sentAt: Long)
 
 /**
- * Everything the helper recorded, on this phone only: location points, activity segments, step-counter snapshots,
+ * Everything the senses recorded, on this phone only: location points, activity segments, step-counter snapshots,
  * health readings, and the batches waiting for Ash. Rows not yet handed to Ash are marked pushed = 0.
  */
 class SenseStore(ctx: Context) : SQLiteOpenHelper(ctx, "senses.db", null, 1) {

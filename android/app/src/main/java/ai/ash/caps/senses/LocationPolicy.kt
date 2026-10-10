@@ -106,7 +106,7 @@ object LocationPolicy {
     fun explain(provider: String, code: String, timeoutS: Long): String = when (code) {
         NOT_PRESENT -> "$provider: this phone has no such provider"
         DISABLED -> if (provider == GPS) "gps: switched off by the system (location is on, but only network location is allowed)" else "$provider: switched off by the system"
-        NOT_ALLOWED -> "gps: needs precise location, which Ash 感知 is not granted"
+        NOT_ALLOWED -> "gps: needs precise location, which Ash is not granted"
         TIMEOUT -> "$provider: no fix within ${timeoutS}s"
         REFUSED -> "$provider: the system refused the request"
         DISABLED_WHILE_WAITING -> "$provider: switched off while waiting"

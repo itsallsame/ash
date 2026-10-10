@@ -212,6 +212,13 @@
             android:label="Ash"
             android:taskAffinity="ai.ash.screen.lock" />
 
+        <!-- config.permission.request: shows one permission prompt (or settings page) over whatever is in front. -->
+        <activity
+            android:name=".caps.config.PermissionRequestActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Senses: the owner's page, each permission and source with a button to grant it. -->
         <activity
             android:name=".caps.senses.SetupActivity"

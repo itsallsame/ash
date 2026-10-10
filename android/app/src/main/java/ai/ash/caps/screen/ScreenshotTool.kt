@@ -2,16 +2,18 @@ package ai.ash.caps.screen
 
 import ai.ash.caps.CapResult
 import ai.ash.caps.Capability
+import ai.ash.caps.Effect
+import ai.ash.caps.Risk
 import ai.ash.caps.prop
+import ai.ash.caps.result
 import ai.ash.caps.schema
 import android.content.Context
 import android.os.Environment
 import android.util.Base64
 import org.json.JSONObject
 import java.io.File
-import ai.ash.host.screen.ScreenBridge
 
-/** screen.screenshot: the screen side captures (screen.capture), Ash writes the file, with its own storage access. */
+/** screen.screenshot: the screen side captures ([ScreenCapabilities.capture]), Ash writes the file, with its own storage access. */
 internal object ScreenshotTool : Capability {
     override val name = "screen.screenshot"
     override val description = "Save a full-resolution PNG screenshot of the phone's screen to a file and return its path (the image itself is " +
@@ -21,11 +23,14 @@ internal object ScreenshotTool : Capability {
         "path" to prop("string", "optional absolute file path to write (parent directories are created)"),
         "display" to prop("integer", "display id to capture (default 0 = the main screen)"),
     )
-    override fun available(ctx: Context) = ScreenBridge.accessibility()
+    override val result: JSONObject = result("path:string!", "width:integer", "height:integer", "bytes:integer")
+    override val effect = Effect.READ
+    override val risk = Risk.NONE
+    override val label = "在截屏"
+    override fun available(ctx: Context) = ScreenCapabilities.canCapture(ctx)
 
     override fun run(ctx: Context, args: JSONObject): CapResult {
-        val captured = ScreenBridge.call("screen.capture", JSONObject().put("display", args.optInt("display", 0)))
-        val data = captured.data as? JSONObject ?: return captured
+        val data = ScreenCapabilities.capture(args.optInt("display", 0))
         val png = Base64.decode(data.optString("png"), Base64.NO_WRAP)
         val p = args.optString("path").trim()
         val out = if (p.isNotEmpty()) File(p) else File(dir(ctx), "screen-${System.currentTimeMillis()}.png")

@@ -51,7 +51,7 @@ object LocationReader {
             record(FixAttempt(started, mode.id, accuracy, asked, reasons, System.currentTimeMillis() - started, error = "$code: $message"))
             throw SenseError(code, message)
         }
-        if (!Senses.locationPermission(ctx)) fail("permission_denied", "location permission is not granted to Ash 感知 (open its setup page)")
+        if (!Senses.locationPermission(ctx)) fail("permission_denied", "location permission is not granted to Ash (open the senses setup page)")
         if (!Senses.locationOn(ctx)) fail("location_off", "location is turned off in the phone's settings")
         val lm = ctx.getSystemService(LocationManager::class.java)
         val providers = providers(ctx)
@@ -131,7 +131,7 @@ object LocationReader {
             return Result(chosen.fix, attempt)
         }
         if (!Senses.locationOn(ctx)) fail("location_off", "location was turned off", plan.ask, reasons)
-        val background = if (!Senses.backgroundLocation(ctx)) " (background location is not allowed: with the phone locked or Ash 感知 not in front, the system gives no fix; set location to 「始终允许」)" else ""
+        val background = if (!Senses.backgroundLocation(ctx)) " (background location is not allowed: with the phone locked or Ash not in front, the system gives no fix; set location to 「始终允许」)" else ""
         fail("no_fix", "no location fix within ${timeoutS}s: ${LocationPolicy.explainAll(reasons, timeoutS)}$background", plan.ask, reasons)
     }
 

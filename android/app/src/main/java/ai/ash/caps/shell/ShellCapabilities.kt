@@ -1,7 +1,8 @@
 package ai.ash.caps.shell
 
-import ai.ash.caps.shell.PrivShell
-import ai.ash.caps.shell.ShizukuState
+import ai.ash.caps.result
+import ai.ash.caps.Risk
+import ai.ash.caps.Effect
 import android.os.Build
 import android.os.Process
 import org.json.JSONObject
@@ -29,8 +30,9 @@ object ShellCapabilities {
             "cwd" to prop("string", "Optional working directory (absolute path)."),
             "max_output" to prop("integer", "Max bytes kept per stream (default 16000, max 200000)."),
         ),
-        confirm = true,
         availableIf = { PrivShell.maybeAvailable(it) },
+        effect = Effect.EXECUTE, risk = Risk.STRUCTURE, label = "在手机上执行命令",
+        result = result("exit_code:integer", "stdout:string", "stderr:string")
     ) { ctx, args ->
         val command = args.optString("command").trim()
         if (command.isEmpty()) return@Cap CapResult.fail("command is required")
@@ -70,6 +72,8 @@ object ShellCapabilities {
         schema = schema(
             "request_permission" to prop("boolean", "Ask the owner to authorize ash in Shizuku if it is not yet authorized."),
         ),
+        effect = Effect.READ, risk = Risk.NONE, label = "在看命令权限",
+        result = result("installed:boolean", "running:boolean", "authorized:boolean")
     ) { ctx, args ->
         val installed = ShizukuState.installed(ctx)
         if (installed) ShizukuState.awaitBinder(3000)

@@ -1,5 +1,8 @@
 package ai.ash.caps.media
 
+import ai.ash.caps.result
+import ai.ash.caps.Risk
+import ai.ash.caps.Effect
 import ai.ash.host.AppState
 import ai.ash.host.Notifications
 import ai.ash.ui.CameraActivity
@@ -47,11 +50,11 @@ import ai.ash.caps.schema
 /**
  * The owner's photos, videos and audio through Android's media store, the gallery, and the camera. Reading needs the
  * storage permission the owner grants once ("photos" in Ash's permission guide); nothing here asks per call.
- * Files are handed to the agent as paths in its own environment: shared storage is visible there as-is, anything
- * else is copied into its workspace's media/ folder.
+ * Files are handed to the agent as paths in its own environment where it can open them in place: shared storage is
+ * visible there as-is. A file that would have to be copied there (a content uri, the app's private files) is not handed
+ * over yet; that goes through the hub later, and the call says so ("unavailable").
  */
 object MediaCapabilities {
-    private const val KERNEL_CONTAINER_ROOT = "/data/user/0/ai.ash.kernel/files/container/main"
     private const val ASK = "Ask the owner to allow it: show a permission card with permission \"photos\"."
 
     private fun canRead(ctx: Context) = granted(ctx, Manifest.permission.READ_EXTERNAL_STORAGE) ||
@@ -61,13 +64,11 @@ object MediaCapabilities {
 
     private fun denied(what: String) = CapResult.error("permission_denied", "Ash may not $what yet (the phone's photos, videos and files permission is off). $ASK")
 
-    private fun paths(ctx: Context): ContainerPaths {
-        // TODO(T11c): the container now lives in the kernel package's private storage, which this app cannot read or
-        // write, so a copy into the agent's workspace (handOver with copy = true) fails until media hand-over is
-        // redesigned. Files in shared storage are still handed over in place.
-        val root = File(KERNEL_CONTAINER_ROOT)
-        return ContainerPaths(File(root, "ubuntu"), File(root, "tmp"))
-    }
+    private val paths = ContainerPaths()
+
+    /** What a call that needs a file copied to the agent says: that goes through the hub, which is not wired yet. */
+    private fun needsHandOver(what: String) = CapResult.error("unavailable",
+        "$what would have to be copied to your environment, and files outside shared storage are handed over through the hub, which is not available yet")
 
     private fun iso(ms: Long) = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.ROOT).format(Date(ms))
 
@@ -103,12 +104,12 @@ object MediaCapabilities {
     private fun Row.uri(): Uri? = kind?.let { ContentUris.withAppendedId(base(it), id) }
 
     /** The container path of the row's file when the agent can open it in place (shared storage, readable now). */
-    private fun Row.inPlace(paths: ContainerPaths): String? {
+    private fun Row.inPlace(): String? {
         val f = data?.let { File(it) } ?: return null
         return paths.toAgent(f)?.takeIf { it.startsWith(paths.storage) && f.canRead() }
     }
 
-    private fun Row.json(paths: ContainerPaths): JSONObject = JSONObject().apply {
+    private fun Row.json(): JSONObject = JSONObject().apply {
         put("id", id); put("type", kind?.word ?: "other"); put("name", name); put("mime_type", mime); put("size", size)
         taken?.let { put("taken", iso(it)); put("taken_ms", it) }
         added?.let { put("added_ms", it) }
@@ -117,7 +118,7 @@ object MediaCapabilities {
         if (duration > 0) put("duration_ms", duration)
         album?.let { put("album", it) }
         uri()?.let { put("uri", it.toString()) }
-        inPlace(paths)?.let { put("path", it) }
+        inPlace()?.let { put("path", it) }
     }
 
     /** Pages through the media store: limit and offset go to the provider when it honours them, else are applied here. */
@@ -168,16 +169,17 @@ object MediaCapabilities {
             "offset" to prop("integer", "Items to skip (next_offset from the previous page)."),
             "with_location" to prop("boolean", "Also return latitude/longitude of photos that record it (slower)."),
         ),
+        effect = Effect.READ, risk = Risk.NONE, label = "在看你的照片和视频",
+        result = result("items:array!", "next_offset:integer?")
     ) { ctx, args ->
         MediaArguments.list(args, { a ->
             if (!canRead(ctx)) return@list denied("read the owner's photos and videos")
-            val paths = paths(ctx)
             val items = JSONArray()
             val lines = mutableListOf<String>()
             var more = false
             query(ctx, MediaArguments.query(a), a.limit + 1, a.offset) { r ->
                 if (items.length() == a.limit) { more = true; return@query }
-                val o = r.json(paths)
+                val o = r.json()
                 if (a.withLocation && r.kind == MediaKind.IMAGE) location(ctx, r.uri())?.let { o.put("latitude", it[0]).put("longitude", it[1]) }
                 items.put(o)
                 lines += listOfNotNull("id ${r.id}", r.name, r.taken?.let { iso(it) },
@@ -195,6 +197,8 @@ object MediaCapabilities {
         description = "The albums (folders) the owner's photos, videos and audio are in, with how many items each holds and the newest " +
             "item's time, largest first. Use a name with media.list album. Needs the phone's photos permission.",
         schema = schema("type" to prop("string", "image, video, audio or any (default any).", enum = listOf("image", "video", "audio", "any"))),
+        effect = Effect.READ, risk = Risk.NONE, label = "在看你的相册",
+        result = result("albums:array!")
     ) { ctx, args ->
         MediaArguments.albums(args, { a ->
             if (!canRead(ctx)) return@albums denied("read the owner's photos and videos")
@@ -221,37 +225,34 @@ object MediaCapabilities {
     private val read = Cap(
         name = "media.read",
         description = "Open one item from media.list by id. A photo comes back as an image you can look at (scaled so its long side " +
-            "is at most max_size px) with its details, and a JPEG of that size is put in your workspace (path). A video comes back " +
-            "with one frame as an image; video and audio files come with a path you can process with your own tools (a file in " +
-            "shared storage is opened in place, anything else is copied into your workspace's media/ folder). copy: true also copies " +
-            "the original photo there. Needs the phone's photos permission.",
+            "is at most max_size px) with its details (original_path when the file is in shared storage). A video comes back " +
+            "with one frame as an image; video and audio files come with a path you can process with your own tools when the file is in " +
+            "shared storage (opened in place); any other is not available yet (error unavailable). Needs the phone's photos permission.",
         schema = schema(
             "id" to prop("integer", "The item's id from media.list.", required = true),
             "max_size" to prop("integer", "Longest side of the returned image in px, 256–2048 (default 1280)."),
-            "copy" to prop("boolean", "Also hand over the original file (a copy in your workspace, even if it is in shared storage)."),
+            "copy" to prop("boolean", "Copy the original into your workspace (not available yet: error unavailable)."),
         ),
+        effect = Effect.READ, risk = Risk.NONE, label = "在看你的照片"
     ) { ctx, args ->
         MediaArguments.read(args, { a ->
             if (!canRead(ctx)) return@read denied("read the owner's photos and videos")
             val r = one(ctx, a.id) ?: return@read CapResult.fail("no media item with id ${a.id} (ids come from media.list)")
             val kind = r.kind ?: return@read CapResult.fail("item ${a.id} is not a photo, video or audio file")
             val uri = r.uri()!!
-            val paths = paths(ctx)
-            val meta = r.json(paths)
+            val meta = r.json()
+            if (a.copy) return@read needsHandOver("a copy of the original")
             when (kind) {
                 MediaKind.IMAGE -> {
                     val bmp = decode(ctx, uri, a.maxSize, r.orientation) ?: return@read CapResult.fail("cannot decode ${r.name} as an image")
                     val jpeg = jpeg(bmp)
-                    val stem = MediaArguments.safeName(r.name.substringBeforeLast('.'))
-                    val preview = File(paths.exchange.apply { mkdirs() }, "${r.id}-$stem-${bmp.width}.jpg").apply { writeBytes(jpeg) }
-                    meta.put("path", paths.toAgent(preview)).put("image_width", bmp.width).put("image_height", bmp.height)
-                    r.inPlace(paths)?.let { meta.put("original_path", it) }
-                    if (a.copy) meta.put("original_path", handOver(ctx, paths, r, uri, copy = true))
+                    meta.put("image_width", bmp.width).put("image_height", bmp.height)
+                    r.inPlace()?.let { meta.put("original_path", it) }
                     location(ctx, uri)?.let { meta.put("latitude", it[0]).put("longitude", it[1]) }
                     CapResult.textAndImage(caption(r, meta), Base64.encodeToString(jpeg, Base64.NO_WRAP), "image/jpeg", meta)
                 }
                 else -> {
-                    meta.put("path", handOver(ctx, paths, r, uri, a.copy))
+                    if (meta.has("path")) Unit else return@read needsHandOver("${r.name}, which is not in shared storage,")
                     val frame = if (kind == MediaKind.VIDEO) runCatching { frame(ctx, uri, a.maxSize) }.getOrNull() else null
                     if (frame == null) CapResult.text(caption(r, meta), meta)
                     else CapResult.textAndImage(caption(r, meta), Base64.encodeToString(jpeg(frame), Base64.NO_WRAP), "image/jpeg", meta)
@@ -266,19 +267,6 @@ object MediaCapabilities {
         "${r.size / 1024} KB", meta.optString("path").takeIf { it.isNotEmpty() }?.let { "path $it" },
         meta.optString("original_path").takeIf { it.isNotEmpty() }?.let { "original $it" },
     ).joinToString(" · ")
-
-    /** A container path for the row's file: in place in shared storage, or a copy in the workspace's media/ folder. */
-    private fun handOver(ctx: Context, paths: ContainerPaths, r: Row, uri: Uri, copy: Boolean): String {
-        if (!copy) r.inPlace(paths)?.let { return it }
-        val dir = paths.exchange.apply { mkdirs() }
-        val dest = File(dir, "${r.id}-${MediaArguments.safeName(r.name)}")
-        if (dest.isFile && dest.length() == r.size && r.size > 0) return paths.toAgent(dest)!!
-        if (r.size > 0 && r.size > dir.usableSpace - 200L * 1024 * 1024) throw IllegalStateException("not enough free space on the phone to copy ${r.name} (${r.size / 1_000_000} MB)")
-        val temp = File(dir, ".${dest.name}.part")
-        (ctx.contentResolver.openInputStream(uri) ?: throw IllegalStateException("cannot open ${r.name}")).use { input -> temp.outputStream().use { input.copyTo(it) } }
-        if (!temp.renameTo(dest)) { temp.delete(); throw IllegalStateException("cannot write ${dest.name}") }
-        return paths.toAgent(dest)!!
-    }
 
     /** Latitude and longitude a photo records, when the owner's permission lets Ash see it (Android hides it otherwise). */
     private fun location(ctx: Context, uri: Uri?): DoubleArray? {
@@ -345,8 +333,8 @@ object MediaCapabilities {
     private val save = Cap(
         name = "media.save",
         description = "Save a photo or video into the owner's gallery (Pictures/<album> or Movies/<album>, album default Ash) so it " +
-            "shows up in the phone's Photos app. Give path (a file in your environment, e.g. /root/work/out.jpg, or in shared " +
-            "storage at /sdcard/...) or data (base64, up to about 10 MB). Returns the gallery item's content uri.",
+            "shows up in the phone's Photos app. Give path (a file in shared storage at /sdcard/...; a file elsewhere in your environment is not " +
+            "available yet) or data (base64, up to about 10 MB). Returns the gallery item's content uri.",
         schema = schema(
             "path" to prop("string", "Absolute path of the image or video file in your environment."),
             "data" to prop("string", "The file itself as base64, instead of path."),
@@ -354,11 +342,12 @@ object MediaCapabilities {
             "mime_type" to prop("string", "image/... or video/... (default: from the name or the bytes)."),
             "album" to prop("string", "Folder under Pictures or Movies (default Ash)."),
         ),
+        effect = Effect.WRITE, risk = Risk.NONE, label = "在存图片到相册",
+        result = result("uri:string")
     ) { ctx, args ->
         MediaArguments.save(args, { a ->
-            val paths = paths(ctx)
             val source: File? = a.path?.let { p ->
-                paths.toHost(p)?.takeIf { it.isFile } ?: return@save CapResult.fail("media.save: $p is not a file in your environment")
+                paths.toHost(p)?.takeIf { it.isFile } ?: return@save needsHandOver("$p")
             }
             val bytes = a.data?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() ?: return@save CapResult.fail("media.save: data is not valid base64") }
             if (bytes != null && bytes.isEmpty()) return@save CapResult.fail("media.save: data is empty")
@@ -423,14 +412,16 @@ object MediaCapabilities {
     private val capture = Cap(
         name = "camera.capture",
         description = "Ask the owner to take a photo: the phone's own camera opens (Android does not let apps take pictures " +
-            "unseen) and the owner presses the shutter. Returns the photo as an image you can look at and its path in your " +
-            "workspace's media/ folder (it is not put in the gallery; media.save does that). If Ash is in the background the " +
+            "unseen) and the owner presses the shutter. Returns the photo as an image you can look at, and its path in shared storage (/sdcard/Ash/camera) when the app may write there " +
+            "(it is not put in the gallery; media.save does that). If Ash is in the background the " +
             "owner gets a notification to open the camera. Fails with cancelled when the owner closes the camera without a photo.",
         schema = schema(
             "reason" to prop("string", "What the photo is for, shown to the owner when Ash has to ask through a notification (Chinese, short)."),
             "timeout_s" to prop("integer", "How long to wait for the photo, 15–150 seconds (default 120)."),
             "max_size" to prop("integer", "Longest side of the returned image in px, 256–2048 (default 1280); the saved file is full size."),
         ),
+        effect = Effect.ACT, risk = Risk.NONE, label = "在等你拍照",
+        result = result("path:string")
     ) { ctx, args ->
         MediaArguments.camera(args, { a ->
             val file = CaptureProvider.newFile(ctx, "photo", "jpg")
@@ -463,18 +454,22 @@ object MediaCapabilities {
     }
 
     private fun taken(ctx: Context, file: File, maxSize: Int): CapResult {
-        val paths = paths(ctx)
-        val dest = File(paths.exchange.apply { mkdirs() }, file.name)
-        file.copyTo(dest, overwrite = true)
-        val degrees = exifDegrees(dest)
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(dest.path, it) }
-        val bmp = decode({ dest.inputStream() }, maxSize, degrees) ?: return CapResult.fail("camera.capture: the camera returned a file that is not a photo")
+        val degrees = exifDegrees(file)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(file.path, it) }
+        val bmp = decode({ file.inputStream() }, maxSize, degrees) ?: return CapResult.fail("camera.capture: the camera returned a file that is not a photo")
         val upright = degrees % 180 != 0
         val w = if (upright) bounds.outHeight else bounds.outWidth
         val h = if (upright) bounds.outWidth else bounds.outHeight
-        val path = paths.toAgent(dest)!!
-        val data = JSONObject().put("path", path).put("width", w).put("height", h).put("bytes", dest.length()).put("mime_type", "image/jpeg")
-        return CapResult.textAndImage("Photo taken (${w}×$h, ${dest.length() / 1024} KB), saved at $path. It is not in the gallery; media.save puts it there.",
+        // The photo is in the app's private cache and is deleted when the call ends. A copy in shared storage is something the agent
+        // can open in place; without the storage permission there is none, and the image itself is all that comes back.
+        val saved = runCatching {
+            val dir = File(File(Environment.getExternalStorageDirectory(), "Ash"), "camera").apply { mkdirs() }
+            File(dir, file.name).also { file.copyTo(it, overwrite = true) }
+        }.getOrNull()
+        val path = saved?.let { paths.toAgent(it) }
+        val data = JSONObject().put("width", w).put("height", h).put("bytes", file.length()).put("mime_type", "image/jpeg").apply { if (path != null) put("path", path) }
+        return CapResult.textAndImage("Photo taken (${w}×$h, ${file.length() / 1024} KB)" + (path?.let { ", saved at $it" } ?: ", not saved to a file (no storage permission)") +
+            ". It is not in the gallery; media.save puts it there.",
             Base64.encodeToString(jpeg(bmp), Base64.NO_WRAP), "image/jpeg", data)
     }
 

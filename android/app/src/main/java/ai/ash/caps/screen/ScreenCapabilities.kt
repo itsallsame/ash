@@ -1,14 +1,14 @@
 package ai.ash.caps.screen
 
-import ai.ash.caps.screen.KeepAliveSwitches
 import ai.ash.caps.Cap
 import ai.ash.caps.CapResult
 import ai.ash.caps.Capability
+import ai.ash.caps.Effect
+import ai.ash.caps.Overlay
+import ai.ash.caps.Risk
+import ai.ash.caps.result
 import ai.ash.caps.prop
 import ai.ash.caps.schema
-import ai.ash.caps.screen.A11yService
-import ai.ash.caps.screen.AccessibilityUi
-import ai.ash.caps.screen.SwitchFlow
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Bitmap
@@ -162,6 +162,8 @@ object ScreenCapabilities {
             "Waits briefly for the UI to settle first. Use it to see what's on screen, find a button, or check where you are " +
             "after acting. Returns up to ${A11yService.MAX_NODES} elements. Games and custom-drawn screens expose nothing: use screen.see then.",
         availableIf = connected,
+        effect = Effect.READ, risk = Risk.NONE, label = "在读屏幕内容",
+        result = result("package:string", "screenW:integer", "screenH:integer", "count:integer", "truncated:boolean", "note:string", "nodes:array")
     ) { _, _ ->
         val s = svc()
         s.awaitIdle()
@@ -183,6 +185,7 @@ object ScreenCapabilities {
             "display" to int("display id to capture (default 0 = the main screen; a virtual display id also works)"),
         ),
         availableIf = canShoot,
+        effect = Effect.READ, risk = Risk.NONE, label = "在看屏幕", overlay = Overlay.HIDDEN
     ) { _, a ->
         val s = svc()
         s.awaitIdle(250, 1000)
@@ -209,19 +212,17 @@ object ScreenCapabilities {
         CapResult.image(Base64.encodeToString(bytes, Base64.NO_WRAP), "image/jpeg", cap.toString())
     }
 
-    /** Not offered to the agent: Ash's own screen.screenshot writes the file, with Ash's storage access. */
-    private val capture = Cap(
-        name = "screen.capture",
-        description = "A full-resolution PNG of a display, for Ash.",
-        schema = schema("display" to int("display id to capture (default 0 = the main screen)")),
-        availableIf = canShoot,
-    ) { _, a ->
-        val bmp = svc().screenshot(a.optInt("display", 0))
+    /** A full-resolution PNG of a display, for [ScreenshotTool] (which writes the file with Ash's own storage access): {png (base64), width, height}. */
+    fun capture(displayId: Int): JSONObject {
+        val bmp = svc().screenshot(displayId)
         val png = ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
         val data = JSONObject().put("png", Base64.encodeToString(png, Base64.NO_WRAP)).put("width", bmp.width).put("height", bmp.height)
         bmp.recycle()
-        CapResult.text("Captured ${data.optInt("width")}x${data.optInt("height")} px.", data)
+        return data
     }
+
+    /** Whether [capture] can work now. */
+    fun canCapture(ctx: Context): Boolean = canShoot(ctx)
 
     private val tap = Cap(
         name = "screen.tap",
@@ -238,6 +239,8 @@ object ScreenCapabilities {
             "long" to prop("boolean", "long-press instead of a tap"),
         ),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在点屏幕", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("method:string", "x:integer", "y:integer")
     ) { _, a ->
         val s = svc()
         val size = s.screenSize()
@@ -271,6 +274,8 @@ object ScreenCapabilities {
             "paste" to prop("boolean", "legacy alias: true = mode paste"),
         ),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在屏幕上输入", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("method:string", "focused:boolean", "fallback:boolean")
     ) { _, a ->
         if (!a.has("text") || a.isNull("text")) return@Cap CapResult.fail("screen.type needs text")
         val text = a.optString("text")
@@ -289,6 +294,8 @@ object ScreenCapabilities {
             "Uses accessibility scrolling; if the screen has no scrollable element (web pages, games), swipes across the middle instead.",
         schema = schema("direction" to prop("string", "up | down | left | right", required = true, enum = listOf("up", "down", "left", "right"))),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在滚动屏幕", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("method:string")
     ) { _, a ->
         val dir = a.optString("direction", "down").ifEmpty { "down" }
         val r = svc().scroll(dir)
@@ -308,6 +315,8 @@ object ScreenCapabilities {
             "finger" to int("optional finger 0-7"),
         ),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在滑动屏幕", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("held:array")
     ) { _, a ->
         val op = JSONObject().put("kind", "swipe")
         for ((from, to) in listOf("x1" to "x", "y1" to "y", "fx1" to "fx", "fy1" to "fy", "x2" to "x2", "y2" to "y2", "fx2" to "fx2", "fy2" to "fy2", "durationMs" to "durationMs", "finger" to "finger")) {
@@ -325,6 +334,8 @@ object ScreenCapabilities {
             "action=down instead. Coordinates: fx/fy (fractions 0..1, preferred) or x/y (pixels).",
         schema = schema(*point(), "durationMs" to num("how long to hold, milliseconds (default 500)"), "finger" to int("optional finger 0-7")),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在长按屏幕", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("held:array")
     ) { _, a ->
         val op = JSONObject().put("kind", "hold")
         for (k in listOf("x", "y", "fx", "fy", "durationMs", "finger")) if (a.has(k) && !a.isNull(k)) op.put(k, a.get(k))
@@ -346,6 +357,8 @@ object ScreenCapabilities {
             *point(),
         ),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在操作触屏", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("held:array")
     ) { _, a ->
         val s = svc()
         val action = a.optString("action")
@@ -388,6 +401,8 @@ object ScreenCapabilities {
             JSONObject().put("type", "array").put("description", "gesture strokes, in timeline order").put("items", strokeSchema)))
             .put("required", JSONArray().put("strokes")),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在做屏幕手势", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("held:array")
     ) { _, a ->
         val strokes = a.optJSONArray("strokes")
         if (strokes == null || strokes.length() == 0) return@Cap CapResult.fail("screen.gesture needs a non-empty strokes array")
@@ -399,6 +414,8 @@ object ScreenCapabilities {
         description = "Show which virtual fingers are currently held down (from screen.touch / screen.gesture): finger number, " +
             "position in pixels and fractions, and how long it has been held; plus screen size and limits (8 fingers, 30 s auto-release).",
         availableIf = connected,
+        effect = Effect.READ, risk = Risk.NONE, label = "在看触控状态",
+        result = result("held:array", "screenW:integer", "screenH:integer", "maxFingers:integer", "holdTimeoutMs:integer")
     ) { _, _ ->
         val r = svc().touchStatus()
         CapResult.text("Screen ${r.optInt("screenW")}x${r.optInt("screenH")} px; up to ${r.optInt("maxFingers")} fingers; " +
@@ -424,6 +441,7 @@ object ScreenCapabilities {
             "split_screen (toggle), lock_screen (Android 9+; locks the phone).",
         schema = schema("action" to prop("string", "which system action", required = true, enum = globalActions.keys.toList())),
         availableIf = connected,
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在操作手机系统键", foreground = true, overlay = Overlay.PASSTHROUGH
     ) { _, a ->
         val name = a.optString("action")
         val (id, minApi) = globalActions[name] ?: return@Cap CapResult.fail("unknown action \"$name\"; one of ${globalActions.keys.joinToString()}")
@@ -431,29 +449,6 @@ object ScreenCapabilities {
         if (svc().global(id)) CapResult.text("Done: $name.") else CapResult.fail("the system refused $name")
     }
 
-    private val switchesRunning = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    /**
-     * Ash's own tool for the owner's tap on 「帮我打开」: turns on the keep-alive switches of Ash's three apps in the maker's
-     * settings. Never listed, so no agent can call it. [ai.ash.caps.screen.SwitchFlow] does the work.
-     */
-    private val keepAliveSwitches = Cap(
-        name = KeepAliveSwitches.CAPABILITY,
-        description = "Turn on the background-running switches of Ash's own apps (ColorOS only), for Ash.",
-        schema = schema("packages" to JSONObject().put("type", "array").put("items", JSONObject().put("type", "string"))),
-        availableIf = connected,
-    ) { _, a ->
-        val asked = a.optJSONArray("packages")?.let { l -> (0 until l.length()).map { l.optString(it) } }.orEmpty().mapNotNull { KeepAliveSwitches.target(it) }
-        val report = when {
-            !SwitchFlow.supported(Build.MANUFACTURER) -> KeepAliveSwitches.Report(KeepAliveSwitches.Outcome.UNSUPPORTED, "", emptyList())
-            !switchesRunning.compareAndSet(false, true) -> return@Cap CapResult.fail("already running")
-            else -> try { val service = svc(); SwitchFlow(AccessibilityUi(service, service), asked.map { it.pkg }).run() } finally { switchesRunning.set(false) }
-        }
-        CapResult.text(report.summary(asked), report.toJson())
-    }
-
-    /** What the agent is offered (Ash adds screen.screenshot on top of [capture]). */
-    val list: List<Capability> = listOf(read, see, tap, type, scroll, swipe, hold, touch, gesture, touchStatus, globalAction)
-    /** Called by Ash itself, never listed. */
-    val hidden: List<Capability> = listOf(capture, keepAliveSwitches)
+    /** What the agent is offered (screen.screenshot is [ScreenshotTool], which writes a file with Ash's own storage access). */
+    val list: List<Capability> = listOf(read, see, ScreenshotTool, tap, type, scroll, swipe, hold, touch, gesture, touchStatus, globalAction)
 }

@@ -1,7 +1,5 @@
 package ai.ash.caps
 
-import ai.ash.caps.CapResult
-import ai.ash.caps.CapabilityPolicies
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -59,14 +57,15 @@ class DeviceCallsTest {
         assertEquals("permission_denied", (outcome.detail as JSONObject).getString("code"))
     }
 
-    @Test fun assessGivesThePoliciesRiskAndTheRiskiestForAnUnknownCapability() {
-        val calls = HandHandlersProbe
-        assertEquals("outward", calls.assess("screen.tap").risk)
-        assertEquals("none", calls.assess("screen.read").risk)
-        assertEquals("structure", calls.assess("shell.run").risk)
-        assertEquals("structure", calls.assess("nope.nothing").risk)
-        assertEquals("none", calls.assess("decision.surface").risk)
-        assertTrue(CapabilityPolicies.byName.containsKey("screen.tap"))
+    @Test fun assessGivesTheDeclaredRiskAndTheRiskiestForAnUnknownCapability() {
+        assertEquals("outward", HandHandlersProbe.assess("screen.tap").risk)
+        assertEquals("none", HandHandlersProbe.assess("screen.read").risk)
+        assertEquals("structure", HandHandlersProbe.assess("shell.run").risk)
+        assertEquals("structure", HandHandlersProbe.assess("nope.nothing").risk)
+        assertEquals("none", HandHandlersProbe.assess("decision.surface").risk)
+        assertEquals("structure", HandHandlersProbe.assess("config.keepalive.fix").risk)
+        // The old name of a renamed capability is no longer one.
+        assertEquals("structure", HandHandlersProbe.assess("intent.view").risk)
     }
 
     /** [DeviceCalls] needs a Context for the decision host; `assess` does not touch it, so it is reached through the same rules. */

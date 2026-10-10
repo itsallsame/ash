@@ -5,28 +5,18 @@ import org.json.JSONObject
 
 /**
  * The phone maker's switches that keep Ash alive, and what the screen flow reports after turning them on (ColorOS
- * only): the flow writes a [Report], the permission entry reads it back. It is a tool of Ash's own for the owner's tap:
- * it is never listed in the phone's manifest, so no agent can call it.
+ * only): [SwitchFlow] writes a [Report]; the capability `config.keepalive.fix` and the owner's tap on the permission
+ * entry both run it (see [ai.ash.caps.config.KeepAliveFix]).
  */
 object KeepAliveSwitches {
-    /** Run through the screen runner's generic call, but never listed. */
-    const val CAPABILITY = "ash.keepalive_switches"
     const val ASH_PACKAGE = "ai.ash.agent"
-    // The two apps below no longer exist (they were merged into Ash); the flow still knows their entries in the phone
-    // maker's settings and skips whatever is not installed. The keep-alive task prunes them with the flow's tests.
-    private const val SCREEN_PACKAGE = "ai.ash.screen"
-    private const val SENSES_PACKAGE = "ai.ash.senses"
     /** Opened by the flow when it is done: Ash's task comes back as it was left (see Ash's ReturnActivity). */
     const val RETURN_ACTIVITY = "ai.ash.host.screen.ReturnActivity"
 
     /** An app as the maker's settings list it. */
     data class Target(val pkg: String, val label: String)
     /** The only apps the flow ever touches. */
-    val targets: List<Target> = listOf(
-        Target(ASH_PACKAGE, "Ash"),
-        Target(SENSES_PACKAGE, "Ash 感知"),
-        Target(SCREEN_PACKAGE, "Ash 屏幕助手"),
-    )
+    val targets: List<Target> = listOf(Target(ASH_PACKAGE, "Ash"))
     fun target(pkg: String): Target? = targets.firstOrNull { it.pkg == pkg }
 
     /** One switch, by the text next to it. */

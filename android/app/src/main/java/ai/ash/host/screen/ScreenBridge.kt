@@ -1,12 +1,7 @@
 package ai.ash.host.screen
 
 import ai.ash.host.TaskStatus
-import ai.ash.caps.CapResult
-import ai.ash.caps.Capability
-import ai.ash.caps.screen.ScreenCapabilities
-import ai.ash.screen.ScreenHost
 import ai.ash.screen.ScreenLink
-import ai.ash.caps.screen.A11yService
 import ai.ash.screen.island.NativeIsland
 import ai.ash.ui.HomeActivity
 import android.content.Context
@@ -15,12 +10,10 @@ import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
 import ai.ash.caps.config.ScreenRecovery
-import ai.ash.caps.screen.ScreenshotTool
 
 /**
- * The rest of Ash's face to the screen abilities (the accessibility service's tools and the task island), which live in
- * this same app: the tools join the phone's manifest, the island is told what to show, and the owner's actions on it
- * come back here.
+ * Ash's face to the task island, which the accessibility service draws: the island is told what to show, and the owner's
+ * actions on it come back here. The screen tools are capabilities ([ai.ash.caps.screen.ScreenCapabilities]), not part of this.
  */
 object ScreenBridge {
     private val main = Handler(Looper.getMainLooper())
@@ -41,29 +34,11 @@ object ScreenBridge {
         ai.ash.link.Link.manifestChanged()
     }
 
-    // ---- what Ash asks of the screen side ----
+    // ---- the island ----
 
-    /** The accessibility switch is on in system settings (whether or not the service is running). */
-    fun switchedOn(ctx: Context): Boolean = android.provider.Settings.Secure.getString(ctx.contentResolver,
-        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any { it.startsWith("${ctx.packageName}/") }
-    /** The accessibility service is on: Ash can see and operate the screen. */
-    fun accessibility() = A11yService.instance != null
     /** The island can be drawn (the accessibility service, or the overlay permission). */
     fun islandReady() = app?.let { NativeIsland.ready(it) } ?: false
     fun islandShown() = NativeIsland.showing()
-
-    private val tools: List<Capability> by lazy { ScreenCapabilities.list.map { ScreenTool(it) } }
-    fun tools(): List<Capability> = tools +
-        if (A11yService.instance != null && A11yService.canScreenshot) listOf(ScreenshotTool) else emptyList()
-
-    fun call(name: String, args: JSONObject): CapResult {
-        val ctx = app ?: return CapResult.fail("$name is not available right now: Ash has not started")
-        return ScreenHost.run(ctx, name, args)
-    }
-    fun screenState(settle: Boolean): JSONObject = ScreenHost.screenState(settle)
-
-    /** Ash's own input to other apps (opening an app, a key) passes under the island; refused while the owner types. */
-    fun <T> withTouchPassthrough(action: () -> T): T = if (app == null) action() else NativeIsland.withTouchPassthrough(action)
 
     /** What the island shows. Sent when it changes, and once more after a restart of the screen service. */
     fun island(model: JSONObject?, ashInFront: Boolean) {
@@ -92,15 +67,5 @@ object ScreenBridge {
             "send" -> TaskStatus.sendInput(a.optString("text"), a.optString("client_id"), reply)
             else -> reply(false, "未知操作")
         }
-    }
-
-    /** One of the screen tools, as Ash's capability: it runs through [ScreenHost] (the island steps aside for it). */
-    private class ScreenTool(private val real: Capability) : Capability {
-        override val name: String = real.name
-        override val description: String = real.description
-        override val schema: JSONObject = real.schema
-        override val confirm: Boolean = real.confirm
-        override fun available(ctx: Context) = real.available(ctx)
-        override fun run(ctx: Context, args: JSONObject) = ScreenHost.run(ctx, name, args)
     }
 }

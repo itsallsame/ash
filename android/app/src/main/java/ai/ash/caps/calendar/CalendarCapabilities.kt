@@ -1,5 +1,8 @@
 package ai.ash.caps.calendar
 
+import ai.ash.caps.result
+import ai.ash.caps.Risk
+import ai.ash.caps.Effect
 import android.Manifest
 import android.content.ContentUris
 import android.content.ContentValues
@@ -29,6 +32,8 @@ object CalendarCapabilities {
             "limit" to prop("integer", "Maximum matching events, 1–50 (default 20)."),
         ),
         availableIf = ::canRead,
+        effect = Effect.READ, risk = Risk.NONE, label = "在看日历",
+        result = result("events:array!")
     ) { ctx, args ->
         CalendarArguments.search(args, System.currentTimeMillis(), provider@{ input ->
             val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also { ContentUris.appendId(it, input.start); ContentUris.appendId(it, input.end) }.build()
@@ -57,6 +62,8 @@ object CalendarCapabilities {
         description = "List the owner's phone calendars: ID, name, account, whether events can be added to it (writable), shown, primary. Use an ID from here as calendar.create's calendar_id. Requires calendar read permission; it does not change anything.",
         schema = schema(),
         availableIf = ::canRead,
+        effect = Effect.READ, risk = Risk.NONE, label = "在看有哪些日历",
+        result = result("calendars:array!")
     ) { ctx, args ->
         CalendarArguments.list(args, provider@{
             val columns = arrayOf(CalendarContract.Calendars._ID, CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
@@ -86,6 +93,8 @@ object CalendarCapabilities {
             "time_zone" to prop("string", "IANA time zone (default phone's current time zone)."),
         ),
         availableIf = { canRead(it) && canWrite(it) },
+        effect = Effect.WRITE, risk = Risk.OUTWARD, label = "在添加日历事件",
+        result = result("id:string")
     ) { ctx, args ->
         CalendarArguments.create(args, provider@{ input ->
             val writable = ctx.contentResolver.query(CalendarContract.Calendars.CONTENT_URI,

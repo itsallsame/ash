@@ -143,7 +143,7 @@ class SetupActivity : Activity() {
         val density = resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(16), dp(20), dp(24)) }
-        list.addView(TextView(this).apply { text = "Ash 感知"; textSize = 24f; typeface = Typeface.DEFAULT_BOLD })
+        list.addView(TextView(this).apply { text = "位置、运动与健康"; textSize = 24f; typeface = Typeface.DEFAULT_BOLD })
         list.addView(TextView(this).apply {
             text = "为 Ash 记录位置、运动、步数，读取健康数据。默认什么都不记录；只有你开启「位置与运动记录」或设置体重秤后才采集。" +
                 "数据只存在这台手机上，交给你的 Ash；健康数据只读，不写入任何地方。每项授权都由你在系统页面自己完成，可随时撤销，撤销后立即读不到。"

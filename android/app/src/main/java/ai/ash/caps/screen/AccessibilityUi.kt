@@ -1,7 +1,5 @@
 package ai.ash.caps.screen
 
-import ai.ash.caps.screen.KeepAliveSwitches
-import ai.ash.caps.screen.A11yService
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent

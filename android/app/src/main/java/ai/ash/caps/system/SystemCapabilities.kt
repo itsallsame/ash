@@ -1,10 +1,10 @@
 package ai.ash.caps.system
 
+import ai.ash.caps.result
+import ai.ash.caps.Overlay
+import ai.ash.caps.Risk
+import ai.ash.caps.Effect
 import ai.ash.caps.shell.PrivShell
-import ai.ash.caps.system.Apps
-import ai.ash.caps.system.Clip
-import ai.ash.caps.system.Launcher
-import ai.ash.caps.system.Usage
 import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.content.Context
@@ -48,6 +48,8 @@ object SystemCapabilities {
         "clipboard.get",
         "Read the text currently on the phone's clipboard. No permission needed, but Android 10+ only lets the app in " +
             "the foreground read the clipboard: while ash is in the background this fails (ask the owner to open ash, or to paste the text).",
+        effect = Effect.READ, risk = Risk.NONE, label = "在读剪贴板",
+        result = result("text:string!")
     ) { ctx, _ ->
         val text = Clip.get(ctx)
         when {
@@ -62,6 +64,7 @@ object SystemCapabilities {
         "clipboard.set",
         "Put text on the phone's clipboard (replacing what is there) so the owner can paste it anywhere. No permission needed.",
         schema("text" to prop("string", "The text to copy.", required = true)),
+        effect = Effect.ACT, risk = Risk.STRUCTURE, label = "在改剪贴板"
     ) { ctx, args ->
         if (!args.has("text")) return@Cap CapResult.fail("text is required")
         val text = args.optString("text")
@@ -75,6 +78,8 @@ object SystemCapabilities {
         "device.status",
         "Current phone status: battery level and charging, network (type, online, metered), free storage, memory, " +
             "screen on/locked, ringer mode and volumes, time, time zone, locale, model and Android version. No permission needed.",
+        effect = Effect.READ, risk = Risk.NONE, label = "在看手机状态",
+        result = result("battery:object", "time:string")
     ) { ctx, _ -> CapResult.json(deviceStatus(ctx)) }
 
     private fun deviceStatus(ctx: Context): JSONObject {
@@ -168,6 +173,8 @@ object SystemCapabilities {
             "query" to prop("string", "Only apps whose label or package contains this text (case-insensitive)."),
             "include_system" to prop("boolean", "Include preinstalled system apps (default true)."),
         ),
+        effect = Effect.READ, risk = Risk.NONE, label = "在看装了哪些应用",
+        result = result("apps:array!")
     ) { ctx, args ->
         val q = args.optString("query").trim().lowercase(Locale.ROOT)
         val sys = args.optBoolean("include_system", true)
@@ -185,12 +192,14 @@ object SystemCapabilities {
             "background apps from opening screens, so this works when ash is in the foreground, ash's accessibility service is " +
             "enabled, or Shizuku is running with ash authorized (it then goes through the Shizuku shell); otherwise the result says it may have been blocked.",
         schema("app" to prop("string", "Package name (e.g. com.tencent.mm) or launcher label (e.g. \"WeChat\").", required = true)),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在打开应用", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("package:string", "opened:boolean")
     ) { ctx, args ->
         val app = try { Apps.resolve(ctx, args.optString("app")) } catch (e: Exception) { return@Cap CapResult.fail(e.message ?: "unknown app") }
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(app.component)
             .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         val how = Launcher.start(ctx, intent)
-        CapResult.text("${app.label} (${app.pkg}): $how.", JSONObject().put("package", app.pkg).put("label", app.label))
+        CapResult.text("${app.label} (${app.pkg}): $how.", JSONObject().put("package", app.pkg).put("label", app.label).put("opened", true))
     }
 
     private val appsInfo = Cap(
@@ -203,6 +212,8 @@ object SystemCapabilities {
             "app" to prop("string", "Package name or launcher label.", required = true),
             "permissions" to prop("boolean", "Include the requested permissions (default true)."),
         ),
+        effect = Effect.READ, risk = Risk.NONE, label = "在查看应用信息",
+        result = result("package:string", "label:string", "version:string")
     ) { ctx, args ->
         val q = args.optString("app").trim()
         val pkg = if (Apps.isInstalled(ctx, q)) q else try { Apps.resolve(ctx, q).pkg } catch (e: Exception) { return@Cap CapResult.fail("$q is not installed (${e.message})") }
@@ -217,7 +228,7 @@ object SystemCapabilities {
         val d = JSONObject()
             .put("package", pkg)
             .put("label", pm.getApplicationLabel(ai).toString())
-            .put("version_name", pi.versionName ?: "")
+            .put("version", pi.versionName ?: "").put("version_name", pi.versionName ?: "")
             .put("version_code", if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong())
             .put("first_install", iso(pi.firstInstallTime))
             .put("last_update", iso(pi.lastUpdateTime))
@@ -260,6 +271,8 @@ object SystemCapabilities {
             "app" to prop("string", "Only this package (or label substring)."),
         ),
         availableIf = { Usage.granted(it) },
+        effect = Effect.READ, risk = Risk.NONE, label = "在看应用使用情况",
+        result = result("apps:array")
     ) { ctx, args ->
         val days = args.optInt("days", 1).coerceIn(1, 30)
         val limit = args.optInt("limit", 20).coerceIn(1, 500)
@@ -336,6 +349,8 @@ object SystemCapabilities {
             "action" to prop("string", "Raw settings intent action instead of page, e.g. android.settings.NIGHT_DISPLAY_SETTINGS."),
             "package" to prop("string", "Package for app-specific pages (default: ash)."),
         ),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在打开设置页", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("opened:boolean")
     ) { ctx, args ->
         val page = args.optString("page").trim()
         val raw = args.optString("action").trim()
@@ -356,7 +371,7 @@ object SystemCapabilities {
         if (target.resolveActivity(pm) == null && target.data != null) target = Intent(target.action) // some ROMs lack the per-app variant
         if (target.resolveActivity(pm) == null) return@Cap CapResult.fail("this phone has no settings page for ${raw.ifEmpty { page }}")
         val how = Launcher.start(ctx, target)
-        CapResult.text("Settings page ${raw.ifEmpty { page }}${if (target.data != null) " ($pkg)" else ""}: $how.")
+        CapResult.text("Settings page ${raw.ifEmpty { page }}${if (target.data != null) " ($pkg)" else ""}: $how.", JSONObject().put("opened", true))
     }
 
     private val NAMESPACES = listOf("system", "secure", "global")
@@ -390,6 +405,8 @@ object SystemCapabilities {
             "namespace" to prop("string", "system, secure or global.", required = true, enum = NAMESPACES),
             "key" to prop("string", "Setting key; omit to list the namespace."),
         ),
+        effect = Effect.READ, risk = Risk.NONE, label = "在读系统设置",
+        result = result("value:string?")
     ) { ctx, args ->
         val ns = args.optString("namespace").lowercase(Locale.ROOT)
         if (ns !in NAMESPACES) return@Cap CapResult.fail("namespace must be system, secure or global")
@@ -424,7 +441,8 @@ object SystemCapabilities {
             "key" to prop("string", "Setting key.", required = true),
             "value" to prop("string", "New value (as a string).", required = true),
         ),
-        confirm = true,
+        effect = Effect.WRITE, risk = Risk.STRUCTURE, label = "在改系统设置",
+        result = result("previous:string?", "value:string?")
     ) { ctx, args ->
         val ns = args.optString("namespace").lowercase(Locale.ROOT)
         val key = args.optString("key").trim()
@@ -458,7 +476,7 @@ object SystemCapabilities {
         }
         val after = try { readSetting(ctx, ns, key) } catch (e: Throwable) { null }
         CapResult.text("$ns/$key: ${before ?: "null"} → ${after ?: "null"} ($how).",
-            JSONObject().put("namespace", ns).put("key", key).put("before", before ?: JSONObject.NULL).put("after", after ?: JSONObject.NULL))
+            JSONObject().put("namespace", ns).put("key", key).put("previous", before ?: JSONObject.NULL).put("value", after ?: JSONObject.NULL))
     }
 
     private fun setVolume(ctx: Context, key: String, stream: Int, value: String): CapResult {
@@ -474,13 +492,13 @@ object SystemCapabilities {
             return CapResult.fail("Android refused to change $key (Do Not Disturb policy): ${e.message}")
         }
         val after = am.getStreamVolume(stream)
-        return CapResult.text("$key: $before → $after (max $max).", JSONObject().put("key", key).put("before", before).put("after", after).put("max", max))
+        return CapResult.text("$key: $before → $after (max $max).", JSONObject().put("key", key).put("previous", before.toString()).put("value", after.toString()).put("before", before).put("after", after).put("max", max))
     }
 
     // ───────────────────────────── intents & keys ─────────────────────────────
 
     private val intentView = Cap(
-        "intent.view",
+        "apps.open_url",
         "Open a URL or deep link on the phone's screen with the app that handles it (https:// in the browser or the " +
             "matching app, geo:, tel: (opens the dialer, does not call), mailto:, market://, app-specific schemes). Optionally " +
             "force a package. Same background-start rules as apps.open.",
@@ -488,6 +506,8 @@ object SystemCapabilities {
             "uri" to prop("string", "The URL or deep link.", required = true),
             "package" to prop("string", "Open with this app only (package name)."),
         ),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在打开链接", foreground = true, overlay = Overlay.PASSTHROUGH,
+        result = result("opened:boolean")
     ) { ctx, args ->
         val uri = args.optString("uri").trim()
         if (uri.isEmpty() || !uri.contains(':')) return@Cap CapResult.fail("uri must be an absolute URL or deep link (scheme:...)")
@@ -501,7 +521,7 @@ object SystemCapabilities {
         }
         val how = Launcher.start(ctx, intent)
         val handler = ri.activityInfo?.packageName?.let { if (it == "android") "chooser" else it } ?: "?"
-        CapResult.text("Opened $uri (handler: $handler): $how.")
+        CapResult.text("Opened $uri (handler: $handler): $how.", JSONObject().put("opened", true))
     }
 
     private val MEDIA_KEYS = mapOf(
@@ -529,6 +549,7 @@ object SystemCapabilities {
             "key" to prop("string", "Key name or numeric KeyEvent keycode.", required = true),
             "long_press" to prop("boolean", "Long-press (injected keys only)."),
         ),
+        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在按手机按键", foreground = true, overlay = Overlay.PASSTHROUGH
     ) { ctx, args ->
         val k = args.optString("key").trim().lowercase(Locale.ROOT)
         val num = k.toIntOrNull()

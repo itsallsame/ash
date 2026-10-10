@@ -13,7 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.CalendarContract
 import android.util.Log
-import ai.ash.link.Link
+import ai.ash.caps.Events
 import ai.ash.host.HandRuntime
 import org.json.JSONObject
 
@@ -162,7 +162,7 @@ class CalendarSense(private val ctx: Context, private val rescanIntervalMs: Long
 
     private fun send(kind: String, event: JSONObject, key: String, acceptedState: Map<String, String> = emptyMap()): Boolean = outbox.dispatch(kind, key, acceptedState) { id ->
         try {
-            Link.emit(ctx, "sense.calendar", JSONObject().put("kind", kind).put("event", event), id)
+            Events.emit(ctx, "sense.calendar", JSONObject().put("kind", kind).put("event", event), id)
         } catch (e: Exception) {
             Log.w("sense.calendar", "delivery unavailable: ${e.javaClass.simpleName}")
             throw e
@@ -180,7 +180,7 @@ class CalendarSense(private val ctx: Context, private val rescanIntervalMs: Long
             if (reserve) mapOf(attemptKey to attempt.encode()) else emptyMap(),
             setOf(attemptKey),
         ) { id ->
-            Link.emit(ctx, "sense.calendar", JSONObject().put("kind", "changed").put("event", event), id)
+            Events.emit(ctx, "sense.calendar", JSONObject().put("kind", "changed").put("event", event), id)
         }
     }
 

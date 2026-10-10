@@ -12,12 +12,10 @@ import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
-import ai.ash.caps.config.KeepAliveFlow
-import ai.ash.host.screen.ScreenBridge
+import ai.ash.caps.screen.Screen
 import android.widget.Toast
-import ai.ash.caps.config.ScreenSetup
-import ai.ash.caps.config.ScreenRecovery
-import ai.ash.caps.senses.SensesBridge
+import ai.ash.caps.senses.SenseSync
+import ai.ash.caps.senses.SetupActivity
 import ai.ash.caps.shell.ShizukuState
 import ai.ash.host.Notifications
 
@@ -147,11 +145,11 @@ object Permissions {
             ))
             add(Permission(
                 "accessibility", "无障碍（屏幕）", "让 Ash 看懂屏幕内容，替你点击、输入、滚动，并在其他应用上方显示灵动岛",
-                { ScreenBridge.accessibility() },
+                { Screen.accessibility() },
                 { a -> ScreenSetup.openAccessibility(a) },
                 { c ->
                     // The system stopped the service: its switch stays on, but the service is not running.
-                    if (ScreenBridge.switchedOn(c)) "开关开着，但无障碍没在工作（系统清理过它）：在无障碍里把它关掉再打开"
+                    if (Screen.switchedOn(c)) "开关开着，但无障碍没在工作（系统清理过它）：在无障碍里把它关掉再打开"
                     else "在无障碍列表里找到「Ash」并打开"
                 },
             ))
@@ -162,10 +160,10 @@ object Permissions {
                 { c -> if (ShizukuState.ready()) "点「去开启」，经 Shizuku 授权一次" else "需要授权一次：用 Shizuku，或在电脑上运行 ${ScreenRecovery.grantCommand(c)}" },
             ))
             add(Permission(
-                "senses", "Ash 感知", "位置、运动、步数和健康数据：Ash 觉得有用时自己开启记录并告诉你，你说停就停；数据只存在手机上",
-                { c -> SensesBridge.status().optJSONObject("permissions")?.optBoolean("location") == true },
-                { a -> SensesBridge.openSetup(a) },
-                { "打开 Ash 感知，逐项授权位置、运动与健身、通知等" },
+                "senses", "位置、运动与健康", "位置、运动、步数和健康数据：Ash 觉得有用时自己开启记录并告诉你，你说停就停；数据只存在手机上",
+                { c -> SenseSync.status(c).optJSONObject("permissions")?.optBoolean("location") == true },
+                { a -> a.startActivity(Intent(a, SetupActivity::class.java)) },
+                { "打开「位置、运动与健康」页，逐项授权位置、运动与健身、通知等" },
             ))
             if (Build.VERSION.SDK_INT >= 30) add(Permission(
                 "all_files", "所有文件访问", "让 Ash 读写手机存储里的所有文件，包括别的应用放在共享存储里的下载和文档",
@@ -231,7 +229,7 @@ object Permissions {
     /**
      * Once per install change (an upgrade or reinstall), on Ash's first screen: the keep-alive switches are looked at
      * again (see [KeepAliveRecheck]) and, if one may be off, the usual fix is offered once — the system's question
-     * for the battery exemption, or the helper's one-tap fix, which still waits for the owner's 「确定」.
+     * for the battery exemption, or the one-tap fix, which still waits for the owner's 「确定」.
      */
     fun recheckAfterUpgrade(a: Activity, firstStart: Boolean) {
         val prefs = a.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

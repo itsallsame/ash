@@ -37,7 +37,7 @@ object TaskStatus {
         val raw = ctx.getSharedPreferences(NOTICED, Context.MODE_PRIVATE).getString("keys", null) ?: return
         runCatching { org.json.JSONArray(raw) }.getOrNull()?.let { a -> model.restoreNoticed((0 until a.length()).map { a.getString(it) }) }
     }
-    fun start(ctx: Context) { main.post { if (app == null) loadNoticed(ctx.applicationContext); app = ctx.applicationContext; ai.ash.host.screen.ScreenBridge.start(ctx); ai.ash.caps.senses.SensesBridge.start(ctx); main.removeCallbacks(tick); tick.run() } }
+    fun start(ctx: Context) { main.post { if (app == null) loadNoticed(ctx.applicationContext); app = ctx.applicationContext; ai.ash.host.screen.ScreenBridge.start(ctx); ai.ash.caps.senses.SenseSync.start(ctx); main.removeCallbacks(tick); tick.run() } }
     fun close() { main.post {
         main.removeCallbacks(tick); model.clear(); TaskCapsule.hide(); app?.getSystemService(NotificationManager::class.java)?.cancel(ID)
         val ctx = app; app = null; lastNotification = null

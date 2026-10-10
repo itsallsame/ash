@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.util.Log
-import ai.ash.link.Link
+import ai.ash.caps.Events
 import org.json.JSONObject
 import java.util.UUID
 
@@ -94,7 +94,7 @@ class DeviceSense(private val ctx: Context) {
     }
 
     private fun send(word: String, body: JSONObject, id: String): Boolean = try {
-        Link.emit(ctx, word, body, id)
+        Events.emit(ctx, word, body, id)
         true
     } catch (e: Exception) {
         Log.w("sense.device", "delivery unavailable: ${e.javaClass.simpleName}: ${e.message?.take(80)}")

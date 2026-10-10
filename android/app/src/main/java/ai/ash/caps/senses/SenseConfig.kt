@@ -9,7 +9,7 @@ data class Geofence(val name: String, val lat: Double, val lon: Double, val radi
 }
 
 /**
- * What the helper records, set by the owner (here, or through Ash with approval). Everything starts off: nothing is
+ * What the senses record, set by the owner (here, or through Ash with approval). Everything starts off: nothing is
  * recorded until the owner asks.
  */
 data class SenseConfig(
