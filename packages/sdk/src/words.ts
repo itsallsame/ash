@@ -762,7 +762,7 @@ add("service:apps", "apps.surface", "request", obj({ id: appId, surface: surface
     csp: obj({ connectDomains: strings, resourceDomains: strings }, ["connectDomains", "resourceDomains"]) }, ["id", "surface", "mime"]),
   { label: "在取应用页面", description: "The page resource of one of an app's surfaces (the ui:// resource its app.json lists), for a channel to show; csp lists the domains the page declared it may connect to and load from. Pages talk to the app through the bridge, not through this word." });
 add("service:apps", "apps.icon", "request", obj({ id: appId }, ["id"]), obj({ id: appId, mime: nonempty, data: str }, ["id", "mime", "data"]),
-  { label: "在取应用图标", description: "The icon file of an app (base64 in data), for a channel to show in its list of apps." });
+  { label: "在取应用图标", description: "The icon file of an app (base64 in data), for a channel to show in its list of apps. An app with no icon, or whose icon file is gone, gets Ash's default PNG icon instead of an error." });
 
 // ===================================================================================================================
 // the list

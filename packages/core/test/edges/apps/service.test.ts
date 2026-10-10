@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { DEFAULT_APP_ICON } from "../../../src/edges/apps/runtime";
 import { join } from "node:path";
 import test from "node:test";
 import { wordsOf } from "../../../../sdk/src/words";
@@ -127,9 +128,11 @@ test("surface gives the page of a running app; icon gives the file; both say wha
   await words(w, "apps.disable", { id: "fixture" });
   const down = await words(w, "apps.surface", { id: "fixture", surface: "home" });
   assert.equal(down.ok === false && down.error.code, "offline");
-  const none = world();
-  await none.apps.start();
-  assert.equal((await words(none, "apps.icon", { id: "fixture" })).ok, false);
+  // an icon file that is gone, like an app that names none, gets the default icon
+  rmSync(join(w.root, "fixture", "icon.png"));
+  assert.deepEqual(dataOf(await words(w, "apps.icon", { id: "fixture" })), { id: "fixture", ...DEFAULT_APP_ICON });
+  const unknown = await words(w, "apps.icon", { id: "nothing-here" });
+  assert.equal(unknown.ok === false && unknown.error.code, "not_found"); // an app that is not there is still not found
 });
 
 test("validate: a good app is ok with warnings; a bad server is an error with the last stderr; a path works as well as an id", async () => {
@@ -194,6 +197,10 @@ test("scaffold: writes an app that validates, installs and works; it refuses to 
   const items = dataOf(await call(w, "app:todo", "todo.list")).items;
   assert.equal(items[0].text, "buy milk");
   assert.equal((await words(w, "apps.surface", { id: "todo", surface: "home" })).ok, true);
+  // no icon of its own: the default one comes back instead of an error
+  const own = dataOf(await words(w, "apps.icon", { id: "todo" }));
+  assert.equal(own.mime, "image/png");
+  assert.deepEqual(Buffer.from(own.data, "base64").subarray(0, 8), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   const again = await words(w, "apps.scaffold", { id: "todo", name: "Todo" });
   assert.equal(again.ok === false && again.error.code, "conflict");
   const dup = await words(w, "apps.scaffold", { id: "dup", name: "Dup", tools: [{ name: "a.b" }, { name: "a.b" }] });

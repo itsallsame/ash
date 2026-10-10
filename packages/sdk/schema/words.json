@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "aceae00e6b85a518d0a5079d774c6ee9885d179946aef5a7247f45b9f45573f6",
+ "hash": "e93132eaab2a76b05dfce4c1f3c7102cfe98e5f013d0447baa6077a2097e911c",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8254,7 +8254,7 @@
    "word": "apps.icon",
    "kind": "request",
    "direction": "in",
-   "description": "The icon file of an app (base64 in data), for a channel to show in its list of apps.",
+   "description": "The icon file of an app (base64 in data), for a channel to show in its list of apps. An app with no icon, or whose icon file is gone, gets Ash's default PNG icon instead of an error.",
    "input_schema": {
     "type": "object",
     "properties": {

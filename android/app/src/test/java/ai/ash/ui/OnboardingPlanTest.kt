@@ -1,11 +1,13 @@
 package ai.ash.ui
 
 import ai.ash.caps.config.ConfigStatus
+import ai.ash.caps.config.KernelAutostart
 import ai.ash.host.KernelState
 import ai.ash.ui.OnboardingPlan.Row
 import ai.ash.ui.OnboardingStep.*
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -75,5 +77,29 @@ class OnboardingPlanTest {
     @Test fun theSensesAndSpecialAccessesAreWhereTheSpecPutsThem() {
         assertEquals(setOf("location", "location_background", "activity_recognition", "health"), ConfigStatus.NAMES.filter { OnboardingPlan.stepOf(it) == SENSES }.toSet())
         assertEquals(setOf("accessibility", "notification_listener"), ConfigStatus.NAMES.filter { OnboardingPlan.stepOf(it) == SCREEN_ACCESS }.toSet())
+    }
+
+    @Test fun miuiAndColorosGetTheLineAboutTheSystemQuestion() {
+        for (maker in listOf("Xiaomi", "Redmi", "POCO", "OPPO", "OnePlus", "realme")) {
+            val line = OnboardingPlan.kernelPrompt(KernelAutostart.rom(maker))
+            assertEquals("系统会问是否允许打开 Ash 内核，请选「始终允许」。", line)
+        }
+    }
+
+    @Test fun otherPhonesGetNoLineAndNoRefusedRetry() {
+        val rom = KernelAutostart.rom("samsung")
+        assertNull(OnboardingPlan.kernelPrompt(rom))
+        assertNull(OnboardingPlan.kernelRetryHint(rom))
+        assertFalse(OnboardingPlan.showRefusedRetry(rom, 10 * OnboardingPlan.KERNEL_WAIT_MS))
+    }
+
+    @Test fun theRefusedRetryShowsOnlyAfterThirtySeconds() {
+        val rom = KernelAutostart.rom("Xiaomi")
+        assertEquals(30_000L, OnboardingPlan.KERNEL_WAIT_MS)
+        assertFalse(OnboardingPlan.showRefusedRetry(rom, 0))
+        assertFalse(OnboardingPlan.showRefusedRetry(rom, 29_999))
+        assertTrue(OnboardingPlan.showRefusedRetry(rom, 30_000))
+        assertTrue(OnboardingPlan.showRefusedRetry(KernelAutostart.rom("oppo"), 120_000))
+        assertEquals("如果刚才选了拒绝，点这里重试", OnboardingPlan.kernelRetryHint(rom))
     }
 }
