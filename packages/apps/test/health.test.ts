@@ -13,8 +13,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { build } from "esbuild";
 import { appToolContract } from "../../sdk/src/app";
+import { bundleApp } from "../bundle.mjs";
 import { checkManifest } from "../../core/src/edges/apps/check";
 import { validateCard } from "../../core/src/services/widgets/card";
 
@@ -232,12 +232,7 @@ test("the Ash client speaks MCP to the endpoint ash gives the app, with its toke
 });
 
 test("the bundled server the core installs runs over stdio: tools, a call through Ash, and its screens", async () => {
-  // The single-file server a first-party app is installed as: app.json, the bundled server and the icon.
-  const manifest = JSON.parse(readFileSync(join(here, "../health/app.json"), "utf8")) as { icon?: string };
-  const bundled = await build({ entryPoints: [join(src, "server.mjs")], bundle: true, write: false, platform: "node", format: "esm", target: "node20",
-    minify: true, legalComments: "none", loader: { ".html": "text" }, logLevel: "silent",
-    banner: { js: "import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);" } });
-  const app = { files: { "app.json": `${JSON.stringify(manifest, null, 2)}\n`, "server.mjs": bundled.outputFiles[0]!.text } as Record<string, string> };
+  const app = { files: await bundleApp(join(here, "../health")) };
   const dir = mkdtempSync(join(tmpdir(), "ash-health-app-"));
   for (const [name, text] of Object.entries(app.files)) writeFileSync(join(dir, name), text);
   // Data from 1.0.x (next to app.json) moves into data_dir on start.

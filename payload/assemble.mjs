@@ -13,6 +13,7 @@
 //   ash/       ash core bundle (ash-core.mjs) and next to it the relay program (ash-gateway.mjs, built by the gateway repository:
 //              `npm run build:bundle` there, then --gateway <dir> or ASH_GATEWAY_DIR; default node_modules/ash-gateway).
 //   ash-skills/  ash's own DSH skill-provider plugin and its instructions.
+//   ash-apps/    first-party apps (packages/apps), one folder each: app.json, a bundled server.mjs, the icon.
 //   bin/       small sh wrappers (Android has no /usr/bin/env).
 //   profile/   the host's DSH patch layer (cordis.patch.yml rows, e.g. the ptc worker launcher).
 // Next to the zip: payload-index.json { build, links, exec, placeholders, dshTree }.
@@ -26,6 +27,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dshFingerprint } from "../tools/verify-dsh.mjs";
+import { writeBundledApps } from "../packages/apps/bundle.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -307,6 +309,9 @@ async function build() {
   // Its tests stay in the repository: only the plugin, the skills (with their sample files) and the persona templates ship.
   fs.cpSync(path.join(ROOT, "packages/ash-skills"), path.join(tree, "ash-skills"), { recursive: true,
     filter: (source) => path.relative(path.join(ROOT, "packages/ash-skills"), source).split(path.sep)[0] !== "test" });
+  // First-party apps (packages/apps/<id>) as single-file apps, beside ash-skills: the hub installs the ones the phone does not have yet as built-in apps.
+  const apps = await writeBundledApps(path.join(ROOT, "packages/apps"), path.join(tree, "ash-apps"));
+  log("first-party apps", apps.join(", "));
   // The agent's DSH runs in the container (tools/build-container-rootfs.mjs): model calls and
   // credentials go through ash core, so the in-process cost and vault plugins are not shipped.
 

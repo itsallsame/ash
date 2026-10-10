@@ -30,8 +30,9 @@ export function createApps(options: AppRuntimeOptions): Apps {
 }
 
 /**
- * The hub's own organs (ash-skills/organs/<id>): each is copied into the apps folder the first time and then left alone,
- * because after that the agent maintains it. Returns their ids, for `builtinApps`.
+ * The hub's own apps, built in with the release: the organs (ash-skills/organs/<id>) and the first-party apps (packages/apps,
+ * bundled into the payload). Each is copied into the apps folder the first time and then left alone, because after that the
+ * agent maintains it. Returns their ids, for `builtinApps` (installed without a card: the release decides, not a card).
  */
 export function installBuiltinOrgans(source: string, root: string): string[] {
   const ids = existsSync(source) ? readdirSync(source, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [];

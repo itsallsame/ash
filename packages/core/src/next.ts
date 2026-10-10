@@ -99,8 +99,17 @@ const service = (member: string): Caller => ({ member, via: "service", local: tr
 /** `packages/ash-skills` next to the sources; `<payload>/ash-skills` next to the bundle (`<payload>/ash/ash-core.mjs`, payload/assemble.mjs). */
 const SKILLS = [new URL("../ash-skills/", import.meta.url), new URL("../../ash-skills/", import.meta.url)]
   .map((url) => fileURLToPath(url)).find((dir) => existsSync(join(dir, "agents", "main.json"))) ?? fileURLToPath(new URL("../../ash-skills/", import.meta.url));
+/**
+ * The first-party apps, already bundled (`<payload>/ash-apps/<id>/`, payload/assemble.mjs). Only the payload has them: a
+ * source tree has `packages/apps/<id>` unbundled, which cannot run as it is.
+ */
+const FIRST_PARTY_APPS = fileURLToPath(new URL("../ash-apps/", import.meta.url));
+
+/** Burned into the bundle by `build:core` (esbuild --define, from package.json); absent when running from the sources. */
+declare const __ASH_VERSION__: string | undefined;
 
 function hubVersion(): string {
+  if (typeof __ASH_VERSION__ === "string") return __ASH_VERSION__;
   try { return String((JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown }).version ?? "dev"); } catch { return "dev"; }
 }
 
@@ -213,7 +222,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   if (launcher) installContractDoc(launcher.root, APP_CONTRACT_DOC);
   const apps = late.apps = createApps({
     router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log, contract: { doc: APP_CONTRACT_DOC },
-    ...(launcher ? { builtinApps: installBuiltinOrgans(join(SKILLS, "organs"), launcher.root) } : {}),
+    ...(launcher ? { builtinApps: [...installBuiltinOrgans(join(SKILLS, "organs"), launcher.root), ...installBuiltinOrgans(FIRST_PARTY_APPS, launcher.root)] } : {}),
   });
   const human = createHuman({
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,

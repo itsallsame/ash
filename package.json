@@ -1,6 +1,7 @@
 {
   "name": "ash",
   "private": true,
+  "version": "0.4.0",
   "type": "module",
   "description": "ash — the personal-agent layer on top of DeepSeek Harness (DSH)",
   "license": "MIT",
@@ -19,7 +20,7 @@
     "test:ui:e2e": "npm run -s gen:ui && node --import tsx --test --test-concurrency=1 --test-timeout=180000 packages/web/test/e2e/*.test.js",
     "test:originality": "node --test tools/originality.test.mjs",
     "test:public-terms": "node tools/originality.mjs --ci-terms",
-    "build:core": "npm run -s gen:ui && npm run -s gen:rules && esbuild packages/core/src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=packages/core/dist/ash-core.mjs --banner:js=\"import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);\"",
+    "build:core": "npm run -s gen:ui && npm run -s gen:rules && esbuild packages/core/src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=packages/core/dist/ash-core.mjs \"--define:__ASH_VERSION__=\\\"$npm_package_version\\\"\" --banner:js=\"import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);\"",
     "build:payload": "npm run -s build:core && node payload/assemble.mjs --out build/payload",
     "build:container": "node tools/build-container-rootfs.mjs",
     "build:device": "esbuild packages/device/src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=packages/device/dist/ash-device.mjs --banner:js=\"import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);\"",
