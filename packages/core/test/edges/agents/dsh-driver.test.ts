@@ -74,7 +74,7 @@ test("send: the turn is reported started, then speech as whole messages, thought
   assert.deepEqual(started.ids, ["m_hello "]);
   assert.equal((t.of("turn.ended")[0] as any).outcome, "completed");
   const seen = t.log().find((l) => l.prompt)!;
-  assert.match(seen.text, /^\[ash\] 2023-11-15 06:13:20 Asia\/Shanghai \(UTC\+08:00\) · 手机 · 对话 · lane front · say · id m_hello /);
+  assert.match(seen.text, /^\[ash\] 2023-11-15 Wed 06:13:20 Asia\/Shanghai \(UTC\+08:00\) · 手机 · 对话 · lane front · say · id m_hello /);
 });
 
 test("tool calls become tool events with start and end", async () => {
