@@ -160,11 +160,7 @@ class SetupActivity : Activity() {
             list.addView(box)
         }
         val scroll = ScrollView(this).apply { addView(list) }
-        // Drawn edge to edge (targetSdk 35): keep clear of the status and navigation bars.
-        scroll.setOnApplyWindowInsetsListener { v, insets ->
-            @Suppress("DEPRECATION") v.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
-            insets
-        }
+        ai.ash.apps.Ui.insets(scroll) // edge to edge (targetSdk 35)
         return scroll
     }
 
