@@ -11,6 +11,7 @@ import { WordError, type Caller, type ErrorCode, type HandleContext, type Messag
 import { DEFAULT_CALLERS, type Member, type WordContract } from "../../../../sdk/src/word";
 import type { Ledger } from "../../kernel/ledger";
 import type { Registry, Router } from "../../kernel/types";
+import { markNotified, RELEASE_DIR, type BuiltinKept } from "./builtin";
 import { AppBridge, mcpContent, type RecentFacts } from "./bridge";
 import { checkFolder, checkManifest, toolProblem, trialRun, UI_MIME, type AppProblem, type AppSpawn } from "./check";
 import { scaffoldFiles, type ScaffoldSurface, type ScaffoldTool } from "./scaffold";
@@ -48,6 +49,10 @@ export interface AppRuntimeOptions {
   launcher: AppLauncher | null;
   /** Folders already in the apps folder that are the hub's own organs: installed without a card the first time, then kept like any app. */
   builtinApps?: string[];
+  /** Built-in apps whose newer release was not applied because the agent changed them (see ./builtin.ts): the main agent is told once. */
+  builtinKept?: BuiltinKept[];
+  /** The built-in apps whose folder is exactly the release: only these are granted again from their app.json. None when not given. */
+  builtinExact?: ReadonlySet<string>;
   contract?: { doc: string; docPath?: string };
   log?: (...args: unknown[]) => void;
   clock?: { now(): number };
@@ -149,6 +154,22 @@ export class AppRuntime {
     this.found = this.discover();
     for (const id of this.options.builtinApps ?? []) this.seedBuiltin(id);
     await this.refresh();
+    this.tellKept();
+  }
+
+  /** The main agent hears (a background `tell`) that a release is waiting for the apps it changed; the hub does not merge it. */
+  private tellKept(): void {
+    const agent = this.options.primaryAgent();
+    for (const item of this.options.builtinKept ?? []) {
+      const text = `Ash 自带的应用 ${item.id} 发了新版 ${item.shipped}，但你改过它（现在是 ${item.current}），所以没有覆盖，你的版本继续用。` +
+        `新版的文件放在 ${this.agentPath(`${RELEASE_DIR}/${item.id}`)}/ ；需要的话你自己决定要不要把新版的改动合进 ${this.agentPath(item.id)}/（合完改 app.json 的 version，再 apps.restart）。${this.agentPath(RELEASE_DIR)}/ 每次启动都会被覆盖，是只读的，别在里面改。这条只提醒一次。`;
+      this.log("builtin app kept", item.id, item.shipped);
+      if (!agent) { this.log("builtin app kept: no main agent to tell", item.id); continue; }
+      const dir = this.dir(item.id);
+      void this.options.router.send({ to: agent, kind: "request", word: "tell", body: { text } }, SERVICE_CALLER)
+        .then((reply) => { if (reply.ok) { if (dir) markNotified(dir, item.shipped); } else this.log("builtin app kept: tell failed", item.id, reply.error.message); },
+          (error) => this.log("builtin app kept: tell failed", item.id, error instanceof Error ? error.message : error));
+    }
   }
 
   /**
@@ -186,6 +207,7 @@ export class AppRuntime {
     const root = this.root;
     if (!root || !existsSync(root)) return found;
     for (const id of readdirSync(root).sort()) {
+      if (!ID.test(id)) continue; // not an app name (.new-x, _release, ...): never an app
       const item = this.readFolder(root, id);
       if (!item) continue;
       found.set(id, item);
@@ -449,12 +471,28 @@ export class AppRuntime {
 
   // ---- install and the other words ----------------------------------------------------------------------------------
 
-  /** The first time, the hub's own organs are installed without a card: the owner's hub is installing its own parts. */
+  /**
+   * The hub's own organs are installed without a card: the owner's hub is installing its own parts. The release decides, but
+   * only while the folder is exactly the release (`builtinExact`): then the grants follow its app.json (version, needs,
+   * listens). What the agent wrote into a built-in app never widens anything: a folder it changed keeps the grants it has, and
+   * gets no first grant (that goes through apps.install). Whether the app is switched on stays the owner's. An app the owner installed
+   * by hand under the same id is left alone.
+   */
   seedBuiltin(id: string): void {
-    if (this.grants.get(id)) return;
     const manifest = this.manifest(id);
     if (!manifest) { this.log("builtin app not found", id); return; }
+    const had = this.grants.get(id);
+    // A folder that is not the release gets nothing from its own app.json, not even a first grant: what the agent wrote
+    // there goes through apps.install and the owner's card like any app.
+    if (!had && this.options.builtinExact && !this.options.builtinExact.has(id)) { this.log("builtin app not granted: the folder is not the release", id); return; }
+    if (had) {
+      const same = (items: readonly unknown[]) => JSON.stringify(items.map((item) => JSON.stringify(item)).sort());
+      if (!had.builtin || !this.options.builtinExact?.has(id)) return;
+      if (had.version === manifest.version && same(had.needs) === same(manifest.needs ?? []) && same(had.listens) === same(manifest.listens ?? [])) return;
+      this.log("builtin app granted again", id, `${had.version} -> ${manifest.version}`);
+    }
     this.grants.grant(id, manifest.version, manifest.needs ?? [], manifest.listens ?? [], { builtin: true });
+    if (had && !had.enabled) this.grants.setEnabled(id, false);
   }
 
   /** What the install approval card says about the app: everything it asks for and what its events do. */
