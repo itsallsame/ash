@@ -248,9 +248,12 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
     return hit?.value ?? wanted;
   }
 
+  /** Ash's names for a setting, and the id DSH calls it by. */
+  const DSH_CONFIG_ID: Record<string, string> = { effort: "reasoning_effort" };
+
   async function configureSession(p: Proc, sess: Session, config: Record<string, unknown>): Promise<void> {
     for (const [id, value] of Object.entries(config)) {
-      const answer = await ask<{ configOptions?: unknown[] }>(p, "session/set_config_option", { sessionId: sess.id, configId: id, value: optionValue(sess, id, value) });
+      const answer = await ask<{ configOptions?: unknown[] }>(p, "session/set_config_option", { sessionId: sess.id, configId: DSH_CONFIG_ID[id] ?? id, value: optionValue(sess, id, value) });
       if (answer?.configOptions) sess.options = answer.configOptions;
     }
   }
@@ -379,6 +382,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
       const first = targets[0];
       const out: Record<string, unknown> = {};
       for (const o of (first?.options ?? []) as { id?: string; currentValue?: unknown }[]) if (o.id) out[o.id] = o.currentValue;
+      if ("reasoning_effort" in out) out["effort"] = out["reasoning_effort"];
       return out;
     },
     async plugins(agent, op, name) {

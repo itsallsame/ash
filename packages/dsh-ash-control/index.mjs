@@ -156,12 +156,13 @@ export function createModelMemory(ctx, log = () => {}) {
      * through `set(configId, value) -> result` and return the resume result with the options after that.
      */
     async restore(sessionId, result, set) {
+      // Outside the try: when a later set fails, the earlier ones went through and DSH is already where `options` says.
+      let options = result.configOptions;
       try {
         const agent = typeof sessionId === "string" ? ctx.agents?.get?.(sessionId) : undefined;
         const latest = agent && latestModelIntent(agent.session);
         if (!latest || latest.kind !== "selection") return result;
         const want = latest.selection;
-        let options = result.configOptions;
         const have = selectionOf(options);
         if (!have || !sameRoute(have, want)) options = (await set(MODEL_OPTION, JSON.stringify([want.provider, want.model])))?.configOptions ?? options;
         if (want.reasoningEffort && selectionOf(options)?.reasoningEffort !== want.reasoningEffort)
@@ -169,7 +170,7 @@ export function createModelMemory(ctx, log = () => {}) {
         return { ...result, configOptions: options };
       } catch (error) {
         log(`dsh-ash-control: could not restore the model choice: ${String(error?.message ?? error).slice(0, 200)}`);
-        return result;
+        return { ...result, configOptions: options };
       }
     },
   };
