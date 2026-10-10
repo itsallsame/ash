@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
+import android.util.Log
 import android.graphics.Typeface
 import android.view.Gravity
 import android.webkit.MimeTypeMap
@@ -35,6 +36,7 @@ import ai.ash.host.HandRuntime
 import ai.ash.host.KernelGate
 import ai.ash.host.KernelLauncher
 import ai.ash.caps.config.Permissions
+import ai.ash.human.ChatBridge
 import ai.ash.link.Link
 import ai.ash.caps.camera.CaptureProvider
 import androidx.webkit.WebViewAssetLoader
@@ -63,9 +65,11 @@ class HomeActivity : Activity() {
     private val chat get() = Link.get(this).chat
     /** Frames from the page, one at a time and in order, off the main thread (checking a big one takes a moment). */
     private val bridgeWork = Executors.newSingleThreadExecutor { r -> Thread(r, "ash-chat-bridge").apply { isDaemon = true } }
-    private var pageCount = 0L
-    /** Which page load is live: 0 while no verified page of the app is loaded. A message from an older page is ignored. */
-    @Volatile private var pageEpoch = 0L
+    /** Which page load is live ([PageGate.epoch]): 0 while no verified page of the app is loaded. A message from an older page is ignored. */
+    private val gate = PageGate()
+    private val pageEpoch get() = gate.epoch
+    /** The page attached to the chat bridge by this screen, so that closing it does not drop the page of a newer screen. */
+    private var attachedPage: ChatBridge.Page? = null
     /** The web page's pending <input type=file> request; answered exactly once (null = cancelled). */
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private class SaveFile(val id: String, val name: String, val bytes: ByteArray, val epoch: Long, val reply: androidx.webkit.JavaScriptReplyProxy)
@@ -132,9 +136,11 @@ class HomeActivity : Activity() {
                 ai.ash.host.AppState.homePageLive = false
                 super.onPageStarted(view, url, favicon)
                 // The old page's syncs end with it; a message of it that is still on its way is dropped by the epoch.
-                chat.detach()
-                pageEpoch = if (url == UI_ASSET_URL) ++pageCount else 0L
-                if (pageEpoch == 0L) view.stopLoading()
+                // Its `hello` may already have been taken (the two events come from different queues): then this is the same page.
+                val started = gate.started(url == UI_ASSET_URL)
+                Log.i(CHAT_TAG, "page started: $started (page ${gate.epoch})")
+                if (started != PageGate.Started.SAME) { chat.detach(); attachedPage = null }
+                if (started == PageGate.Started.OFF) view.stopLoading()
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -145,15 +151,27 @@ class HomeActivity : Activity() {
         }
 
         WebViewCompat.addWebMessageListener(web, "AshNative", setOf(UI_ASSET_ORIGIN)) { _, message, origin, mainFrame, reply ->
-            if (!mainFrame || origin.toString() != UI_ASSET_ORIGIN || pageEpoch == 0L) return@addWebMessageListener
+            if (!mainFrame || origin.toString() != UI_ASSET_ORIGIN) return@addWebMessageListener
             val input = runCatching { JSONObject(message.data ?: "") }.getOrNull() ?: return@addWebMessageListener
+            // A `hello` may come before the WebView says the page started; everything else needs a live page.
+            if (input.optString("type") != "hello" && pageEpoch == 0L) return@addWebMessageListener
             val epoch = pageEpoch
             when (input.optString("type")) {
                 "hello" -> {
+                    val verdict = gate.hello(input.optString("doc"))
+                    Log.i(CHAT_TAG, "page hello: $verdict (page ${gate.epoch}, try ${input.optInt("try")})")
                     reply.postMessage(JSONObject().put("type", "ready").toString())
-                    // From here on the page is given the human channel's frames and the state of the link.
-                    chat.attach { text -> ui.post { if (pageEpoch == epoch) runCatching { reply.postMessage(text) } } }
+                    if (verdict != PageGate.Hello.AGAIN) {
+                        if (verdict == PageGate.Hello.REPLACE) { chat.detach(); attachedPage = null }
+                        // From here on the page is given the human channel's frames and the state of the link.
+                        val live = gate.epoch
+                        val sink = ChatBridge.Page { text -> ui.post { if (pageEpoch == live) runCatching { reply.postMessage(text) } } }
+                        attachedPage = sink
+                        chat.attach(sink)
+                    }
                 }
+                // The page asks what state the link is in (it is told at `hello`, but may have come late or missed it).
+                "link_state" -> chat.resendLink()
                 "frame" -> input.optJSONObject("frame")?.let { frame -> bridgeWork.execute { if (pageEpoch == epoch) chat.fromPage(frame) } }
                 "file_save" -> handleFileSave(input, reply)
                 "browser_logins" -> handleBrowserLogins(input, reply)
@@ -447,7 +465,7 @@ class HomeActivity : Activity() {
     override fun onDestroy() {
         ai.ash.host.AppState.homePageLive = false
         ui.removeCallbacksAndMessages(null)
-        chat.detach()
+        chat.detach(attachedPage)
         appsPane?.close()
         bridgeWork.shutdown()
         answerFiles(null)
@@ -462,6 +480,7 @@ class HomeActivity : Activity() {
         /** Open with the message box focused (the home-screen widget's "跟 Ash 说"). */
         const val EXTRA_FOCUS_INPUT = "ai.ash.extra.FOCUS_INPUT"
         private const val STATE_TAB = "ai.ash.state.TAB"
+        private const val CHAT_TAG = "ash.chat"
         private const val UI_ASSET_ORIGIN = "https://appassets.androidplatform.net"
         private const val UI_ASSET_URL = "$UI_ASSET_ORIGIN/assets/ash-ui/index.html"
         private const val REQ_FILES = 7101

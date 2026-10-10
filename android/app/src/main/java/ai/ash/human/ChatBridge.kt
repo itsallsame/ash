@@ -20,11 +20,19 @@ import java.util.concurrent.TimeoutException
  *    the protocol) is answered with an `error` frame carrying the frame's `id` (or its `sid`).
  *  - native to page `{type:"frame", frame}`: `send.result`, `sync.page`, `sync.msg`, `stream`, and the `chat` presents.
  *  - native to page `{type:"link", open, client?, local?}`: the human channel opened or closed. Its syncs end with it, so the
- *    page opens them again when it opens; the same message is sent when a page attaches.
+ *    page opens them again when it opens; the same message is sent when a page attaches, and again whenever the page asks
+ *    ([resendLink], its `{type:"link_state"}`): the bridge keeps the last state, so a page that came late, or missed it,
+ *    only has to ask.
  *
  * Nothing in a frame is looked at, except to find the `chat` presents and to end the page's syncs when the page goes.
  */
-class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val log: (String) -> Unit = {}) {
+class ChatBridge(
+    private val link: Uplink,
+    private val ui: ChatUi,
+    private val log: (String) -> Unit = {},
+    /** Progress lines for the `ash.chat` log: the page coming and going, the link state it was told, frame counts. */
+    private val trace: (String) -> Unit = {},
+) {
     /** The app's connection, human channel side. */
     interface Uplink {
         /** Sends one frame as it is; null when it was sent, otherwise why not. */
@@ -54,6 +62,8 @@ class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val l
     private val asked = ConcurrentHashMap<String, CompletableFuture<PresentOutcome>>()
     /** `chat` presents that came while no page was attached; the page gets them when it attaches. */
     private val waiting = ArrayList<JSONObject>()
+    private var toPageCount = 0L
+    private var fromPageCount = 0L
 
     // --- the page ---
 
@@ -66,15 +76,33 @@ class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val l
             queued = ArrayList(waiting)
             waiting.clear()
             message = linkMessage.toString()
+            toPageCount = 0; fromPageCount = 0
         }
+        trace("page attached; link state told: $message; ${queued.size} present(s) waited")
         page.post(message)
         queued.forEach { toPage(it) }
     }
 
-    /** The page is gone (it reloaded, or the screen closed): its syncs end, and the presents it never answered fail. */
-    fun detach() {
+    /** The page asks for the state of the link again (it came late, or doubts what it has): it is told the last one. False when no page is attached. */
+    fun resendLink(): Boolean {
+        val sink: Page?
+        val message: String
+        synchronized(lock) { sink = page; message = linkMessage.toString() }
+        trace("page asked for the link state; " + if (sink == null) "no page attached" else "told: $message")
+        sink?.post(message)
+        return sink != null
+    }
+
+    /**
+     * The page is gone (it reloaded, or the screen closed): its syncs end, and the presents it never answered fail. With [only],
+     * nothing happens unless that is the page attached now: a screen that is closing must not drop the page of the one that
+     * replaced it.
+     */
+    fun detach(only: Page? = null) {
         val open: List<String>
         synchronized(lock) {
+            if (only != null && page !== only) return
+            trace("page detached after $fromPageCount frame(s) from it and $toPageCount to it")
             page = null
             open = ArrayList(syncs)
             syncs.clear()
@@ -87,6 +115,8 @@ class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val l
     /** A frame from the page. */
     fun fromPage(frame: JSONObject) {
         val type = frame.optString("t")
+        val n = synchronized(lock) { ++fromPageCount }
+        if (n == 1L || n % 100 == 0L) trace("frames from the page: $n (latest: $type)")
         if (type == "present.result") {
             asked[frame.optString("id")]?.complete(outcomeOf(frame))
             return
@@ -121,6 +151,7 @@ class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val l
             // The kernel dropped these syncs with the connection.
             if (!open) syncs.clear()
         }
+        trace("human channel ${if (open) "opened as $client" else "closed"}; " + if (sink == null) "no page attached, kept for it" else "page told")
         sink?.post(message.toString())
     }
 
@@ -149,7 +180,10 @@ class ChatBridge(private val link: Uplink, private val ui: ChatUi, private val l
     }
 
     private fun toPage(frame: JSONObject) {
-        val sink = synchronized(lock) { page } ?: return
+        val sink: Page
+        val n: Long
+        synchronized(lock) { sink = page ?: return; n = ++toPageCount }
+        if (n == 1L || n % 100 == 0L) trace("frames to the page: $n (latest: ${frame.optString("t")})")
         sink.post(JSONObject().put("type", "frame").put("frame", frame).toString())
     }
 

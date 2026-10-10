@@ -2,16 +2,24 @@
 // messages with the native layer. `{type:"frame", frame}` carries the human channel's frames of ash-link/1 unchanged, both
 // ways; `{type:"link", open, client?, local?}` (native to page) says the channel opened or closed. The owner credential
 // never enters this page.
+//
+// Nothing here may depend on which side is ready first. The page says `hello` until it hears `ready` (the native layer may
+// not have noticed the page yet), and once it is running it asks for the state of the link (`link_state`) until it has been
+// told once; after that every change is pushed. The last state told is kept, so a listener that registers late is given it.
 (() => {
   const native = globalThis.AshNative;
   if (!native || location.origin !== "https://appassets.androidplatform.net") return;
+  const LINK_ASKS = 40;
+  const HELLO_TRIES = 40;
   const pending = new Map();
   let nextId = 0;
   let ready = false;
   let onFrame = null;
   let onLink = null;
   let lastLink = null;
+  const doc = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   const post = (value) => native.postMessage(JSON.stringify(value));
+  const later = (fn, ms) => globalThis.setTimeout?.(fn, ms);
 
   /** Saves bytes the page already holds ({name, mime?, b64}) through the system file picker. */
   globalThis.__ashFileSave = (file) => {
@@ -36,7 +44,24 @@
   const bridge = {
     post: (frame) => post({ type: "frame", frame }),
     onFrame(fn) { onFrame = fn; },
-    onLink(fn) { onLink = fn; if (lastLink) fn(lastLink); },
+    // A listener that registers after the state came is given it, but not from inside this call: the caller is still being built.
+    onLink(fn) { onLink = fn; if (lastLink) { const told = lastLink; Promise.resolve().then(() => { if (onLink === fn) fn(told); }); } },
+    /** Asks the native layer for the state of the link now; asks again until it has been told once. */
+    requestLink() { askGeneration++; askLink(0, askGeneration); },
+  };
+
+  let askGeneration = 0;
+  const askLink = (tries, generation) => {
+    if (generation !== askGeneration) return;
+    post({ type: "link_state", try: tries });
+    if (tries + 1 < LINK_ASKS) later(() => { if (!lastLink) askLink(tries + 1, generation); }, Math.min(2000, 300 * 2 ** tries));
+  };
+
+  // `hello` is said again until `ready` comes, in case the first one was lost or not placed yet.
+  const sayHello = (tries) => {
+    if (ready || tries >= HELLO_TRIES) return;
+    post({ type: "hello", doc, try: tries });
+    later(() => sayHello(tries + 1), Math.min(2000, 300 * 2 ** tries));
   };
 
   native.onmessage = (event) => {
@@ -54,5 +79,5 @@
     pending.delete(message.id);
     item.resolve(message);
   };
-  post({ type: "hello" });
+  sayHello(0);
 })();

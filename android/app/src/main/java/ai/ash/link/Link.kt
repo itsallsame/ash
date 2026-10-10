@@ -62,7 +62,7 @@ object Link {
         )
 
         /** The chat page's way to the human channel of this connection (SPEC-05 §4.1). */
-        val chat = ChatBridge(ChatBridge.LinkUplink { client }, HomeLauncher(ctx)) { Log.w(TAG, it) }
+        val chat = ChatBridge(ChatBridge.LinkUplink { client }, HomeLauncher(ctx), log = { Log.w(TAG, it) }, trace = { Log.i("ash.chat", it) })
         private val human = Surfaces.android(ctx, chat)
 
         val client: LinkClient = LinkClient(
