@@ -297,6 +297,9 @@ withFixture("signal: INT reaches a whole process group (the shell and what it st
   const pid = Number((await readFile(join(root, "pid"), "utf8")).trim());
   await ws.call("workspace.signal", { process: started.data.process as string, signal: "TERM" });
   await finish(ws, started);
+  // The inner shell got the signal, but it is gone only once it has been reaped: under load that takes a moment.
+  const gone = () => { try { process.kill(pid, 0); return false; } catch { return true; } };
+  for (let i = 0; i < 200 && !gone(); i++) await new Promise((r) => setTimeout(r, 25));
   assert.throws(() => process.kill(pid, 0), /ESRCH/);
 });
 
