@@ -188,7 +188,7 @@
 | `ui/initialize {protocolVersion: "2026-01-26", appInfo, appCapabilities}`（请求） | 第一件事。回答里 `hostContext` 有 `theme`、`locale`（`zh-CN`）、`timeZone`、`containerDimensions {width, height}`、`displayMode`、`platform` |
 | `ui/notifications/initialized`（通知） | 初始化完成后发一次 |
 | `tools/call {name, arguments}`（请求） | **只能调用本应用自己的工具**；以主人身份执行、记账；回答是工具的 `CallToolResult` |
-| `ui/message {role: "user", content: [{type: "text", text}]}`（请求） | 替主人给 Ash 发一句话，开头标明来自哪个应用；主人先确认 |
+| `ui/message {role: "user", content: [{type: "text", text}]}`（请求） | 替主人给 Ash 发一句话。**本版壳 App 还不支持**（§8），会回 `Method not found` |
 | `ui/open-link {url}`（请求） | 用浏览器打开 http(s) 链接；主人先确认 |
 | `ui/notifications/size-changed {width, height}`（通知） | 可选 |
 | `ping` | `{}` |
@@ -273,15 +273,20 @@
 - `owner_text`：**给主人看的一句中文**，页面上显示它而不是 `message`。例如手机没连上是「手机暂时没连上 Ash，稍后再试」，没批准是「安装时没有批准这一项，用不了」。
 - `recent`：设备暂时答不了、而 Ash 自己已经有记录时，附上最近的记录 `{as_of, source, …}`（`as_of` 是其中最新一条的时间，毫秒）。页面应显示这些值并注明时间，而不是留白。
 
-## 8. 壳 App 的接口（主人身份，Ash 已有的鉴权 HTTP 接口）
+## 8. 壳 App 的接口（主人身份，经 Ash 自己的桥）
 
-| 路由 | 返回 |
+壳 App 的页面跑在 `:app` 进程里，那里没有中枢的连接；它经一座 AIDL 桥（`IAppsBridge.call(to, word, bodyJson) → replyJson`）请 Ash 主进程，以主人身份在 Ash 唯一的那条连接上发词（`send {wait: true}`），把响应（`Reply`：`{ok, result: {data, content}} | {ok: false, error}`）原样带回。桥只放行：
+
+| 调用 | 作用 |
 |---|---|
-| `GET /api/apps` | `[{id, name, version, summary, icon: "/api/apps/<id>/icon", surfaces: [{id, title}], enabled, granted}]` |
-| `GET /api/apps/<id>/icon` | 图标文件 |
-| `GET /api/apps/<id>/surfaces/<surface>` | `{html, csp: {connectDomains: [], resourceDomains: []}}`（应用未运行时 503） |
-| `POST /api/apps/<id>/call` `{tool, arguments}` | MCP `CallToolResult`（以主人身份调用，记账） |
-| `POST /api/apps/<id>/message` `{text}` | 以主人身份给主 agent 发一条带应用名前缀的消息，返回 `{id, seq}` |
+| `service:apps/apps.list {}` | `{apps: [{id, name, version, summary, surfaces: [{id, title, resource}], enabled, granted, …}]}` |
+| `service:apps/apps.icon {id}` | `{id, mime, data}`（`data` 是 base64） |
+| `service:apps/apps.surface {id, surface}` | `{id, surface, mime, html, csp: {connectDomains, resourceDomains}}`（应用未运行时 `offline`）。页面的网络规则就用这里的 `csp` |
+| `app:<当前页面的应用 id>/<工具>` | 页面的 `tools/call`：以主人身份调用本应用自己的工具，记账 |
+
+别的成员、别的应用、`service:apps` 的其他词一律被拒（`forbidden`）。页面拿到的工具结果是 MCP 信封：成功 `{content, structuredContent: data}`（`content` 取 `result.content`，没有就是 `data` 的 JSON 文本）；失败 `{isError: true, content: [{type: "text", text: 给主人看的原因}], structuredContent: {error}}`。
+
+本版壳 App 还不支持 `ui/message`（`app.tell`）：桥里没有让页面对 agent 说话的词，页面发它会得到 `Method not found`。
 
 ## 9. 最小例子 hello（一个页面，一个工具）
 

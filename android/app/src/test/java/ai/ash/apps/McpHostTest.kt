@@ -10,14 +10,12 @@ import org.junit.Test
 class McpHostTest {
     private class FakeBackend : AppsBackend {
         val calls = mutableListOf<Triple<String, String, JSONObject>>()
-        val messages = mutableListOf<Pair<String, String>>()
         var fail: String? = null
         override fun callTool(app: String, tool: String, arguments: JSONObject): JSONObject {
             fail?.let { throw AppsError(it) }
             calls += Triple(app, tool, arguments)
             return JSONObject().put("content", JSONArray().put(JSONObject().put("type", "text").put("text", "ok")))
         }
-        override fun sendMessage(app: String, text: String) { messages += app to text }
     }
 
     private class FakeUi(var allow: Boolean = true) : HostUi {
@@ -25,7 +23,6 @@ class McpHostTest {
         val opened = mutableListOf<String>()
         var size: Pair<Int?, Int?>? = null
         override fun confirmLink(url: String, answer: (Boolean) -> Unit) { asked += url; answer(allow) }
-        override fun confirmMessage(text: String, answer: (Boolean) -> Unit) { asked += text; answer(allow) }
         override fun openLink(url: String) { opened += url }
         override fun sizeChanged(width: Int?, height: Int?) { size = width to height }
     }
@@ -108,16 +105,21 @@ class McpHostTest {
         assertEquals(1, ui.opened.size)
     }
 
-    @Test fun messageAcceptsBlockOrListAndGoesToThisApp() {
+    @Test fun messageToTheAgentIsNotSupported() {
         req(10, "ui/message", JSONObject().put("role", "user").put("content", JSONObject().put("type", "text").put("text", "记一下体重")))
-        req(11, "ui/message", JSONObject().put("role", "user").put("content", JSONArray().put(JSONObject().put("type", "text").put("text", "a")).put(JSONObject().put("type", "text").put("text", "b"))))
-        assertEquals(listOf("health" to "记一下体重", "health" to "a\nb"), backend.messages)
-        req(12, "ui/message", JSONObject().put("content", JSONObject().put("type", "image")))
-        assertEquals(McpHost.INVALID_PARAMS, last().getJSONObject("error").getInt("code"))
-        ui.allow = false
-        req(13, "ui/message", JSONObject().put("content", JSONObject().put("type", "text").put("text", "x")))
-        assertEquals("Message sending denied", last().getJSONObject("error").getString("message"))
-        assertEquals(2, backend.messages.size)
+        assertEquals(McpHost.METHOD_NOT_FOUND, last().getJSONObject("error").getInt("code"))
+        assertTrue(ui.asked.isEmpty())
+    }
+
+    @Test fun toolResultsPassThroughAsTheBackendMadeThem() {
+        val failed = Replies.toolResult(Replies.error("forbidden", "needs the owner's approval"))
+        val h = McpHost("health", "健康", "1", Csp(emptyList(), emptyList()),
+            object : AppsBackend { override fun callTool(app: String, tool: String, arguments: JSONObject) = failed }, ui,
+            { JSONObject() }, { out += JSONObject(it) }, { it.run() })
+        h.handle(JSONObject().put("jsonrpc", "2.0").put("id", 20).put("method", "tools/call").put("params", JSONObject().put("name", "health.log")).toString())
+        val r = last().getJSONObject("result")
+        assertTrue(r.getBoolean("isError"))
+        assertEquals("forbidden", r.getJSONObject("structuredContent").getJSONObject("error").getString("code"))
     }
 
     @Test fun unknownMethodsAndBadMessagesGetErrorShapes() {

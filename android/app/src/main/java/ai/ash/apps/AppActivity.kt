@@ -53,6 +53,7 @@ class AppActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newCachedThreadPool { Thread(it, "app-call") }
     private lateinit var appId: String
+    private lateinit var ash: Ash
     private var info: AppInfo? = null
     private var icon: Bitmap? = null
     private lateinit var root: LinearLayout
@@ -79,6 +80,7 @@ class AppActivity : Activity() {
         val id = AppIds.fromLink(intent?.dataString)
         if (id == null) { finish(); return }
         appId = id
+        ash = Ash(this, id)
         surface = intent?.getStringExtra(Ui.EXTRA_SURFACE)?.takeIf { AppIds.validSurface(it) }
         build()
         Ui.taskCard(this, appId, null)
@@ -108,6 +110,7 @@ class AppActivity : Activity() {
     override fun onDestroy() {
         drop()
         worker.shutdown()
+        if (::ash.isInitialized) ash.close()
         super.onDestroy()
     }
 
@@ -186,8 +189,8 @@ class AppActivity : Activity() {
     private fun load() {
         say("正在打开…")
         Thread({
-            val result = runCatching { Ash.apps(this).firstOrNull { it.id == appId } }
-            val bitmap = if (icon == null && result.getOrNull() != null) Ash.icon(this, appId) else icon
+            val result = runCatching { ash.apps().firstOrNull { it.id == appId } }
+            val bitmap = if (icon == null && result.getOrNull() != null) ash.icon(appId) else icon
             main.post {
                 if (isDestroyed) return@post
                 val error = result.exceptionOrNull()
@@ -227,10 +230,10 @@ class AppActivity : Activity() {
     private fun open(surfaceId: String) {
         say("正在打开…")
         Thread({
-            val result = runCatching { Ash.surface(this, appId, surfaceId) }
+            val result = runCatching { ash.surface(appId, surfaceId) }
             main.post {
                 if (isDestroyed || surface != surfaceId) return@post
-                result.onSuccess { (html, csp) -> show(html, csp) }
+                result.onSuccess { show(it.html, it.csp) }
                     .onFailure { say(it.message ?: "打不开这一页", "重新加载") { load() } }
             }
         }, "app-surface").start()
@@ -244,7 +247,7 @@ class AppActivity : Activity() {
         val web = WebView(this)
         val token = randomToken()
         lateinit var p: Page
-        val host = McpHost(appId, info?.name ?: appId, BuildConfig.VERSION_NAME, csp, Ash.backend(applicationContext), hostUi(),
+        val host = McpHost(appId, info?.name ?: appId, BuildConfig.VERSION_NAME, csp, ash.backend(), hostUi(),
             context = { hostContext(web) },
             send = { text -> main.post { if (page === p) runCatching { p.port?.postMessage(WebMessage(text)) } } },
             worker = worker)
@@ -333,9 +336,6 @@ class AppActivity : Activity() {
     private fun hostUi() = object : HostUi {
         override fun confirmLink(url: String, answer: (Boolean) -> Unit) {
             main.post { ask("「${info?.name ?: appId}」想打开链接", url, "打开", answer) }
-        }
-        override fun confirmMessage(text: String, answer: (Boolean) -> Unit) {
-            main.post { ask("「${info?.name ?: appId}」想替你发给 Ash", text, "发送", answer) }
         }
         override fun openLink(url: String) {
             main.post {
