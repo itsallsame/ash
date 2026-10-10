@@ -87,6 +87,8 @@ const EVENT_QUEUE_MAX = 200;
 const ON_EVENT_TIMEOUT_MS = 10_000;
 const LOG_LINES = 400, LOG_LINE_CHARS = 1000;
 const MIME: Record<string, string> = { ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp" };
+/** What an app with no icon (or whose icon file is gone) shows: a 96x96 PNG of four rounded tiles, so every channel can draw it as it would any icon. */
+export const DEFAULT_APP_ICON = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAAC+0lEQVR42u3d605aURQE4PWYbe1NrVprvQByR0Dr3T6OCAiIgIDv0oeYpqbRmGpzlmfvs9xhdvL9nmTmHyRniTh4bzZuMYvE8s1q6eZjvN28BT3PY/FTUHROy3+3OQXpxS9+awqK70Xlz21NQe6w/JBGmEtNQO5FKv99agLyh+W/5hE+pCYg/54uPz0BJeeJAcag5Dwq/2N6DErewwCZMSh59wN8yoxByftb/g3IjnzevgHZ4QAcYMYHmM/egOzIfHYEsiML2RHIjizkRkgKgF8aoedGIa+xeFeFWOWqBljMjeBb3CJCy9WQxdwQPsUt4aGMMHK15Et+CJ9cFRFKrhYHsB5gKT+ET66KCCVXS5YKQ/jkrIhAcrVkqTCAT+6KCCNXS5YLA/jkqohQcrVkuTiAT86KCCRXS1aKA/jkqohQcrU4gPkApWv45KyIQHK15GvpGj65KiKUXC3vA7goI7Rc1QCr5Wv4FreI0HI1ZLXcR1L0BYSdG4V8K/dBdjiA+QCVPsiOrFX6IDuyVrkC2ZHvO1cgOxyAA8z4AOvVK5AdWa/2QHZko9oD2ZGNWg9kRzZrPSRF+6NY6LlRyGss3lUhVrm6Aepd+Ba7iMByNWSr3oVPrv4aDCVXiwNYD5Cqd+GTqyJCydWS1G4XPjkrIpBcLUntduCTuyLCyNWS9G4HPrkqIpRcLUnvdeCTsyICydWSzF4HPrkqIpRcLcnsXcInd0WEkasl2z8u4ZOrIkLJ1eIAHGDGB8juX8K3uCWElqsh2f02fItfRFi5GpLbbyMp2gJCz41CcgdtkB0OYD1A/qANsiP5gxbIjhQOWyA7HMB6gOJhC2Tn7gvqxaMWKHn39wOKR01Q8u4HKB01Qcl7dEemdNwEJeefK0rl4yYoOU/eEmMxhuXfDXByAfLvv/ckKycXIH8iXVRlUYbl/3k7pxcg91RXtXdOGyB3XnRXvnraAMUncR9LNCr+0QhnDVB04uvVzhqg50lSr3Z2Dnoglq/+8xyzyEV3vwHXORmi6Fr8HwAAAABJRU5ErkJggg==" };
 const ID = new RegExp(APP_NAME_PATTERN);
 const clean = (value: unknown, max: number) => String(value ?? "").replace(/[\p{C}\s]+/gu, " ").trim().slice(0, max);
 const fail = (code: ConstructorParameters<typeof WordError>[0], message: string, extra?: { detail?: unknown; recovery_hint?: string }) => new WordError(code, message, extra);
@@ -700,9 +702,9 @@ export class AppRuntime {
   icon(id: string): { mime: string; data: string } {
     const manifest = this.manifest(id);
     if (!manifest) throw fail("not_found", `no app ${id}`);
-    if (!manifest.icon) throw fail("not_found", `${id} has no icon`);
+    if (!manifest.icon) return { ...DEFAULT_APP_ICON };
     const file = join(this.dir(id)!, manifest.icon);
-    try { return { mime: MIME[extname(file).toLowerCase()] ?? "application/octet-stream", data: readFileSync(file).toString("base64") }; } catch { throw fail("not_found", `${id}'s icon file is missing`); }
+    try { return { mime: MIME[extname(file).toLowerCase()] ?? "application/octet-stream", data: readFileSync(file).toString("base64") }; } catch { return { ...DEFAULT_APP_ICON }; }
   }
 
   /** Read a surface (a ui:// resource) of a running app. */

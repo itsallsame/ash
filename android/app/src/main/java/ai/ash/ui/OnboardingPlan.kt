@@ -1,5 +1,6 @@
 package ai.ash.ui
 
+import ai.ash.caps.config.KernelAutostart
 import ai.ash.host.KernelState
 
 /** The five steps of the first-launch guide (SPEC-05 §9). */
@@ -59,4 +60,21 @@ object OnboardingPlan {
     /** The first step that is not over and not skipped; [OnboardingStep.DONE] when none is left. */
     fun current(kernel: KernelState, rows: List<Row>, skipped: Set<OnboardingStep>): OnboardingStep =
         OnboardingStep.entries.first { it == OnboardingStep.DONE || (it !in skipped && !complete(it, kernel, rows)) }
+
+    /** How long the kernel may take to come up after the system's own question before the guide offers to ask again (ms). */
+    const val KERNEL_WAIT_MS = 30_000L
+
+    /**
+     * Step 1 on MIUI and ColorOS: the system asks 「Ash 想要打开 Ash 内核，是否允许？」 the first time the kernel starts, and the
+     * kernel does not start on a 「拒绝」. Said before the owner meets the question; null on a phone that does not ask.
+     */
+    fun kernelPrompt(rom: KernelAutostart.Rom?): String? =
+        if (rom == null) null else "系统会问是否允许打开 Ash 内核，请选「始终允许」。"
+
+    /** The label of the retry button for the owner who refused the question (shown by [showRefusedRetry]). */
+    fun kernelRetryHint(rom: KernelAutostart.Rom?): String? =
+        if (rom == null) null else "如果刚才选了拒绝，点这里重试"
+
+    /** Whether the retry button for a refused question shows: on a phone that asks, once the kernel has not come up for [KERNEL_WAIT_MS]. */
+    fun showRefusedRetry(rom: KernelAutostart.Rom?, waitedMs: Long): Boolean = rom != null && waitedMs >= KERNEL_WAIT_MS
 }

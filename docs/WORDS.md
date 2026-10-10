@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `aceae00e6b85a518`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `e93132eaab2a76b0`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -189,7 +189,7 @@
 | `apps.scaffold` | owner, agent, app | write / none | - | id*, name*, summary, role, surfaces, tools | 在写应用骨架 | Write a new app's skeleton into /root/apps/<id>/ (app.json, a dependency-free server.mjs, one ui/<page>.html per surface, shared ui/app.css and ui/app.js, an empty data/ folder). It runs as it is: a small working list in data/data.json with tools <id>.list, <id>.add, <id>.done (mark done/undone), <id>.remove, and a first page with the list and done/undone toggles. Change them to what the app is about; tools you name besides those answer with a placeholder until you write them in server.mjs. role (default: summary) says what the app is for and when to use it; you and Ash see it in every conversation. surfaces default to one page home: give the app tools that read and change its data, so you can do through them everything the owner does on its pages. Refuses a folder that already has an app.json. No approval is needed: it only writes files. Then edit, apps.validate, and apps.install (the owner approves what it needs). |
 | `apps.validate` | owner, agent, app | read / none | - | id, path | 在检查应用 | Check an app folder the way install will: app.json against the contract (each missing or wrong field by its path), the icon file, then a trial start of its server (it must start and speak MCP over stdio), its tools (names, input schemas) and every page (each surface's ui:// resource must be served as HTML). Give id (the folder /root/apps/<id>) or path (/root/apps/<folder>). ok is true when nothing would stop it from installing and opening; warnings are worth fixing but do not block. Nothing is installed or changed. |
 | `apps.surface` | owner, agent, app | read / none | - | id*, surface* | 在取应用页面 | The page resource of one of an app's surfaces (the ui:// resource its app.json lists), for a channel to show; csp lists the domains the page declared it may connect to and load from. Pages talk to the app through the bridge, not through this word. |
-| `apps.icon` | owner, agent, app | read / none | - | id* | 在取应用图标 | The icon file of an app (base64 in data), for a channel to show in its list of apps. |
+| `apps.icon` | owner, agent, app | read / none | - | id* | 在取应用图标 | The icon file of an app (base64 in data), for a channel to show in its list of apps. An app with no icon, or whose icon file is gone, gets Ash's default PNG icon instead of an error. |
 
 ## `service:clock`
 

@@ -294,6 +294,44 @@ test("usage: every ten minutes the runtime's records go to service:cost; the cur
   assert.equal(g.agents.manager.run(M).spec.usage_since, 100);
 });
 
+test("usage: a turn that ends gets its agent's usage pulled a few seconds later; turns inside the wait share one pull", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  f.router.on("service:cost/usage.recorded", () => ({ ok: true }));
+  d.usageRecords = [{ at: 5, done: 100, provider: "deepseek-official", model: "deepseek-flash", input: 10, output: 20, ok: true }];
+  const fired = new Set<unknown>();
+  const usageTimers = () => f.timers.afters.filter((a) => a.ms === 5000 && !a.cancelled && !fired.has(a));
+  const fire = () => { const a = usageTimers()[0]!; fired.add(a); a.fn(); };
+  await f.call(M, "say", { text: "one" });
+  await waitFor(() => d.of("send").length === 1);
+  d.finish(M, "front");
+  await settle();
+  assert.equal(usageTimers().length, 1);
+  assert.equal(d.of("usage").length, 0); // not at once: it waits for the debounce
+  // more turns end before the timer fires: still the one pull
+  await f.call(M, "say", { text: "two" });
+  await waitFor(() => d.of("send").length === 2);
+  d.finish(M, "front");
+  await settle();
+  assert.equal(usageTimers().length, 1);
+  fire();
+  await waitFor(() => f.router.to("service:cost", "usage.recorded").length === 1);
+  assert.deepEqual(d.of("usage").map((c) => c[2]), [0]);
+  assert.equal(f.agents.manager.run(M).spec.usage_since, 100);
+  // the next turn arms a new wait
+  d.usageRecords = [];
+  await f.call(M, "say", { text: "three" });
+  await waitFor(() => d.of("send").length === 3);
+  d.finish(M, "front");
+  await settle();
+  assert.equal(usageTimers().length, 1);
+  fire();
+  await waitFor(() => d.of("usage").length === 2);
+  assert.deepEqual(d.of("usage").map((c) => c[2]), [0, 100]);
+  assert.equal(f.timers.everies[0]!.ms, 600_000); // the ten-minute timer stays as the fallback
+});
+
 test("removing an agent stops it, takes it out of the registry and clears its inbox", async () => {
   const f = fixture();
   await f.start();

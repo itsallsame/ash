@@ -65,6 +65,8 @@ const proxyKey = (network: HostNetwork | null | undefined): string => JSON.strin
 
 export const DEFAULT_CREDENTIAL_REFS = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 export const USAGE_POLL_MS = 10 * 60_000;
+/** After a turn ends the agent's usage is pulled once this much later; turns that end inside the wait share the one pull (ms). */
+export const USAGE_DEBOUNCE_MS = 5000;
 /** How long a worker may take when `spawn` names no limit (seconds). */
 export const SPAWN_TIMEOUT_S = 600;
 /** How long after the last `typing` the owner is taken to be still typing (ms). */
@@ -121,6 +123,10 @@ export class AgentManager {
   private paused = false;
   private proxy: string;
   private readonly stoppers: (() => void)[] = [];
+  /** Agents whose usage pull after a turn is waiting on the debounce, with the way to cancel it. */
+  private readonly usageDue = new Map<string, () => void>();
+  /** Pulls run one after another: two at once would send the same records twice. */
+  private usageQueue: Promise<unknown> = Promise.resolve();
   private readonly timers: Timers;
   readonly now: () => number;
   private readonly log: (...args: unknown[]) => void;
@@ -152,6 +158,8 @@ export class AgentManager {
 
   async stopAll(): Promise<void> {
     for (const stop of this.stoppers.splice(0)) stop();
+    for (const stop of this.usageDue.values()) stop();
+    this.usageDue.clear();
     await Promise.allSettled([...this.live.keys()].map((id) => this.stopAgent(id, "hub stopping")));
   }
 
@@ -597,6 +605,7 @@ export class AgentManager {
       else waiter.reject(new WordError(ev.outcome === "cancelled" ? "cancelled" : "failed", ev.error ?? `the turn ended: ${ev.outcome}`));
     }
     if (failed) this.failureNotice(live.id, ev.turn, ev.error);
+    this.usageSoon(live.id);
     this.emit(live.id, "turn.ended", { turn: ev.turn, lane: ev.key, outcome: ev.outcome, ...(ev.error ? { error: ev.error } : {}) }, ev.turn);
     if (lane.screenPlanned) { lane.screenPlanned = false; this.bg(this.screenReconcile(live, ev), "screen reconcile"); }
     // A turn that another lane's `on` started does not start further lanes: that would loop.
@@ -732,9 +741,22 @@ export class AgentManager {
     }
   }
 
-  /** Every ten minutes: what the runtimes recorded since last time goes to `service:cost`. If it is not there the records are dropped. */
-  async pollUsage(): Promise<void> {
+  /** After a turn: pull this agent's usage in a few seconds, so the day's count is current without waiting for the ten-minute timer. */
+  private usageSoon(id: string): void {
+    if (this.usageDue.has(id)) return;
+    this.usageDue.set(id, this.timers.after(USAGE_DEBOUNCE_MS, () => { this.usageDue.delete(id); this.bg(this.pollUsage(id), "usage poll"); }));
+  }
+
+  /** What the runtimes recorded since last time goes to `service:cost` (every ten minutes for all, and soon after a turn for the one that ran). If it is not there the records are dropped. */
+  pollUsage(only?: string): Promise<void> {
+    const run = this.usageQueue.then(() => this.pullUsage(only));
+    this.usageQueue = run.catch(() => {});
+    return run;
+  }
+
+  private async pullUsage(only?: string): Promise<void> {
     for (const live of [...this.live.values()]) {
+      if (only && live.id !== only) continue;
       if (live.state !== "running" || !live.driver.usage) continue;
       const since = this.run(live.id).spec.usage_since;
       let usage;
@@ -751,7 +773,7 @@ export class AgentManager {
       }
       this.runs.patch(live.id, (spec) => { spec.usage_since = cursor; });
     }
-    for (const live of this.live.values()) for (const lane of live.lanes.values()) this.bg(this.drain(live, lane), "drain");
+    if (!only) for (const live of this.live.values()) for (const lane of live.lanes.values()) this.bg(this.drain(live, lane), "drain");
   }
 
   // ----------------------------------------------------------------------------------------------------------------

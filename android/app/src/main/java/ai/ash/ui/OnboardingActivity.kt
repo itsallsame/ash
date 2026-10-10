@@ -7,6 +7,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -22,6 +23,7 @@ import ai.ash.apps.Ui
 import ai.ash.caps.Capabilities
 import ai.ash.caps.config.ConfigStatus
 import ai.ash.caps.config.KeepAliveStatus
+import ai.ash.caps.config.KernelAutostart
 import ai.ash.caps.config.Permission
 import ai.ash.caps.config.Permissions
 import ai.ash.caps.config.ScreenRecovery
@@ -51,6 +53,8 @@ class OnboardingActivity : Activity() {
     private val tick = Runnable { reload() }
     private var startsTried = 0
     private var lastStart = 0L
+    /** When the kernel step first saw the kernel installed but not running (0: it is running, or not yet seen). */
+    private var waitingSince = 0L
     /** While the kernel package downloads or waits for the owner's confirmation: what to say. */
     @Volatile private var installing: String? = null
     @Volatile private var installError: String? = null
@@ -152,10 +156,11 @@ class OnboardingActivity : Activity() {
 
     /** On the kernel step, an installed kernel that does not run is started, a few times, a while apart. */
     private fun keepKernelUp(kernel: KernelState) {
-        if (kernel != KernelState.NOT_RUNNING) { startsTried = 0; return }
+        if (kernel != KernelState.NOT_RUNNING) { startsTried = 0; waitingSince = 0; return }
         val l = loaded ?: return
         if (plan(Loaded(kernel, l.items)) != OnboardingStep.KERNEL) return
         val now = SystemClock.elapsedRealtime()
+        if (waitingSince == 0L) waitingSince = now
         if (KernelGate.action(kernel, startsTried) == KernelGate.Action.START && now - lastStart > START_GAP_MS) {
             KernelLauncher.start(this)
             startsTried++; lastStart = now
@@ -205,10 +210,15 @@ class OnboardingActivity : Activity() {
             }
             else -> {
                 val gave = KernelGate.action(state, startsTried) == KernelGate.Action.WAIT
-                body.text = if (gave) "内核未运行。已经试着启动 $startsTried 次，还是没有起来。" else "内核未运行，正在启动…"
-                primary.visibility = if (gave) View.VISIBLE else View.GONE
-                primary.text = "再试一次"
-                primary.setOnClickListener { startsTried = 0; lastStart = 0; keepKernelUp(KernelState.NOT_RUNNING); render() }
+                val rom = KernelAutostart.rom(Build.MANUFACTURER)
+                val waited = if (waitingSince == 0L) 0L else SystemClock.elapsedRealtime() - waitingSince
+                val refused = state == KernelState.NOT_RUNNING && OnboardingPlan.showRefusedRetry(rom, waited)
+                val lines = mutableListOf(if (gave) "内核未运行。已经试着启动 $startsTried 次，还是没有起来。" else "内核未运行，正在启动…")
+                if (state == KernelState.NOT_RUNNING) OnboardingPlan.kernelPrompt(rom)?.let { lines += it }
+                body.text = lines.joinToString("\n\n")
+                primary.visibility = if (gave || refused) View.VISIBLE else View.GONE
+                primary.text = if (refused) OnboardingPlan.kernelRetryHint(rom) else "再试一次"
+                primary.setOnClickListener { startsTried = 0; lastStart = 0; waitingSince = SystemClock.elapsedRealtime(); keepKernelUp(KernelState.NOT_RUNNING); render() }
             }
         }
     }
