@@ -58,7 +58,8 @@ object Ui {
                 edges(insets.getInsets(WindowInsetsCompat.Type.ime())),
             )
             v.setPadding(e.left, e.top, e.right, e.bottom)
-            insets
+            // Made room for here: a WebView inside must not add the same bars again through its page's safe-area insets.
+            WindowInsetsCompat.CONSUMED
         }
         ViewCompat.requestApplyInsets(root)
     }
