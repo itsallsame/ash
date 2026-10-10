@@ -54,7 +54,7 @@ test("S032, S039, S033: an outward action waits for the owner; once approved the
   assert.equal(message.word, "tell", "the answer reaches the asker as agent:<x>/tell");
   assert.equal(delivery.agent, MAIN, "and only the agent that asked");
   assert.equal(message.lane, "back", "on the back lane, not into the owner's conversation");
-  assert.ok(JSON.stringify(message.body).includes(flow.pendingId), "naming the pending request");
+  assert.ok(message.text.includes(flow.pendingId), "naming the pending request");
   await eventually(() => flow.again, "the redeem results");
   assert.equal(flow.redeemed!.isError, false);
   assert.equal(phone.calls.length, 1, "the hand ran it once");
@@ -75,7 +75,7 @@ test("S032: the owner says no: the asker is told, redeeming does nothing", async
 
   const refusal = await s.driver.delivery(fromGate, "the background message about the refusal");
   assert.equal(refusal.delivery.agent, MAIN);
-  assert.ok(JSON.stringify(refusal.message.body).includes(flow.pendingId));
+  assert.ok(refusal.message.text.includes(flow.pendingId));
   await eventually(() => flow.again, "the redeem results");
   assert.equal(flow.redeemed!.isError, true);
   assert.equal(phone.calls.length, 0);

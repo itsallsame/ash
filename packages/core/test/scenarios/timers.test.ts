@@ -31,7 +31,7 @@ test("S083, agent 9: an agent sets a timer that wakes it later; the wake comes o
 
   const { message } = await s.driver.delivery((m) => m.word === "wake", "the timer waking the agent");
   assert.equal(message.lane, "back");
-  assert.equal(bodyOf(message).reason, "timer");
+  assert.ok(message.text.startsWith("Wake · timer"));
   const turn = await s.driver.turn((r) => r.key === "back" && r.messages.some((m) => m.word === "wake"), "a back-lane turn for the wake");
   assert.equal(turn.agent, MAIN);
 });
@@ -72,7 +72,7 @@ test("S084, 设备: a timer far away asks the host to wake the device then; when
   s.hostEvent({ event: "wake.fired", at: s.clock.t });
 
   const { message } = await s.driver.delivery((m) => m.word === "wake", "the timer firing after the host's alarm");
-  assert.equal(bodyOf(message).reason, "timer");
+  assert.ok(message.text.startsWith("Wake · timer"));
 });
 
 test("timer ids: setting returns an id and the next fire time (SPEC-02 §4.1)", async (t) => {

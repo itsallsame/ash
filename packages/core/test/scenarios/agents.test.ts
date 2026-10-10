@@ -98,7 +98,7 @@ test("SPEC-08 §5.8: the front and back lanes of one agent run at the same time"
   const told = await owner.call("service:agents", "tell", { agent: MAIN, text: "后台有事" });
   assert.ok(told.ok);
 
-  const back = await s.driver.turn((r) => r.key === "back" && r.messages.some((m) => textOf(m) === "后台有事" || JSON.stringify(m.body).includes("后台有事")), "a back-lane turn");
+  const back = await s.driver.turn((r) => r.key === "back" && r.messages.some((m) => m.text.includes("后台有事")), "a back-lane turn");
   assert.equal(front.outcome, "running", "the front turn is still running");
   await back.done;
   assert.equal(back.outcome, "completed");
@@ -119,7 +119,7 @@ test("S170, S171, SPEC-00 §6.5: the hub restarts in the middle of a turn: the b
 
   await s.restart();
 
-  const { message } = await s.driver.delivery((m) => m.lane === "back" && /中断|interrupt/i.test(JSON.stringify(m.body)), "the note that the last turn was interrupted");
+  const { message } = await s.driver.delivery((m) => m.lane === "back" && /中断|interrupt/i.test(m.text), "the note that the last turn was interrupted");
   assert.notEqual(message.from, OWNER);
   assert.equal(s.driver.deliveries.slice(before).filter((d) => d.messages.some(ownerMessage("做一件慢事"))).length, 0, "the owner's message was not given again");
   assert.equal(hand.calls.length, 1, "the call in flight was not replayed");
@@ -147,12 +147,12 @@ test("S028 (first_meeting): the first time the owner connects, the primary agent
   const s = await startScenario(t);
   await s.human();
 
-  const { message } = await s.driver.delivery((m) => m.word === "wake" && bodyOf(m).reason === "first_meeting", "the first-meeting wake");
+  const { message } = await s.driver.delivery((m) => m.word === "wake" && m.text.startsWith("Wake · first_meeting"), "the first-meeting wake");
   assert.equal(message.lane, "back");
 
   await s.human({ name: "another channel of the owner" });
   await quiet();
-  const wakes = s.driver.messages().filter((m) => m.word === "wake" && bodyOf(m).reason === "first_meeting");
+  const wakes = s.driver.messages().filter((m) => m.word === "wake" && m.text.startsWith("Wake · first_meeting"));
   assert.equal(wakes.length, 1);
 });
 

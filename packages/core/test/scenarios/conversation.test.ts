@@ -42,7 +42,7 @@ test("S002, S003: a message that comes while the agent is busy waits for the nex
   const hold = deferred();
   s.driver.script(async (turn) => {
     if (turn.messages.some(ownerMessage("第一件事"))) await turn.until(hold.promise);
-    turn.say(`做完了：${turn.messages.map(textOf).join(" / ")}`);
+    turn.say(`做完了：${turn.messages.map((m) => m.text).join(" / ")}`);
   });
   const owner = await s.human();
 
@@ -110,8 +110,8 @@ test("S016: an option card the agent shows; the owner's pick reaches the agent a
   const card = await owner.seen(toOwner("show", MAIN), "the option card");
   accepted(await owner.say("", { inReplyTo: card.id, optionId: "b" }));
 
-  const { message } = await s.driver.delivery((m) => bodyOf(m).option_id === "b", "the pick reaching the agent");
-  assert.equal(bodyOf(message).in_reply_to, card.id);
+  const { message } = await s.driver.delivery((m) => m.text.startsWith(`[answers ${card.id}, option b]`), "the pick reaching the agent");
+  assert.ok(message.text.includes(card.id), "the reply names the card it answers");
   assert.equal(message.from, OWNER);
 });
 

@@ -146,6 +146,8 @@
 * service:host/wake.clear  kernel
 * service:host/power.hold  kernel
 * service:host/power.release  kernel
+* service:host/wake.fired  kernel  event-out
+* service:host/env.changed  kernel  event-out
 * service:host/hands.handoff  kernel
 * service:host/update.install  owner
 * app:*/ash.on_event  kernel
@@ -162,9 +164,10 @@
 * person:owner/typing  kernel  event-out
 * person:owner/widget.rendered  kernel  event-out
 * service:agents/usage.recorded  kernel  event-out
+* service:llm/usage.recorded  kernel  event-out
 * service:widgets/widget.action  kernel  event-out
 * person:owner/widget.preview  kernel
-* person:owner/widget.state  kernel  event-out
+* service:widgets/widget.state  kernel  event-out
 * service:widgets/widget.problem  kernel  event-out
   service:pulse/pulse.get  owner,agent,app
   service:pulse/pulse.set  owner,agent,app
