@@ -7,7 +7,7 @@ import android.net.Uri
 import ai.ash.apps.OpenActivity
 import ai.ash.ui.HomeActivity
 
-/** Where a card's open actions go: an app's page in 「Ash 应用」 (the apps shell), Ash itself, or a link. */
+/** Where a card's open actions go: an app's page (its own task), Ash itself, or a link. */
 object WidgetActions {
     fun openIntent(ctx: Context, target: CAction): Intent = when (target) {
         is CAction.OpenApp ->

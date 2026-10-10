@@ -169,7 +169,7 @@ class AppActivity : Activity() {
             when (it.itemId) {
                 1 -> Pin.request(this, appId, info?.name ?: appId, icon)
                 2 -> load()
-                3 -> startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                3 -> Ash.openApps(this)
             }
             true
         }
@@ -196,7 +196,7 @@ class AppActivity : Activity() {
                 val error = result.exceptionOrNull()
                 if (error != null) return@post say(error.message ?: "连不上 Ash", "打开 Ash") { Ash.open(this) }
                 val a = result.getOrNull() ?: return@post say("Ash 里没有这个应用（$appId）", "全部应用") {
-                    startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    Ash.openApps(this)
                 }
                 info = a
                 icon = bitmap

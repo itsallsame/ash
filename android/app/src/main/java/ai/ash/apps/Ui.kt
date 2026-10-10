@@ -48,9 +48,10 @@ object Ui {
      * Drawn edge to edge (targetSdk 35, where `adjustResize` no longer makes room by itself): [root] keeps clear of the
      * system bars, the cutout and the keyboard by padding itself, so what it holds shrinks with the keyboard and a field
      * at the bottom sits on top of it. Every screen of the app does this the same way. A WebView must not be [root]
-     * (it does not lay its page out inside its own padding): put it in a [inset] frame.
+     * (it does not lay its page out inside its own padding): put it in a [inset] frame. [onKeyboard] hears whether the keyboard
+     * is up each time the insets change (a screen with a bar at the bottom hides it then).
      */
-    fun insets(root: View) {
+    fun insets(root: View, onKeyboard: ((Boolean) -> Unit)? = null) {
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val e = fit(
                 edges(insets.getInsets(WindowInsetsCompat.Type.systemBars())),
@@ -58,6 +59,7 @@ object Ui {
                 edges(insets.getInsets(WindowInsetsCompat.Type.ime())),
             )
             v.setPadding(e.left, e.top, e.right, e.bottom)
+            onKeyboard?.invoke(insets.isVisible(WindowInsetsCompat.Type.ime()))
             // Made room for here: a WebView inside must not add the same bars again through its page's safe-area insets.
             WindowInsetsCompat.CONSUMED
         }

@@ -163,9 +163,9 @@ object Pin {
         AlertDialog.Builder(a)
             .setTitle("没能添加到桌面")
             .setMessage("「$name」的图标没有放到桌面上。如果是你刚才点了取消，忽略这条就好。\n\n" +
-                "在 ColorOS（OPPO、一加、realme）等系统上，要先允许「Ash 应用」使用「创建桌面快捷方式」权限：" +
+                "在 ColorOS（OPPO、一加、realme）等系统上，要先允许「Ash」使用「创建桌面快捷方式」权限：" +
                 "点「去设置」，进入「权限」（可能在「其他权限」里），找到「创建桌面快捷方式」，选「允许」，再回来添加一次。")
-            .setPositiveButton("去设置") { _, _ -> settings(a, a.packageName, "Ash 应用") }
+            .setPositiveButton("去设置") { _, _ -> settings(a, a.packageName, "Ash") }
             .setNegativeButton("知道了", null)
             .show()
     }
