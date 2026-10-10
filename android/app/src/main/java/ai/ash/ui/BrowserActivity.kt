@@ -1,7 +1,7 @@
 package ai.ash.ui
 
-import ai.ash.host.browser.BrowserArguments
-import ai.ash.host.browser.BrowserSession
+import ai.ash.caps.browser.BrowserArguments
+import ai.ash.caps.browser.BrowserSession
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent

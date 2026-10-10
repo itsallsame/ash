@@ -16,7 +16,7 @@ import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import ai.ash.R
-import ai.ash.screen.a11y.A11yService
+import ai.ash.caps.screen.A11yService
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.CountDownLatch

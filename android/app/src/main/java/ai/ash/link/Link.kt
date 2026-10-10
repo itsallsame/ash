@@ -1,13 +1,15 @@
 package ai.ash.link
 
 import ai.ash.BuildConfig
-import ai.ash.host.cap.Capabilities
+import ai.ash.caps.Capabilities
 import android.content.Context
 import android.os.Build
 import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import ai.ash.caps.DeviceCalls
+import ai.ash.caps.DeviceManifest
 
 /**
  * The app's one connection to the kernel (SPEC-05 §4): the process-wide [LinkClient], with the phone's identity, event

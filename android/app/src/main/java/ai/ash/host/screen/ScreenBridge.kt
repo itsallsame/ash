@@ -1,12 +1,12 @@
 package ai.ash.host.screen
 
 import ai.ash.host.TaskStatus
-import ai.ash.host.cap.CapResult
-import ai.ash.host.cap.Capability
-import ai.ash.screen.ScreenCapabilities
+import ai.ash.caps.CapResult
+import ai.ash.caps.Capability
+import ai.ash.caps.screen.ScreenCapabilities
 import ai.ash.screen.ScreenHost
 import ai.ash.screen.ScreenLink
-import ai.ash.screen.a11y.A11yService
+import ai.ash.caps.screen.A11yService
 import ai.ash.screen.island.NativeIsland
 import ai.ash.ui.HomeActivity
 import android.content.Context
@@ -14,6 +14,8 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
+import ai.ash.caps.config.ScreenRecovery
+import ai.ash.caps.screen.ScreenshotTool
 
 /**
  * The rest of Ash's face to the screen abilities (the accessibility service's tools and the task island), which live in

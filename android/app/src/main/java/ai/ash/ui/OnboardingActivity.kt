@@ -19,8 +19,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import ai.ash.R
-import ai.ash.host.Permission
-import ai.ash.host.Permissions
+import ai.ash.caps.config.Permission
+import ai.ash.caps.config.Permissions
 import kotlin.math.abs
 
 /**

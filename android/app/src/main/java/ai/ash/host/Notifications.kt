@@ -245,7 +245,7 @@ object Notifications {
      * page so the owner can watch, take over or close it. Null [latest] (nothing open) removes it.
      */
     @Suppress("DEPRECATION")
-    fun browsing(ctx: Context, latest: ai.ash.host.browser.BrowserSession.Info?, open: Int) {
+    fun browsing(ctx: Context, latest: ai.ash.caps.browser.BrowserSession.Info?, open: Int) {
         val manager = ctx.getSystemService(NotificationManager::class.java)
         if (latest == null) { manager.cancel("browser-browsing", 0); return }
         val page = latest.title.ifBlank { latest.site }

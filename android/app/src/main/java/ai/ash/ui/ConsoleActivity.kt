@@ -17,8 +17,8 @@ import android.widget.TextView
 import android.widget.Toast
 import ai.ash.host.KernelLauncher
 import ai.ash.link.Link
-import ai.ash.host.Permissions
-import ai.ash.host.senses.NotificationSenseSettings
+import ai.ash.caps.config.Permissions
+import ai.ash.caps.senses.NotificationSenseSettings
 
 /** Diagnostics: the kernel package and the link to it, the phone permissions ash can use. No business logic. */
 class ConsoleActivity : Activity() {
@@ -59,7 +59,7 @@ class ConsoleActivity : Activity() {
             isAllCaps = false
             setOnClickListener {
                 val ctx = this@ConsoleActivity
-                ai.ash.host.screen.ScreenRecovery.setEnabled(ctx, !ai.ash.host.screen.ScreenRecovery.enabled(ctx)); renderRecovery()
+                ai.ash.caps.config.ScreenRecovery.setEnabled(ctx, !ai.ash.caps.config.ScreenRecovery.enabled(ctx)); renderRecovery()
             }
         }
         root.addView(recoveryToggle)
@@ -141,7 +141,7 @@ class ConsoleActivity : Activity() {
 
     /** What recovery may do, whether it is on, and when it last acted. */
     private fun renderRecovery() {
-        val r = ai.ash.host.screen.ScreenRecovery
+        val r = ai.ash.caps.config.ScreenRecovery
         val times = r.history(this).takeLast(3).reversed().joinToString("、") { java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.CHINA).format(java.util.Date(it)) }
         recoveryState.text = buildString {
             append(if (!r.granted(this@ConsoleActivity)) "未授权（见上方「无障碍自动恢复」）。" else if (r.enabled(this@ConsoleActivity)) "已开启。" else "已关闭。")

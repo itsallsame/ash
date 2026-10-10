@@ -1,8 +1,8 @@
 package ai.ash.screen
 
-import ai.ash.host.cap.CapResult
+import ai.ash.caps.CapResult
 import ai.ash.host.screen.ScreenBridge
-import ai.ash.screen.a11y.A11yService
+import ai.ash.caps.screen.A11yService
 import ai.ash.screen.island.NativeIsland
 import android.content.Context
 import android.os.Handler
@@ -11,6 +11,8 @@ import android.util.Log
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import ai.ash.caps.screen.KeepAliveSwitches
+import ai.ash.caps.screen.ScreenCapabilities
 
 /**
  * The screen abilities, inside Ash: the accessibility service's tools and the task island. [ScreenBridge] is the face
