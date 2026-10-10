@@ -16,21 +16,18 @@ import { generateKeyPairSync, sign as signBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
 import type { TestContext } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createNodeClient, type CallOutcome, type HandClient, type HandHandlers, type PresentOutcome } from "../../../link/src";
 import type { CallFrame, CapabilitySpec, HandKind, HelloChannels, ManifestAckFrame, PresentFrame, SendRequest, SendResultFrame, SyncPageFrame } from "../../../sdk/src/link";
-import { HOST_ENV } from "../../../sdk/src/host";
 import { base64url, deviceId, handId } from "../../../sdk/src/ids";
 import type { Message, Reply } from "../../../sdk/src/message";
 import { standardAction } from "../../../sdk/src/namespaces";
-import { HostClient, loadHostBoot } from "../../src/edges/host";
 import {
   startHub, type AgentDriver, type AgentDriverFactory, type AgentEvent, type AgentStartSpec, type DriverMessage, type Hub,
 } from "../../src/next";
-import { FAKE_SEAL_KEY, FakeHost } from "../fixtures/host";
+import { FakeHost } from "../fixtures/host";
 import { eventually } from "../fixtures/wait";
 
 export const OWNER = "person:owner";
@@ -64,7 +61,10 @@ export const toOwner = (word: string, from?: string) => (m: Message): boolean =>
 export const isApprovalAsk = (m: Message): boolean => m.kind === "request" && m.from === GATE && m.to === OWNER && m.word === "ask";
 
 export const ownerMessage = (text: string) => (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && textOf(m) === text;
-export const fromGate = (m: DriverMessage): boolean => m.from === GATE;
+/** The gate telling the agent that asked: an `agent:<x>/tell` from `service:gate` (BUILD-PROGRESS §7, decision 4). */
+export const fromGate = (m: DriverMessage): boolean => m.from === GATE && m.word === "tell";
+/** A background `tell` whose text names this id (a `pending_id`, a `setup_id`). */
+export const tellAbout = (id: string) => (m: DriverMessage): boolean => m.word === "tell" && JSON.stringify(m.body).includes(id);
 
 // --- identities (a hand proves itself by signing the challenge, SPEC-03 §2.2) --------------------------------------------
 
@@ -109,18 +109,26 @@ export const textResult = (text: string, data?: unknown): CallOutcome => ({ ok: 
 
 // --- the scripted agent driver ---------------------------------------------------------------------------------------------
 
-/** What a tool call on `/mcp` gave back. Results are JSON in the first text part; an error has `isError`. */
+/**
+ * What a tool call on `/mcp` gave back (decision 5 of BUILD-PROGRESS §7): a success carries the word's result as
+ * `structuredContent` (and its content, or the data as JSON text, in `content`); a failure has `isError` and
+ * `structuredContent: {error: ErrorBody}`. A receipt's data is `{status, request_id | pending_id, ...}`.
+ */
 export interface ToolResult {
   isError: boolean;
+  /** `structuredContent` */
+  data: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  /** The text parts of `content`, joined. */
   text: string;
-  /** The text parsed as JSON, or undefined when it is not JSON. */
-  json: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
-/** The error code in a failed tool result, wherever the surface puts it (`{error:{code}}` or `{code}`). */
-export const errorCode = (r: ToolResult): string | undefined => r.json?.error?.code ?? r.json?.code;
+/** The error code of a failed tool result. */
+export const errorCode = (r: ToolResult): string | undefined => r.data?.error?.code;
 
-/** The payload of a tool result: `capability_call` may wrap the word's result as `{result}` or hand it back as is. */
-export const resultOf = (r: ToolResult): any => r.json?.result ?? r.json; // eslint-disable-line @typescript-eslint/no-explicit-any
+/** The data of a reply (`Reply.result` is a `WordResult {data, content}`). */
+export const dataOf = (reply: Reply): any => (reply.ok ? reply.result?.data : undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+/** The data of a tool result (a receipt is `{status, request_id | pending_id}`). */
+export const resultOf = (r: ToolResult): any => r.data; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 export interface ToolCallRecord { agent: string; key: string; turn: string; name: string; args: Record<string, unknown>; result: ToolResult }
 
@@ -177,12 +185,10 @@ class ToolLine {
   }
   async call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const client = await this.connect();
-    const res = (await client.callTool({ name, arguments: args })) as { content?: unknown; isError?: unknown };
+    const res = (await client.callTool({ name, arguments: args })) as { content?: unknown; structuredContent?: unknown; isError?: unknown };
     const parts = Array.isArray(res.content) ? (res.content as { type?: string; text?: string }[]) : [];
     const text = parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
-    let json: unknown;
-    try { json = JSON.parse(text); } catch { /* not JSON */ }
-    return { isError: Boolean(res.isError), text, json };
+    return { isError: Boolean(res.isError), data: res.structuredContent, text };
   }
   async close(): Promise<void> {
     const client = await this.client?.catch(() => undefined);
@@ -212,7 +218,7 @@ export class ScriptedDriver {
   private readonly queued = new Map<string, DriverMessage[][]>();
   private serial = 0;
 
-  constructor(kinds: readonly string[] = ["dsh", "scripted", "codex", "claude"]) {
+  constructor(kinds: readonly string[] = ["dsh"]) {
     this.drivers = Object.fromEntries(kinds.map((kind) => [kind, (report: (event: AgentEvent) => void) => this.driver(report)]));
   }
 
@@ -374,8 +380,6 @@ export interface HumanOptions {
   identity?: Identity;
 }
 
-const OPTION_LABELS = { once: /这次|一次|once|allow/i, always: /以后|总是|always/i, deny: /不行|拒绝|deny|no\b/i } as const;
-
 /**
  * The owner on one channel: a hand that opened the human channel on the local connection. Everything the hub puts in the
  * conversation arrives through `sync`; everything it presents arrives as `present` frames.
@@ -445,12 +449,13 @@ export class Human {
     if (!sent.ok) return { ok: false, error: sent.error };
     return (sent.response as Reply | undefined) ?? { ok: true };
   }
-  /** Answers a card the hub asked (`ask`): [which] is `once`, `always` or `deny` for an approval card, or an option id. */
-  answer(ask: Message, which: string, text?: string): Promise<SendResultFrame> {
-    const options = (bodyOf(ask).options as { id: string; label?: string; text?: string }[] | undefined) ?? [];
-    const pattern = (OPTION_LABELS as Record<string, RegExp>)[which];
-    const option = options.find((o) => o.id === which) ?? (pattern ? options.find((o) => pattern.test(`${o.label ?? ""}${o.text ?? ""}`)) : undefined);
-    return this.send({ to: ask.from, kind: "response", word: "ask", reply_to: ask.id, body: { ok: true, result: { choice: option?.id ?? which, ...(text ? { text } : {}) } } });
+  /** Answers a card the hub asked (`ask`) by option id: `once`, `always` or `deny` on an approval card. The answer is the response to that request. */
+  answer(ask: Message, choice: string, text?: string): Promise<SendResultFrame> {
+    return this.send({ to: ask.from, kind: "response", word: "ask", reply_to: ask.id, body: { ok: true, result: { data: { choice, ...(text ? { text } : {}) } } } });
+  }
+  /** The ids of the options on a card the hub asked. */
+  optionIds(ask: Message): string[] {
+    return ((bodyOf(ask).options as { id: string }[] | undefined) ?? []).map((o) => o.id);
   }
   presence(state: { visible?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
 
@@ -494,7 +499,7 @@ export class Human {
     for (let pages = 0; pages < 50; pages++) {
       const reply = await this.call("service:history", "query", { limit: 200, ...filter, ...(before ? { before } : {}) });
       if (!reply.ok) throw new Error(`history query failed: ${reply.error.code} ${reply.error.message}`);
-      const result = reply.result as { messages?: Message[]; next_before?: number };
+      const result = dataOf(reply) as { messages?: Message[]; next_before?: number };
       all.push(...(result.messages ?? []));
       if (!result.next_before) break;
       before = result.next_before;
@@ -591,6 +596,10 @@ export class Hand {
 export interface ScenarioOptions {
   /** Give the hub a clock the test moves with `advance()`. Default: the system clock. */
   fakeNow?: boolean;
+  /** Runtime kinds, besides `dsh`, that the fake driver answers for (a scenario that declares `runtime: scripted` lists it here). */
+  runtimes?: string[];
+  /** Where the hub's small model lives (a fake model server of the scenario). */
+  llm?: { baseUrl: string };
 }
 
 /** A clock the test moves. Starts at 2026-10-10 07:00 UTC. */
@@ -618,17 +627,18 @@ interface ConnectOptions {
 
 export class Scenario {
   readonly host = new FakeHost();
-  readonly driver = scriptedDriver();
+  readonly driver: ScriptedDriver;
   readonly clock = new ManualNow();
   readonly dataDir = mkdtempSync(join(tmpdir(), "ash-scenario-"));
   private hubValue: Hub | undefined;
-  private events = new PassThrough();
   private readonly clients = new Set<HandClient>();
   private handoffs = 0;
   private current: { port: number; token: string } | undefined;
   private booted = false;
 
-  constructor(private readonly options: ScenarioOptions = {}) {}
+  constructor(private readonly options: ScenarioOptions = {}) {
+    this.driver = scriptedDriver(["dsh", ...(options.runtimes ?? [])]);
+  }
 
   // --- the hub
 
@@ -645,15 +655,12 @@ export class Scenario {
 
   async boot(): Promise<void> {
     if (!this.host.endpoint) await this.host.start();
+    // The hub boots the way a host starts it (SPEC-07): the environment names host.json, carries the seal key and the host
+    // token (a copy: the hub takes them out of what it is given); the host's events arrive on its standard input.
     const launch = this.host.writeLaunch();
-    const loaded = loadHostBoot({ env: { ...launch.env } });
-    if (!loaded.ok) throw new Error(`fake host boot failed: ${loaded.reason}`);
-    const host = new HostClient({ endpoint: loaded.boot.spec.endpoint, token: loaded.boot.secrets.token, capabilities: loaded.boot.spec.capabilities });
-    // The vault seal key reaches the hub as the host's environment would give it (SPEC-07). HubOptions has no field for it yet.
-    process.env[HOST_ENV.sealKey] = FAKE_SEAL_KEY;
-    this.events = new PassThrough();
     this.hubValue = await startHub({
-      dataDir: this.dataDir, port: 0, host, hostEvents: this.events, drivers: this.driver.drivers,
+      dataDir: this.dataDir, port: 0, env: { ...launch.env }, stdin: this.host.stdin, drivers: this.driver.drivers,
+      ...(this.options.llm ? { llm: this.options.llm } : {}),
       ...(this.options.fakeNow ? { now: this.clock.now } : {}),
     });
     this.booted = true;
@@ -681,7 +688,7 @@ export class Scenario {
     this.clock.t += ms;
   }
   /** Plays a host event on the hub's standard input (`wake.fired`, `env.changed`, `lifecycle.stop`). */
-  hostEvent(event: Record<string, unknown>): void { this.events.write(`${JSON.stringify(event)}\n`); }
+  hostEvent(event: Record<string, unknown>): void { this.host.sendEvent(event); }
 
   // --- connections
 

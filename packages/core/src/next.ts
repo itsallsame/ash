@@ -4,7 +4,6 @@
  * reaches the hub through `startHub` and the one port it opens (`/link`, `/mcp`), never through a module.
  */
 import type { Readable } from "node:stream";
-import type { HostClient } from "./edges/host";
 
 // --- the agent driver contract (SPEC-08), the smallest form the scenarios need -------------------------------------
 // T17 puts the real definition in `packages/sdk/src/driver.ts`; when it lands, delete this section and import from there.
@@ -64,13 +63,12 @@ export interface HubOptions {
   dataDir: string;
   /** The one port the hub opens on 127.0.0.1. 0 or absent: any free port. */
   port?: number;
-  /** The client of the host (SPEC-07). Absent: no host, the optional host capabilities are skipped. */
-  host?: HostClient;
-  /**
-   * Where the host's events arrive (one JSON line each: `wake.fired`, `env.changed`, `lifecycle.stop`). Defaults to
-   * `process.stdin`. Not in the first signature of this task; without it the scenarios cannot deliver `wake.fired`.
-   */
-  hostEvents?: Readable;
+  /** The environment the host started the hub with (SPEC-07: `ASH_HOST_SPEC`, `ASH_VAULT_SEAL_KEY`, `ASH_HOST_TOKEN`). Absent: `process.env`. The hub reads host.json itself. */
+  env?: NodeJS.ProcessEnv;
+  /** Where the host's events arrive, one JSON line each (`wake.fired`, `env.changed`, `lifecycle.stop`). Absent: `process.stdin`. */
+  stdin?: Readable;
+  /** Where the hub's small model lives; overrides the providers' own addresses (BUILD-PROGRESS §7, decision 1). Absent: the real ones. */
+  llm?: { baseUrl: string };
   /** Drivers by runtime kind (`dsh`, `codex`, ...). Absent: the real ones. */
   drivers?: Record<string, AgentDriverFactory>;
   /** The clock of everything that waits for a time (timers, approval expiry, pulse). Absent: the system clock. */

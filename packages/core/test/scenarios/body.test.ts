@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accepted, byOwnerText, isApprovalAsk, quiet, resultOf, startScenario, type ToolResult } from "./harness";
+import { accepted, byOwnerText, isApprovalAsk, quiet, resultOf, startScenario, type ToolResult, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 test("S026: the owner lists, writes and reads files in the main body directly", async (t) => {
@@ -16,8 +16,8 @@ test("S026: the owner lists, writes and reads files in the main body directly", 
   const read = await owner.call("body:main", "workspace.read", { path: "notes/hello.txt" });
 
   assert.ok(wrote.ok, "the owner writes without a card");
-  assert.ok(listed.ok && JSON.stringify(listed.result).includes("hello.txt"));
-  assert.ok(read.ok && (read.result as { text: string }).text.includes("你好，文件"));
+  assert.ok(listed.ok && JSON.stringify(dataOf(listed)).includes("hello.txt"));
+  assert.ok(read.ok && (dataOf(read) as { text: string }).text.includes("你好，文件"));
 });
 
 test("SPEC-00 §6.4: an agent writes inside the work directory without a card; writing outside it asks the owner", async (t) => {
@@ -35,7 +35,7 @@ test("SPEC-00 §6.4: an agent writes inside the work directory without a card; w
   await quiet();
   assert.equal(owner.messages.filter(isApprovalAsk).length, 0, "no card for a write in the work directory");
   const read = await owner.call("body:main", "workspace.read", { path: "notes/agent.txt" });
-  assert.ok(read.ok && (read.result as { text: string }).text.includes("agent 写的"));
+  assert.ok(read.ok && (dataOf(read) as { text: string }).text.includes("agent 写的"));
 
   accepted(await owner.say("写在系统里"));
   await owner.seen(isApprovalAsk, "a card for the write outside");

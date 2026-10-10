@@ -6,8 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAIN, accepted, byOwnerText, errorCode, extensionCapability, fromGate, isApprovalAsk, quiet, resultOf,
-  startScenario, type Hand, type Scenario, type TurnScript, type ToolResult,
-} from "./harness";
+  startScenario, type Hand, type Scenario, type TurnScript, type ToolResult, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 interface Flow { pendingId: string; first?: ToolResult; redeemed?: ToolResult; again?: ToolResult }
@@ -42,6 +41,7 @@ test("S032, S039, S033: an outward action waits for the owner; once approved the
 
   accepted(await owner.say("帮我打开笔记"));
   const card = await owner.seen(isApprovalAsk, "the approval card");
+  assert.deepEqual([...owner.optionIds(card)].sort(), ["always", "deny", "once"], "the card's options are exactly once / always / deny");
 
   await eventually(() => flow.first, "the asker's receipt");
   assert.equal(resultOf(flow.first!).status, "waiting_owner");
@@ -50,8 +50,11 @@ test("S032, S039, S033: an outward action waits for the owner; once approved the
 
   accepted(await owner.answer(card, "once"));
 
-  const { message } = await s.driver.delivery(fromGate, "the background message about the answer");
-  assert.equal(message.lane, "back", "the answer comes on the back lane, not into the owner's conversation");
+  const { delivery, message } = await s.driver.delivery(fromGate, "the background message about the answer");
+  assert.equal(message.word, "tell", "the answer reaches the asker as agent:<x>/tell");
+  assert.equal(delivery.agent, MAIN, "and only the agent that asked");
+  assert.equal(message.lane, "back", "on the back lane, not into the owner's conversation");
+  assert.ok(JSON.stringify(message.body).includes(flow.pendingId), "naming the pending request");
   await eventually(() => flow.again, "the redeem results");
   assert.equal(flow.redeemed!.isError, false);
   assert.equal(phone.calls.length, 1, "the hand ran it once");
@@ -59,7 +62,7 @@ test("S032, S039, S033: an outward action waits for the owner; once approved the
   assert.equal(phone.calls[0]!.caller.member, MAIN);
   assert.equal(flow.again!.isError, true, "a second redeem does not run it again");
   const audit = await owner.call("service:gate", "audit", { word: "apps.open" });
-  assert.ok(audit.ok && JSON.stringify(audit.result).includes("apps.open"), "S034-S038: the decision left evidence in the audit");
+  assert.ok(audit.ok && JSON.stringify(dataOf(audit)).includes("apps.open"), "S034-S038: the decision left evidence in the audit");
 });
 
 test("S032: the owner says no: the asker is told, redeeming does nothing", async (t) => {
@@ -70,7 +73,9 @@ test("S032: the owner says no: the asker is told, redeeming does nothing", async
   const card = await owner.seen(isApprovalAsk, "the approval card");
   accepted(await owner.answer(card, "deny"));
 
-  await s.driver.delivery(fromGate, "the background message about the refusal");
+  const refusal = await s.driver.delivery(fromGate, "the background message about the refusal");
+  assert.equal(refusal.delivery.agent, MAIN);
+  assert.ok(JSON.stringify(refusal.message.body).includes(flow.pendingId));
   await eventually(() => flow.again, "the redeem results");
   assert.equal(flow.redeemed!.isError, true);
   assert.equal(phone.calls.length, 0);
@@ -92,7 +97,7 @@ test("S032: 'always' makes a rule: the same request does not ask again", async (
   assert.notEqual(resultOf(flow.first!).status, "waiting_owner");
   assert.equal(phone.calls.length, 2, "it ran without a card");
   const rules = await owner.call("service:gate", "rules.list");
-  assert.ok(rules.ok && JSON.stringify(rules.result).includes("apps.open"), "S034-S038: the rule is listed");
+  assert.ok(rules.ok && JSON.stringify(dataOf(rules)).includes("apps.open"), "S034-S038: the rule is listed");
 });
 
 test("S039: the approval has expired: answering it late does not let the request run", async (t) => {
@@ -179,8 +184,7 @@ test("human_ask: a question to the owner is answered by the owner; the answer co
   s.driver.script(byOwnerText({
     "问问我": async (turn) => {
       const receipt = await turn.tool("human_ask", { title: "晚饭吃什么", options: [{ id: "noodle", label: "面" }, { id: "rice", label: "饭" }] });
-      const id = resultOf(receipt)?.request_id ?? resultOf(receipt)?.pending_id;
-      await turn.tool("await_result", { request_id: id });
+      await turn.tool("await_result", { request_id: resultOf(receipt)?.request_id });
     },
   }));
   const owner = await s.human();
@@ -190,7 +194,7 @@ test("human_ask: a question to the owner is answered by the owner; the answer co
   accepted(await owner.answer(question, "rice"));
 
   const done = await s.driver.toolCall("await_result", "the agent receiving the answer");
-  assert.match(done.result.text, /rice/);
+  assert.equal(done.result.data?.choice, "rice");
 });
 
 test("SPEC-00 §6.4: an agent proposing to change the persona is always asked about; refusing changes nothing", async (t) => {
@@ -205,6 +209,7 @@ test("SPEC-00 §6.4: an agent proposing to change the persona is always asked ab
 
   accepted(await owner.say("改一下人格"));
   const card = await owner.seen(isApprovalAsk, "the card for the persona change");
+  assert.deepEqual([...owner.optionIds(card)].sort(), ["deny", "once"], "no 'always' on a change that is always asked about");
   await eventually(() => state.proposed, "the receipt");
   assert.equal(resultOf(state.proposed!).status, "waiting_owner");
   accepted(await owner.answer(card, "deny"));
@@ -212,7 +217,7 @@ test("SPEC-00 §6.4: an agent proposing to change the persona is always asked ab
   await quiet();
   const now = await owner.call("service:persona", "get", { file: "SOUL.md" });
   assert.ok(now.ok);
-  assert.ok(!JSON.stringify(now.result).includes("全新的人格"), "the approved persona did not change");
+  assert.ok(!JSON.stringify(dataOf(now)).includes("全新的人格"), "the approved persona did not change");
 });
 
 test("SPEC-02 §3.2: an agent only sees the words its contract lets it call; the owner-only ones are not in its directory", async (t) => {
@@ -229,9 +234,9 @@ test("SPEC-02 §3.2: an agent only sees the words its contract lets it call; the
   accepted(await owner.say("看看保险箱"));
 
   await eventually(() => state.direct, "the agent's attempts");
-  const words = JSON.stringify(state.listed!.json);
+  const words = JSON.stringify(state.listed!.data);
   assert.ok(words.includes("list") && words.includes("describe"), "it can see the read words");
   assert.ok(!/"(set|delete)"/.test(words), "it cannot see set and delete");
   assert.ok(state.direct!.isError);
-  assert.ok(["forbidden", "not_found"].includes(errorCode(state.direct!) ?? ""), "and calling set is refused");
+  assert.equal(errorCode(state.direct!), "forbidden", "and calling set is refused");
 });

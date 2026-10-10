@@ -5,8 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MAIN, OWNER, accepted, bodyOf, deferred, ownerMessage, quiet, startScenario, textOf, toOwner,
-} from "./harness";
+  MAIN, OWNER, accepted, bodyOf, deferred, ownerMessage, quiet, startScenario, textOf, toOwner, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 test("S057 (agent 1): the owner speaks, agent:main takes a front-lane turn and answers the owner", async (t) => {
@@ -137,7 +136,7 @@ test("人场景 4: the owner can list the agents; the primary one is marked", as
   const reply = await owner.call("service:agents", "list");
 
   assert.ok(reply.ok, "list is answered");
-  const agents = (reply.result as { agents: { id: string; primary?: boolean }[] }).agents;
+  const agents = (dataOf(reply) as { agents: { id: string; primary?: boolean }[] }).agents;
   assert.equal(agents.find((a) => a.id === MAIN)?.primary, true, "a fresh hub has agent:main, and it is the primary one");
 });
 

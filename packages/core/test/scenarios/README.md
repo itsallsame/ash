@@ -63,7 +63,7 @@ T17 (agents + a driver). The "also needs" column lists only what a test needs on
 | timers | S082 reminder to the owner | `service:clock` (T3 journal; the service itself has no task, see gaps) |
 | | S083, agent 9 timer wakes an agent on `back` | clock, T7 `timer_set`, T17 (`wake` → back lane) |
 | | S084 list and cancel | clock |
-| | S084, 设备 host alarm: `wake.at`, then `wake.fired` fires it | clock, T15 `service:host/wake.at`, host events, `HubOptions.now` + `hostEvents` |
+| | S084, 设备 host alarm: `wake.at`, then `wake.fired` fires it | clock, T15 `service:host/wake.at`, host events, `HubOptions.now` + `stdin` |
 | | timer ids | clock |
 | senses | S097 geofence → wake | T5 (event routing), T19 `service:senses`, the organ `app:sense-rules` (T4 `listens`, T7 apps bridge) |
 | | S100 stale source → wake; S098 calendar → wake | same |
@@ -183,22 +183,22 @@ Rows are numbered in the order of the file (§1 = R1–R15, §2 = R16–R27, §3
 
 ## Gaps in the specs found while writing the scenarios
 
-1. **Small-model calls cannot be answered from outside.** The review model, JEV (`conversation.control`, `task.outcome`), the turn summary and the
-   `service:llm` organs all go through `edges/llm`, whose endpoint and key are not injectable. `HubOptions` needs something like
-   `llm?: { baseUrl }` (or a documented env var) so a scenario can run a fake model. Without it: R3 (steer), R18, R22 (bash review), R29, R47, R64, R77.
-2. **`HubOptions` had no field for the host's stdin.** Added `hostEvents?: Readable` (default `process.stdin`); without it `wake.fired`
-   cannot be delivered. The vault seal key also has no field: the harness sets `ASH_VAULT_SEAL_KEY` in the environment, as the host would.
-3. **The approval answer is under-specified.** SPEC-01 §6.5 names three choices (this time / from now on / no) but no option ids, and says
-   "a `response` to the `ask`" without the response body. The harness sends `{ok:true, result:{choice}}` and picks the option by id
-   (`once`, `always`, `deny`) or by its label.
-4. **The background message to the initiator has no shape.** After an answer, a relay-setup step or a pairing step the initiator gets "a
-   background message": sender, word and body are not defined. Tests only check `from`/lane (`service:gate`, `back`) and that a pending/setup id is in it.
-5. **Tool results have no stated envelope.** SPEC-02 §3.4 gives the fields of `accepted` / `waiting_owner` but not the success wrapper of
-   `capability_call`, nor where the error code sits in a failed result, nor the receipt id of `human_ask`. `resultOf` and `errorCode` in the
-   harness accept the plausible variants; the spec should fix one.
-6. **The driver contract is only half written.** SPEC-08 does not list the fields of the messages a driver is given (`DriverMessage` here is a
-   minimum), has no `session.*`, `compact`, `configure`, `plugins` in the interface the scenarios could script (R48, R49), and does not say
-   which runtime kind the seeded `main` uses (the harness registers `dsh`, `scripted`, `codex`, `claude` under the same fake).
+Decisions of the coordinator (BUILD-PROGRESS §7, "T20 发现的规格缺口和总控的决定") closed gaps 1–6 and 11; the harness follows them.
+
+1. **Small model: decided (1).** `HubOptions.llm?: { baseUrl }` overrides the providers' addresses so a scenario can run a fake model.
+   The scenarios that need one (R3 steer, R18, R22 bash review, R29, R47, R64, R77) wait for a fake model server in the harness.
+2. **Seal key: decided (2).** `ASH_VAULT_SEAL_KEY` comes with the host's environment (SPEC-07). The harness passes `env` (a copy of
+   what `FakeHost.writeLaunch()` gives) and `stdin` (`FakeHost.stdin`, where `FakeHost.sendEvent()` plays `wake.fired`); the hub reads
+   host.json itself. No field for the key.
+3. **Approval answer: decided (3).** Card options are exactly `once`, `always` (only when offered) and `deny`; the answer is the response
+   to the `person:owner/ask` request, `{ok:true, result:{data:{choice}}}`; expiry is a deny. The harness answers by option id and asserts the ids.
+4. **Background message: decided (4).** The initiator (only when it is an agent) gets `agent:<x>/tell` on its back lane, one sentence naming
+   the request, the result and the next step. Tests assert `word === "tell"`, the receiving agent, and the `pending_id` / `setup_id` in it.
+5. **Tool result envelope: decided (5).** Success = `{content, structuredContent: data}`, failure = `isError` + `structuredContent: {error}`;
+   a receipt's id is `request_id` (long call) or `pending_id` (approval). `ToolResult` is `{isError, data, text}`, `errorCode` reads `data.error.code`.
+6. **Driver contract: decided (6).** Full `DriverMessage`, `session.*`/`compact`/`configure`/`plugins` on `AgentDriver`, `start(spec)` with
+   `tools:{mcp_url, token}`, seeded `main` on runtime `dsh`. The harness registers only `dsh`; a scenario that declares another runtime lists it
+   in `startScenario(t, { runtimes })`. The minimal types in `next.ts` are replaced by T17a's `sdk/driver.ts`.
 7. **A computer cannot pair through the local connection.** `hello` has no field for a pairing code; pairing (`waiting → requested →
    approved → connected`) can only be driven through the gateway, so the "initiator is told at each step" rule is tested on the relay
    setup instead (`gateway.setup.start`/`cancel`, which also opens `127.0.0.1:8976`, a fixed port: scenarios using it cannot run in parallel).
@@ -209,9 +209,8 @@ Rows are numbered in the order of the file (§1 = R1–R15, §2 = R16–R27, §3
    nothing in SPEC-06 owns a shared fixture. R20, R23, R39, R58, R70–R74 wait for one (T7 is the natural owner).
 10. **Pulse only exists with a placed widget.** SPEC-10 §3 makes pulse depend on `widget.placed` events and the schedule, so an hourly-pulse
     scenario needs the widget schema, the time zone of the host spec and the fake clock; not written yet.
-11. **No task owns `service:clock`, `service:admin` and the organ `app:sense-rules`.** SPEC-06 moves the clock journal (T3) and the admin
-    journal (T3) but never says which task writes the services or the organ's source (HUB-MODULES §7 puts it in `ash-skills/organs/sense-rules/`).
-    The timers, pause and senses scenarios depend on them; they are presumably part of T12 wiring or T14/T19.
+11. **Unowned services: decided (11).** `service:clock` and `service:senses` are the new T21; the organ `app:sense-rules` is T19; `service:admin`
+    (including the quiet-hours setting keys, gap 12) is T6. The timers, pause and senses scenarios depend on them.
 12. **Quiet hours and other `admin` settings have no keys in `words.ts`** (`settings.set` is a free object), so they cannot be scripted.
 13. **`sync` defaults.** SPEC-03 §5.2 does not say what a `sync` with neither `after` nor `before` returns, nor which way `before` pages. The
     harness always opens `after: 0` and pages with `before` + `limit` (the messages immediately before).

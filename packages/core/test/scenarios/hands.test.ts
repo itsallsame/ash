@@ -6,8 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAIN, accepted, byOwnerText, errorCode, extensionCapability, isApprovalAsk, resultOf, standardCapability, startScenario,
-  textResult, type ToolResult,
-} from "./harness";
+  textResult, type ToolResult, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 test("agent 7, 设备 19: a hand's manifest becomes its capabilities; one bad capability is refused alone", async (t) => {
@@ -18,7 +17,7 @@ test("agent 7, 设备 19: a hand's manifest becomes its capabilities; one bad ca
   assert.deepEqual(hand.ack.rejected.map((r) => r.name), ["Bad Name"]);
   const listed = await owner.call("service:directory", "list", { member: hand.member });
   assert.ok(listed.ok);
-  const words = JSON.stringify(listed.result);
+  const words = JSON.stringify(dataOf(listed));
   assert.ok(words.includes("location.get"));
   assert.ok(!words.includes("Bad Name"));
 });
@@ -37,7 +36,7 @@ test("S085, 设备 20: an agent calls a capability of a hand; the hand sees who 
   assert.deepEqual(call.args, {});
   const done = await s.driver.toolCall("capability_call");
   assert.equal(done.result.isError, false);
-  assert.match(done.result.text, /31\.2/);
+  assert.equal(done.result.data?.lat, 31.2, "the hand's data comes back as the structured result");
 });
 
 test("设备 8, SPEC-03 §11.3b: revoking a hand closes it with 4003 and it cannot come back, not even from this machine", async (t) => {
@@ -134,7 +133,7 @@ test("设备 8: the owner renames a hand and changes what it may do; the list sh
   assert.ok(renamed.ok && access.ok);
   const listed = await owner.call("service:devices", "list");
   assert.ok(listed.ok);
-  const mine = (listed.result as { devices: { device: string; name: string; tier: string; web_ui: boolean }[] }).devices.find((d) => d.device === phone.member);
+  const mine = (dataOf(listed) as { devices: { device: string; name: string; tier: string; web_ui: boolean }[] }).devices.find((d) => d.device === phone.member);
   assert.equal(mine?.name, "客厅的手机");
   assert.equal(mine?.tier, "full");
   assert.equal(mine?.web_ui, true);
@@ -169,6 +168,6 @@ test("设备 27: decision.* are for the hub's reflex only: neither the owner nor
 
   assert.ok(!mine.ok && mine.error.code === "forbidden");
   await eventually(() => state.agent, "the agent's attempt");
-  assert.ok(["forbidden", "not_found"].includes(errorCode(state.agent!) ?? ""));
+  assert.equal(errorCode(state.agent!), "forbidden");
   assert.equal(phone.calls.length, 0);
 });

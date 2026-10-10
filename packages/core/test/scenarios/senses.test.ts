@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAIN, bodyOf, quiet, startScenario } from "./harness";
+import { MAIN, bodyOf, quiet, startScenario, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 test("S097: the owner enters a geofence: the phone says so, the organ wakes agent:main on its back lane", async (t) => {
@@ -51,7 +51,7 @@ test("S102, S103: a reading that no rule cares about wakes nobody, but it is arc
 
   const archived = await eventually(async () => {
     const reply = await owner.call("service:senses", "query", { kind: "battery" });
-    return reply.ok && JSON.stringify(reply.result).includes("73") ? reply : null;
+    return reply.ok && JSON.stringify(dataOf(reply)).includes("73") ? reply : null;
   }, "the reading in the archive");
   assert.ok(archived.ok);
   await quiet();
@@ -67,7 +67,7 @@ test("SPEC-03 §11.4a, SPEC-00 §6.12: sense events are not in the ledger and ar
   await phone.emit("sense.location", { batch_id: "b1", items: [{ ts: Date.now(), lat: 31.2, lon: 121.5, accuracy_m: 20, provider: "fused" }] });
   await eventually(async () => {
     const reply = await owner.call("service:senses", "now");
-    return reply.ok && JSON.stringify(reply.result).includes("31.2") ? reply : null;
+    return reply.ok && JSON.stringify(dataOf(reply)).includes("31.2") ? reply : null;
   }, "the location in the archive");
 
   const ledger = await owner.ledger();

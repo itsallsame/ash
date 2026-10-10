@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Message } from "../../../sdk/src/message";
-import { MAIN, OWNER, accepted, byOwnerText, findBlob, startScenario, textOf } from "./harness";
+import { MAIN, OWNER, accepted, byOwnerText, findBlob, startScenario, textOf, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 const timerBody = (): Record<string, unknown> => ({ at: Date.now() + 3_600_000, to: MAIN, word: "wake", body: { reason: "later" }, label: "稍后" });
@@ -60,7 +60,7 @@ test("SPEC-00 §6.9, S159: a secret put in the vault is in no ledger record; onl
   const found = await owner.ledger({ text: secret });
   assert.equal(found.length, 0, "searching for it finds nothing");
   const listed = await owner.call("service:vault", "list");
-  assert.ok(listed.ok && JSON.stringify(listed.result).includes("deepseek") && !JSON.stringify(listed.result).includes(secret));
+  assert.ok(listed.ok && JSON.stringify(dataOf(listed)).includes("deepseek") && !JSON.stringify(dataOf(listed)).includes(secret));
 });
 
 function bodyValue(m: Message): unknown {
@@ -84,7 +84,7 @@ test("S011-S014: a very long message is kept as a summary and an attachment; the
   while (offset !== null) {
     const part = await owner.call("service:blobs", "read", { hash: blob.$blob, offset, limit: 200_000 });
     assert.ok(part.ok);
-    const result = part.result as { text: string; next_offset: number | null };
+    const result = dataOf(part) as { text: string; next_offset: number | null };
     got += result.text;
     offset = result.next_offset;
   }
@@ -103,9 +103,9 @@ test("S020-S023: what a turn did can be looked up afterwards: its messages and i
 
   const detail = await eventually(async () => {
     const reply = await owner.call("service:history", "turn", { turn: turn.turn });
-    return reply.ok && JSON.stringify(reply.result).includes("location.get") ? reply : null;
+    return reply.ok && JSON.stringify(dataOf(reply)).includes("location.get") ? reply : null;
   }, "the turn's record");
   assert.ok(detail.ok);
-  const text = JSON.stringify(detail.result);
+  const text = JSON.stringify(dataOf(detail));
   assert.ok(text.includes("查一下位置") && text.includes("查好了"), "what it was given and what it said");
 });

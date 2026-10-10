@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAIN, OWNER, accepted, bodyOf, byOwnerText, quiet, startScenario, textOf, toOwner } from "./harness";
+import { MAIN, OWNER, accepted, bodyOf, byOwnerText, quiet, startScenario, textOf, toOwner, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 test("S082: a reminder the owner sets for themselves arrives as a message to the owner at the time", async (t) => {
@@ -41,10 +41,10 @@ test("S084: a timer is listed and can be cancelled; a cancelled timer does not f
   const owner = await s.human();
   const set = await owner.call("service:clock", "set", { at: Date.now() + 600, to: OWNER, word: "say", body: { text: "不该出现" }, label: "取消我" });
   assert.ok(set.ok);
-  const id = (set.result as { id: string }).id;
+  const id = (dataOf(set) as { id: string }).id;
 
   const listed = await owner.call("service:clock", "list");
-  assert.ok(listed.ok && JSON.stringify(listed.result).includes(id));
+  assert.ok(listed.ok && JSON.stringify(dataOf(listed)).includes(id));
   const cancelled = await owner.call("service:clock", "cancel", { id });
   assert.deepEqual(cancelled.ok && cancelled.result, { cancelled: true });
 
@@ -83,6 +83,6 @@ test("timer ids: setting returns an id and the next fire time (SPEC-02 §4.1)", 
   const set = await owner.call("service:clock", "set", { at, to: OWNER, word: "say", body: { text: "晚点" }, label: "晚点" });
 
   assert.ok(set.ok);
-  assert.equal(typeof (set.result as { id: string }).id, "string");
-  assert.equal((set.result as { next: number }).next, at);
+  assert.equal(typeof (dataOf(set) as { id: string }).id, "string");
+  assert.equal((dataOf(set) as { next: number }).next, at);
 });

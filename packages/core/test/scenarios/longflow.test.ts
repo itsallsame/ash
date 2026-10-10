@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accepted, byOwnerText, errorCode, quiet, resultOf, startScenario, type ToolResult } from "./harness";
+import { MAIN, accepted, byOwnerText, dataOf, errorCode, quiet, resultOf, startScenario, tellAbout, type ToolResult } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 test("HUB-MODULES §4, SPEC-03 §9.5.2: a relay setup the agent started tells the agent when its state changes, not the owner", async (t) => {
@@ -25,7 +25,9 @@ test("HUB-MODULES §4, SPEC-03 §9.5.2: a relay setup the agent started tells th
   const cancelled = await owner.call("service:link", "gateway.setup.cancel", { setup_id: setupId });
   assert.ok(cancelled.ok, "the owner cancels it");
 
-  const { message } = await s.driver.delivery((m) => m.from !== "person:owner" && JSON.stringify(m.body).includes(setupId), "a background message to the agent about the change");
+  const { delivery, message } = await s.driver.delivery(tellAbout(setupId), "a background message to the agent about the change");
+  assert.equal(message.word, "tell");
+  assert.equal(delivery.agent, MAIN, "to the agent that started it");
   assert.equal(message.lane, "back");
   await quiet();
   assert.ok(
@@ -52,11 +54,11 @@ test("SPEC-03 §9.5.4, SPEC-00 §6.9: an agent starts a pairing and never sees t
   assert.ok(started.pair_id && started.expires_at, "the agent gets pair_id and expires_at");
   assert.ok(!("code" in started), "and not the code");
   assert.ok(state.peek!.isError);
-  assert.ok(["forbidden", "not_found"].includes(errorCode(state.peek!) ?? ""), "asking for the code is refused");
+  assert.equal(errorCode(state.peek!), "forbidden", "asking for the code is refused");
 
   const code = await owner.call("service:devices", "pair_code", { pair_id: started.pair_id });
   assert.ok(code.ok, "the owner, on this machine, can see it");
-  const secret = (code.result as { code: string }).code;
+  const secret = (dataOf(code) as { code: string }).code;
   assert.ok(secret.length > 0);
   const ledger = JSON.stringify(await owner.ledger());
   assert.ok(!ledger.includes(secret), "the ledger only has the masked version");

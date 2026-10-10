@@ -6,8 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAIN, OWNER, accepted, bodyOf, byOwnerText, deferred, errorCode, extensionCapability, ownerMessage, quiet, resultOf,
-  startScenario, textOf, type ToolResult,
-} from "./harness";
+  startScenario, textOf, type ToolResult, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 const HELPER = "agent:helper";
@@ -16,7 +15,7 @@ const helper = (extra: Record<string, unknown> = {}) => ({
 });
 
 test("S046-S051: an agent declares a sub-agent, asks it, and the answer comes back; the owner hears nothing of it", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { runtimes: ["scripted"] });
   const state: { created?: ToolResult; asked?: ToolResult } = {};
   s.driver.scriptFor(HELPER, (turn) => turn.say("答案是 42"));
   s.driver.scriptFor(MAIN, byOwnerText({
@@ -32,15 +31,15 @@ test("S046-S051: an agent declares a sub-agent, asks it, and the answer comes ba
 
   await eventually(() => state.asked, "the answer from the helper");
   assert.equal(state.created!.isError, false);
-  assert.match(state.asked!.text, /答案是 42/);
+  assert.equal(resultOf(state.asked!).answer, "答案是 42");
   await quiet();
   assert.ok(!owner.messages.some((m) => m.from === HELPER), "a sub-agent does not speak to the owner on its own");
   const list = await owner.call("service:agents", "list");
-  assert.ok(list.ok && JSON.stringify(list.result).includes(HELPER), "the declaration is in the list");
+  assert.ok(list.ok && JSON.stringify(dataOf(list)).includes(HELPER), "the declaration is in the list");
 });
 
 test("SPEC-08 §5.7: a sub-agent cannot be given more than its maker has (declare is narrowed to the caller's tools)", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { runtimes: ["scripted"] });
   const state: { within?: ToolResult; beyond?: ToolResult } = {};
   s.driver.scriptFor(HELPER, async (turn) => {
     state.within = await turn.tool("agent_create", { ...helper({ id: "agent:child-a" }), tools: ["human_say"] });
@@ -61,7 +60,7 @@ test("SPEC-08 §5.7: a sub-agent cannot be given more than its maker has (declar
 });
 
 test("SPEC-08 §5.7 (spawn): a temporary agent does one task and is gone; the ledger keeps what it did", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { runtimes: ["scripted"] });
   const state: { spawned?: ToolResult } = {};
   s.driver.script(async (turn) => {
     if (turn.agent !== MAIN) { turn.say("结果是 7"); return; }
@@ -74,12 +73,12 @@ test("SPEC-08 §5.7 (spawn): a temporary agent does one task and is gone; the le
   accepted(await owner.say("派个临时工"));
 
   await eventually(() => state.spawned, "the result of the temporary agent");
-  assert.match(JSON.stringify(resultOf(state.spawned!)), /结果是 7/);
+  assert.equal(resultOf(state.spawned!).answer, "结果是 7");
   const worker = s.driver.turns.find((r) => r.agent !== MAIN);
   assert.ok(worker && /^agent:w-/.test(worker.agent), "the temporary agent is named agent:w-<id>");
   await eventually(async () => {
     const list = await owner.call("service:agents", "list");
-    return list.ok && !JSON.stringify(list.result).includes(worker.agent) ? true : null;
+    return list.ok && !JSON.stringify(dataOf(list)).includes(worker.agent) ? true : null;
   }, "the temporary agent being removed");
   const ledger = await owner.ledger();
   assert.ok(ledger.some((m) => m.from === worker.agent || m.to === worker.agent), "what it did is still in the ledger");
@@ -140,7 +139,7 @@ test("S164, S165: pausing stops the running turns of every agent; resuming is th
   await turn.done;
   assert.equal(turn.outcome, "interrupted");
   const resumed = await owner.call("service:admin", "resume", { confirmed: true });
-  assert.ok(resumed.ok && (resumed.result as { paused: boolean }).paused === false);
+  assert.ok(resumed.ok && (dataOf(resumed) as { paused: boolean }).paused === false);
   hold.resolve();
 });
 
@@ -158,7 +157,7 @@ test("S028 (first_meeting): the first time the owner connects, the primary agent
 });
 
 test("SPEC-08 §5.7: primary.set hands the primary role to another agent", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { runtimes: ["scripted"] });
   const owner = await s.human();
   const made = await owner.call("service:agents", "declare", helper());
   assert.ok(made.ok);
@@ -173,7 +172,7 @@ test("SPEC-08 §5.7: primary.set hands the primary role to another agent", async
 });
 
 test("S046: the owner talks to a sub-agent directly; in that turn it may answer the owner, and only there", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { runtimes: ["scripted"] });
   s.driver.scriptFor(HELPER, (turn) => turn.say("我是帮手，听到了"));
   const owner = await s.human();
   assert.ok((await owner.call("service:agents", "declare", helper())).ok);
