@@ -22,6 +22,8 @@ import type { Ledger } from "../../kernel/ledger";
 import { ask, CLOCK_TIME, dataOf, localDayStart, primaryAgent, reconcileTimers, seedBodyFile, wakeAgent, type Sender } from "./shared";
 
 export const PULSE_ID = "service:pulse";
+/** The members that lay down timers for `pulse.due` (the clock sends each as its setter): the pulse itself, and the semantic entity that also runs the daily review and the reload. */
+const DUE_FROM: ReadonlySet<string> = new Set([PULSE_ID, "service:semantic"]);
 const GUIDANCE = "PULSE.md";
 const HOUR = 3_600_000;
 /** Real timers are laid down this far ahead and renewed as time passes. */
@@ -356,7 +358,8 @@ export class PulseService implements Member {
   }
 
   private async dueFromClock(msg: Message, body: Record<string, unknown>) {
-    if (msg.from !== "service:clock") throw new WordError("forbidden", "pulse timers are reported by the clock only");
+    // The clock sends a timer as the one who set it, and the semantic layer set all of these (pulse, daily review, reload).
+    if (!DUE_FROM.has(msg.from)) throw new WordError("forbidden", "pulse timers are reported by the semantic layer's own timers only");
     const kind = body.kind;
     if (kind !== "wake" && kind !== "daily" && kind !== "reload") bad("unknown timer kind");
     await this.due(kind as DueKind, Number(body.at));

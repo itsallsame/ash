@@ -13,7 +13,7 @@
  * `service:history` returns.
  */
 import { generateKeyPairSync, sign as signBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -27,7 +27,9 @@ import type { Message, Reply } from "../../../sdk/src/message";
 import { standardAction } from "../../../sdk/src/namespaces";
 import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage } from "../../../sdk/src/driver";
 import { startHub, type Hub } from "../../src/next";
+import { FakeGateway } from "../../../link/test/fixtures/fake-gateway";
 import { FakeHost } from "../fixtures/host";
+import { hubKey } from "../edges/link-server/control-harness";
 import { eventually } from "../fixtures/wait";
 
 export type { DriverMessage };
@@ -176,11 +178,11 @@ export interface Delivery { via: "send" | "followup" | "steer"; agent: string; k
 /** The tool surface as one agent sees it: a Streamable HTTP MCP client with the agent's own bearer token. */
 class ToolLine {
   private client: Promise<Client> | undefined;
-  constructor(private readonly tools: AgentStartSpec["tools"]) {}
+  constructor(private readonly tools: AgentStartSpec["tools"], private readonly lane: string) {}
   private connect(): Promise<Client> {
     this.client ??= (async () => {
       const client = new Client({ name: "scripted-driver", version: "0.0.0" });
-      await client.connect(new StreamableHTTPClientTransport(new URL(this.tools.mcp_url), { requestInit: { headers: { Authorization: `Bearer ${this.tools.token}` } } }));
+      await client.connect(new StreamableHTTPClientTransport(new URL(this.tools.mcp_url), { requestInit: { headers: { Authorization: `Bearer ${this.tools.tokens[this.lane]}` } } }));
       return client;
     })();
     return this.client;
@@ -250,6 +252,15 @@ export class ScriptedDriver {
     return eventually(() => this.calls.find((call) => call.name === name), what);
   }
 
+  /** Empties what was recorded about turns, deliveries and tool calls. */
+  forget(): void {
+    for (const list of [this.turns, this.calls, this.deliveries]) list.length = 0;
+  }
+
+  private async closeLines(agent: string): Promise<void> {
+    for (const [slot, line] of [...this.lines]) if (slot.startsWith(`${agent}/`)) { this.lines.delete(slot); await line.close(); }
+  }
+
   /** Ends everything (the scenario is over or the hub is being restarted). */
   async dispose(): Promise<void> {
     for (const run of this.running.values()) run.abort.abort();
@@ -280,15 +291,14 @@ export class ScriptedDriver {
       plugins: async () => ({}),
       start: async (agent, spec) => {
         this.starts.push({ agent, spec });
-        await this.lines.get(agent)?.close();
-        this.lines.set(agent, new ToolLine(spec.tools));
+        await this.closeLines(agent);
+        for (const key of spec.lanes) this.lines.set(`${agent}/${key}`, new ToolLine(spec.tools, key));
         for (const key of spec.lanes) if (!spec.sessions[key]) open(agent, key);
       },
       stop: async (agent, reason) => {
         this.stops.push({ agent, reason });
         for (const [slot, run] of this.running) if (slot.startsWith(`${agent}/`)) run.abort.abort();
-        await this.lines.get(agent)?.close();
-        this.lines.delete(agent);
+        await this.closeLines(agent);
       },
       send: async (agent, key, batch) => {
         this.deliveries.push({ via: "send", agent, key, messages: batch });
@@ -331,8 +341,8 @@ export class ScriptedDriver {
 
     const aborted = new Promise<undefined>((resolve) => abort.signal.addEventListener("abort", () => resolve(undefined), { once: true }));
     const tool = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
-      const line = this.lines.get(agent);
-      if (!line) throw new Error(`${agent} has no tool line (the hub never called start())`);
+      const line = this.lines.get(slot);
+      if (!line) throw new Error(`${slot} has no tool line (the hub never called start())`);
       report({ event: "tool", agent, key, turn, phase: "start", name });
       const result = await line.call(name, args);
       this.calls.push({ agent, key, turn, name, args, result });
@@ -478,6 +488,8 @@ export class Human {
   optionIds(ask: Message): string[] {
     return ((bodyOf(ask).options as { id: string }[] | undefined) ?? []).map((o) => o.id);
   }
+  /** Goes away (a normal close). */
+  disconnect(): void { this.client.stop(); }
   presence(state: { visible?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
 
   // --- seeing things
@@ -621,6 +633,11 @@ export interface ScenarioOptions {
   runtimes?: string[];
   /** Where the hub's small model lives (a fake model server of the scenario). */
   llm?: { baseUrl: string };
+  /**
+   * Leave the first meeting to the test. By default the scenario starts after it: someone connected once, the primary agent
+   * was woken for `first_meeting` and its turn is over, the connection is closed and the driver's records are empty.
+   */
+  firstMeeting?: boolean;
 }
 
 /** A clock the test moves. Starts at 2026-10-10 07:00 UTC. */
@@ -652,6 +669,7 @@ export class Scenario {
   readonly clock = new ManualNow();
   readonly dataDir = mkdtempSync(join(tmpdir(), "ash-scenario-"));
   private hubValue: Hub | undefined;
+  private relayValue: FakeGateway | undefined;
   private readonly clients = new Set<HandClient>();
   private handoffs = 0;
   private current: { port: number; token: string } | undefined;
@@ -683,8 +701,11 @@ export class Scenario {
     const launch = this.host.writeLaunch();
     this.stdin = new PassThrough();
     this.host.stdin.pipe(this.stdin);
+    // The packaged relay program, as a stand-in: a setup is refused without one.
+    const relayBundle = join(this.dataDir, "ash-gateway.mjs");
+    writeFileSync(relayBundle, "export default {};\n");
     this.hubValue = await startHub({
-      dataDir: this.dataDir, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
+      dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
       ...(this.options.llm ? { llm: this.options.llm } : {}),
       ...(this.options.fakeNow ? { now: this.clock.now } : {}),
     });
@@ -697,8 +718,9 @@ export class Scenario {
 
   /** Stops the hub and starts it again on the same data directory; every connected client reconnects. */
   async restart(): Promise<void> {
-    await this.driver.dispose();
+    // The hub goes first: it ends the turns and the tool lines it holds itself, then the fake driver lets go.
     await this.hub.stop();
+    await this.driver.dispose();
     this.hubValue = undefined;
     // Events the host sends while the hub is down wait in the host's stream for the next boot's pipe.
     if (this.stdin) { this.host.stdin.unpipe(this.stdin); this.stdin.end(); }
@@ -707,6 +729,34 @@ export class Scenario {
     await this.boot();
     for (const client of returning) client.reconnectNow();
     await eventually(() => returning.every((client) => client.state === "ready"), "the connections coming back");
+  }
+
+  /**
+   * The owner's first connection: the hub wakes the primary agent once for `first_meeting` (its own turn, run by the
+   * fallback script). Connects, waits for that turn to end, disconnects, and empties what the driver recorded about turns,
+   * deliveries and tool calls, so a scenario counts only its own.
+   */
+  async passFirstMeeting(): Promise<void> {
+    const owner = await this.human({ name: "first meeting" });
+    const isMeeting = (m: DriverMessage): boolean => m.word === "wake" && m.text.startsWith("Wake · first_meeting");
+    const turn = await this.driver.turn((record) => record.messages.some(isMeeting), "the first-meeting turn");
+    await turn.done;
+    owner.disconnect();
+    this.driver.forget();
+  }
+
+  /**
+   * A fake relay (the owner's side of `ash-gw/1`) that already belongs to this hub: the host signs for the hub's key, which
+   * the relay knows as its owner. Nothing is connected yet; the owner points the hub at it with
+   * `service:link/gateway.use {url: relay.url}`, the way they would with a relay of their own.
+   */
+  async relay(): Promise<FakeGateway> {
+    if (this.relayValue) return this.relayValue;
+    const key = await hubKey();
+    this.host.results.set("identity.key", () => key.identity.key());
+    this.host.results.set("identity.sign", (body: unknown) => key.identity.sign((body as { data: string }).data));
+    this.relayValue = await FakeGateway.start({ claimedBy: { id: key.id, key: key.publicKey } });
+    return this.relayValue;
   }
 
   /** Moves the hub's clock (needs `fakeNow`). */
@@ -795,6 +845,8 @@ export class Scenario {
     await this.driver.dispose();
     await this.hubValue?.stop().catch(() => {});
     this.hubValue = undefined;
+    await this.relayValue?.stop().catch(() => {});
+    this.relayValue = undefined;
     await this.host.stop().catch(() => {});
     rmSync(this.dataDir, { recursive: true, force: true });
     if (this.booted) this.booted = false;
@@ -809,5 +861,6 @@ export async function startScenario(t: TestContext, options: ScenarioOptions = {
   const scenario = new Scenario(options);
   t.after(() => scenario.dispose());
   await scenario.boot();
+  if (!options.firstMeeting) await scenario.passFirstMeeting();
   return scenario;
 }

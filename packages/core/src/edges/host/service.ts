@@ -8,6 +8,7 @@
  *
  * What the host does not offer is skipped, not imitated: its words answer `unavailable`.
  */
+import type { Readable } from "node:stream";
 import { WordError, type Caller, type Message, type WordResult } from "../../../../sdk/src/message";
 import type { HostEvent } from "../../../../sdk/src/host";
 import type { Member } from "../../../../sdk/src/word";
@@ -31,7 +32,7 @@ export interface HostService {
   /** `service:host`: add it to the registry. */
   member: Member;
   /** Reads the host's events from the kernel's standard input; `close()` stops reading. */
-  listen(input: NodeJS.ReadableStream): HostEventReader;
+  listen(input: Readable): HostEventReader;
 }
 
 export function createHostService(deps: HostServiceDeps): HostService {
@@ -66,7 +67,7 @@ export function createHostService(deps: HostServiceDeps): HostService {
 
   return {
     member,
-    listen: (input) => readHostEvents(input as never, async (event: HostEvent) => {
+    listen: (input) => readHostEvents(input, async (event: HostEvent) => {
       switch (event.event) {
         case "wake.fired": await pass("service:clock", "wake.fired", { at: event.at }); return;
         case "env.changed": {

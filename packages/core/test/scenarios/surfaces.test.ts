@@ -70,7 +70,8 @@ test("S107, S108: a card an agent puts is drawn on the channels that declared 'w
 
   accepted(await phone.say("放一张卡片"));
 
-  const frame = await phone.nextPresent((f) => f.surface === "widget" && f.op === "state", "the widget state frame");
+  // A channel that has just connected first gets the current (still empty) state; the card comes in a later frame.
+  const frame = await phone.nextPresent((f) => f.surface === "widget" && f.op === "state" && JSON.stringify(f.body).includes("todo"), "the widget state frame with the card");
   assert.ok(JSON.stringify(frame.body).includes("todo"));
 });
 
@@ -102,9 +103,9 @@ test("S111: a tap on a card reaches the agent that made it, as the owner's actio
   accepted(await phone.say("放一张卡片"));
   await s.driver.toolCall("capability_call", "the card being put");
 
-  const tapped = await phone.call("service:widgets", "widget.tap", { card: "todo", action: "toggle", component: "row", checked: true });
+  const tapped = await phone.call("service:widgets", "widget.tap", { card: "todo", action: "toggle", component: "row@0", checked: true });
 
   assert.ok(tapped.ok);
-  const { message } = await s.driver.delivery((m) => m.word === "widget.action", "the creator being told about the tap");
+  const { message } = await s.driver.delivery((m) => m.word === "tell" && m.from === "service:widgets" && m.text.includes("[widget.action]"), "the creator being told about the tap");
   assert.ok(message.text.includes("todo"));
 });

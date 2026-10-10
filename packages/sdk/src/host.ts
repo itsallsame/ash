@@ -52,7 +52,11 @@ export interface HostProotIsolation {
     storage_binds?: string[]; dns?: string[];
   };
 }
-export interface HostNativeIsolation { kind: "native"; native: { workspace: string; dsh_bin: string; dsh_home: string } }
+export interface HostNativeIsolation { kind: "native"; native: {
+  workspace: string; dsh_bin: string; dsh_home: string;
+  /** The `--patch` file for DSH on this machine (inside the container it is /opt/ash/patch.yml). Absent: DSH runs without one. */
+  dsh_patch?: string;
+} }
 export interface HostContainerIsolation { kind: "container"; container: { engine: string; image: string } }
 export type HostIsolation = HostProotIsolation | HostNativeIsolation | HostContainerIsolation;
 
@@ -183,7 +187,7 @@ export const HOST_SPEC_SCHEMA = {
           required: ["kind", "native"],
           properties: {
             kind: { const: "native" },
-            native: { type: "object", required: ["workspace", "dsh_bin", "dsh_home"], properties: { workspace: str, dsh_bin: str, dsh_home: str } },
+            native: { type: "object", required: ["workspace", "dsh_bin", "dsh_home"], properties: { workspace: str, dsh_bin: str, dsh_home: str, dsh_patch: str } },
           },
         },
         {

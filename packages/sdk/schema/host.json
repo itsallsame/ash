@@ -182,6 +182,10 @@
                 "dsh_home": {
                   "type": "string",
                   "minLength": 1
+                },
+                "dsh_patch": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }

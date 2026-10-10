@@ -11,8 +11,8 @@
  * presented to every channel that declared `widget`, and what a channel reports becomes `widget.rendered`. A channel that
  * has just connected is given the current state from `service:widgets/widget.list`.
  *
- * Assembly: `link.onChannel("human", human.attach)`, `registry.add(human.member)`; the small model goes in as
- * `summarize` (see `summaryRequest`).
+ * Assembly: `link.onChannel("human", human.attach)`, `registry.add(human.member)`; the small model goes in as `summarize`
+ * (`createSummarizer` of edges/llm/summary).
  */
 import { isAgentId, OWNER_ID } from "../../../../../sdk/src/ids";
 import type { HelloFrame } from "../../../../../sdk/src/link";
@@ -32,7 +32,7 @@ import { Presenter, type PresentResult } from "./present";
 import { TaskStatus, type Summarize } from "./status";
 import { Syncs } from "./sync";
 
-export { summaryRequest, type Summarize, type TaskFrame } from "./status";
+export { type Summarize, type TaskFrame } from "./status";
 export { isQuiet, QUIET_HOURS_KEY, DEDUPE_MINUTES_KEY } from "./delivery";
 export type { ClientInfo, Surface } from "./clients";
 export type { PresentResult } from "./present";
@@ -44,7 +44,7 @@ export interface HumanDeps {
   settings(): Record<string, unknown>;
   /** The primary agent's id, or null while there is no agent: then replies on notifications have nobody to go to and are not sent. */
   primary(): string | null;
-  /** One short line about what the agent is doing, from the small model; null when there is none. */
+  /** One short line about what the agent is doing, from the small model; null when there is none. Absent: the tool's own line stays. */
   summarize?: Summarize;
   now?: () => number;
   /** IANA zone for quiet hours; default the host's local time. */

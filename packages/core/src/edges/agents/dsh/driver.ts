@@ -18,7 +18,8 @@ import {
 } from "../../../../../sdk/src/driver";
 import { AcpClient, AcpError, type AcpUpdate, type DriverProcess, type SpawnFn } from "./acp";
 
-export const DEFAULT_ARGV = ["/opt/dsh/node_modules/.bin/dsh", "--profile", "acp", "--patch", "/opt/ash/patch.yml"];
+/** `dsh` is a name the main body resolves: its own binary on a development machine, /opt/dsh/... in the container. */
+export const DEFAULT_ARGV = ["dsh", "--profile", "acp", "--patch", "/opt/ash/patch.yml"];
 const IMAGE = /^image\/(png|jpeg|webp|gif)$/;
 /** The file DSH loads from the working directory as the base of every session. */
 export const BASELINE_FILE = "AGENTS.md";
@@ -184,7 +185,12 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
 
   // -- sessions ----------------------------------------------------------------------------------------------------
 
-  const servers = (spec: AgentStartSpec) => [{ type: "http", name: "ash", url: spec.tools.mcp_url, headers: [{ name: "authorization", value: `Bearer ${spec.tools.token}` }] }];
+  /** The tool surface for one lane's session: that lane's own token, so the hub knows which lane a call comes from. */
+  const servers = (spec: AgentStartSpec, key: string) => {
+    const token = spec.tools.tokens[key];
+    if (!token) throw new Error(`the spec has no tool token for lane ${key}`);
+    return [{ type: "http", name: "ash", url: spec.tools.mcp_url, headers: [{ name: "authorization", value: `Bearer ${token}` }] }];
+  };
 
   /** Resume the handle, or open a new session when there is none or the runtime no longer knows it. */
   async function open(agent: string, p: Proc, key: string, handle?: string): Promise<Session> {
@@ -193,7 +199,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
     let created = false;
     if (handle) {
       try {
-        const resumed = await p.client.request<{ configOptions?: unknown[] }>("session/resume", { sessionId: handle, cwd: p.cwd, mcpServers: servers(p.spec) });
+        const resumed = await p.client.request<{ configOptions?: unknown[] }>("session/resume", { sessionId: handle, cwd: p.cwd, mcpServers: servers(p.spec, key) });
         id = handle;
         options = resumed?.configOptions ?? [];
       } catch (error) {
@@ -202,7 +208,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
       }
     }
     if (!id) {
-      const made = await p.client.request<{ sessionId: string; configOptions?: unknown[] }>("session/new", { cwd: p.cwd, mcpServers: servers(p.spec) });
+      const made = await p.client.request<{ sessionId: string; configOptions?: unknown[] }>("session/new", { cwd: p.cwd, mcpServers: servers(p.spec, key) });
       if (typeof made?.sessionId !== "string") throw new Error("the runtime gave no session id");
       id = made.sessionId;
       options = made.configOptions ?? [];

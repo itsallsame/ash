@@ -84,12 +84,12 @@ export interface Rig {
   edge: ToolsEdge;
   ledger: Ledger;
   router: ReturnType<typeof fakeRouter>;
-  /** The turn each agent is in now; set to null for "no turn". */
+  /** The turn each agent is in now on a lane (`agent` for the front lane, `agent/lane` for another); set to null for "no turn". */
   turns: Map<string, string | null>;
   policies: Map<string, AgentPolicy | null>;
   url: string;
-  token(agent?: string): string;
-  client(agent?: string): Promise<ToolClient>;
+  token(agent?: string, lane?: string): string;
+  client(agent?: string, lane?: string): Promise<ToolClient>;
 }
 
 export interface ToolResult { isError: boolean; data: any; text: string; content: any[] }
@@ -113,7 +113,7 @@ export async function startRig(over: Partial<ToolsEdgeOptions> & { dir?: string;
   const edge = createToolsEdge({
     router, registry: fakeRegistry(), ledger,
     agentPolicy: (id) => policies.get(id) ?? null,
-    currentTurn: (id) => turns.get(id) ?? null,
+    currentTurn: (id, lane) => turns.get(lane === "front" ? id : `${id}/${lane}`) ?? null,
     fastPathMs: 60, maxWaitMs: 400, settleMs: 40,
     ...over,
   });
@@ -128,12 +128,17 @@ export async function startRig(over: Partial<ToolsEdgeOptions> & { dir?: string;
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
-  const token = (agent = MAIN) => { let t = tokens.get(agent); if (!t) { t = edge.issueToken(agent); tokens.set(agent, t); } return t; };
+  /** Tokens are issued once per agent for the lanes the tests use; the agent's earlier tokens are replaced as on a restart. */
+  const LANES = ["front", "back"];
+  const token = (agent = MAIN, lane = "front") => {
+    if (!tokens.has(`${agent}/${lane}`)) for (const [l, t] of Object.entries(edge.issueTokens(agent, LANES))) tokens.set(`${agent}/${l}`, t);
+    return tokens.get(`${agent}/${lane}`)!;
+  };
   return {
     edge, ledger, router, turns, policies, url, token,
-    async client(agent = MAIN) {
+    async client(agent = MAIN, lane = "front") {
       const client = new Client({ name: "test", version: "0.0.0" });
-      await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token(agent)}` } } }));
+      await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token(agent, lane)}` } } }));
       clients.push(client);
       return new ToolClient(client);
     },

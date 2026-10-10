@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentDriverFactory } from "../../sdk/src/driver";
 import { MAIN_BODY_ID } from "../../sdk/src/ids";
 import { WordError, type Caller } from "../../sdk/src/message";
-import { createAgents, bodyFileWriter, fileTemplates } from "./edges/agents";
+import { createAgents, bodyFileWriter } from "./edges/agents";
 import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
 import { createRemoteDrivers } from "./edges/agents/remote";
 import { createApps, installBuiltinOrgans, installContractDoc } from "./edges/apps";
@@ -22,12 +22,14 @@ import { createHostService, HostClient, loadHostBoot } from "./edges/host";
 import { createLlm } from "./edges/llm";
 import { createReviewer } from "./edges/llm/review";
 import { createLlmService } from "./edges/llm/service";
+import { createSummarizer } from "./edges/llm/summary";
 import { createLinkServer } from "./edges/link-server";
+import { relayBundleFile, RELAY_BUNDLE_FILE } from "./edges/link-server/control/bundle";
 import { createLinkControl } from "./edges/link-server/control/words";
 import { Devices } from "./edges/link-server/hands/devices";
 import { createBodies, splitBodyCapabilities } from "./edges/link-server/hands/bodies";
 import { HandRegistry } from "./edges/link-server/hands/registry";
-import { createHuman, summaryRequest } from "./edges/link-server/human";
+import { createHuman } from "./edges/link-server/human";
 import { staticWeb } from "./edges/link-server/web";
 import { createToolsEdge, TOOL_NAMES, toolWords } from "./edges/tools";
 import { APP_CONTRACT_DOC } from "./prompts/app-contract.generated";
@@ -72,6 +74,13 @@ export interface HubOptions {
   llm?: { baseUrl: string };
   /** Drivers by runtime kind (`dsh`, `codex`, ...). Absent: the real ones. */
   drivers?: Record<string, AgentDriverFactory>;
+  /**
+   * The relay program (`ash-gateway.mjs`, from the gateway's `npm run build:bundle`) that `gateway.setup.deploy` uploads.
+   * Absent: `ash-gateway.mjs` next to the hub's own program. If the file is not there, deploy answers `unavailable`.
+   */
+  relayBundle?: string;
+  /** The local port the relay setup's sign-in returns to (default 8976; 0 = any free port, for tests). */
+  relaySetupPort?: number;
   /** The clock of everything that waits for a time (timers, approval expiry, pulse). Absent: the system clock. */
   now?: () => number;
 }
@@ -90,7 +99,6 @@ const service = (member: string): Caller => ({ member, via: "service", local: tr
 /** `packages/ash-skills` next to the sources; `<payload>/ash-skills` next to the bundle (`<payload>/ash/ash-core.mjs`, payload/assemble.mjs). */
 const SKILLS = [new URL("../ash-skills/", import.meta.url), new URL("../../ash-skills/", import.meta.url)]
   .map((url) => fileURLToPath(url)).find((dir) => existsSync(join(dir, "agents", "main.json"))) ?? fileURLToPath(new URL("../../ash-skills/", import.meta.url));
-const PERSONA = ["SOUL", "IDENTITY", "PULSE"] as const;
 
 function hubVersion(): string {
   try { return String((JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown }).version ?? "dev"); } catch { return "dev"; }
@@ -136,6 +144,8 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     onParked: (pending) => late.gateService!.issueCard(pending),
     onError: (where, error) => log(where, error),
     agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords,
+    mayTalkToOwner: (caller, word) => late.agents?.mayTalkToOwner(caller, word) ?? true,
+    mayAnswer: (caller, body) => late.agents?.mayAnswer(caller, body) ?? true,
     appGranted: (app, to, word) => late.apps!.runtime.granted(app, to, word),
   });
 
@@ -156,7 +166,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const vaultService = createVaultService({ vault, ledger, router });
   const semantic = createSemantic({
     ledger, router, now, log,
-    templates: Object.fromEntries(PERSONA.map((name) => [`${name}.md`, readFileSync(join(SKILLS, "persona", `${name}.template.md`), "utf8")])) as never,
+    templatesDir: join(SKILLS, "persona"),
   });
 
   // 6. edges
@@ -175,8 +185,10 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     },
   });
   const link = createLinkServer({ hands, hostClient: host, ...(opts.port ? { port: opts.port } : {}), log });
+  const relayBundle = relayBundleFile(opts.relayBundle ?? fileURLToPath(new URL(RELAY_BUNDLE_FILE, import.meta.url)));
   const linkControl = createLinkControl({
-    db: ledger.db(), router, link, hands, vault, now, log,
+    db: ledger.db(), router, link, hands, vault, now, log, bundle: relayBundle.read, bundleMissing: relayBundle.missing,
+    ...(opts.relaySetupPort === undefined ? {} : { callbackPort: opts.relaySetupPort }),
     identity: { key: () => host.identityKey(), sign: (data) => host.identitySign(data) },
   });
   const devices = new Devices({ hands, router, bodies, gateway: linkControl.pairing, now });
@@ -185,7 +197,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   link.onChannel("agent", remote.attach);
 
   let url = "";
-  const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id) => late.agents?.currentTurn(id) ?? null });
+  const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id, lane) => late.agents?.currentTurn(id, lane) ?? null });
   const drivers: Record<string, AgentDriverFactory> = {
     dsh: (report) => createDshDriver({ report, spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), readBlob: (ref) => ledger.blob.get(ref) }),
     ...remote.factories,
@@ -193,9 +205,9 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   };
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
-    templates: fileTemplates(join(SKILLS, "agents")),
+    templatesDir: join(SKILLS, "agents"),
     rules: (decl) => (decl.primary ? MAIN_RULES : AGENT_RULES),
-    tools: (agent, allowed) => ({ mcp_url: `${url}/mcp`, token: tools.issueToken(agent), allowed: allowed ?? [...TOOL_NAMES] }),
+    tools: (agent, lanes, allowed) => ({ mcp_url: `${url}/mcp`, tokens: tools.issueTokens(agent, lanes), allowed: allowed ?? [...TOOL_NAMES] }),
   });
   const launcher = body.appLauncher();
   if (launcher) installContractDoc(launcher.root, APP_CONTRACT_DOC);
@@ -205,7 +217,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   });
   const human = createHuman({
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
-    summarize: async (steps) => { try { return (await llm.complete("person:owner", summaryRequest(steps))).text.trim() || null; } catch { return null; } },
+    summarize: createSummarizer({ llm }),
   });
   const hostService = createHostService({ client: host, router, onStop: (deadline) => stop(deadline), log });
   link.onChannel("human", human.attach);

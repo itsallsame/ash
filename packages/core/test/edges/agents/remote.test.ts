@@ -65,7 +65,8 @@ class Computer {
   /** The agent calls an Ash tool; resolves with the hub's `outbound_result`. */
   async tool(frame: Frame): Promise<Frame> {
     const id = `o_${++this.n}`;
-    this.out({ id, outbound: frame.tool, agent: frame.agent, key: frame.key ?? "front", turn: frame.turn ?? "t0", args: frame.args ?? {} });
+    const key = frame.key ?? "front";
+    this.out({ id, outbound: frame.tool, agent: frame.agent, key, turn: frame.turn ?? this.agents.get(frame.agent)?.turns.get(key) ?? "t0", args: frame.args ?? {} });
     return eventually(() => this.results.find((r) => r.id === id), `outbound_result of ${frame.tool}`, 5000);
   }
 
@@ -122,7 +123,7 @@ class Computer {
 }
 
 const spec = (on: string | undefined, over: Partial<AgentStartSpec> = {}, kind = "codex"): AgentStartSpec => ({
-  runtime: { kind }, ...(on ? { native: { on, cwd: "/work" } } : {}), tools: { mcp_url: "http://hub/mcp", token: "tok", allowed: ["*"] },
+  runtime: { kind }, ...(on ? { native: { on, cwd: "/work" } } : {}), tools: { mcp_url: "http://hub/mcp", tokens: { front: "tok" }, allowed: ["*"] },
   modules: { static: [] }, lanes: ["front", "back"], sessions: {}, ...over,
 });
 
@@ -144,6 +145,14 @@ async function world(t: test.TestContext, options: Partial<RemoteOptions> = {}) 
     return c;
   };
   return { hub, remote, router, replies, sent, events, drivers, codex: drivers.codex!, computer, of: (name: AgentEvent["event"]) => events.filter((e) => e.event === name) };
+}
+
+/** The agent's lane takes a message and is in a turn; the turn's id. */
+async function turnOn(w: Awaited<ReturnType<typeof world>>, agent: string, key: string): Promise<string> {
+  const before = w.of("turn.started").length;
+  await w.codex.send(agent, key, [{ id: `m-${key}-${before}`, from: "person:owner", word: "say", text: "go", lane: key, at: 1 }]);
+  await eventually(() => w.of("turn.started").length === before + 1, "turn.started");
+  return (w.of("turn.started")[before] as any).turn;
 }
 
 test("start: the computer named by native.on is asked, its sessions are kept for session.get, info is what its hello said", async (t) => {
@@ -263,12 +272,13 @@ test("outbound: the agent's tool call goes through the router as that agent and 
   w.replies.set("service:agents/ask", (m) => ({ ok: true, result: { data: { answer: `re: ${(m.body as any).text}` } } }));
   w.replies.set("service:agents/tell", () => ({ ok: false, error: { code: "forbidden", message: "not yours to tell" } }));
 
-  const list = await c.tool({ tool: "agent_list", agent: "agent:x", turn: "t9" });
+  const t9 = await turnOn(w, "agent:x", "front");
+  const list = await c.tool({ tool: "agent_list", agent: "agent:x", turn: t9 });
   assert.deepEqual([list.outbound_result, list.ok, list.result], ["agent_list", true, { agents: [{ id: "agent:main" }] }]);
   assert.deepEqual(w.sent[0]!.msg, { to: "service:agents", kind: "request", word: "list", body: {} });
   assert.equal(w.sent[0]!.caller.member, "agent:x");
   assert.equal(w.sent[0]!.caller.via, "agent");
-  assert.equal(w.sent[0]!.caller.turn, "t9");
+  assert.equal(w.sent[0]!.caller.turn, t9);
 
   const ask = await c.tool({ tool: "agent_ask", agent: "agent:x", args: { agent: "agent:main", text: "q?", extra: "dropped" } });
   assert.deepEqual([ask.ok, ask.result], [true, { answer: "re: q?" }]);
@@ -290,6 +300,7 @@ test("outbound: a computer cannot speak for an agent that is not its own, and a 
   const a = await w.computer();
   const b = await w.computer();
   await w.codex.start("agent:x", spec(a.id));
+  await turnOn(w, "agent:x", "front");
   const forged = await b.tool({ tool: "agent_tell", agent: "agent:x", args: { agent: "agent:main", text: "forged" } });
   assert.deepEqual([forged.ok, forged.error.code], [false, "forbidden"]);
   const unknown = await b.tool({ tool: "agent_list", agent: "agent:main" });
@@ -307,6 +318,33 @@ test("outbound: a computer cannot speak for an agent that is not its own, and a 
   await new Promise((r) => setTimeout(r, 30));
   a.drop();
   await eventually(() => aborted, "the in-flight tool call aborted");
+});
+
+test("outbound: the lane's turn is the hub's own record; a call cannot name another lane's turn or a turn that is over", async (t) => {
+  const w = await world(t);
+  const c = await w.computer();
+  await w.codex.start("agent:x", spec(c.id, { tools: { mcp_url: "u", tokens: { front: "a", back: "b" }, allowed: ["*"] } }, "codex"));
+  const idle = await c.tool({ tool: "agent_list", agent: "agent:x", key: "back", turn: "t-made-up" });
+  assert.deepEqual([idle.ok, idle.error.code], [false, "forbidden"]);
+
+  const front = await turnOn(w, "agent:x", "front");
+  const back = await turnOn(w, "agent:x", "back");
+  assert.notEqual(front, back);
+  const own = await c.tool({ tool: "agent_list", agent: "agent:x", key: "back" });
+  assert.equal(own.ok, true);
+  assert.equal(w.sent.at(-1)!.caller.turn, back, "the back lane's call is in the back lane's turn");
+  const borrowed = await c.tool({ tool: "agent_list", agent: "agent:x", key: "back", turn: front });
+  assert.deepEqual([borrowed.ok, borrowed.error.code], [false, "forbidden"], "the back lane cannot name the front lane's turn");
+  const unknown = await c.tool({ tool: "agent_list", agent: "agent:x", key: "nope", turn: front });
+  assert.equal(unknown.ok, false);
+  assert.equal(w.sent.length, 1, "refused calls never reach the router");
+
+  c.finish("agent:x", "back");
+  await eventually(() => w.of("turn.ended").length === 1, "turn.ended");
+  const over = await c.tool({ tool: "agent_list", agent: "agent:x", key: "back", turn: back });
+  assert.deepEqual([over.ok, over.error.code], [false, "forbidden"], "a turn that is over is not one");
+  assert.equal((await c.tool({ tool: "agent_list", agent: "agent:x", key: "front" })).ok, true);
+  assert.equal(w.sent.at(-1)!.caller.turn, front);
 });
 
 test("disconnect: the agents on that computer are reported ended; the computer comes back and start attaches", async (t) => {
@@ -359,7 +397,7 @@ test("agent.status is a state, not an end: only the ended event restarts; a fail
 test("outbound: the declaration's tool list is enforced, and a call still open when its turn ends fails", async (t) => {
   const w = await world(t);
   const c = await w.computer();
-  await w.codex.start("agent:x", spec(c.id, { tools: { mcp_url: "u", token: "t", allowed: ["agent_list", "agent_ask"] } }));
+  await w.codex.start("agent:x", spec(c.id, { tools: { mcp_url: "u", tokens: { front: "t" }, allowed: ["agent_list", "agent_ask"] } }));
   const denied = await c.tool({ tool: "agent_tell", agent: "agent:x", args: { agent: "agent:main", text: "x" } });
   assert.deepEqual([denied.ok, denied.error.code], [false, "forbidden"]);
   assert.equal(w.sent.length, 0);
@@ -453,15 +491,14 @@ test("through the agents module: declared on a computer, a message becomes a tur
   assert.equal(send.messages[0].text, "hello there");
   await waitFor(() => f.agents.manager.stateOf(MAIN) === "working");
   c.say(MAIN, "front", "hi owner");
+  // its tool call is the agent's own words, under its declaration, in the turn it is in
+  f.router.on("service:agents/list", () => ({ ok: true, result: { data: { agents: [] } } }));
+  const list = await c.tool({ tool: "agent_list", agent: MAIN, key: "front" });
+  assert.equal(list.ok, true);
   c.finish(MAIN, "front");
   await waitFor(() => f.router.says().some((s) => s.text === "hi owner"));
   assert.deepEqual(f.router.says().find((s) => s.text === "hi owner")!.from, MAIN);
   await waitFor(() => f.agents.manager.stateOf(MAIN) === "idle");
-
-  // its tool call is the agent's own words, under its declaration
-  f.router.on("service:agents/list", () => ({ ok: true, result: { data: { agents: [] } } }));
-  const list = await c.tool({ tool: "agent_list", agent: MAIN, turn: "tx" });
-  assert.equal(list.ok, true);
 
   // the wire drops: the module sees the agent end, starts it again, and the computer says it attached
   c.drop();

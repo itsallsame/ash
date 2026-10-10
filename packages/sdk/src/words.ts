@@ -215,7 +215,7 @@ add("service:devices", "access_set", "request", obj({ device: deviceRef, ...acce
   { effect: "write", risk: "structure", label: "在调整设备权限", description: "Change what a hand may do (lend capabilities, serve as a body, run local agents, web chat) and its tier (ask, full). An agent asking for this is always asked about by the owner." });
 add("service:devices", "update", "request", obj({ device: deviceRef, version: { type: "string", pattern: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$" }, sha256: sha }, ["device", "version", "sha256"]), obj({ started: bool }, ["started"]),
   { effect: "write", risk: "structure", label: "在更新设备程序", description: "Have a computer update its Ash program to the given version (checked against sha256). Approved here once; the update itself is then run by the hub. An agent asking for this is always asked about by the owner." });
-add("service:devices", "pair_code", "request", obj({ pair_id: id }, ["pair_id"]), obj({ code: sensitive(nonempty, "hidden"), url: str, expires_at: nonnegativeSafe }, ["code"]),
+add("service:devices", "pair_code", "request", obj({ pair_id: id }, ["pair_id"]), obj({ code: sensitive(nonempty, "hidden"), url: sensitive(str, "hidden"), expires_at: nonnegativeSafe }, ["code"]),
   { callers: OWNER, local_only: true, label: "在看配对码", description: "Show the pairing code of a pairing the owner started, with the address to open on the new computer. Only the owner, from a channel on this machine." });
 add("service:devices", "pair.changed", "event", obj({ pair_id: id, state: pairState, device: deviceRef }, ["pair_id", "state"]), undefined,
   { record: true, label: "在记下配对进展", description: "A pairing moved on (requested, approved, rejected, connected, expired). The one who started it is told by a background message." });
@@ -242,8 +242,8 @@ add("service:link", "reconnect", "request", obj({ hand: handRef }, ["hand"]), ob
 add("service:link", "refresh_manifest", "request", obj({ hand: handRef }, ["hand"]), obj({ requested: bool }, ["requested"]),
   { callers: LINK_CALLERS, effect: "act", label: "在请手重发能力清单", description: "Ask a hand to send its capability list again, for example after you changed what it may lend." });
 add("service:link", "gateway.status", "request", empty,
-  obj({ configured: bool, url: str, claimed: bool, connected: bool, account_email: sensitive(str, "email"), last_error: str }, ["configured", "connected"], true),
-  { callers: LINK_CALLERS, label: "在看中转站", description: "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error." });
+  obj({ configured: bool, url: str, claimed: bool, connected: bool, account_email: sensitive(str, "email"), last_error: str, setup_unavailable: str }, ["configured", "connected"], true),
+  { callers: LINK_CALLERS, label: "在看中转站", description: "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error, and (setup_unavailable) why building a relay is not possible in this build." });
 add("service:link", "gateway.setup.start", "request", obj({ provider: { const: "cloudflare" } }, ["provider"]), setupInfo,
   { callers: LINK_CALLERS, effect: "act", label: "在开始搭中转站", description: "Start building a relay in the owner's Cloudflare account: a 'sign in to Cloudflare' card goes to the owner. You get a setup_id and a background message at each step." });
 add("service:link", "gateway.setup.status", "request", obj({ setup_id: id }, ["setup_id"]), setupInfo,
@@ -414,7 +414,7 @@ add("service:clock", "set", "request", obj({ at: num, every: { type: "integer", 
 add("service:clock", "cancel", "request", obj({ id }, ["id"]), obj({ cancelled: bool }, ["cancelled"]),
   { effect: "write", label: "在取消提醒", description: "Cancel a timer by id; check `cancelled` because it may already have fired." });
 add("service:clock", "list", "request", empty, obj({ timers: array(any) }, ["timers"]),
-  { label: "在看提醒", description: "The active timers, to look at before changing them; the result is a snapshot." });
+  { label: "在看提醒", description: "The active timers, to look at before changing them; the result is a snapshot. An agent or an app sees the timers it set; the owner sees all." });
 add("service:clock", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]), undefined,
   { direction: "in", label: "在响应唤醒闹钟", description: "The host's alarm went off (the device woke); the clock checks which timers are due. Sent by the host module." });
 
