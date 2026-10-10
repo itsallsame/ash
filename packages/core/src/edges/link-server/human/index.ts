@@ -56,8 +56,6 @@ export interface HumanDeps {
 export interface HumanEdge {
   /** `person:owner`: add it to the registry. */
   member: Member;
-  /** `service:human`, who sends the events the edge sends on its own (`typing`, `widget.rendered`); the router only lets a sender send events its own words declare, so add it to the registry too. */
-  sender: Member;
   /** For `link.onChannel("human", …)`. */
   attach: ChannelAttach;
   clients(): ClientInfo[];
@@ -66,9 +64,9 @@ export interface HumanEdge {
   close(): void;
 }
 
-/** Who the human edge is when it speaks for itself (typing, widget.rendered): events the owner cannot send. */
-const SELF: Caller = { member: "service:human", via: "service", local: true };
-const SENDER_EVENTS = ["typing", "widget.rendered"];
+
+/** The member `person:owner` acting on its own (its events `typing` and `widget.rendered`, reading the widget state): the hub's code, not the owner speaking. */
+const AS_SERVICE: Caller = { member: OWNER_ID, via: "service", local: true };
 
 export function createHuman(deps: HumanDeps): HumanEdge {
   const now = deps.now ?? Date.now;
@@ -91,7 +89,6 @@ export function createHuman(deps: HumanDeps): HumanEdge {
   const notifier: Notifier = new Notifier({
     clients, presenter, settings: deps.settings, now, islandMs: t.islandMs, ...(deps.timeZone ? { zone: deps.timeZone } : {}),
     primary: deps.primary,
-    noted: (id, client) => asks.noted(id, client), isOpen: (id) => asks.has(id),
   });
   const asks: Asks = new Asks({
     now,
@@ -100,7 +97,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
   });
   const inbound = new Inbound({ router: deps.router, ledger: deps.ledger, recorded, asks, now, recordMs: t.recordMs, log });
 
-  const sendEvent = (out: Outgoing) => void deps.router.send(out, SELF).then((reply) => { if (!reply.ok) log(`${out.word} to ${out.to} refused: ${reply.error.message}`); }, (error) => log(`${out.word} to ${out.to} failed`, error));
+  const sendEvent = (out: Outgoing) => void deps.router.send(out, AS_SERVICE).then((reply) => { if (!reply.ok) log(`${out.word} to ${out.to} refused: ${reply.error.message}`); }, (error) => log(`${out.word} to ${out.to} failed`, error));
 
   // Everything the router announces: following syncs, answers waiting to be recorded, the task status, the turns that make replies ring.
   const unsubscribe = deps.router.subscribe({}, (m: Message) => {
@@ -113,12 +110,6 @@ export function createHuman(deps: HumanDeps): HumanEdge {
       else if (m.word === "turn.ended") void notifier.turnEnded(turn).catch((error) => log("turn end notification failed", error));
     }
   });
-
-  const sender: Member = {
-    id: SELF.member, kind: "service", name: "Human edge",
-    words: (): WordContract[] => [...wordsOf("agent:*"), ...wordsOf("service:widgets")].filter((w) => w.kind === "event" && SENDER_EVENTS.includes(w.word)),
-    async handle() {},
-  };
 
   // ---- the member -----------------------------------------------------------------------------------------------------
 
@@ -140,10 +131,13 @@ export function createHuman(deps: HumanDeps): HumanEdge {
           if (!deps.ledger.get(body.message_id)) throw new WordError("not_found", `no message ${body.message_id}`);
           return { data: { accepted: true } };
         case "ask": {
-          const answer = asks.wait(msg, ctx.signal);
-          const open = asks.list().find((a) => a.id === msg.id);
-          if (open) void notifier.ask(open).catch((error) => log("notification failed", error));
-          return answer;
+          const { ask, done } = asks.wait(msg, ctx.signal);
+          void notifier.ask(ask).then((reached) => {
+            // The question may have ended while the notification was on its way.
+            if (asks.has(ask.id)) for (const client of reached) asks.noted(ask.id, client);
+            else notifier.hide(ask.id, reached);
+          }).catch((error) => log("notification failed", error));
+          return done;
         }
         case "open": return open(body as Parameters<typeof open>[0]);
         default: throw new WordError("not_found", `person:owner has no word ${msg.word}`);
@@ -163,13 +157,12 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     throw failure;
   }
 
-  /** `open`: a page on the named channel, else the one the owner is on. The body is `{target}` when that is all there is, else `{target: {target, id?, mode?}}` (the frame's `target` is open-ended). */
+  /** `open`: a page on the named channel, else the one the owner is on. */
   async function open(body: { target: string; id?: string; mode?: string; client?: string }): Promise<WordResult> {
     const c = body.client ? clients.get(body.client) : clients.current();
     if (!c) throw new WordError("offline", body.client ? `${body.client} is not connected` : "the owner has no channel open");
     if (!c.surfaces.includes("chat")) throw new WordError("unavailable", `${c.client} does not show chat pages`);
-    const detail = { target: body.target, ...(body.id !== undefined ? { id: body.id } : {}), ...(body.mode !== undefined ? { mode: body.mode } : {}) };
-    const result = await presenter.send(c, { surface: "chat", op: "open", body: { target: Object.keys(detail).length === 1 ? body.target : detail } });
+    const result = await presenter.send(c, { surface: "chat", op: "open", body: { target: body.target, ...(body.id !== undefined ? { id: body.id } : {}), ...(body.mode !== undefined ? { mode: body.mode } : {}) } });
     if (!result.ok) throw new WordError(result.error.code, result.error.message);
     return { data: { opened: (result.data as { opened?: unknown } | undefined)?.opened !== false } };
   }
@@ -239,14 +232,14 @@ export function createHuman(deps: HumanDeps): HumanEdge {
 
   /** A channel that just connected gets the current state. */
   function greetWidgets(c: LiveClient): void {
-    void deps.router.send({ to: "service:widgets", kind: "request", word: "widget.list", body: {} }, SELF).then(
+    void deps.router.send({ to: "service:widgets", kind: "request", word: "widget.list", body: {} }, AS_SERVICE).then(
       (reply) => { if (reply.ok && reply.result?.data !== undefined) return pushWidgets(reply.result.data, [c]); },
       (error) => log("widget.list failed", error),
     );
   }
 
   return {
-    member, sender, attach,
+    member, attach,
     clients: () => clients.info(),
     async focus(client) {
       const c = client ? clients.get(client) : clients.current();

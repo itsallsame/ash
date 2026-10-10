@@ -11,7 +11,6 @@
  * pending `person:owner/ask` here, and the router records it as that request's response.
  */
 import { createHash, randomBytes } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import type { SendFrame } from "../../../../../sdk/src/link";
 import { errorBody, type ErrorBody, type Message, type Outgoing, type Reply } from "../../../../../sdk/src/message";
 import { OWNER_ID } from "../../../../../sdk/src/ids";
@@ -33,12 +32,12 @@ export const ownerCaller = (c: Pick<LiveClient, "client" | "hand" | "channel" | 
 
 /** Waits for the router to announce a message of the owner (used for the response that records an answer). */
 export class Recorded {
-  private readonly waiters = new Set<{ match(m: Message): boolean; found: Message | null; resolve(m: Message): void }>();
+  private readonly waiters = new Set<{ match(m: Message): boolean; resolve(m: Message): void }>();
 
   /** Must be called before the thing that makes the message. */
   expect(match: (m: Message) => boolean): { promise: Promise<Message>; cancel(): void } {
-    let waiter!: { match(m: Message): boolean; found: Message | null; resolve(m: Message): void };
-    const promise = new Promise<Message>((resolve) => { waiter = { match, found: null, resolve }; });
+    let waiter!: { match(m: Message): boolean; resolve(m: Message): void };
+    const promise = new Promise<Message>((resolve) => { waiter = { match, resolve }; });
     this.waiters.add(waiter);
     return { promise, cancel: () => void this.waiters.delete(waiter) };
   }
@@ -47,7 +46,6 @@ export class Recorded {
     for (const waiter of this.waiters) {
       if (!waiter.match(m)) continue;
       this.waiters.delete(waiter);
-      waiter.found = m;
       waiter.resolve(m);
       return;
     }
@@ -113,12 +111,13 @@ export class Inbound {
     });
     const first = await Promise.race([seen.promise.then(() => null), sending]);
     seen.cancel();
-    if (first && !first.ok) return fail(first.error);
+    // Refused before it was recorded is an error; recorded and then failed in the handler is a response that says so.
+    if (first && !first.ok && !this.d.ledger.get(id)) return fail(first.error);
     const ref = { id, seq: this.d.ledger.get(id)?.seq ?? 0 };
     if (req.wait !== true) return { ok: true, message: ref };
     const reply = await sending;
-    if (!reply.ok) return fail(reply.error);
-    return { ok: true, message: ref, response: { ok: true, ...(reply.result ? { result: reply.result } : {}) } as Record<string, unknown> };
+    const response = reply.ok ? { ok: true, ...(reply.result ? { result: reply.result } : {}) } : { ok: false, error: reply.error };
+    return { ok: true, message: ref, response: response as Record<string, unknown> };
   }
 
   private async answer(req: Request): Promise<SendOutcome> {

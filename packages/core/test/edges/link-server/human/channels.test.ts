@@ -22,7 +22,7 @@ test("open goes to the channel named, and only there; without one it goes to the
   await eventually(() => hub.human.clients().find((c) => c.client === phone.clientId)?.visible, "the phone visible");
   await hub.mini.send(open({ target: "turn", id: "t_1", mode: "suggest" }), AGENT);
   const frame = await phone.present((f) => f.surface === "chat" && f.op === "open", "the page where the owner is");
-  assert.deepEqual(frame.body, { target: { target: "turn", id: "t_1", mode: "suggest" } });
+  assert.deepEqual(frame.body, { target: "turn", id: "t_1", mode: "suggest" });
   assert.equal(web.presented("chat", "open").length, 1);
 
   const gone = await hub.mini.send(open({ target: "settings", client: "client:nobody" }), AGENT);

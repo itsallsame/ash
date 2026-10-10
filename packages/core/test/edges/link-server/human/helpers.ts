@@ -45,8 +45,8 @@ export class MiniRouter implements Router {
     const member = msg.to ? this.members.get(msg.to) : undefined;
     const contract = member?.words().find((w) => w.word === msg.word);
     if (msg.kind === "event") {
-      // The router lets an event through when the sender's own words declare it; the human edge's sender is held to that.
-      if (caller.member === "service:human" && !this.members.get(caller.member)?.words().some((w) => w.word === msg.word)) return { ok: false, error: errorBody("forbidden", `${caller.member} does not declare ${msg.word}`) };
+      // The router lets an event through when the sender's own words declare it; the owner member is held to that.
+      if (caller.member === "person:owner" && caller.via === "service" && !this.members.get(caller.member)?.words().some((w) => w.word === msg.word)) return { ok: false, error: errorBody("forbidden", `${caller.member} does not declare ${msg.word}`) };
       const event = { seq: 0, id: `e_${randomBytes(4).toString("hex")}`, ts: Date.now(), from: caller.member, to: msg.to, kind: "event" as const, word: msg.word, body: msg.body };
       this.publish(event);
       if (member) await member.handle(event, { signal: new AbortController().signal, caller, raw: msg.body });
@@ -99,7 +99,6 @@ export async function startHumanHub(over: Partial<HumanDeps> = {}): Promise<Huma
     ...over,
   });
   mini.members.set("person:owner", human.member);
-  mini.members.set("service:human", human.sender);
   mini.stub("agent:main", ["say", "wake"]);
   mini.stub("service:vault", ["set"]);
   mini.stub("service:widgets", ["widget.list"], () => widgetState.value);

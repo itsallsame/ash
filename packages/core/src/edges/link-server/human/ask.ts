@@ -11,7 +11,6 @@ import { errorBody, WordError, type ErrorBody, type Message, type WordResult } f
 export interface AskOption { id: string; label: string }
 /** A confirmation without options of its own gets these. They are not the approval card's `once` / `deny`. */
 export const YES_NO: readonly AskOption[] = [{ id: "yes", label: "是" }, { id: "no", label: "否" }];
-const APPROVAL_FALLBACK: readonly AskOption[] = [{ id: "once", label: "可以" }, { id: "deny", label: "不行" }];
 export const DEFAULT_EXPIRY_MS = 24 * 3600_000;
 export const MAX_EXPIRY_MS = 7 * 24 * 3600_000;
 export const APPROVAL_SENDER = "service:gate";
@@ -47,19 +46,19 @@ export class Asks {
 
   list(): PendingAsk[] { return [...this.entries.values()]; }
   has(id: string): boolean { return this.entries.has(id); }
-  notified(id: string): Set<string> | undefined { return this.entries.get(id)?.notified; }
 
-  /** Holds the request until it is answered or ends. */
-  wait(msg: Message, signal: AbortSignal): Promise<WordResult> {
+  /** Opens the question: `ask` is what to show, `done` settles when it is answered or ends. */
+  wait(msg: Message, signal: AbortSignal): { ask: PendingAsk; done: Promise<WordResult> } {
     const body = (msg.body ?? {}) as Record<string, any>;
     const now = this.o.now();
     const kind: PendingAsk["kind"] = msg.from === APPROVAL_SENDER ? "approval" : body.human_kind === "confirmation" ? "confirmation" : "question";
     const given = Array.isArray(body.options) ? body.options as AskOption[] : [];
-    const options = given.length ? given.map(({ id, label }) => ({ id, label })) : kind === "confirmation" ? [...YES_NO] : kind === "approval" ? [...APPROVAL_FALLBACK] : [];
+    const options = given.length ? given.map(({ id, label }) => ({ id, label })) : kind === "confirmation" ? [...YES_NO] : [];
     const source = body.source as { body_full?: unknown; body_preview?: unknown } | undefined;
     const expires = Math.min(typeof body.expires_at === "number" ? body.expires_at : msg.ts + DEFAULT_EXPIRY_MS, msg.ts + MAX_EXPIRY_MS);
-    return new Promise<WordResult>((resolve, reject) => {
-      const entry: Entry = {
+    let entry!: Entry;
+    const done = new Promise<WordResult>((resolve, reject) => {
+      entry = {
         id: msg.id, from: msg.from, ...(msg.turn ? { turn: msg.turn } : {}), kind, title: String(body.title ?? ""), detail: typeof body.detail === "string" ? body.detail : "",
         original: typeof source?.body_full === "string" ? source.body_full : typeof source?.body_preview === "string" ? source.body_preview : "",
         options, allow_custom: body.allow_custom === true, expires_at: expires, since: now,
@@ -72,6 +71,7 @@ export class Asks {
       if (signal.aborted) entry.settle(new WordError("cancelled", "the question was withdrawn"));
       else this.o.changed();
     });
+    return { ask: entry, done };
   }
 
   /** The owner answered on some channel: `body` is the response body `{ok:true, result:{data:{choice, text?}}}`. */

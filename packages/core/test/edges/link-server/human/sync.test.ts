@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { WordError } from "../../../../../sdk/src/message";
 import { eventually } from "../../../fixtures/wait";
 import { Channel, quiet, startHumanHub } from "./helpers";
 
@@ -102,4 +103,19 @@ test("send is answered at once with the id the hub made, before a slow word has 
   assert.ok(sent.ok);
   assert.equal(hub.ledger.get(sent.message.id)?.seq, sent.message.seq);
   assert.match(hub.mini.sent.at(-1)!.msg.word, /say/);
+});
+
+test("wait: true on a word that was recorded and then failed is a message with a failed response; a refusal before recording is an error", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  hub.mini.stub("agent:broken", ["say"], () => { throw new WordError("failed", "没成"); });
+  const phone = await Channel.open(hub);
+
+  const failed = await phone.send({ to: "agent:broken", kind: "request", word: "say", body: { text: "x" }, wait: true });
+  const refused = await phone.send({ to: "agent:nobody", kind: "request", word: "say", body: { text: "x" }, wait: true });
+
+  assert.ok(failed.ok);
+  const response = failed.response as { ok: boolean; error: { code: string } };
+  assert.deepEqual([response.ok, response.error.code], [false, "failed"]);
+  assert.equal(hub.ledger.get(failed.message.id)?.seq, failed.message.seq, "the message is in the ledger");
+  assert.ok(!refused.ok && refused.error.code === "offline");
 });

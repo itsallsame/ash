@@ -25,19 +25,15 @@ export interface NotifierDeps {
   zone?: string;
   /** How long the island may take to say whether it is on screen. */
   islandMs: number;
-  noted(askId: string, client: string): void;
   /** The primary agent: the one a reply on a notification goes to when the message did not come from an agent; null when there is no agent yet. */
   primary(): string | null;
-  /** Whether the question is still waiting for an answer. */
-  isOpen(askId: string): boolean;
 }
 
 export class Notifier {
   private readonly delivery: Delivery;
   private readonly running = new Set<string>();
-  /** turn -> the reply that was shown quietly and is the turn's last so far. */
-  private readonly quietReplies = new Map<string, string>();
-  private readonly shown = new Map<string, Set<string>>();
+  /** turn -> the reply that was shown quietly and is the turn's last so far, and the channels it was shown on. */
+  private readonly quietReplies = new Map<string, { id: string; clients: string[] }>();
 
   constructor(private readonly d: NotifierDeps) { this.delivery = new Delivery(d.zone); }
 
@@ -56,14 +52,12 @@ export class Notifier {
     return verdict === "ring";
   }
 
-  private async showTo(id: string, body: Record<string, unknown>, askId?: string): Promise<LiveClient[]> {
+  /** Shows a notification on every channel that declared the surface; returns the channels that took it. */
+  private async showTo(body: Record<string, unknown>): Promise<LiveClient[]> {
     const targets = this.d.clients.withSurface("notification");
     const results = await Promise.all(targets.map((c) => this.d.presenter.send(c, { surface: "notification", op: "show", body: body as never })));
     // A channel that says the notification is already past its time (`expired`) did not show it.
-    const reached = targets.filter((_, i) => { const r = results[i]!; return r.ok && (r.data as { expired?: unknown } | undefined)?.expired !== true; });
-    if (reached.length) this.shown.set(id, new Set(reached.map((c) => c.client)));
-    if (askId) for (const c of reached) this.d.noted(askId, c.client);
-    return reached;
+    return targets.filter((_, i) => { const r = results[i]!; return r.ok && (r.data as { expired?: unknown } | undefined)?.expired !== true; });
   }
 
   /** `person:owner/say`. */
@@ -76,22 +70,20 @@ export class Notifier {
     // A notification says who a reply goes to; with no agent at all there is nobody to reply to.
     const target = isAgentId(msg.from) ? msg.from : this.d.primary();
     if (!target || !(await this.rings(kind, body.dedupe_key))) { if (turn) this.quietReplies.delete(turn); return; }
-    const reached = await this.showTo(msg.id, {
+    const reached = await this.showTo({
       id: msg.id, kind, title: TITLES[kind] ?? "Ash", text: clip(body.text), reply_to: msg.id, reply_target: target, ...(kind === "reply" ? { alert: quiet ? "quiet" : "strong" } : {}),
     });
-    if (turn && kind === "reply") { if (quiet && reached.length) this.quietReplies.set(turn, msg.id); else this.quietReplies.delete(turn); }
+    if (turn && kind === "reply") { if (quiet && reached.length) this.quietReplies.set(turn, { id: msg.id, clients: reached.map((c) => c.client) }); else this.quietReplies.delete(turn); }
   }
 
-  /** An open question or approval card. */
-  async ask(ask: PendingAsk): Promise<void> {
-    if (!(await this.rings("ask", undefined))) return;
-    const approvalForm = ask.kind === "approval" && ask.options.some((o) => o.id === "deny") && ask.options.every((o) => ["once", "always", "deny"].includes(o.id));
-    await this.showTo(ask.id, {
+  /** An open question or approval card. Returns the channels that were notified (to take it down when it ends). */
+  async ask(ask: PendingAsk): Promise<string[]> {
+    if (!(await this.rings("ask", undefined))) return [];
+    const reached = await this.showTo({
       id: ask.id, kind: "approval", title: ask.title, text: clip(ask.detail), options: ask.options, expires_at: ask.expires_at, reply_to: ask.id, reply_target: ask.from,
-      ...(approvalForm ? {} : { human_kind: "question", ...(ask.allow_custom ? { allow_custom: true } : {}) }),
-    }, ask.id);
-    // It may have ended while the notification was on its way.
-    if (!this.d.isOpen(ask.id)) this.hide(ask.id, this.shown.get(ask.id) ?? []);
+      ...(ask.kind === "approval" ? {} : { human_kind: "question", ...(ask.allow_custom ? { allow_custom: true } : {}) }),
+    });
+    return reached.map((c) => c.client);
   }
 
   /** Takes a notification down on the channels that were shown it (the question was answered or ended). */
@@ -100,18 +92,17 @@ export class Notifier {
       const c = this.d.clients.get(client);
       if (c) void this.d.presenter.send(c, { surface: "notification", op: "hide", body: { id } });
     }
-    this.shown.delete(id);
   }
 
   turnStarted(turn: string): void { this.running.add(turn); }
 
   async turnEnded(turn: string): Promise<void> {
     this.running.delete(turn);
-    const id = this.quietReplies.get(turn);
+    const quiet = this.quietReplies.get(turn);
     this.quietReplies.delete(turn);
-    const clients = id ? this.shown.get(id) : undefined;
-    if (!id || !clients || await this.watching()) return;
-    for (const client of clients) {
+    if (!quiet || await this.watching()) return;
+    const { id } = quiet;
+    for (const client of quiet.clients) {
       const c = this.d.clients.get(client);
       if (c) await this.d.presenter.send(c, { surface: "notification", op: "alert", body: { id } });
     }
