@@ -314,7 +314,7 @@ test("pulse: the budget, a pause and a timer that fired far too late each keep t
   paused.paused = true;
   await paused.advanceTo(MON(8));
   assert.equal(pulseWakes(paused).length, 1);                // only the one before the pause (the first card is at start)
-  const late = (await paused.send("service:pulse", "pulse.due", { kind: "wake", at: MON(1) }, SERVICE("service:clock")));
+  const late = (await paused.send("service:pulse", "pulse.due", { kind: "wake", at: MON(1) }, SERVICE("service:pulse")));
   assert.equal(late.ok, true);
   assert.equal(pulseWakes(paused).length, 1);
   assert.equal(await refused(paused, "pulse.due", { kind: "wake", at: MON(8) }, "agent:main"), "forbidden");
