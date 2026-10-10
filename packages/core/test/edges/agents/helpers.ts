@@ -78,6 +78,8 @@ export class FakeDriver implements AgentDriver {
   instantTurns = false;
   compactError: WordError | null = null;
   credentials = new Map<string, string>();
+  /** While set, `credentialsSet` waits for it: the runtime is slow to take the key. */
+  credentialsGate: Promise<void> | null = null;
   usageRecords: unknown[] = [];
   private n = 0;
   constructor(readonly report: (e: AgentEvent) => void) {}
@@ -127,7 +129,7 @@ export class FakeDriver implements AgentDriver {
   async configure(agent: string, key: string | undefined, config?: Record<string, unknown>) { this.calls.push(["configure", agent, key, config]); return { model: "m", ...(config ?? {}) }; }
   async plugins(agent: string, op: string, name?: string) { this.calls.push(["plugins", agent, op, name]); return { plugins: [] }; }
   async credentialsHas(agent: string, ref: string) { this.calls.push(["credentialsHas", agent, ref]); return this.credentials.has(ref); }
-  async credentialsSet(agent: string, ref: string, value: string) { this.calls.push(["credentialsSet", agent, ref]); this.credentials.set(ref, value); }
+  async credentialsSet(agent: string, ref: string, value: string) { this.calls.push(["credentialsSet", agent, ref]); if (this.credentialsGate) await this.credentialsGate; this.credentials.set(ref, value); }
   async usage(agent: string, since: number): Promise<DriverUsage> { this.calls.push(["usage", agent, since]); return { records: this.usageRecords }; }
 
   // -- the test plays the agent --

@@ -237,7 +237,7 @@ test("session.compact: busy waits for the turn; a runtime that cannot compact op
   assert.equal(d.of("session.new").length, 1);
 });
 
-test("keys: a missing key is configured once at start; a key the runtime has is left alone; vault.changed checks again; other refs never go in", async () => {
+test("keys: a missing key is configured once at start; a key the runtime has is left alone at start; a saved key is written over it; other refs never go in", async () => {
   const f = fixture({ secrets: { DEEPSEEK_API_KEY: "sk-fake-deepseek-0001", CLOUDFLARE_TOKEN: "cf-fake-0002" } });
   await f.start();
   const d = f.driver();
@@ -248,15 +248,15 @@ test("keys: a missing key is configured once at start; a key the runtime has is 
   await f.service("restart", { agent: M });
   assert.equal(d.of("credentialsHas").length, 2);
   assert.equal(d.of("credentialsSet").length, 1);
-  // the owner saves the key again, or another one
+  // the owner saves the key again (it may be a corrected one): written over what the runtime holds, whether it holds one or not
   await f.service("vault.changed", { ref: "DEEPSEEK_API_KEY", action: "saved" }, caller("service:vault", "service"));
-  assert.equal(d.of("credentialsSet").length, 1);
+  assert.equal(d.of("credentialsSet").length, 2);
   d.credentials.clear();
   await f.service("vault.changed", { ref: "DEEPSEEK_API_KEY", action: "saved" }, caller("service:vault", "service"));
-  assert.equal(d.of("credentialsSet").length, 2);
+  assert.equal(d.of("credentialsSet").length, 3);
   await f.service("vault.changed", { ref: "CLOUDFLARE_TOKEN", action: "saved" }, caller("service:vault", "service"));
   await f.service("vault.changed", { ref: "DEEPSEEK_API_KEY", action: "removed" }, caller("service:vault", "service"));
-  assert.equal(d.of("credentialsSet").length, 2);
+  assert.equal(d.of("credentialsSet").length, 3);
   assert.ok(!d.of("credentialsHas").some((c) => c[2] === "CLOUDFLARE_TOKEN"));
   // the value is in no message, no log
   const everything = JSON.stringify([f.router.sent, f.logs, f.ledger.db().prepare("SELECT spec FROM agent_runs").all(), f.ledger.db().prepare("SELECT text FROM agent_inbox").all()]);

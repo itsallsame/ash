@@ -174,6 +174,8 @@ export class AgentManager {
   private readonly outputs = new Map<string, string[]>();
   private readonly typingUntil = new Map<string, number>();
   private paused = false;
+  /** The keys being written into the runtimes now (settled when none is): no turn is opened before they are in. */
+  private keySync: Promise<void> = Promise.resolve();
   /** The module is stopping: no attempt starts and no member comes back, whatever restart is still on its way. */
   private closing = false;
   private proxy: string;
@@ -379,7 +381,12 @@ export class AgentManager {
     const ended = died ? { outcome: "error" as const, error: `the agent process ended (${live.ended ?? reason})` } : { outcome: "interrupted" as const };
     for (const lane of live.lanes.values()) {
       if (!lane.busy || !lane.turn) continue;
-      this.finishTurn(live, lane, { event: "turn.ended", agent: live.id, key: lane.key, turn: lane.turn, ...ended }, reason);
+      // One lane that cannot be ended must not keep the others, or the stop of the process, from happening.
+      try { this.finishTurn(live, lane, { event: "turn.ended", agent: live.id, key: lane.key, turn: lane.turn, ...ended }, reason); } catch (error) {
+        this.log(`agents: ending the turn of ${live.id}/${lane.key}: ${errorText(error)}`);
+        lane.busy = false;
+        lane.turn = undefined;
+      }
     }
   }
   private endWait(slot: Slot): void { slot.cancelWait?.(); slot.cancelWait = undefined; }
@@ -637,6 +644,7 @@ export class AgentManager {
     let sent = false;
     try {
       if (!(await this.quotaAllows(live, lane))) return;
+      await this.keySync; // a key the owner has just saved is written first, or this turn would meet the old one
       if (lane.busy || !this.isUp(live)) return;
       await this.inject(live, lane);
       const screen = await this.screenPlan(live, lane, rows);
@@ -841,9 +849,12 @@ export class AgentManager {
       else if (ev.outcome === "completed") waiter.resolve(said);
       else waiter.reject(new WordError(ev.outcome === "cancelled" ? "cancelled" : "failed", ev.error ?? `the turn ended: ${ev.outcome}`));
     }
-    if (failed) this.failureNotice(live.id, ev.turn, ev.error);
     if (cut === undefined) this.usageSoon(live.id);
+    // The end of the turn goes first: whoever judges from it whether the turn spoke must not take the failure notice for speech.
     this.emit(live.id, "turn.ended", { turn: ev.turn, lane: ev.key, outcome: ev.outcome, ...(ev.error ? { error: ev.error } : {}) }, ev.turn);
+    if (failed) this.failureNotice(live.id, ev.turn, ev.error);
+    // The hub is going down: the turns it cuts are over, and they start nothing else and put nothing on the screen.
+    if (this.closing) { lane.screenPlanned = false; return; }
     if (lane.screenPlanned) { lane.screenPlanned = false; this.bg(this.screenReconcile(live, ev), "screen reconcile"); }
     // A turn that another lane's `on` started does not start further lanes: that would loop.
     if (!(rows.length && rows.every((r) => r.word === "lane"))) this.trigger(live, ev.key, `${ev.key}:turn.ended`, `Lane ${ev.key} finished a turn (${ev.outcome}). Its turn id is ${ev.turn}; service:history/turn shows what happened in it.`, ev.turn);
@@ -945,15 +956,18 @@ export class AgentManager {
   // keys and usage
   // ----------------------------------------------------------------------------------------------------------------
 
-  /** Give the runtime the keys it lacks. It keeps and reads its own; a key it already has is left alone. */
-  async syncCredentials(live: Live, refs = this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS): Promise<void> {
+  /**
+   * Give the runtime the keys. At start it keeps and reads its own, so a key it already has is left alone; `force` (the owner
+   * has just saved this key) writes it over whatever the runtime holds, for a key that was wrong is made right that way.
+   */
+  async syncCredentials(live: Live, refs = this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS, force = false): Promise<void> {
     const driver = live.driver;
     if (!driver.credentialsHas || !driver.credentialsSet) return;
     for (const ref of refs) {
       const value = this.deps.vault.use(ref);
       if (!value) continue;
       try {
-        if (!(await driver.credentialsHas(live.id, ref))) await driver.credentialsSet(live.id, ref, value);
+        if (force || !(await driver.credentialsHas(live.id, ref))) await driver.credentialsSet(live.id, ref, value);
       } catch (error) { this.log(`agents: credential ${ref} for ${live.id}: ${(error as { code?: string }).code ?? "failed"}`); }
     }
   }
@@ -961,7 +975,11 @@ export class AgentManager {
   async onVaultChanged(ref: string, action: string): Promise<void> {
     // Only the keys a runtime may hold for itself; the vault keeps others (gateway, cloud) to itself.
     if (action !== "saved" || !(this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS).includes(ref)) return;
-    for (const live of this.ups()) await this.syncCredentials(live, [ref]);
+    // Set before the first await: the owner's words or a wake that comes right after the save (from another service, in the
+    // same breath) find the key being written and wait for it (see `drain`). Writes follow each other.
+    const work = this.keySync.then(async () => { for (const live of this.ups()) await this.syncCredentials(live, [ref], true); });
+    this.keySync = work.catch(() => {});
+    await work;
   }
 
   // ----------------------------------------------------------------------------------------------------------------
