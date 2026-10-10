@@ -67,6 +67,8 @@ export class FakeDriver implements AgentDriver {
   statuses = new Map<string, AgentStatus0>();
   startFailures = 0;
   steerResult = true;
+  /** A turn that starts and ends inside `send`, before it returns (what a remote driver can look like). */
+  instantTurns = false;
   compactError: WordError | null = null;
   credentials = new Map<string, string>();
   usageRecords: unknown[] = [];
@@ -104,6 +106,7 @@ export class FakeDriver implements AgentDriver {
     this.calls.push(["send", agent, key, batch]);
     if (this.running.has(this.k(agent, key))) throw new WordError("conflict", "busy");
     this.begin(agent, key, batch);
+    if (this.instantTurns) this.finish(agent, key);
   }
   async followup(agent: string, key: string, batch: DriverMessage[]) {
     this.calls.push(["followup", agent, key, batch]);

@@ -1,6 +1,6 @@
 /**
  * The agents module's working part (HUB-MODULES §2.5, SPEC-08): declared agents, their lanes and inboxes, delivery
- * through a driver, the events a driver reports, keys and usage. `service.ts` and `member.ts` are the words on top.
+ * through a driver, the events a driver reports, keys and usage. `service.ts` is the words on top.
  *
  * Everything here reaches other members through `router.send` and the registry; the driver of each runtime kind is
  * injected, so nothing here knows how an agent is started.
@@ -51,15 +51,19 @@ export interface AgentsDeps {
 export const DEFAULT_CREDENTIAL_REFS = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 export const USAGE_POLL_MS = 10 * 60_000;
 /** A process that ran at least this long before it died does not count against the three tries. */
+/** How long a worker may take when `spawn` names no limit (seconds), and how long the owner is taken to be still typing after the last `typing`. */
+export const SPAWN_TIMEOUT_S = 600;
+export const TYPING_MS = 5000;
 export const STABLE_RUN_MS = 60_000;
 export const MAX_FAILURES = 3;
 /** Dynamic modules are put in again after this many turns even if unchanged. */
 export const REINJECT_EVERY = 20;
 const BATCH = 20;
-const SPAWN_TIMEOUT_S = 600;
 
 interface Lane {
   key: string;
+  /** A drain is already scheduled for when the owner stops typing. */
+  typingTimer?: boolean;
   busy: boolean;
   /** A batch is being prepared or handed to the driver. */
   sending: boolean;
@@ -95,6 +99,8 @@ export class AgentManager {
   private readonly drivers = new Map<string, AgentDriver>();
   private readonly waiters = new Map<string, Waiter>();
   private readonly outputs = new Map<string, string[]>();
+  private readonly typingUntil = new Map<string, number>();
+  private paused = false;
   private readonly stoppers: (() => void)[] = [];
   private readonly timers: Timers;
   readonly now: () => number;
@@ -119,6 +125,7 @@ export class AgentManager {
   async startAll(): Promise<void> {
     this.runs.seed(this.deps.templates);
     this.inbox.prune(this.now() - 7 * 86_400_000);
+    await this.refreshPaused();
     this.stoppers.push(this.timers.every(USAGE_POLL_MS, () => this.bg(this.pollUsage(), "usage poll")));
     await Promise.allSettled(this.runs.list().filter((run) => run.desired === "on").map((run) => this.startAgent(run.id, "内核重启")));
   }
@@ -266,7 +273,7 @@ export class AgentManager {
 
   /** A request or event addressed to an agent. */
   async accept(id: string, msg: Message, raw: unknown, signal?: AbortSignal): Promise<{ data: unknown }> {
-    if (msg.word === "typing") return { data: undefined };
+    if (msg.word === "typing") { this.typingUntil.set(id, this.now() + TYPING_MS); return { data: undefined }; }
     const body = (raw && typeof raw === "object" ? raw : msg.body) as Record<string, any>;
     const decl = this.run(id).spec.decl;
     const attachments = this.storeAttachments(body.attachments);
@@ -299,7 +306,7 @@ export class AgentManager {
     const row = this.inbox.add({ ...item, agent: id, lane: key });
     const live = this.live.get(id);
     const l = live?.lanes.get(key);
-    if (live && l && live.state === "running" && row.state === "pending") {
+    if (live && l && live.state === "running" && row.state === "pending" && !this.paused) {
       if (l.busy) this.bg(this.busyRoute(live, l, row), `route ${row.id}`);
       else if (!l.sending) this.bg(this.drain(live, l), `drain ${id}/${key}`);
     }
@@ -308,9 +315,18 @@ export class AgentManager {
 
   /** The agent is idle on this lane: give it what is waiting (one batch). */
   async drain(live: Live, lane: Lane): Promise<void> {
-    if (live.state !== "running" || lane.busy || lane.sending) return;
+    if (live.state !== "running" || lane.busy || lane.sending || this.paused) return;
     const rows = this.inbox.pending(live.id, lane.key, BATCH);
     if (!rows.length) return;
+    // The owner is still typing to this agent: a lane that takes their words waits until they have had time to finish.
+    const wait = (this.typingUntil.get(live.id) ?? 0) - this.now();
+    if (wait > 0 && lanesOf(this.run(live.id).spec.decl)[lane.key]?.from?.includes(OWNER_ID)) {
+      if (!lane.typingTimer) {
+        lane.typingTimer = true;
+        this.timers.after(wait, () => { lane.typingTimer = false; this.bg(this.drain(live, lane), `drain ${live.id}/${lane.key}`); });
+      }
+      return;
+    }
     lane.sending = true;
     try {
       if (!(await this.quotaAllows(live, lane))) return;
@@ -318,12 +334,12 @@ export class AgentManager {
       await this.inject(live, lane);
       this.inbox.mark(rows.map((r) => r.id), "sent");
       try {
+        // The lane turns busy when the driver reports `turn.started`, not here: on a remote driver that report
+        // (or even `turn.ended`) can arrive before this call returns.
         await live.driver.send(live.id, lane.key, rows.map(toDriverMessage));
-        lane.busy = true;
       } catch (error) {
         this.inbox.mark(rows.map((r) => r.id), "pending");
-        if (error instanceof WordError && error.code === "conflict") lane.busy = true; // the driver is in a turn already
-        else throw error;
+        if (!(error instanceof WordError && error.code === "conflict")) throw error; // conflict: the driver is in a turn already
       }
     } finally { lane.sending = false; }
     // What arrived while the batch was being handed over now meets a busy lane.
@@ -332,7 +348,7 @@ export class AgentManager {
 
   /** A message came while the lane is in a turn: the owner's words go to the reflex judgement, the rest queue for the next turn. */
   private async busyRoute(live: Live, lane: Lane, row: InboxRow): Promise<void> {
-    if (lane.routing.has(row.id)) return;
+    if (lane.routing.has(row.id) || this.paused) return;
     lane.routing.add(row.id);
     try {
       let action: "interrupt" | "steer" | "followup" = "followup";
@@ -340,6 +356,10 @@ export class AgentManager {
         const reply = await this.deps.router.send({ to: "service:reflex", kind: "request", word: "conversation.control", body: { message_id: row.id, agent: live.id, lane: lane.key } }, SERVICE_CALLER);
         const chosen = reply.ok ? (reply.result?.data as { action?: string } | undefined)?.action : undefined;
         if (chosen === "interrupt" || chosen === "steer") action = chosen;
+        if (chosen === "pause") { // the switch is the admin service's; the message waits, and the pause interrupts the turn
+          await this.deps.router.send({ to: "service:admin", kind: "request", word: "pause", body: { by: row.id } }, SERVICE_CALLER);
+          return;
+        }
       }
       if (!lane.busy) { this.bg(this.drain(live, lane), "drain"); return; } // the turn ended while we were asking
       if (this.inbox.get(row.id)?.state !== "pending") return;
@@ -406,7 +426,8 @@ export class AgentManager {
       default:
     }
     if (!live) return;
-    const lane = live.lanes.get(ev.key) ?? this.adoptLane(live, ev.key);
+    const lane = live.lanes.get(ev.key);
+    if (!lane) return; // a lane the declaration does not have
     switch (ev.event) {
       case "turn.started":
         lane.busy = true;
@@ -428,12 +449,6 @@ export class AgentManager {
         return;
       case "turn.ended": this.finishTurn(live, lane, ev); return;
     }
-  }
-
-  private adoptLane(live: Live, key: string): Lane {
-    const lane = newLane(key);
-    live.lanes.set(key, lane);
-    return lane;
   }
 
   private speaks(id: string, key: string): boolean {
@@ -573,6 +588,22 @@ export class AgentManager {
     for (const live of this.live.values()) if (live.state === "running") await this.syncCredentials(live, [ref]);
   }
 
+  // ----------------------------------------------------------------------------------------------------------------
+  // pause (HUB-MODULES §2.5): the admin service holds the switch; here a pause stops turns, not the inbox
+  // ----------------------------------------------------------------------------------------------------------------
+
+  /** Read the switch. No admin service, or no answer, means not paused. */
+  async refreshPaused(): Promise<void> {
+    const reply = await this.deps.router.send({ to: "service:admin", kind: "request", word: "status", body: {} }, SERVICE_CALLER);
+    const paused = reply.ok && (reply.result?.data as { paused?: boolean } | undefined)?.paused === true;
+    if (paused === this.paused) return;
+    this.paused = paused;
+    for (const live of this.live.values()) for (const lane of live.lanes.values()) {
+      if (paused) { if (lane.busy) this.bg(live.driver.interrupt(live.id, lane.key), "interrupt for pause"); }
+      else this.bg(this.drain(live, lane), `drain ${live.id}/${lane.key}`);
+    }
+  }
+
   /** Every ten minutes: what the runtimes recorded since last time goes to `service:cost`. If it is not there the records are dropped. */
   async pollUsage(): Promise<void> {
     for (const live of [...this.live.values()]) {
@@ -584,8 +615,9 @@ export class AgentManager {
       for (const r of usage.records as Record<string, any>[]) {
         cursor = Math.max(cursor, Number(r.done ?? r.at ?? 0));
         const reply = await this.deps.router.send({ to: "service:cost", kind: "event", word: "usage.recorded", body: {
-          caller: live.id, provider: /openrouter/i.test(String(r.provider)) ? "openrouter" : "deepseek", model: String(r.model || "unknown"),
+          caller: live.id, provider: String(r.provider || "unknown"), model: String(r.model || "unknown"),
           input_tokens: Number(r.input) || 0, output_tokens: Number(r.output) || 0, ok: r.ok !== false, at: Number(r.at ?? r.done ?? this.now()),
+          ...(typeof r.cost === "number" && r.cost >= 0 ? { cost: r.cost } : {}), // no price known: no cost, never a made-up one
         } }, SERVICE_CALLER);
         if (!reply.ok && reply.error.code === "offline") break;
       }

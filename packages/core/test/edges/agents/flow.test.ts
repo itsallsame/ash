@@ -73,7 +73,7 @@ test("the owner speaks while the lane is busy: the reflex judgement decides", as
     ["steer", true, (d: FakeDriver) => assert.deepEqual(d.of("steer").map((c) => c[3]), ["second"])],
     ["steer", false, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
     ["followup", true, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
-    ["pause", true, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
+    ["pause", true, (d: FakeDriver) => assert.equal(d.of("followup").length + d.of("steer").length, 0)], // admin is asked; see the pause test
     [undefined, true, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
   ] as const) {
     const f = fixture();
@@ -305,4 +305,94 @@ test("an ask whose turn is cancelled fails; asking a stopped agent is offline", 
   await f.service("stop", { agent: M });
   assert.ok(!f.registry.members.has(M));
   await assert.rejects(f.service("ask", { agent: M, text: "q" }, caller("agent:other")), (e: any) => e.code === "offline");
+});
+
+test("a lane that takes the owner's words waits while the owner is typing, and opens when they have had time to finish; other lanes do not wait", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "typing", {});
+  await f.call(M, "say", { text: "half a thought" });
+  await f.call(M, "wake", { reason: "pulse" }, caller("service:pulse", "service"));
+  await waitFor(() => sends(d, "back").length === 1);
+  await settle();
+  assert.equal(sends(d, "front").length, 0);
+  const timer = f.timers.afters.filter((t) => !t.cancelled);
+  assert.equal(timer.length, 1);
+  assert.equal(timer[0]!.ms, 5000);
+  // still typing when the time comes: it waits again, for the rest
+  f.clock.t += 3000;
+  await f.call(M, "typing", {});
+  timer[0]!.fn();
+  await settle();
+  assert.equal(sends(d, "front").length, 0);
+  const again = f.timers.afters.filter((t) => !t.cancelled).at(-1)!;
+  assert.equal(again.ms, 5000);
+  f.clock.t += 5000;
+  again.fn();
+  await waitFor(() => sends(d, "front").length === 1);
+  assert.deepEqual(texts(sends(d, "front")[0]!), ["half a thought"]);
+});
+
+test("a pause (read from service:admin at start and on settings.changed) stops turns, not the inbox; resuming delivers", async () => {
+  let paused = true;
+  const f = fixture();
+  f.router.on("service:admin/status", () => ({ ok: true, result: { data: { now: 1, paused } } }));
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "say", { text: "while paused" });
+  await settle();
+  assert.equal(sends(d).length, 0);
+  assert.equal(f.agents.manager.inbox.pending(M, "front").length, 1); // kept
+  assert.ok(f.registry.members.has(M)); // the agent is still there
+  paused = false;
+  await f.service("settings.changed", { keys: ["paused"] }, caller("service:admin", "service"));
+  await waitFor(() => sends(d).length === 1);
+  assert.deepEqual(texts(sends(d)[0]!), ["while paused"]);
+  // pausing in the middle of a turn interrupts it, and the next message waits
+  paused = true;
+  const reads = f.router.to("service:admin", "status").length;
+  await f.service("settings.changed", { keys: ["something else"] }, caller("service:admin", "service"));
+  assert.equal(f.router.to("service:admin", "status").length, reads); // not about the switch: no read
+  await f.service("settings.changed", { keys: ["paused"] }, caller("service:admin", "service"));
+  await waitFor(() => d.of("interrupt").length === 1);
+  d.finish(M, "front", "cancelled");
+  await f.call(M, "say", { text: "still paused" });
+  await settle();
+  assert.equal(sends(d).length, 1);
+  paused = false;
+  await f.service("settings.changed", { keys: ["paused"] }, caller("service:admin", "service"));
+  await waitFor(() => sends(d).length === 2);
+  assert.deepEqual(texts(sends(d)[1]!), ["still paused"]);
+});
+
+test("without an admin service nothing is paused; a reflex verdict of pause asks admin to pause and leaves the message waiting", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  f.router.on("service:reflex/conversation.control", () => ({ ok: true, result: { data: { action: "pause" } } }));
+  await f.call(M, "say", { text: "first" });
+  await waitFor(() => sends(d).length === 1);
+  await f.call(M, "say", { text: "stop everything" });
+  await waitFor(() => f.router.to("service:admin", "pause").length === 1);
+  const asked = f.router.to("service:admin", "pause")[0]!;
+  assert.equal(asked.caller.member, "service:agents");
+  const row = f.ledger.db().prepare("SELECT id, state FROM agent_inbox WHERE text='stop everything'").get() as { id: string; state: string };
+  assert.deepEqual(asked.msg.body, { by: row.id });
+  assert.equal(row.state, "pending");
+  assert.equal(d.of("followup").length, 0);
+  assert.equal(d.of("steer").length, 0);
+});
+
+test("the lane turns busy when the driver says the turn started, not when send returns: a turn that has ended by then leaves the lane free", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  d.instantTurns = true;
+  await f.call(M, "say", { text: "one" });
+  await waitFor(() => sends(d).length === 1);
+  await settle();
+  await f.call(M, "say", { text: "two" });
+  await waitFor(() => sends(d).length === 2); // a send, not a followup behind a turn that is already over
+  assert.equal(d.of("followup").length, 0);
 });

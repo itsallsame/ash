@@ -7,9 +7,9 @@ import { WordError, type HandleContext, type Message, type WordResult } from "..
 import type { DriverMessage, ModuleId } from "../../../../sdk/src/driver";
 import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
-import { agentCaller, staticHash, type AgentManager } from "./manager";
+import { agentCaller, SPAWN_TIMEOUT_S, staticHash, type AgentManager } from "./manager";
 import { SERVICE_CALLER } from "./modules";
-import { callerPower, MAX_DEPTH, withinPower } from "./policy";
+import { callerPower, MAX_DEPTH, withApprovalTools, withinPower } from "./policy";
 import { DEFAULT_RUNTIME, lanesOf, readDecl, type AgentDecl, type Run } from "./runs";
 
 export const AGENTS_ID = "service:agents";
@@ -52,7 +52,7 @@ export function createAgentsService(manager: AgentManager): Member {
   async function declare(body: Record<string, any>, ctx: HandleContext): Promise<WordResult> {
     const depth = ctx.caller.via === "agent" ? depthOf(ctx) + 1 : 0;
     if (depth > MAX_DEPTH) throw new WordError("forbidden", `delegation goes at most ${MAX_DEPTH} levels deep`);
-    const decl = readDecl(body, ctx.caller.member, depth);
+    const decl = withApprovalTools(readDecl(body, ctx.caller.member, depth), power(ctx));
     if (runs.get(decl.id)) throw new WordError("conflict", `${decl.id} is already declared; use update`);
     if (decl.primary && !isOwner(ctx)) throw new WordError("forbidden", "only the owner makes an agent primary");
     if (decl.primary && runs.primary()) throw new WordError("conflict", "there is a primary agent already; use primary.set to hand it over");
@@ -66,7 +66,8 @@ export function createAgentsService(manager: AgentManager): Member {
     const run = manager.run(body.agent);
     if (body.primary !== undefined && !!body.primary !== !!run.spec.decl.primary) throw new WordError("bad_request", "primary is handed over with primary.set");
     const before = run.spec.decl;
-    const decl: AgentDecl = { ...before, ...pick(body) };
+    let decl: AgentDecl = { ...before, ...pick(body) };
+    if (body.tools) decl = withApprovalTools(decl, power(ctx));
     if (before.primary) decl.primary = true; else delete decl.primary;
     checkPower(ctx, decl);
     runs.put({ id: run.id, spec: { ...run.spec, decl }, desired: run.desired });
@@ -92,15 +93,15 @@ export function createAgentsService(manager: AgentManager): Member {
     if (!template) throw new WordError("not_found", `no such template: ${body.template}`);
     const id = `agent:w-${randomBytes(3).toString("hex")}`;
     const runtime = { ...(template.runtime ?? { kind: DEFAULT_RUNTIME }), ...(body.runtime ?? {}), ...(body.model ? { model: body.model } : {}) };
-    const decl = readDecl({
+    const decl = withApprovalTools(readDecl({
       id, name: `w-${id.slice(8)}`, summary: String(body.task).slice(0, 80), brief: template.brief ?? WORKER_BRIEF, runtime,
       native: body.native ?? template.native ?? { on: "body:main" },
       // What the worker may do is what was asked for, or else what the caller can do itself: never more.
       tools: body.tools ?? template.tools ?? parent?.tools, words: template.words ?? parent?.words,
       lanes: { work: { from: ["*"], speak: false } }, modules: template.modules ?? WORKER_MODULES, ephemeral: true,
-    }, ctx.caller.member, depth);
+    }, ctx.caller.member, depth), power(ctx));
     checkPower(ctx, decl);
-    const answer = await manager.runWorker(decl, String(body.task), ctx.caller.member, Number(body.timeout) || 600);
+    const answer = await manager.runWorker(decl, String(body.task), ctx.caller.member, Number(body.timeout) || SPAWN_TIMEOUT_S);
     return data({ answer, agent: id });
   }
 
@@ -145,7 +146,7 @@ export function createAgentsService(manager: AgentManager): Member {
             const { handle } = await driver.session.new(id, key);
             runs.patch(id, (spec) => { spec.sessions[key] = handle; });
             manager.forgetInjected(lane);
-            return data({ compacted: true, detail: "this runtime cannot compact; a new session was opened instead" });
+            return data({ compacted: false, detail: "this runtime cannot compact; a new session was opened instead" });
           }
           throw error;
         }
@@ -185,7 +186,9 @@ export function createAgentsService(manager: AgentManager): Member {
       case "declare": return declare(body, ctx);
       case "update": return update(body, ctx);
       case "start": manager.run(body.agent); manager.runs.setDesired(body.agent, "on"); await manager.startAgent(body.agent, "启动"); return data(info(manager.run(body.agent)));
-      case "stop": await manager.stopAgent(manager.run(body.agent).id, "stopped", true); return data(info(manager.run(body.agent)));
+      case "stop":
+        if (manager.run(body.agent).spec.decl.primary && ctx.caller.via !== "human") throw new WordError("forbidden", "only the owner can stop the primary agent");
+        await manager.stopAgent(manager.run(body.agent).id, "stopped", true); return data(info(manager.run(body.agent)));
       case "restart": manager.run(body.agent); await manager.restartAgent(body.agent); return data(info(manager.run(body.agent)));
       case "remove": return remove(body.agent);
       case "primary.set":
@@ -223,6 +226,7 @@ export function createAgentsService(manager: AgentManager): Member {
       }
       case "spawn": return spawn(body, ctx);
       case "vault.changed": await manager.onVaultChanged(String(body.ref), String(body.action)); return;
+      case "settings.changed": if (Array.isArray(body.keys) && body.keys.includes("paused")) await manager.refreshPaused(); return;
       case "env.changed": return;
     }
     throw new WordError("not_found", `service:agents has no word ${word}`);
@@ -240,7 +244,7 @@ export function createAgentsService(manager: AgentManager): Member {
   }
 
   return {
-    id: AGENTS_ID, kind: "service", name: "agents", listens: ["vault.changed"],
+    id: AGENTS_ID, kind: "service", name: "agents", listens: ["vault.changed", "settings.changed"],
     words: () => wordsOf(AGENTS_ID),
     handle,
   };
