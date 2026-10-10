@@ -185,21 +185,28 @@ object SystemCapabilities {
         CapResult.text(text, JSONObject().put("apps", arr))
     }
 
+    private fun launchData(l: Launch): JSONObject = JSONObject().put("opened", l.opened).put("via", l.via)
+        .apply { l.confirmed?.let { put("confirmed", it) }; l.front?.let { put("front", it) } }
+
+    private fun launchError(e: LaunchFailure): CapResult = CapResult.error(e.code, e.message ?: "could not start the screen", e.hint)
+
     private val appsOpen = Cap(
         "apps.open",
         "Open (launch or bring to front) an app on the REAL foreground phone screen, by package name or launcher label. " +
             "Use this when the owner asks you to open an app for them to use; leave it visible, not on a virtual display. Android 10+ blocks " +
             "background apps from opening screens, so this works when ash is in the foreground, ash's accessibility service is " +
-            "enabled, or Shizuku is running with ash authorized (it then goes through the Shizuku shell); otherwise the result says it may have been blocked.",
+            "enabled, the overlay permission is granted, or Shizuku is running with ash authorized (it then goes through the Shizuku shell, and asks the owner " +
+            "to authorize ash if Shizuku is running but ash is not yet); otherwise it fails and the recovery_hint says what the owner can turn on. " +
+            "When the screen can be read afterwards the result says whether the app is really in front (confirmed).",
         schema("app" to prop("string", "Package name (e.g. com.tencent.mm) or launcher label (e.g. \"WeChat\").", required = true)),
         effect = Effect.ACT, risk = Risk.OUTWARD, label = "在打开应用", foreground = true, overlay = Overlay.PASSTHROUGH,
-        result = result("package:string", "opened:boolean")
+        result = result("package:string", "opened:boolean", "confirmed:boolean", "via:string")
     ) { ctx, args ->
         val app = try { Apps.resolve(ctx, args.optString("app")) } catch (e: Exception) { return@Cap CapResult.fail(e.message ?: "unknown app") }
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(app.component)
             .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        val how = Launcher.start(ctx, intent)
-        CapResult.text("${app.label} (${app.pkg}): $how.", JSONObject().put("package", app.pkg).put("label", app.label).put("opened", true))
+        val l = try { Launcher.start(ctx, intent) } catch (e: LaunchFailure) { return@Cap launchError(e) }
+        CapResult.text("${app.label} (${app.pkg}): ${l.summary()}.", launchData(l).put("package", app.pkg).put("label", app.label))
     }
 
     private val appsInfo = Cap(
@@ -370,8 +377,8 @@ object SystemCapabilities {
         var target = intent
         if (target.resolveActivity(pm) == null && target.data != null) target = Intent(target.action) // some ROMs lack the per-app variant
         if (target.resolveActivity(pm) == null) return@Cap CapResult.fail("this phone has no settings page for ${raw.ifEmpty { page }}")
-        val how = Launcher.start(ctx, target)
-        CapResult.text("Settings page ${raw.ifEmpty { page }}${if (target.data != null) " ($pkg)" else ""}: $how.", JSONObject().put("opened", true))
+        val l = try { Launcher.start(ctx, target) } catch (e: LaunchFailure) { return@Cap launchError(e) }
+        CapResult.text("Settings page ${raw.ifEmpty { page }}${if (target.data != null) " ($pkg)" else ""}: ${l.summary()}.", launchData(l))
     }
 
     private val NAMESPACES = listOf("system", "secure", "global")
@@ -519,9 +526,9 @@ object SystemCapabilities {
             intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(pkg)
             ri = ctx.packageManager.resolveActivity(intent, 0) ?: return@Cap CapResult.fail("no app on the phone can open $uri")
         }
-        val how = Launcher.start(ctx, intent)
+        val l = try { Launcher.start(ctx, intent) } catch (e: LaunchFailure) { return@Cap launchError(e) }
         val handler = ri.activityInfo?.packageName?.let { if (it == "android") "chooser" else it } ?: "?"
-        CapResult.text("Opened $uri (handler: $handler): $how.", JSONObject().put("opened", true))
+        CapResult.text("Opened $uri (handler: $handler): ${l.summary()}.", launchData(l))
     }
 
     private val MEDIA_KEYS = mapOf(

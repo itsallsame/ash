@@ -116,11 +116,12 @@ class CapResult private constructor(val ok: Boolean, val content: JSONArray, val
         fun fail(msg: String) = CapResult(false, JSONArray().put(JSONObject().put("type", "text").put("text", msg)), null, msg)
 
         /** A failure with one of the unified [ERROR_CODES] the caller can act on (e.g. "forbidden"): the error reads "code: message". */
-        fun error(code: String, message: String): CapResult {
+        fun error(code: String, message: String, recoveryHint: String? = null): CapResult {
             require(code in ERROR_CODES) { "$code is not an error code" }
             val text = "$code: $message"
-            return CapResult(false, JSONArray().put(JSONObject().put("type", "text").put("text", text)),
-                JSONObject().put("code", code).put("message", message), text)
+            val data = JSONObject().put("code", code).put("message", message)
+            if (!recoveryHint.isNullOrEmpty()) data.put("recovery_hint", recoveryHint)
+            return CapResult(false, JSONArray().put(JSONObject().put("type", "text").put("text", text)), data, text)
         }
 
         /** A result that crossed the bridge as [toJson]. */
