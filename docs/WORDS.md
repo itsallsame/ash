@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `547ac71d88b87d32`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `6cd0358f4f900e56`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -240,7 +240,7 @@
 | `pulse.note` | owner, agent, app | write / none | - | did*, why, kind, data_used | 在记下这次做了什么 | Record what you did on this wake and why (did, why, data_used: what you looked at). kind: pulse (default) for an ordinary wake, gap for something you wanted to know or do but could not get; gaps are collected so the missing source can be added. Nothing here ever reaches the owner. |
 | `pulse.fire` | owner, agent, app | write / none | - | why | 在试一次主动更新 | Wake yourself now as a pulse (why defaults to schedule) to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on. |
 | `pulse.switch` | owner | write / none | - | enabled* | 在开关主动更新 | Owner only: switch the whole pulse on or off. Off keeps PULSE.md, history and feedback. |
-| `pulse.due` | kernel | write / none | - | kind*, at* | 在响应到点的主动更新 | Internal: the clock reports one of the pulse's own timers, and the pulse wakes the agent. Only the hub itself calls this. |
+| `pulse.due` | kernel | write / none | - | kind*, at* | 在响应到点的主动更新 | Internal: the clock reports one of the semantic layer's own timers: wake (an hourly pulse), daily (the evening look back at the day) or reload (the daily new session). The hub itself calls this; nobody else. |
 
 ## `service:cost`
 

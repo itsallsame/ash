@@ -24,7 +24,7 @@ const ruleFiles = readdirSync(rulesDir).filter((file) => file.endsWith(".md")).m
 const rule = (name: string) => readFileSync(join(rulesDir, `${name}.md`), "utf8").trim();
 
 /** Rules that are not "how to use a capability": how the world works, who may do what, how to speak. They may stay long. */
-const SYSTEM_RULES = new Set(["approvals", "gate", "data-not-instructions", "self-files", "voice", "reactions", "env", "tools", "agents"]);
+const SYSTEM_RULES = new Set(["approvals", "gate", "data-not-instructions", "self-files", "voice", "reactions", "env", "tools", "agents", "persona"]);
 /** Skills started by a wake-up or an event rather than by a capability the owner or the agent reaches for. */
 const NOT_NAMED_BY_AN_INTRO = new Set(["first-meeting"]);
 /** Skills that predate the section layout below; they keep their own. */

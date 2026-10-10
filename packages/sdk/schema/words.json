@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "547ac71d88b87d32cbeca2bf235bf41b2cb3cd6857196b9d572286270ad43574",
+ "hash": "6cd0358f4f900e567996853d146c365aa5cd5a931b7e84006314b576f772ac5d",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -10560,7 +10560,7 @@
    "word": "pulse.due",
    "kind": "request",
    "direction": "in",
-   "description": "Internal: the clock reports one of the pulse's own timers, and the pulse wakes the agent. Only the hub itself calls this.",
+   "description": "Internal: the clock reports one of the semantic layer's own timers: wake (an hourly pulse), daily (the evening look back at the day) or reload (the daily new session). The hub itself calls this; nobody else.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -10568,7 +10568,8 @@
       "type": "string",
       "enum": [
        "wake",
-       "floor"
+       "daily",
+       "reload"
       ]
      },
      "at": {

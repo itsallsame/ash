@@ -681,8 +681,8 @@ add("service:pulse", "pulse.fire", "request", obj({ why: pulseWhy }),
   { label: "在试一次主动更新", effect: "write", description: "Wake yourself now as a pulse (why defaults to schedule) to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on." });
 add("service:pulse", "pulse.switch", "request", obj({ enabled: bool }, ["enabled"]), obj({ enabled: bool }, ["enabled"]),
   { callers: OWNER, label: "在开关主动更新", effect: "write", description: "Owner only: switch the whole pulse on or off. Off keeps PULSE.md, history and feedback." });
-add("service:pulse", "pulse.due", "request", obj({ kind: choice("wake", "floor"), at: nonnegativeSafe }, ["kind", "at"]), accepted,
-  { callers: KERNEL, label: "在响应到点的主动更新", effect: "write", description: "Internal: the clock reports one of the pulse's own timers, and the pulse wakes the agent. Only the hub itself calls this." });
+add("service:pulse", "pulse.due", "request", obj({ kind: choice("wake", "daily", "reload"), at: nonnegativeSafe }, ["kind", "at"]), accepted,
+  { callers: KERNEL, label: "在响应到点的主动更新", effect: "write", description: "Internal: the clock reports one of the semantic layer's own timers: wake (an hourly pulse), daily (the evening look back at the day) or reload (the daily new session). The hub itself calls this; nobody else." });
 
 // ===================================================================================================================
 // service:apps: independent apps (contract ash-app/1)
