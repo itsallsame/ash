@@ -27,7 +27,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -66,6 +65,8 @@
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
     <queries>
+        <!-- The kernel package: this app finds out whether it is installed and starts its service. -->
+        <package android:name="ai.ash.kernel" />
         <package android:name="com.google.android.apps.healthdata" />
         <package android:name="nodomain.freeyourgadget.gadgetbridge" />
     </queries>
@@ -109,7 +110,7 @@
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode" />
 
-        <!-- Diagnostics: core process, logs, permissions, payload. -->
+        <!-- Diagnostics: the kernel package and its link, permissions. -->
         <activity
             android:name=".ui.ConsoleActivity"
             android:exported="false"
@@ -120,12 +121,6 @@
             android:name=".link.HandService"
             android:exported="true"
             android:permission="ai.ash.permission.HAND" />
-
-        <!-- Keeps ash core alive. -->
-        <service
-            android:name=".host.CoreService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
 
         <!-- Optional special access; app opt-in remains off until the owner enables it locally. -->
         <service
@@ -138,26 +133,11 @@
             </intent-filter>
         </service>
 
-        <receiver android:name=".host.BootReceiver" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-        <receiver android:name=".host.WakeReceiver" android:exported="false" />
         <receiver android:name=".host.PresentActionReceiver" android:exported="false" />
         <receiver android:name=".host.NotificationPauseReceiver" android:exported="false" />
         <receiver android:name=".host.TaskStopReceiver" android:exported="false" />
         <receiver android:name=".host.PresentExpiryReceiver" android:exported="false" />
         <receiver android:name=".host.senses.CalendarAlarmReceiver" android:exported="false" />
-        <!-- adb/regression control (start, stop, restart); only holders of DUMP (shell, system) may send. -->
-        <receiver android:name=".host.ControlReceiver" android:exported="true" android:permission="android.permission.DUMP">
-            <intent-filter>
-                <action android:name="ai.ash.START" />
-                <action android:name="ai.ash.STOP" />
-                <action android:name="ai.ash.RESTART" />
-            </intent-filter>
-        </receiver>
 
         <!-- Home-screen widgets: Ash itself, and one card from service:widgets. -->
         <receiver android:name=".widget.AshWidgetProvider" android:exported="true" android:label="Ash">

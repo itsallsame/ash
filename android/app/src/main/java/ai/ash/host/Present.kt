@@ -201,7 +201,7 @@ object Present {
         // Answering the conversation reads it, as opening the app would.
         if (PresentChat.isChat(item(ctx, id)?.optString("kind") ?: "")) clearChat(ctx) else Notifications.hidePresent(ctx, id)
         cancelExpiry(ctx, id)
-        CoreService.start(ctx)
+        KernelLauncher.start(ctx)
         flushAsync(ctx)
     }
 

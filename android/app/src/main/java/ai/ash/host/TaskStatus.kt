@@ -61,7 +61,7 @@ object TaskStatus {
     }
     /** What the Ash home-screen widget shows now, from the same frame and "noticed" record as the island. Main thread. */
     fun widgetView(): ai.ash.widget.AshWidgetView = ai.ash.widget.AshWidgetModel.view(model.frame, model.noticedKeys().toSet(),
-        app != null, CoreService.state == "running", model.stale(System.currentTimeMillis()))
+        app != null, app?.let { KernelLauncher.connected(it) } ?: false, model.stale(System.currentTimeMillis()))
     private fun render() {
         renderTask()
         val ctx = app ?: return

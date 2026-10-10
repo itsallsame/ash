@@ -33,17 +33,14 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import ai.ash.R
 import ai.ash.BuildConfig
-import ai.ash.host.CoreEndpoint
-import ai.ash.host.CoreProcess
-import ai.ash.host.CoreService
-import ai.ash.host.Paths
+import ai.ash.host.HandRuntime
+import ai.ash.host.KernelLauncher
 import ai.ash.host.Permissions
-import ai.ash.host.Secrets
+import ai.ash.link.Link
 import ai.ash.host.media.CaptureProvider
 import ai.ash.ui.transport.CoreCancellation
 import ai.ash.ui.transport.CoreUiRequest
 import ai.ash.ui.transport.FixedCoreClient
-import ai.ash.ui.transport.ownerBearerFromPrivateUiUrl
 import ai.ash.ui.transport.workspaceContentRoute
 import ai.ash.ui.transport.workspaceReadRoute
 import ai.ash.ui.transport.FILE_CSP
@@ -83,7 +80,8 @@ class HomeActivity : Activity() {
         // night mode — so the theme is chosen here to make the ash UI follow the system.
         setTheme(if (night) R.style.Ash_Dark else R.style.Ash_Light)
         super.onCreate(savedInstanceState)
-        CoreService.start(this)
+        // The app does not run the core: if the kernel package is not running, ask it to start; it then binds HandService.
+        KernelLauncher.start(this)
 
         // Browser cookies are not port-scoped. This WebView never receives the core owner token.
         CookieManager.getInstance().setAcceptCookie(false)
@@ -170,12 +168,10 @@ class HomeActivity : Activity() {
                 if (!mainFrame || origin.toString() != UI_ASSET_ORIGIN || pageEpoch == 0L) return@addWebMessageListener
                 val input = runCatching { JSONObject(message.data ?: "") }.getOrNull() ?: return@addWebMessageListener
                 when (input.optString("type")) {
-                    "hello" -> reply.postMessage(JSONObject().put("type", "ready")
-                        .put("endpoint", "http://127.0.0.1:${BuildConfig.CORE_PORT}").toString())
+                    "hello" -> reply.postMessage(JSONObject().put("type", "ready").toString())
                     "cancel" -> requests.remove(input.optString("id"))?.cancel()
                     "request" -> handleNativeRequest(input, reply)
                     "file_save" -> handleFileSave(input, reply)
-                    "gateway_config" -> handleGatewaySetting(input, reply)
                     "browser_logins" -> handleBrowserLogins(input, reply)
                 }
             }
@@ -210,24 +206,13 @@ class HomeActivity : Activity() {
         ui.postDelayed({ if (!isFinishing && !isDestroyed) Permissions.recheckAfterUpgrade(this, firstStart) }, 5_000)
     }
 
+    // TODO(T11b-2): the chat page runs over the human channel; until then it is not loaded (the old route, HTTP to a core
+    // on this phone with a token read from the core's own record, is gone with the old core), and the cover says why.
     private fun poll() {
         if (isFinishing || isDestroyed) return
-        val p = Paths(this)
-        val st = CoreService.state
-        status.text = when {
-            st == "installing" -> "正在安装运行环境… ${CoreService.installProgress.takeIf { it >= 0 }?.let { "$it%" } ?: ""}\n（首次安装或升级后需要一两分钟）"
-            st == "preparing" -> "正在准备 Ash 的工作环境… ${CoreService.installProgress.takeIf { it >= 0 }?.let { "$it%" } ?: ""}\n（首次安装或升级后需要一两分钟）"
-            st == "stopped" -> "Ash 已停止"
-            st.startsWith("error") -> "出错了：${st.removePrefix("error: ")}"
-            else -> "正在启动…"
-        }
-        action.visibility = if (st == "stopped" || st.startsWith("error")) View.VISIBLE else View.GONE
-        if (!loaded && p.uiUrl.exists() && (!BuildConfig.ISOLATED_PROBE || st == "running")) {
-            Thread {
-                val ok = CoreProcess(this).portOpen(1000)
-                if (ok) ui.post { load(p.uiUrl.readText().trim()) }
-            }.start()
-        }
+        status.text = if (KernelLauncher.installedVersion(this) == null) "没有安装 Ash 内核包"
+            else "内核：${Link.describe()}\n（对话页等待人的通道接入）"
+        action.visibility = View.VISIBLE
         ui.postDelayed({ poll() }, 1000)
     }
 
@@ -258,30 +243,15 @@ class HomeActivity : Activity() {
     override fun onResume() {
         super.onResume()
         ai.ash.host.AppState.homeVisible = true
-        CoreService.start(this, CoreService.ACTION_APP_OPEN)
+        HandRuntime.appOpened(this)
+        // In front, the app may start the kernel service; do it when the kernel has not handed over a connection.
+        if (!KernelLauncher.connected(this)) KernelLauncher.start(this)
     }
 
     override fun onPause() {
         ai.ash.host.AppState.homeVisible = false
-        CoreService.start(this, CoreService.ACTION_APP_LEFT)
+        HandRuntime.appLeft()
         super.onPause()
-    }
-
-    private fun load(url: String) {
-        if (loaded) return
-        if (!CoreEndpoint.acceptsUiUrl(url, BuildConfig.CORE_PORT)) {
-            status.text = "核心地址不匹配"
-            cover.visibility = View.VISIBLE
-            return
-        }
-        val token = try { ownerBearerFromPrivateUiUrl(url, BuildConfig.CORE_PORT) }
-            catch (_: Exception) { status.text = "核心凭据不可用"; return }
-        val nativeProof = java.security.MessageDigest.getInstance("SHA-256")
-            .digest("${Secrets(this).hostToken}:home".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-        coreUi = FixedCoreClient(BuildConfig.CORE_PORT, bearer = { token }, nativeUiToken = nativeProof)
-        loaded = true
-        web.loadUrl(UI_ASSET_URL)
-        ui.postDelayed({ cover.visibility = View.GONE }, 400)
     }
 
     private fun handleNativeRequest(input: JSONObject, reply: androidx.webkit.JavaScriptReplyProxy) {
@@ -361,42 +331,6 @@ class HomeActivity : Activity() {
             }.isSuccess
             respond(ok)
         }.start()
-    }
-
-    private fun handleGatewaySetting(input: JSONObject, reply: androidx.webkit.JavaScriptReplyProxy) {
-        val id = input.optString("id")
-        if (!Regex("[1-9][0-9]{0,11}").matches(id)) return
-        val epoch = pageEpoch
-        val paths = Paths(this)
-        val result = when (input.optString("operation")) {
-            "status" -> JSONObject().put("ok", true)
-            "save" -> {
-                val rawUrl = input.opt("url") as? String
-                val rawSecret = input.opt("secret") as? String
-                val url = rawUrl?.trim()
-                val secret = rawSecret?.trim()
-                val normalized = if (url.isNullOrEmpty()) "" else normalizeGatewayUrl(url)
-                val saved = if (url == null || secret == null || secret.length > 1024 || normalized == null) false else runCatching {
-                    paths.state.mkdirs()
-                    if (normalized.isEmpty()) {
-                        if (paths.gateway.exists()) check(paths.gateway.delete())
-                        if (paths.gatewayBootstrap.exists()) check(paths.gatewayBootstrap.delete())
-                    } else {
-                        if (secret.isNotEmpty()) paths.gatewayBootstrap.writeText(secret)
-                        else if (paths.gatewayBootstrap.exists()) check(paths.gatewayBootstrap.delete())
-                        paths.gateway.writeText(JSONObject().put("url", normalized).toString())
-                    }
-                    CoreService.start(this, CoreService.ACTION_RESTART)
-                    true
-                }.getOrDefault(false)
-                JSONObject().put("ok", saved)
-            }
-            else -> return
-        }
-        val configuredUrl = runCatching { JSONObject(paths.gateway.readText()).optString("url") }.getOrDefault("")
-        result.put("type", "gateway_config_result").put("id", id)
-            .put("configured", configuredUrl.isNotEmpty()).put("url", configuredUrl)
-        if (pageEpoch == epoch) reply.postMessage(result.toString())
     }
 
     private fun forbidden() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))

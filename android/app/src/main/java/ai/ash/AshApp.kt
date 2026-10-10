@@ -18,5 +18,6 @@ class AshApp : Application() {
             return
         }
         Notifications.createChannels(this)
+        ai.ash.host.HandRuntime.start(this)
     }
 }

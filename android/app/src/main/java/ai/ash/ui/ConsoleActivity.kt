@@ -15,19 +15,12 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import ai.ash.host.CoreProcess
-import ai.ash.host.CoreService
+import ai.ash.host.KernelLauncher
 import ai.ash.link.Link
-import ai.ash.host.LogShareProvider
-import ai.ash.host.ContainerInstaller
-import ai.ash.host.PayloadInstaller
-import ai.ash.host.Paths
 import ai.ash.host.Permissions
 import ai.ash.host.senses.NotificationSenseSettings
-import java.io.File
-import java.io.RandomAccessFile
 
-/** Diagnostics: the core process, the phone permissions ash can use, logs, payload. No business logic. */
+/** Diagnostics: the kernel package and the link to it, the phone permissions ash can use. No business logic. */
 class ConsoleActivity : Activity() {
     private lateinit var info: TextView
     private lateinit var perms: LinearLayout
@@ -37,7 +30,6 @@ class ConsoleActivity : Activity() {
     private lateinit var recoveryToggle: Button
     private lateinit var residentState: TextView
     private lateinit var residentToggle: Button
-    private lateinit var logView: TextView
     private val ui = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,22 +45,7 @@ class ConsoleActivity : Activity() {
         h("Ash 诊断")
         info = TextView(this).apply { textSize = 13f; setTextIsSelectable(true) }
         root.addView(info)
-        row("启动" to { CoreService.start(this, CoreService.ACTION_START) }, "停止" to { CoreService.start(this, CoreService.ACTION_STOP) }, "重启" to { CoreService.start(this, CoreService.ACTION_RESTART) })
-        row("移除网关配置" to {
-            AlertDialog.Builder(this)
-                .setTitle("移除本机网关配置？")
-                .setMessage("仅移除本机的网关地址和未使用的一次性密钥，然后重启 Ash；不会删除对话或其他数据。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton("移除") { _, _ ->
-                    val paths = Paths(this)
-                    val removed = runCatching {
-                        if (paths.gateway.exists()) check(paths.gateway.delete())
-                        if (paths.gatewayBootstrap.exists()) check(paths.gatewayBootstrap.delete())
-                        CoreService.start(this, CoreService.ACTION_RESTART)
-                    }.isSuccess
-                    Toast.makeText(this, if (removed) "已移除网关配置" else "移除失败", Toast.LENGTH_SHORT).show()
-                }.show()
-        })
+        row("启动内核" to { startKernel(KernelLauncher.ACTION_START) }, "停止" to { startKernel(KernelLauncher.ACTION_STOP) }, "重启" to { startKernel(KernelLauncher.ACTION_RESTART) })
 
         h("手机权限（给 Ash 用的能力）")
         perms = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -121,42 +98,27 @@ class ConsoleActivity : Activity() {
         root.addView(notificationToggle)
         row("系统读取权限" to { openNotificationAccess() })
 
-        h("日志")
-        row("刷新" to { showLog() }, "分享日志" to { shareLogs() })
-        logView = TextView(this).apply { textSize = 10.5f; typeface = Typeface.MONOSPACE; setTextIsSelectable(true) }
-        root.addView(logView)
-
-        h("运行环境")
-        row("重新安装运行环境" to {
-            Paths(this).buildMarker.delete()
-            CoreService.start(this, CoreService.ACTION_RESTART)
-        })
-
         setContentView(ScrollView(this).apply { addView(root) })
         refresh()
-        showLog()
     }
 
     private fun refresh() {
         if (isFinishing) return
         Thread {
-            val p = Paths(this)
-            val core = CoreProcess(this)
-            val pid = core.pid()
-            val open = core.portOpen(1000)
+            val kernel = KernelLauncher.installedVersion(this)
             val text = buildString {
-                append("服务：${CoreService.state}\n")
-                append("ash core：${pid?.let { "pid $it" } ?: "未运行"}${if (open) "，端口 ${CoreProcess.PORT} 在线" else ""}\n")
+                append("内核包：${kernel?.let { "已安装 $it" } ?: "未安装"}\n")
                 append("内核连接：${Link.describe()}\n")
-                append("运行环境：${PayloadInstaller.installedBuild(p) ?: "未安装"}")
-                PayloadInstaller.shippedBuild(this@ConsoleActivity)?.let { if (it != PayloadInstaller.installedBuild(p)) append("（待安装 $it）") }
-                append("\n工作环境：${ContainerInstaller.installedVersion(p) ?: "未安装"}")
-                ContainerInstaller.shippedVersion(this@ConsoleActivity)?.let { if (it != ContainerInstaller.installedVersion(p)) append("（待安装 $it）") }
-                append("\nApp：${packageManager.getPackageInfo(packageName, 0).versionName}  Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）")
+                append("App：${packageManager.getPackageInfo(packageName, 0).versionName}  Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）")
             }
             ui.post { info.text = text; renderPerms(); renderNotificationSense(); renderRecovery(); renderResident() }
         }.start()
         ui.postDelayed({ refresh() }, 3000)
+    }
+
+    private fun startKernel(action: String) {
+        if (KernelLauncher.installedVersion(this) == null) { Toast.makeText(this, "内核包未安装", Toast.LENGTH_SHORT).show(); return }
+        if (!KernelLauncher.start(this, action)) Toast.makeText(this, "无法启动内核", Toast.LENGTH_SHORT).show()
     }
 
     private fun renderPerms() {
@@ -227,43 +189,6 @@ class ConsoleActivity : Activity() {
             VScreenPreview.Shown.NO_PERMISSION -> "需要先开启「悬浮窗」权限"
         }
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun tail(f: File, bytes: Long = 48 * 1024): String {
-        if (!f.exists()) return "（没有日志）"
-        RandomAccessFile(f, "r").use { r ->
-            val start = maxOf(0L, r.length() - bytes)
-            r.seek(start)
-            val b = ByteArray((r.length() - start).toInt())
-            r.readFully(b)
-            // Tokens never belong on screen (they are only in files, but be safe).
-            return String(b, Charsets.UTF_8).replace(Regex("token=[A-Za-z0-9_-]+"), "token=<hidden>")
-        }
-    }
-
-    private fun showLog() {
-        Thread {
-            val t = tail(Paths(this).coreLog)
-            ui.post { logView.text = t }
-        }.start()
-    }
-
-    private fun shareLogs() {
-        Thread {
-            val p = Paths(this)
-            val out = File(LogShareProvider.shareDir(this), "ash-logs.txt")
-            out.writeText(
-                "== core.log\n" + tail(p.coreLog, 512 * 1024) +
-                    "\n\n== dsh.log\n" + tail(File(p.containerDshHome, "logs/dsh.log"), 256 * 1024),
-            )
-            ui.post {
-                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_STREAM, LogShareProvider.uriFor(this@ConsoleActivity, out.name))
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }, "分享 Ash 日志"))
-            }
-        }.start()
     }
 
     override fun onDestroy() {

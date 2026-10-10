@@ -64,7 +64,7 @@ class NotificationSense : NotificationListenerService() {
         val now = android.os.SystemClock.elapsedRealtime()
         if (lastRevive != 0L && now - lastRevive < REVIVE_GAP_MS) return
         lastRevive = now
-        runCatching { ai.ash.host.CoreService.start(this) }
+        runCatching { ai.ash.host.KernelLauncher.start(this) }
             .onFailure { Log.w("sense.notification", "revive failed: ${it.javaClass.simpleName}") }
     }
 
