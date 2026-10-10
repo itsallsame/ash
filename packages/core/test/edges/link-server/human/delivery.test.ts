@@ -120,6 +120,7 @@ test("a repeat of a reply with the same key inside the window is dropped; after 
 
 test("the turn's end still rings strongly when its last quiet reply is not yet answered by the channel", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
+  hub.clock.now = at(12);   // outside the default quiet hours, whatever the real time is
   // The channel holds its answer to the second reply until the turn has ended.
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => { release = resolve; });
@@ -140,6 +141,7 @@ test("the turn's end still rings strongly when its last quiet reply is not yet a
 
 test("a reply while its turn runs rings quietly; the turn's end rings strongly for the last one if the owner is still away", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
+  hub.clock.now = at(12);   // outside the default quiet hours, whatever the real time is
   const p = await phone(hub);
   hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] });
   const agentInTurn = { ...AGENT, turn: "t1" };
@@ -163,6 +165,7 @@ test("a reply while its turn runs rings quietly; the turn's end rings strongly f
 
 test("the end of a turn does not ring when the owner is looking by then", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
+  hub.clock.now = at(12);   // outside the default quiet hours, whatever the real time is
   const p = await phone(hub);
   hub.mini.announce("turn.started", { turn: "t2", lane: "front", ids: [] });
   await tell(hub, { text: "结果" }, { ...AGENT, turn: "t2" });
