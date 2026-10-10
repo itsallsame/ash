@@ -1,0 +1,5 @@
+** MEMINFO in pid 9034 [ai.ash.kernel] **
+                   Pss  Private  Private  Swapped     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty     Size    Alloc     Free
+  Native Heap    81234    81100        0        0    90000    81234     8000
+           TOTAL   198765   150000    20000        0   120000   100000    12000

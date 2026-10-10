@@ -1,0 +1,3 @@
+    mDreamingLockscreen=true mDreamingSleepToken=null
+    isKeyguardShowing=true
+  mCurrentFocus=Window{d00d u0 NotificationShade}

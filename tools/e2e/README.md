@@ -117,3 +117,154 @@ that to `--token-file` (`node -p 'require("./link.json").token' > token && chmod
 that, `link.json` is stale and the hub closes the connection with 4001: read the file from the phone again. If the file is
 missing, the kernel host has not attached yet (or has let go): open the app and wait for it to say it is connected.
 The file holds the token in clear, so keep your copy private and delete it when you are done.
+
+# 真机场景 (real-phone scenarios): `scenarios.mjs`
+
+One more file with no dependencies (Node 22 or newer), next to `owner.mjs`. It is the old real-phone regression
+(`tools/regress.sh` R1-R21) and the key use scenarios of `spec/REGRESSION-0.3.md` rewritten for the new hub, as scripts that
+run on the machine that has adb (a MacBook with the phone or emulator attached). There is nothing to build: copy
+`owner.mjs` and `scenarios.mjs` into one folder and run it.
+
+```
+adb devices                                    # the serial
+node scenarios.mjs --serial <serial> --link-file link.json                 # everything
+node scenarios.mjs --serial <serial> --link-file link.json --only R19,S085 # some
+node scenarios.mjs --list                                                   # what there is
+```
+
+Before you start: a **debuggable** build of the hand app (`assembleDebug`, so that `run-as` works), the app has connected
+(the kernel attached: open it once and wait for it to say so), the phone is awake and not behind a PIN (the script sends
+WAKEUP and dismisses the keyguard, which a PIN refuses), and for the scenarios that talk to the agent a model key is set.
+
+What it does with `adb` and `owner.mjs`:
+
+- **The link.** `run-as ai.ash.agent cat files/debug/local-link.json` is written to `--link-file` (mode 600) and the port is
+  forwarded (`adb forward`). The token changes every time the hub starts, so the script reads it again whenever a call is
+  refused or the hub is not there, and after every scenario that restarts the hub. Nothing else is needed from you.
+- **Acting.** Words are called as the owner (`owner.mjs call`), the agent is spoken to with `say`, and the phone is touched
+  with `input keyevent`, `monkey`, `cmd statusbar`, `cmd notification post`. The state it changes (approval mode, the
+  phone's trust tier, settings, timers, test apps, a sub-agent) it puts back, also when the scenario fails.
+- **Judging.** Only facts: the ledger (`service:history/query` after a marker: which word was called and on which member,
+  whether a card came and with which options, the answer code of a request, turn lanes and outcomes), the phone's own report
+  (`config.status`), `dumpsys window` (foreground package), `dumpsys notification` (what was posted), `dumpsys meminfo`,
+  `ps` (the hub and DSH). It never judges what the agent says. Anything that goes through the model is asked for in a way that
+  forces one word ("call `clipboard.set` with ..."), and the verdict is whether that word was called.
+
+Output is one line per scenario, `PASS|FAIL|SKIP|MANUAL <id> <name> -- <detail>`, then `SUMMARY`. Exit code 0 when nothing
+FAILed, 1 otherwise, 2 when it could not start (no adb, no device, no link), 64 for bad arguments.
+
+| Status | Meaning |
+|---|---|
+| `PASS` / `FAIL` | Judged by facts. A FAIL also leaves `<shots>/<id>-fail.png`. |
+| `SKIP` | A need is missing; the line says what to switch on (the table below), or the situation could not be made (for example the model was too fast for "busy"). |
+| `MANUAL` | The automatic part ran and its result is in the line; the rest needs an eye. The screenshots are in `--shots` (default `./shots`), named after the scenario: `S114-running.png`. |
+
+Options: `--only LIST` (ids, old numbers, categories, `all`), `--skip LIST`, `--safe` (leave out what kills a process),
+`--shots DIR`, `--report FILE` (JSON), `--timeout-scale X` (slow phone or network), `--alt-model provider/model` (S157),
+`--manual-wait S` (S033 waits this long for the tap on the notification, 0 = no wait), `--package`, `--kernel-package`,
+`--owner`, `--adb`, `--state`. `node scenarios.mjs --help` has the rest. The scenarios that kill the hub or DSH run last.
+
+## The scenarios
+
+Each is named by the old number it replaces (`R` is `tools/regress.sh`, `S` is REGRESSION-0.3; the third column is what else it covers).
+
+| Id | Scenario | Also covers | |
+|---|---|---|---|
+| **Smoke (already proven on a phone; quick re-check)** | | | |
+| `R6` | 对话：主 agent 一轮回复 | S057 | auto |
+| `S028` | 首次见面：账本最前面是 agent 先开口 | | auto (SKIP on a used install) |
+| `S082` | 提醒（前台）：到点消息落进对话 | | auto |
+| `S075` | 提醒（后台）：回到桌面后到点出系统通知 | 设备23 | auto |
+| `S161` | 用量：一轮之后今日调用数增加 | | auto |
+| `S174` | 内存压测：连续多轮后中枢没有重启、内存有界 | | auto |
+| **Conversation** | | | |
+| `R17` | 连发：忙时连发三条，不会每条各开一轮 | S002, S003 | auto |
+| `R18` | 插话停：说「停下」，在途的一轮被取消 | S004 | auto |
+| `S016` | 选项卡：出卡、点选、下一轮收到 | | auto |
+| `S005` | 对话失败重试：DSH 在回答中途被杀，出失败提示和 [重试]，点了能做完 | S006-S009 | auto, kills DSH |
+| **Approval** | | | |
+| `R19` | 审批：出卡、批一次、只执行一次 | | auto |
+| `S032` | 审批：拒绝后不执行，发起者被告知 | | auto |
+| `S036` | 审批：以后都可以 → 生成规则，再来不出卡 | S034, S035, S037, S038 | auto |
+| `S039` | 审批：过期作废，迟到的批准不执行 | | auto (SKIP if the agent does not shorten the ttl) |
+| `S033` | 通知上答审批：系统通知出现自动查，点按钮由人 | 人场景8 | MANUAL |
+| **Sub-agents** | | | |
+| `S046` | 子 agent：主 agent 建、启动、问、告诉 | S049, S050 | auto |
+| `S048` | 子 agent：主人直接对话，在被点名那一轮能回人 | | auto |
+| `S051` | 子 agent：后台（非被点名）那一轮不能对主人说话 | | auto |
+| **Phone abilities** | | | |
+| `S085` | agent 经窄腰调手机的词（查电量） | 设备20 | auto |
+| `S086` | 日历（列日历、查未来 30 天） | | auto |
+| `S087` | 位置 | | auto |
+| `S088` | 相册（相册列表、图片列表、读一张） | | auto |
+| `S026` | 文件：主人直接在主 body 里写、读、列文件 | 人场景27 | auto |
+| `S089` | 读通知（adb 发一条，感知档案里查到） | | auto |
+| `S090` | 电量（和 `dumpsys battery` 对得上） | | auto |
+| `S091` | 剪贴板（写入再读出） | | auto |
+| `S092` | 打开应用（设置），前台包名对 | | auto |
+| `S093` | 打开网址，前台换成了浏览器 | | auto |
+| `S094` | 浏览器任务（开页、读页、截图、关） | | auto |
+| `S094b` | 屏幕读取和操作（无障碍） | S095 | auto |
+| `S094c` | Shizuku shell（跑命令、权限是 shell 用户） | 设备33 | auto |
+| **Apps** | | | |
+| `S119` | 脚手架生成、校验通过 | | auto |
+| `S120` | agent 要装 → 出审批卡（不提供“以后都可以”），批了才装上 | | auto |
+| `S121` | 主人装（授权）、停用、启用、收回授权 | S125 | auto |
+| `S122` | 页面（surface）和图标 | 设备39 | auto |
+| `S123` | 调应用自己的工具（加一条、读出来） | | auto |
+| `S124` | 内置 health 在、能描述；已授权时读工具可调 | 设备37 | auto |
+| **Senses and pulse** | | | |
+| `S097` | 屏幕开关事件进感知档案，不进账本；感知器官在运行 | S100, S102, S103 | auto |
+| `S066` | pulse：手动触发一次，后台线醒一轮 | S067 | auto (SKIP without an 'Ash 卡片' widget) |
+| `S061` | 每日复盘：把复盘时刻设到两分钟后，后台线被叫醒 | S062, S063 | auto (SKIP when today's review already went out) |
+| **Settings** | | | |
+| `S164` | 暂停 / 继续：暂停期间不开新一轮，继续后恢复 | S165, R5 | auto |
+| `S159` | 密钥：存进保险箱，列表只见“已配置”，账本里没有明文，删除后消失 | S160 | auto |
+| `S163` | DSH 插件：列出、关掉再打开一个社区插件 | R16, S167 | auto (SKIP without a community plug-in) |
+| `S157` | 模型切换：切到另一个模型，重启 DSH 和中枢后仍保持，换回 | S158, S162 | auto, kills the hub |
+| `R20` | 设置跨重启：安静时段和暂停状态杀中枢后仍在 | S166 | auto, kills the hub |
+| **Recovery** | | | |
+| `S040` | 审批卡等待时杀中枢，重启后重新出卡，批了照样只执行一次 | | auto, kills the hub |
+| `S170` | 一轮进行中杀中枢，重启后这条消息不重放，agent 被告知上一轮中断 | S171, R4 | auto, kills the hub |
+| `S168` | DSH 进程被杀后自动拉起，下一句话能答 | | auto, kills DSH |
+| **Eyes** | | | |
+| `S114` | 任务岛：任务进行中截屏，再从中枢停掉这一轮 | S115-S118 | MANUAL |
+
+Not rewritten: R1 and R3 (fresh install, reboot: they take the phone away), R2 (update over the top: it needs an APK to install), R7-R9 and R14-R15 (the gateway, the paired laptop, an image in chat: other tools), R11-R12 (the DSH ecosystem checks: S163 covers switching a community plug-in; "as published" is checked by the container build), R21 (the memory loop of the old design, replaced by the daily review S061).
+
+## What the phone must allow (`SKIP` tells you which)
+
+The hand app reports its own switches (`config.status`); a scenario that needs one that is `missing` is skipped with the line
+below. Replace `$S` by the serial and `ai.ash.agent` by `--package` if you changed it.
+
+| Need (`config.status` item) | Scenarios | How to switch it on |
+|---|---|---|
+| `calendar` | S086 | `adb -s $S shell pm grant ai.ash.agent android.permission.READ_CALENDAR` (and `WRITE_CALENDAR`) |
+| `location` | S087 | `pm grant ai.ash.agent android.permission.ACCESS_FINE_LOCATION` (and `ACCESS_COARSE_LOCATION`); an emulator also needs a fix: `adb -s $S emu geo fix 121.47 31.23` |
+| `location_background` | (reading in the background) | `pm grant ai.ash.agent android.permission.ACCESS_BACKGROUND_LOCATION` |
+| `activity_recognition` | activity sense | `pm grant ai.ash.agent android.permission.ACTIVITY_RECOGNITION` |
+| `photos` | S088 | `pm grant ai.ash.agent android.permission.READ_MEDIA_IMAGES` (Android 13+, else `READ_EXTERNAL_STORAGE`), and `ACCESS_MEDIA_LOCATION` |
+| `all_files` | files outside the media folders | `adb -s $S shell appops set ai.ash.agent MANAGE_EXTERNAL_STORAGE allow` |
+| `notifications` | S075, S033 | `pm grant ai.ash.agent android.permission.POST_NOTIFICATIONS` |
+| `notification_listener` and the in-app opt-in | S089 | `adb -s $S shell cmd notification allow_listener ai.ash.agent/ai.ash.caps.senses.NotificationSense`; the opt-in (通知读取) is a switch in the app, no adb command |
+| `accessibility` | S094b | `adb -s $S shell settings put secure enabled_accessibility_services ai.ash.agent/ai.ash.caps.screen.A11yService` and `settings put secure accessibility_enabled 1` |
+| `usage_access` | app usage | `adb -s $S shell appops set ai.ash.agent GET_USAGE_STATS allow` |
+| `overlay` | the island | `adb -s $S shell appops set ai.ash.agent SYSTEM_ALERT_WINDOW allow` |
+| `write_settings` | settings words | `adb -s $S shell appops set ai.ash.agent WRITE_SETTINGS allow` |
+| `exact_alarm` | exact reminders | `adb -s $S shell appops set ai.ash.agent SCHEDULE_EXACT_ALARM allow` |
+| `battery_optimization` | staying alive | `adb -s $S shell dumpsys deviceidle whitelist +ai.ash.agent` (and `+ai.ash.kernel`) |
+| `shizuku` | S094c | start Shizuku (`adb -s $S shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh`) and authorize Ash in its app |
+
+Other needs: a **paired phone** (`phone`: the device is online in `service:devices/list`), a **model key** (`llm`:
+`owner.mjs set-key DEEPSEEK_API_KEY < key.txt`), **internet on the phone** (`network`: S093, S094), the **process** can be
+killed (`kill`: `run-as ai.ash.kernel kill -9` works on a debuggable kernel build, or use an emulator/rooted shell).
+The permission dialogs that `pm grant` cannot reach (accessibility on some makers' ROMs, the notification opt-in, the
+battery whitelists of MIUI/ColorOS) are done by hand once.
+
+## Tests of the script
+
+`node --test tools/e2e/scenarios.test.mjs` judges recorded samples (`tools/e2e/fixtures/`: output of `owner.mjs`, ledgers of an
+approval, a refusal, a stop, a failed turn with its retry card, busy supplements, a sub-agent whose background turn is refused;
+`dumpsys` window/notification/meminfo/battery, `ps`) and drives the runner with stand-ins for adb and `owner.mjs`; it needs no
+device. `packages/core/test/edges/owner-cli/scenarios.test.ts` runs the real script against a real hub with a fake `adb`
+(fetching the link, the approval flow, pause and resume, sub-agents, an option card, stop and busy messages).

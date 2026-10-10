@@ -1,0 +1,2 @@
+{"at":"2026-10-10T17:26:44.318Z","kind":"conn","state":"closed","code":4001,"reason":"bad token","reconnect":true}
+{"at":"2026-10-10T17:26:44.319Z","kind":"error","message":"the hub refused this connection (4001 bad token): the local token is not the one of the running hub, or the signature did not hold"}
