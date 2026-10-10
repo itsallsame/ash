@@ -17,6 +17,7 @@ import type { HandRegistry } from "../hands/registry";
 import type { HubLinkServer, LinkConnection, LinkEvent } from "../index";
 import { GatewayControl, type OwnerIdentity } from "./gateway";
 import { RelaySetup, type CloudflareEndpoints } from "./setup";
+import type { RelayProgram } from "./bundle";
 
 export const LINK_ID = "service:link";
 const SERVICE: Caller = { member: LINK_ID, via: "service", local: true };
@@ -179,7 +180,7 @@ export interface LinkControlDeps {
   /** The hub's key in the host's keystore. */
   identity: OwnerIdentity;
   /** The relay program packaged in this build, as one module. */
-  bundle?: () => Promise<string>;
+  bundle?: () => Promise<RelayProgram>;
   /** Why the packaged relay program cannot be used right now, or null when it can. */
   bundleMissing?: () => string | null;
   ownerName?: string;

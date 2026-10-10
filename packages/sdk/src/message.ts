@@ -64,25 +64,6 @@ export function errorBody(code: ErrorCode, message: string, extra: { detail?: un
   return { code, message, ...(extra.detail !== undefined ? { detail: extra.detail } : {}), recovery_hint: extra.recovery_hint ?? DEFAULT_RECOVERY_HINTS[code] };
 }
 
-/**
- * Old code -> new code, for the codes that changed. A code that is also a new code is not listed (use `fromLegacyErrorCode`).
- * Data for the tasks that move the old call sites (router, tool surface, app bridge, hands); the new code never produces an old code.
- */
-export const LEGACY_ERROR_CODES: Readonly<Record<string, ErrorCode>> = Object.freeze({
-  // renamed (SPEC-02 §7)
-  payload_invalid: "bad_request", bad_json: "bad_request", unreachable: "offline", vault_unavailable: "unavailable",
-  capability_error: "failed", internal_error: "internal",
-  // codes the HTTP edge, the apps bridge and the hands made up
-  bad_args: "bad_request", bad_path: "bad_request", method_not_allowed: "bad_request", unknown_capability: "not_found",
-  unknown_process: "not_found", app_failed: "failed", busy: "unavailable",
-  permission_denied: "forbidden", not_recording: "unavailable", source_unavailable: "unavailable", unsupported_schema: "unavailable",
-});
-
-/** The new code for an old one (or for a new one, unchanged); undefined for a code that is neither. */
-export function fromLegacyErrorCode(code: string): ErrorCode | undefined {
-  return Object.hasOwn(LEGACY_ERROR_CODES, code) ? LEGACY_ERROR_CODES[code] : isErrorCode(code) ? code : undefined;
-}
-
 // ---------------------------------------------------------------------------------------------------------------------
 // message (SPEC-01 §3)
 // ---------------------------------------------------------------------------------------------------------------------

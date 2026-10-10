@@ -13,7 +13,7 @@ import { createRegistry } from "../../../src/kernel/registry";
 import { createRouter } from "../../../src/kernel/router";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { fakeOwner } from "../../kernel/router/world";
-import { FakeDriver, MAIN_TEMPLATE, OWNER, settle, waitFor } from "./helpers";
+import { FakeDriver, MAIN_TEMPLATE, OWNER, settle, templateDir, waitFor } from "./helpers";
 
 // The hub's real router, registry, agents module and tool surface (over HTTP, with real MCP clients), and a driver the
 // test plays by hand. Two lanes of one agent are in a turn at once; the tool tokens are the only thing that says which.
@@ -45,7 +45,7 @@ async function hub() {
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: () => null },
     drivers: { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
-    templates: { read: (name) => (name === "main" ? MAIN_TEMPLATE : null) },
+    templatesDir: templateDir({ main: MAIN_TEMPLATE }),
     tools: (agent, lanes, allowed) => ({ mcp_url: url, tokens: (issued[agent] = tools.issueTokens(agent, lanes)), allowed: allowed ?? [...TOOL_NAMES] }),
     revokeTools: (agent) => tools.revoke(agent),
     rules: () => "rules",

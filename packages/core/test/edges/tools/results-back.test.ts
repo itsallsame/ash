@@ -10,7 +10,7 @@ import { wordsOf } from "../../../../sdk/src/words";
 import { createAgents } from "../../../src/edges/agents";
 import { createToolsEdge, type ToolsEdge } from "../../../src/edges/tools";
 import { fake, owner, word, world } from "../../kernel/router/world";
-import { FakeDriver, MAIN_TEMPLATE, settle, waitFor } from "../agents/helpers";
+import { FakeDriver, MAIN_TEMPLATE, settle, templateDir, waitFor } from "../agents/helpers";
 import { deferred, fakeRegistry, MAIN, startRig, type Rig, type ToolClient } from "./helpers";
 
 const SLOW = "service:slow";
@@ -29,7 +29,7 @@ async function setup() {
   const agents = createAgents({
     router: w.router, registry: w.registry, ledger: w.ledger, vault: { use: () => null },
     drivers: { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
-    templates: { read: (name) => (name === "main" ? MAIN_TEMPLATE : null) },
+    templatesDir: templateDir({ main: MAIN_TEMPLATE }),
     tools: (agent, lanes) => ({ mcp_url: "http://hub/mcp", tokens: Object.fromEntries(lanes.map((l) => [l, `tok-${agent}-${l}`])), allowed: ["*"] }),
     started: (agent) => late.edge?.catchUp(agent),
     rules: () => "rules", now: () => Date.now(), newId: () => `n${++ids}`, log: (...a) => logs.push(a),

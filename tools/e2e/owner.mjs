@@ -11236,27 +11236,6 @@ var DEFAULT_RECOVERY_HINTS = Object.freeze({
   failed: "The target tried and failed; read the message, fix the cause, or tell the owner.",
   internal: "This is a fault in Ash, not in your request; tell the owner and do not retry in a loop."
 });
-var LEGACY_ERROR_CODES = Object.freeze({
-  // renamed (SPEC-02 §7)
-  payload_invalid: "bad_request",
-  bad_json: "bad_request",
-  unreachable: "offline",
-  vault_unavailable: "unavailable",
-  capability_error: "failed",
-  internal_error: "internal",
-  // codes the HTTP edge, the apps bridge and the hands made up
-  bad_args: "bad_request",
-  bad_path: "bad_request",
-  method_not_allowed: "bad_request",
-  unknown_capability: "not_found",
-  unknown_process: "not_found",
-  app_failed: "failed",
-  busy: "unavailable",
-  permission_denied: "forbidden",
-  not_recording: "unavailable",
-  source_unavailable: "unavailable",
-  unsupported_schema: "unavailable"
-});
 
 // packages/sdk/src/versions.ts
 var LINK_PROTOCOL = "ash-link/1";
