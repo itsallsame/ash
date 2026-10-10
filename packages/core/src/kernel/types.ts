@@ -36,8 +36,11 @@ export interface Registry {
 // ---------------------------------------------------------------------------------------------------------------------
 
 export interface Router {
-  /** `ref` is the id of the response message when the ledger recorded it (a large result is an attachment of that message). */
-  send(msg: Outgoing, caller: Caller, opts?: { signal?: AbortSignal }): Promise<Reply & { ref?: string }>;
+  /**
+   * `id` is the request's message id (the router always sets it, recorded or not; fakes may leave it out); `ref` is the id of the response message when
+   * the ledger recorded it (a large result is an attachment of that message).
+   */
+  send(msg: Outgoing, caller: Caller, opts?: { signal?: AbortSignal }): Promise<Reply & { id?: string; ref?: string }>;
   /** Read-only: the human edge's sync and the activity page. */
   subscribe(filter: { to?: string; from?: string; involving?: string; word?: string }, cb: (m: Message) => void): () => void;
   /** Once at start: unfinished dispatched requests become interrupted (`result_unknown`), never replayed. */
