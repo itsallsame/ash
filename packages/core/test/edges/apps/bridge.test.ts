@@ -104,6 +104,16 @@ test("services and agents are used the same way as hands: through needs, and not
   assert.equal((await viaApp(w, "service:llm", "other")).error.code, "forbidden", "another word of a granted member");
 });
 
+test("agent:* in needs stands for any agent, and only for agents", async () => {
+  const { w } = await setup({ fixture: (app) => { app.needs = [{ member: "agent:*", words: ["wake"], why: "wake the primary, whoever it is" }]; } });
+  const granted = w.apps.runtime.granted.bind(w.apps.runtime);
+  assert.equal(granted("app:fixture", "agent:main", "wake"), true);
+  assert.equal(granted("app:fixture", "agent:other", "wake"), true);
+  assert.equal(granted("app:fixture", "agent:main", "tell"), false, "only the words of the need");
+  assert.equal(granted("app:fixture", "service:agents", "wake"), false);
+  assert.equal(granted("app:fixture", "device:abc", "wake"), false);
+});
+
 test("the runtime's granted(): needs for words, declared events for events, nothing for an app that is not running", async () => {
   const { w } = await setup();
   const granted = w.apps.runtime.granted.bind(w.apps.runtime);

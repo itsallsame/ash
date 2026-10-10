@@ -2,7 +2,7 @@
 //
 // The hub delivers every sense.* event to `ash.on_event` (app.json `listens`). The rules in ./rules.mjs decide which facts are
 // worth waking an agent for; this file is the glue: it reads what the rules need (the senses archive, PULSE.md, the pause
-// switch), asks the small model when a rule cannot settle something, and wakes the agent with `agent:main/wake`.
+// switch), asks the small model when a rule cannot settle something, and wakes the primary agent (found with `service:agents/list`; `agent:*/wake`).
 //
 //   sense_rules.rules   (read)  the rules in force, in a few words
 //   sense_rules.recent  (read)  the latest decisions: woke, dropped because it was a repeat, too soon, paused, ...
@@ -16,8 +16,6 @@ console.log = (...args) => console.error(...args);
 const DIR = process.env.ASH_APP_DIR || process.cwd();
 const DATA = join(DIR, "data");
 const STATE = join(DATA, "state.json");
-/** The agent a wake goes to: the one app.json `needs` names (the seeded primary). If the owner hands primary over, change both. */
-const WAKE_AGENT = "agent:main";
 const PULSE_FILE = process.env.SENSE_RULES_PULSE || "/root/work/PULSE.md";
 const KEEP_MS = 3 * 86_400_000;
 
@@ -65,6 +63,26 @@ const note = (entry) => { state.recent.push({ at: Date.now(), ...entry }); save(
 
 // ---- waking ----
 
+/** The agent declared primary, asked of service:agents when needed and kept until a wake to it fails. */
+let primary = null;
+async function findPrimary(fresh) {
+  if (primary && !fresh) return primary;
+  const out = await call("service:agents", "list");
+  primary = out.ok ? (out.result?.agents ?? []).find((agent) => agent.primary)?.id ?? null : null;
+  return primary;
+}
+/** Wake the primary agent. A failed wake (it moved, or is offline) asks again who the primary is, and tries the new one once. */
+async function wakePrimary(body) {
+  const first = await findPrimary(false);
+  if (first) {
+    const sent = await call(first, "wake", body);
+    if (sent.ok) return sent;
+  }
+  const again = await findPrimary(true);
+  if (again && again !== first) return call(again, "wake", body);
+  return { ok: false, code: again ? "failed" : "not_found" };
+}
+
 async function paused() {
   const out = await call("service:admin", "status");
   return out.ok && out.result?.paused === true;
@@ -80,7 +98,7 @@ async function wake(w, word) {
   if (!w.unlimited && !limiter.allow(bucket, now)) { note({ word, kind: w.kind, outcome: "too_soon" }); return; }
   state.woken[w.key] = now;
   state.last = Object.fromEntries(limiter.last);
-  const sent = await call(WAKE_AGENT, "wake", { lane: "back", reason: w.kind, context: w.context });
+  const sent = await wakePrimary({ lane: "back", reason: w.kind, context: w.context });
   if (!sent.ok) {
     // not taken: neither the fact nor the time slot is used up, so a later event can try again
     delete state.woken[w.key];

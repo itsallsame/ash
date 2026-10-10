@@ -15,11 +15,11 @@ const MIN = 60_000;
 
 interface Rig {
   w: World;
-  wakes: { reason: string; lane: string; context: any }[];
+  wakes: { reason: string; lane: string; context: any; to: string }[];
   llm: { messages: any[] }[];
   /** What the senses archive holds; the stand-in answers `query` from these. */
   archive: { activity: any[]; location: any[] };
-  state: { paused: boolean; llmAnswer: string; llmDown: boolean; agentDown: boolean };
+  state: { paused: boolean; llmAnswer: string; llmDown: boolean; agentDown: boolean; nextDown: boolean; primary: string };
   pulse: string;
   event(word: string, body: unknown): Promise<void>;
   recent(): Promise<any[]>;
@@ -38,11 +38,12 @@ async function rig(options: { pulse?: string; edit?: (app: Record<string, any>) 
   writeFileSync(manifest, JSON.stringify(app, null, 2));
 
   const w = world({ builtinApps: ["sense-rules"], fixture: false, root });
-  const r = { w, wakes: [], llm: [], archive: { activity: [], location: [] }, state: { paused: false, llmAnswer: "no", llmDown: false, agentDown: false }, pulse: pulseFile } as unknown as Rig;
-  const agent = stubMember("agent:main", "agent", [{ word: "wake", effect: "act" }], { wake: (msg) => {
-    if (r.state.agentDown) throw Object.assign(new Error("gone"), { code: "offline" });
-    r.wakes.push(msg.body as never); return { accepted: true };
+  const r = { w, wakes: [], llm: [], archive: { activity: [], location: [] }, state: { paused: false, llmAnswer: "no", llmDown: false, agentDown: false, nextDown: false, primary: "agent:main" }, pulse: pulseFile } as unknown as Rig;
+  const agentStub = (id: string) => stubMember(id, "agent", [{ word: "wake", effect: "act" }], { wake: (msg) => {
+    if ((r.state.agentDown && id === "agent:main") || (r.state.nextDown && id === "agent:next")) throw Object.assign(new Error("gone"), { code: "offline" });
+    r.wakes.push({ ...(msg.body as object), to: id } as never); return { accepted: true };
   } });
+  const agents = stubMember("service:agents", "service", [{ word: "list" }], { list: () => ({ agents: ["agent:main", "agent:next"].map((id) => ({ id, primary: id === r.state.primary })) }) });
   const senses = stubMember("service:senses", "service", [{ word: "query" }], { query: (msg) => {
     const b = msg.body as { kind: "activity" | "location"; from: number; to: number };
     return { rows: (r.archive[b.kind] ?? []).filter((row) => row.ts >= b.from && row.ts < b.to), truncated: false };
@@ -52,7 +53,7 @@ async function rig(options: { pulse?: string; edit?: (app: Record<string, any>) 
     r.llm.push(msg.body as never); return { text: r.state.llmAnswer };
   } });
   const admin = stubMember("service:admin", "service", [{ word: "status" }], { status: () => ({ now: Date.now(), paused: r.state.paused }) });
-  for (const m of [agent, senses, model, admin]) w.registry.add(m);
+  for (const m of [agentStub("agent:main"), agentStub("agent:next"), agents, senses, model, admin]) w.registry.add(m);
   await w.apps.start();
 
   r.event = async (word, body) => { await w.router.send({ to: null, kind: "event", word, body }, PHONE); };
@@ -73,7 +74,7 @@ test("app.json is a valid ash-app/1 manifest, and the organ is a built-in: insta
   assert.equal(info.running, true);
   assert.equal(info.origin, "builtin");
   assert.deepEqual(info.listens, ["sense.*"]);
-  assert.deepEqual(info.needs.map((n: any) => `${n.member}/${n.words}`).sort(), ["agent:main/wake", "service:admin/status", "service:llm/complete", "service:senses/query"]);
+  assert.deepEqual(info.needs.map((n: any) => `${n.member}/${n.words}`).sort(), ["agent:*/wake", "service:admin/status", "service:agents/list", "service:llm/complete", "service:senses/query"]);
   assert.ok(r.w.registry.members.get("app:sense-rules")!.listens!.includes("sense.*"));
 });
 
@@ -222,6 +223,32 @@ test("nothing wakes while the hub is paused; a wake the agent could not take is 
   await r.event("sense.geofence", { name: "Home", transition: "exit", ts: now });
   await r.settled(3);
   assert.deepEqual(r.wakes.map((x) => x.reason), ["geofence_exit"]);
+});
+
+test("the wake goes to whoever is primary now: remembered until a wake fails, then asked for again; no agent is named in app.json", async () => {
+  const r = await rig();
+  const now = Date.now();
+  assert.ok(!readFileSync(join(ORGAN, "app.json"), "utf8").includes("agent:main"));
+  assert.ok(!readFileSync(join(ORGAN, "server.mjs"), "utf8").includes("agent:main"));
+  await r.event("sense.geofence", { name: "Home", transition: "exit", ts: now });
+  await r.settled(1);
+  assert.deepEqual(r.wakes.map((x) => x.to), ["agent:main"]);
+  // the owner hands primary to another agent and the old one goes away: the next wake finds the new one
+  r.state.primary = "agent:next";
+  r.state.agentDown = true;
+  await r.event("sense.geofence", { name: "Office", transition: "enter", ts: now });
+  await r.settled(2);
+  assert.deepEqual(r.wakes.map((x) => `${x.to} ${x.reason}`), ["agent:main geofence_exit", "agent:next geofence_enter"]);
+  // and it is remembered: the next wake goes straight to the new primary
+  await r.event("sense.activity", { batch_id: "b", items: [{ ts_start: now - 2 * MIN, state: "cycling" }] });
+  await r.settled(3);
+  assert.equal(r.wakes.at(-1)!.to, "agent:next");
+  // no primary at all: the wake is not taken and not remembered
+  r.state.primary = "";
+  r.state.nextDown = true;
+  await r.event("sense.source", { source: "watch", state: "stale", ts: now, stale_hours: 30, summary: "x" });
+  const last = await r.settled(4);
+  assert.notEqual(last.at(-1).outcome, "woke");
 });
 
 test("what it already woke for is remembered across a restart of the app", async () => {
