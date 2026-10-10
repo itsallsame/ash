@@ -1,0 +1,280 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ash-host/1/host.json",
+  "title": "ash-host/1 launch description (host.json)",
+  "type": "object",
+  "required": [
+    "contract",
+    "host",
+    "platform",
+    "dirs",
+    "isolation",
+    "endpoint",
+    "capabilities",
+    "secure_storage"
+  ],
+  "properties": {
+    "contract": {
+      "const": "ash-host/1"
+    },
+    "host": {
+      "type": "object",
+      "required": [
+        "kind",
+        "version"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "required": [
+        "os",
+        "arch"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "os_version": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      }
+    },
+    "dirs": {
+      "type": "object",
+      "required": [
+        "state",
+        "home",
+        "tmp",
+        "runtime",
+        "logs"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "home": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tmp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logs": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "isolation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "proot"
+          ],
+          "properties": {
+            "kind": {
+              "const": "proot"
+            },
+            "proot": {
+              "type": "object",
+              "required": [
+                "root",
+                "rootfs",
+                "bin",
+                "loader",
+                "lib"
+              ],
+              "properties": {
+                "root": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rootfs": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "bin": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "loader": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "lib": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "storage_binds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "dns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "native"
+          ],
+          "properties": {
+            "kind": {
+              "const": "native"
+            },
+            "native": {
+              "type": "object",
+              "required": [
+                "workspace",
+                "dsh_bin",
+                "dsh_home"
+              ],
+              "properties": {
+                "workspace": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "dsh_bin": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "dsh_home": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "container"
+          ],
+          "properties": {
+            "kind": {
+              "const": "container"
+            },
+            "container": {
+              "type": "object",
+              "required": [
+                "engine",
+                "image"
+              ],
+              "properties": {
+                "engine": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "image": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "network": {
+      "type": "object",
+      "required": [
+        "proxy"
+      ],
+      "properties": {
+        "proxy": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "http": {
+                  "type": "string"
+                },
+                "https": {
+                  "type": "string"
+                },
+                "no_proxy": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "endpoint": {
+      "type": "string",
+      "pattern": "^https?://"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "secure_storage": {
+      "enum": [
+        "keystore",
+        "keychain",
+        "tpm",
+        "file",
+        "none"
+      ]
+    },
+    "dev": {
+      "type": "object",
+      "properties": {
+        "owner_token": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

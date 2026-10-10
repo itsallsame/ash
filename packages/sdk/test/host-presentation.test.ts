@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hostPresentationErrors, type HostPresentationV2 } from "../src/host";
+import { hostPresentationErrors, type HostPresentationV2 } from "../src/legacy/host";
 
 const approval: HostPresentationV2 = { id: "p1", kind: "approval", title: "Approve?", text: "Review this action",
   reply_to: "m_ask", reply_target: "service:gate", expires_at: 1_800_000_000_000,

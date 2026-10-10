@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
-import { hostPresentationErrors } from "../../../sdk/src/host";
+import { hostPresentationErrors } from "../../../sdk/src/legacy/host";
 
 export type HostRecord = { method: string; path: string; body: unknown };
 export type Capability = { name: string; description: string; input_schema: Record<string, unknown>; risk: "none" | "outward" | "structure"; label: string; confirm?: boolean };
