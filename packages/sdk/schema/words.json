@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "554ce39bead9c6c9848c42a3564792a9f493236600f4e9d2b5ef175bd02cbc05",
+ "hash": "46f98e19a4886b3f69a12df7bf561f67067392e4e8bb139f59e141ad0aafef56",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -2512,7 +2512,10 @@
       }
      },
      "url": {
-      "type": "string"
+      "type": "string",
+      "x-ash-sensitive": {
+       "mask": "hidden"
+      }
      },
      "expires_at": {
       "type": "integer",
