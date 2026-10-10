@@ -124,22 +124,114 @@ test("the day's sensor statistics come with the review's wake when there are any
   assert.deepEqual(asked.msg.body, { date: "2026-10-12" });
 });
 
-test("the first meeting: one wake the first time the owner connects through a channel for people, never again", async () => {
+/** What the agents module writes on the ledger around a first-meeting turn: the turn starting with the wake's id, its end, the agent's words. */
+const agentSide = (hub: Hub) => {
+  let n = 0;
+  const wakeIds = () => hub.sent.filter((s) => s.msg.word === "wake" && (s.msg.body as any).reason === "first_meeting").map((s) => `m_${hub.sent.indexOf(s) + 1}`);
+  const event = (agent: string, word: string, body: object) => hub.ledger.append({ ts: hub.t, from: agent, to: null, kind: "event", word, body, turn: (body as any).turn });
+  return {
+    wakeIds,
+    start: (turn: string, ids: string[] = [wakeIds().at(-1)!], agent = "agent:main") => event(agent, "turn.started", { turn, lane: "back", ids }),
+    end: (turn: string, outcome: "completed" | "error", agent = "agent:main") => event(agent, "turn.ended", { turn, lane: "back", outcome, ...(outcome === "error" ? { error: "no key" } : {}) }),
+    say: (turn?: string, agent = "agent:main", word = "say", to = "person:owner") => hub.ledger.append({ ts: hub.t, from: agent, to, kind: "request", word, body: word === "say" ? { text: `hello ${++n}` } : { card: { type: "options", prompt: "?", options: [] } }, ...(turn ? { turn } : {}) }),
+    /** The agents module's notice for a failed turn: a say and a retry card, in the failed turn, sent as the agent. */
+    failureNotice: (turn: string) => { for (const word of ["say", "show"]) hub.ledger.append({ ts: hub.t, from: "agent:main", to: "person:owner", kind: "request", word, body: word === "say" ? { text: "刚才这件事没做成", kind: "reply" } : { card: {} }, turn }); },
+  };
+};
+const connect = (hub: Hub, conn = "c1") => hub.event("service:link", "connected", { hand: "hand1", conn, channels: ["device", "human"] });
+const keySaved = (hub: Hub, ref = "DEEPSEEK_API_KEY", action = "saved") => hub.event("service:vault", "vault.changed", { ref, action });
+const meetings = (hub: Hub) => hub.wakes().filter((w) => w.reason === "first_meeting");
+
+test("the first meeting: a wake when someone connects through a channel for people, not for any other event", async () => {
   const hub = await startedHub();
-  const meetings = () => hub.wakes().filter((w) => w.reason === "first_meeting");
   await hub.event("service:link", "connected", { hand: "hand1", conn: "c1", channels: ["device"] });   // a hand only
-  assert.equal(meetings().length, 0);
+  assert.equal(meetings(hub).length, 0);
   await hub.event("service:other", "connected", { hand: "hand1", conn: "c1", channels: ["human"] });    // not the link's event
-  assert.equal(meetings().length, 0);
-  await hub.event("service:link", "connected", { hand: "hand1", conn: "c1", channels: ["device", "human"] });
-  assert.equal(meetings().length, 1);
-  assert.deepEqual(meetings()[0], { agent: "agent:main", reason: "first_meeting", lane: "back", context: {}, at: DAY1 });
-  await hub.event("service:link", "connected", { hand: "hand1", conn: "c2", channels: ["human"] });
-  assert.equal(meetings().length, 1);
-  await hub.restart();                                                                                  // a new process: still remembered
-  await hub.event("service:link", "connected", { hand: "hand2", conn: "c3", channels: ["human"] });
-  assert.equal(meetings().length, 1);
+  assert.equal(meetings(hub).length, 0);
+  await connect(hub);
+  assert.equal(meetings(hub).length, 1);
+  assert.deepEqual(meetings(hub)[0], { agent: "agent:main", reason: "first_meeting", lane: "back", context: {}, at: DAY1 });
+  assert.equal(hub.semantic.entity["options"].kv.get("first_meeting"), null, "taking the wake is not the meeting");
   assert.deepEqual(hub.invalid, []);
+});
+
+test("the first meeting without a key: the turn fails, the key is saved, and the wake comes again; once the agent has spoken it never does", async () => {
+  const hub = await startedHub();
+  const agent = agentSide(hub);
+  await connect(hub);                                                                                   // a new install: no model key yet
+  assert.equal(meetings(hub).length, 1);
+  agent.start("t1"); agent.end("t1", "error"); agent.failureNotice("t1");                               // the turn failed; the notice is not a greeting
+  await connect(hub, "c2");                                                                             // the next trigger tries again
+  assert.equal(meetings(hub).length, 2);
+  agent.start("t2"); agent.end("t2", "error"); agent.failureNotice("t2");
+  await keySaved(hub, "CLOUDFLARE_TOKEN");                                                              // not a model key
+  await keySaved(hub, "DEEPSEEK_API_KEY", "removed");
+  assert.equal(meetings(hub).length, 2);
+  await keySaved(hub);                                                                                  // the model key is set
+  assert.equal(meetings(hub).length, 3);
+  agent.start("t3"); agent.say("t3"); agent.end("t3", "completed");                                      // it spoke
+  await connect(hub, "c3");
+  await keySaved(hub);
+  assert.equal(meetings(hub).length, 3);
+  await hub.restart();                                                                                  // a new process: the ledger and the table remember
+  await connect(hub, "c4");
+  assert.equal(meetings(hub).length, 3);
+  assert.deepEqual(hub.invalid, []);
+});
+
+test("the first meeting is not repeated while the last wake is still being worked on", async () => {
+  const hub = await startedHub();
+  const agent = agentSide(hub);
+  await connect(hub);
+  await connect(hub, "c2");                                                                             // taken, no turn has begun yet
+  await keySaved(hub);
+  assert.equal(meetings(hub).length, 1);
+  agent.start("t1");
+  await connect(hub, "c3");                                                                             // the turn is running
+  await keySaved(hub);
+  assert.equal(meetings(hub).length, 1);
+  agent.end("t1", "error"); agent.failureNotice("t1");
+  await keySaved(hub);                                                                                  // over, and it failed
+  assert.equal(meetings(hub).length, 2);
+  // a restart does not forget a turn that is running, but does not wait for one that the old process left unended
+  agent.start("t2");
+  await hub.restart();
+  await connect(hub, "c4");
+  assert.equal(meetings(hub).length, 2);
+  hub.t += 60_000;
+  await hub.restart();
+  await connect(hub, "c5");
+  assert.equal(meetings(hub).length, 3);
+  assert.deepEqual(hub.invalid, []);
+});
+
+test("the first meeting is already held when an agent spoke to the owner: said first or showed, even the owner opening and being answered", async () => {
+  for (const spoke of [
+    (a: ReturnType<typeof agentSide>) => a.say(),
+    (a: ReturnType<typeof agentSide>) => a.say(undefined, "agent:helper"),
+    (a: ReturnType<typeof agentSide>) => a.say(undefined, "agent:main", "show"),
+  ]) {
+    const hub = await startedHub();
+    spoke(agentSide(hub));
+    await connect(hub);
+    await keySaved(hub);
+    assert.equal(meetings(hub).length, 0);
+    assert.ok(hub.semantic.entity["options"].kv.get("first_meeting"));
+  }
+  const hub = await startedHub();
+  const agent = agentSide(hub);
+  hub.ledger.append({ ts: hub.t, from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "hi" } });   // the owner spoke first
+  await connect(hub);
+  assert.equal(meetings(hub).length, 1, "the owner alone speaking is not a meeting");
+  agent.start("t1", [agent.wakeIds()[0]!]); agent.say("t1"); agent.end("t1", "completed");
+  await connect(hub, "c2");
+  assert.equal(meetings(hub).length, 1);
+  // what an agent said to another agent, or the hub said, is not a greeting
+  const other = await startedHub();
+  agentSide(other).say(undefined, "agent:main", "say", "agent:helper");
+  other.ledger.append({ ts: other.t, from: "service:agents", to: "person:owner", kind: "request", word: "say", body: { text: "heads up", kind: "heads_up" } });
+  await connect(other);
+  assert.equal(meetings(other).length, 1);
 });
 
 test("the first meeting waits for a primary agent that is there; the primary is whoever the list says, no name in the code", async () => {

@@ -220,7 +220,10 @@ export class ScriptedDriver {
   /** While set, `start()` waits for it: the runtime is still coming up. */
   private startGate: Promise<void> | null = null;
   private readonly reporters: ((event: AgentEvent) => void)[] = [];
-  private fallback: TurnScript = () => {};
+  /** The first-meeting wake gets a greeting, as the real agent gives (the hub counts the meeting held only once the agent has spoken); every other turn does nothing. */
+  private fallback: TurnScript = async (turn) => {
+    if (turn.messages.some((m) => m.word === "wake" && m.text.startsWith("Wake · first_meeting"))) await turn.tool("human_say", { text: "你好，我是 Ash。" });
+  };
   private readonly scripts = new Map<string, TurnScript>();
   private readonly lines = new Map<string, ToolLine>();
   private readonly running = new Map<string, Running>();

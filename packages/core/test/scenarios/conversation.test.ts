@@ -15,7 +15,8 @@ test("S057 (agent 1): the owner speaks, agent:main takes a front-lane turn and a
 
   accepted(await owner.say("你好"));
 
-  const reply = await owner.next(toOwner("say", MAIN), "agent:main's answer reaches the owner");
+  // (the greeting of the first meeting is in the owner's history too)
+  const reply = await owner.next((m) => toOwner("say", MAIN)(m) && textOf(m) === "你好，我在。", "agent:main's answer reaches the owner");
   assert.equal(textOf(reply), "你好，我在。");
   const turn = await s.driver.turn((r) => r.agent === MAIN, "a turn of agent:main");
   assert.equal(turn.key, "front", "the owner's words go to the front lane");

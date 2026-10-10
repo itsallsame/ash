@@ -116,13 +116,21 @@ export function newHub(options: { ledger?: Ledger; t?: number; budget?: number; 
       hub.cards.push({ to: out.to!, word: out.word, from: caller.member });
       if (hub.ownerChoice !== "allow") return { ok: false, error: errorBody("denied", "the owner said no") };
     }
-    try {
-      const result = await member.handle(message, ctx);
-      return { ok: true, ...(result ? { result } : {}) };
-    } catch (error) {
-      if (error instanceof WordError) return { ok: false, error: errorBody(error.code, error.message) };
-      return { ok: false, error: errorBody("internal", String((error as Error).message)) };
-    }
+    // A wake is on the real ledger, with the answer it got, as the router records it: the first meeting reads its own wakes back.
+    const recordWake = out.word === "wake";
+    if (recordWake) ledger.append({ id: message.id, ts: hub.t, from: caller.member, to: out.to!, kind: "request", word: "wake", body: out.body });
+    const answer = async (): Promise<Reply> => {
+      try {
+        const result = await member.handle(message, ctx);
+        return { ok: true, ...(result ? { result } : {}) };
+      } catch (error) {
+        if (error instanceof WordError) return { ok: false, error: errorBody(error.code, error.message) };
+        return { ok: false, error: errorBody("internal", String((error as Error).message)) };
+      }
+    };
+    const reply = await answer();
+    if (recordWake) ledger.append({ ts: hub.t, from: out.to!, to: caller.member, kind: "response", word: "wake", body: reply, reply_to: message.id });
+    return reply;
   }
 
   // stand-ins

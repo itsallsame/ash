@@ -82,7 +82,7 @@ T17 (agents + a driver). The "also needs" column lists only what a test needs on
 | | S172 hub restart, runtime still starting: the owner's words are taken and delivered once it is up | T17 (member stays in the registry while starting) |
 | | S168 runtime killed again and again: restarted each time, words answered, never given up | T17 (failure count clears after a finished round) |
 | | S164, S165 pause interrupts all, resume is the owner's | `service:admin` (T6), T17 `session.interrupt` |
-| | S028 first meeting wake, once | T19 |
+| | S028 first meeting wake; no key then key saved: wake again until the agent has spoken | T19, T24 |
 | | SPEC-08 §5.7 `primary.set` | T17 |
 | | S046 owner talks to a sub-agent directly | T17, T4 structural rule |
 | surfaces | S075, 设备 23 notification only to channels that declared it | T6 delivery |

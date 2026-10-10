@@ -14,7 +14,7 @@ test("S082: a reminder the owner sets for themselves arrives as a message to the
   const set = await owner.call("service:clock", "set", { at: Date.now() + 400, to: OWNER, word: "say", body: { text: "该喝水了", kind: "due" }, label: "喝水" });
 
   assert.ok(set.ok, "the timer is accepted");
-  const reminder = await owner.seen(toOwner("say"), "the reminder");
+  const reminder = await owner.seen((m) => toOwner("say")(m) && textOf(m) === "该喝水了", "the reminder");
   assert.equal(textOf(reminder), "该喝水了");
 });
 

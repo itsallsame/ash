@@ -14,6 +14,7 @@ import type { AgentDriverFactory } from "../../sdk/src/driver";
 import { MAIN_BODY_ID } from "../../sdk/src/ids";
 import { WordError, type Caller } from "../../sdk/src/message";
 import { createAgents, bodyFileWriter } from "./edges/agents";
+import { DEFAULT_CREDENTIAL_REFS } from "./edges/agents/manager";
 import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
 import { createRemoteDrivers } from "./edges/agents/remote";
 import { createApps, installBuiltinOrgans, installContractDoc, newBuiltinReport } from "./edges/apps";
@@ -175,7 +176,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const vaultService = createVaultService({ vault, ledger, router });
   const semantic = createSemantic({
     ledger, router, now, log,
-    templatesDir: join(SKILLS, "persona"),
+    templatesDir: join(SKILLS, "persona"), modelKeys: DEFAULT_CREDENTIAL_REFS,
   });
 
   // 6. edges

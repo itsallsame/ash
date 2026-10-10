@@ -256,6 +256,37 @@ test("S028 (first_meeting): the first time the owner connects, the primary agent
   assert.equal(wakes.length, 1);
 });
 
+test("S028 (first_meeting, no key): a new install has no model key, the first turn fails; saving the key brings the first meeting again, and only until the agent has spoken", async (t) => {
+  const s = await startScenario(t, { firstMeeting: true });
+  const isMeeting = (m: { word: string; text: string }) => m.word === "wake" && m.text.startsWith("Wake · first_meeting");
+  const meetings = () => s.driver.messages().filter(isMeeting);
+  let keyed = false;
+  s.driver.script(async (turn) => {
+    if (!turn.messages.some(isMeeting)) return;
+    if (!keyed) throw new Error("no model key");
+    await turn.tool("human_say", { text: "你好，我是 Ash。" });
+  });
+  const owner = await s.human();
+
+  const failed = await s.driver.turn((r) => r.messages.some(isMeeting), "the first turn, without a key");
+  await failed.done;
+  assert.equal(failed.outcome, "error");
+  await quiet();
+  assert.equal(meetings().length, 1, "a failed turn is not retried on a timer");
+
+  keyed = true;
+  const saved = await owner.call("service:vault", "set", { ref: "DEEPSEEK_API_KEY", value: "sk-test", kind: "model" });
+  assert.ok(saved.ok);
+  await eventually(() => meetings().length === 2, "the first meeting again once the key is saved");
+  await eventually(() => s.driver.messages().length > 0 && owner.messages.some((m) => m.to === OWNER && m.word === "say" && textOf(m) === "你好，我是 Ash。"), "the agent greets the owner");
+
+  await s.human({ name: "another channel of the owner" });
+  const saved2 = await owner.call("service:vault", "set", { ref: "DEEPSEEK_API_KEY", value: "sk-test-2", kind: "model" });
+  assert.ok(saved2.ok);
+  await quiet();
+  assert.equal(meetings().length, 2, "the agent has spoken: no third meeting");
+});
+
 test("SPEC-08 §5.7: primary.set hands the primary role to another agent", async (t) => {
   const s = await startScenario(t, { runtimes: ["scripted"] });
   const owner = await s.human();
