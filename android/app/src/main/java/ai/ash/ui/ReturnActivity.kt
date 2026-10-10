@@ -1,7 +1,6 @@
-package ai.ash.host.screen
+package ai.ash.ui
 
 import android.app.Activity
-import android.content.Intent
 import android.os.Bundle
 
 /**

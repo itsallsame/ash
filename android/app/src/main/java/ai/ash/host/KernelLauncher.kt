@@ -1,5 +1,6 @@
 package ai.ash.host
 
+import ai.ash.link.HandService
 import ai.ash.link.Link
 import ai.ash.link.LinkClient
 import android.content.ComponentName
@@ -27,6 +28,10 @@ object KernelLauncher {
 
     /** Whether the link to the kernel is up now. */
     fun connected(ctx: Context): Boolean = Link.get(ctx).client.state == LinkClient.State.READY
+
+    /** Not installed, installed but not running, or bound (the kernel host holds [ai.ash.link.HandService], or the link is up). */
+    fun state(ctx: Context): KernelState =
+        KernelGate.state(installedVersion(ctx) != null, HandService.bound || connected(ctx))
 
     /**
      * Starts the kernel's service (a foreground service), with one of the service's own actions if given.

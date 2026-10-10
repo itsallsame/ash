@@ -68,6 +68,19 @@ object Notifications {
         }, 5000)
     }
 
+    /**
+     * A notice that asks the owner to tap it: something Ash cannot open itself while it is in the background (a settings
+     * page, a permission prompt). One per [tag]; [PendingIntent] must be immutable.
+     */
+    fun notice(ctx: Context, tag: String, title: String, text: String, tap: PendingIntent) {
+        val n = builder(ctx, CH_URGENT).setContentTitle(title).setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(tap).setAutoCancel(true).setCategory(Notification.CATEGORY_REMINDER)
+            .apply { if (Build.VERSION.SDK_INT < 26) setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL) }.build()
+        ctx.getSystemService(NotificationManager::class.java).notify("notice:$tag", 0, n)
+    }
+
+    fun cancelNotice(ctx: Context, tag: String) = ctx.getSystemService(NotificationManager::class.java).cancel("notice:$tag", 0)
+
     /** Ash's colour: the ember of its mark. */
     const val COLOR = 0xFFFF7A3D.toInt()
 

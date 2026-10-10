@@ -30,6 +30,8 @@ android {
         versionName = "0.4.0"
         buildConfigField("boolean", "ISOLATED_PROBE", "false")
         buildConfigField("long", "SENSE_RESCAN_MS", "21600000L")
+        // Where the guide downloads the kernel package from when it is not installed (https; empty = no download offered). Set with -PashKernelApkUrl=...
+        buildConfigField("String", "KERNEL_APK_URL", "\"${providers.gradleProperty("ashKernelApkUrl").getOrElse("")}\"")
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 

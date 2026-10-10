@@ -54,7 +54,7 @@ class CardPickerActivity : Activity() {
             })
         }
         root.addView(Button(this).apply { text = "先不选"; setOnClickListener { CardWidgetProvider.update(this@CardPickerActivity, manager, id); finish() } })
-        setContentView(ScrollView(this).apply { addView(root) })
+        setContentView(ScrollView(this).apply { addView(root) }.also { ai.ash.apps.Ui.insets(it) }) // edge to edge (targetSdk 35)
     }
 
     private fun owner(member: String): String = when {

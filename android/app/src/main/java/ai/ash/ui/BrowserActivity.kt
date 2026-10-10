@@ -56,6 +56,7 @@ class BrowserActivity : Activity() {
         root.addView(spaceBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        ai.ash.apps.Ui.insets(root) // edge to edge (targetSdk 35)
         BrowserSession.addListener(onChange)
         show(intent)
     }

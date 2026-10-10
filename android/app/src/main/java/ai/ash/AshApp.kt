@@ -17,6 +17,7 @@ class AshApp : Application() {
         }
         Notifications.createChannels(this)
         ConfigWatch.install(this)
+        ai.ash.host.BackgroundLaunch.install(this)
         ai.ash.host.HandRuntime.start(this)
     }
 }

@@ -54,6 +54,7 @@ object ScreenRecovery {
     private fun check() {
         val ctx = app ?: return
         main.postDelayed(::check, CHECK_MS)
+        UpgradeRecovery.observe(ctx, Screen.accessibility(), Screen.switchedOn(ctx))
         val down = Screen.switchedOn(ctx) && !Screen.accessibility()
         val now = System.currentTimeMillis()
         if (!down) { downSince = 0; return }

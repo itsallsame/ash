@@ -33,7 +33,7 @@ import java.util.concurrent.locks.ReentrantLock
  * (node actions, typing, scrolling, global actions, arbitrary multi-finger gestures).
  *
  * There is no server here: capabilities ([ai.ash.caps.screen.ScreenCapabilities]) call [instance]
- * in-process from bridge worker threads (Ash calls them through [ai.ash.screen.BridgeService]). Every public method is thread-safe and may block (it waits
+ * in-process from the link's worker threads. Every public method is thread-safe and may block (it waits
  * for gesture / screenshot callbacks, which are delivered on a private handler thread — never on the
  * main thread, so a worker waiting for a callback can never deadlock against a lifecycle callback).
  * Public methods must NOT be called on the main thread.

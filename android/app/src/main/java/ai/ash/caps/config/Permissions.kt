@@ -84,12 +84,7 @@ object Permissions {
             add(Permission(
                 "notifications", "通知", "提醒、需要你确认的卡片，都靠通知送达",
                 { it.getSystemService(NotificationManager::class.java).areNotificationsEnabled() },
-                { a ->
-                    a.startActivity(
-                        if (Build.VERSION.SDK_INT >= 26) Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, a.packageName)
-                        else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(a)),
-                    )
-                },
+                ::askNotifications,
             ))
             add(Permission(
                 "alerts", "提醒的铃声和振动", "任务做完、需要你审批、到点提醒时，手机响铃、振动、弹横幅叫你",
@@ -115,7 +110,7 @@ object Permissions {
                 { it.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(it.packageName) },
                 { a ->
                     val own = { PhoneMaker.current.openKeepAlive(a, a.packageName, "Ash") }
-                    // The helper can turn the switches on for the owner; the written steps are the way back.
+                    // The accessibility service can turn the switches on for the owner; the written steps are the way back.
                     if (a.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(a.packageName)) KeepAliveFlow.offer(a, guidance = own) else own()
                 },
                 { c ->
@@ -208,6 +203,23 @@ object Permissions {
                 },
             ))
         }
+    }
+
+    /** Android 13+: the system's question (POST_NOTIFICATIONS) until the owner has said no for good; then, and before 13, the app's notification page. */
+    private fun askNotifications(a: Activity) {
+        val prefs = a.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val asked = prefs.getBoolean("asked:notifications", false)
+        val ask = Build.VERSION.SDK_INT >= 33 && a.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            (!asked || a.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS))
+        if (ask) {
+            prefs.edit().putBoolean("asked:notifications", true).apply()
+            a.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7104)
+            return
+        }
+        a.startActivity(
+            if (Build.VERSION.SDK_INT >= 26) Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, a.packageName)
+            else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(a)),
+        )
     }
 
     /** The system's own question the first time; once the owner said no for good, the app's permission page instead. */
