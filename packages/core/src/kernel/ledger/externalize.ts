@@ -9,12 +9,11 @@
  * A `$blob` object inside an incoming body is only data: it is not registered as a reference, so a sender cannot
  * make a message "hold" somebody else's attachment.
  */
+import { createHash } from "node:crypto";
 import { binaryNote, textSummary, REF_SUMMARY_MAX } from "./summary";
 
 export const ROW_BODY_LIMIT = 16 * 1024;
 export const STRING_LIMIT = 8 * 1024;
-/** A top-level field smaller than this is not worth moving out: its reference is as big. */
-const MIN_FIELD_BYTES = 512;
 
 export interface BlobRef { $blob: string; mime: string; size: number; summary: string }
 export interface Externalized {
@@ -97,23 +96,32 @@ export function externalize(body: unknown, put: PutBlob): Externalized {
   const text = json(tree);
 
   if (Buffer.byteLength(text) > ROW_BODY_LIMIT) {
-    // Move the largest top-level field out, work out the new size, and repeat while the row is still too big.
+    // Plan first, in memory: take the largest top-level fields one by one, with their exact reference size, until the row
+    // would fit. Only if it would fit are the files written; otherwise the whole body goes out and no field file is made.
     let total = Buffer.byteLength(text);
-    const fields = fieldsOf(tree).filter((field) => field.bytes > MIN_FIELD_BYTES && !made.has((tree as any)[field.key])).sort((a, b) => b.bytes - a.bytes);
     const copy: any = Array.isArray(tree) ? [...tree] : isPlain(tree) ? { ...tree } : null;
+    const plan: { key: string | number; bytes: Buffer; mime: string; ref: BlobRef }[] = [];
+    const fields = fieldsOf(tree).filter((field) => !made.has((tree as any)[field.key])).sort((a, b) => b.bytes - a.bytes);
     for (const field of fields) {
       if (total <= ROW_BODY_LIMIT) break;
       const child = copy[field.key];
       const [bytes, mime, source] = typeof child === "string"
         ? [Buffer.from(child, "utf8"), "text/plain", child] as const
         : [Buffer.from(json(child), "utf8"), "application/json", json(child)] as const;
-      const ref = makeRef(pointer("", field.key), bytes, mime, textSummary(source, REF_SUMMARY_MAX));
-      copy[field.key] = ref;
-      total -= field.bytes - Buffer.byteLength(json(ref));
+      const ref: BlobRef = { $blob: createHash("sha256").update(bytes).digest("hex"), mime, size: bytes.byteLength, summary: textSummary(source, REF_SUMMARY_MAX) };
+      const saved = field.bytes - Buffer.byteLength(json(ref));
+      if (saved <= 0) continue;
+      plan.push({ key: field.key, bytes, mime, ref });
+      total -= saved;
     }
-    if (copy) tree = copy;
-    // No top-level field left to move and the row is still too big: the whole body goes out.
-    if (total > ROW_BODY_LIMIT) tree = makeRef("", Buffer.from(json(tree), "utf8"), "application/json", textSummary(json(tree), REF_SUMMARY_MAX));
+    if (copy && total <= ROW_BODY_LIMIT) {
+      for (const item of plan) {
+        const hash = put(item.bytes, item.mime);
+        refs.push({ path: pointer("", item.key), hash });
+        copy[item.key] = item.ref;
+      }
+      tree = copy;
+    } else tree = makeRef("", Buffer.from(json(tree), "utf8"), "application/json", textSummary(json(tree), REF_SUMMARY_MAX));
   }
   return { stored: tree, refs, notes, size: size + binaryBytes };
 }

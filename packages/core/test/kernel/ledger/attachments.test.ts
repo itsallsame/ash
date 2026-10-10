@@ -165,3 +165,28 @@ test("blob files are written under blobs/<2 hex>/<hash>, with no temp files left
   assert.ok(existsSync(file));
   assert.deepEqual(readdirSync(join(dir, "state", "blobs", ref.slice(0, 2))), [ref]);
 });
+
+test("a medium field whose reference would be bigger than itself stays in the row; the big one goes out", () => {
+  const { ledger } = openLedger();
+  const medium = "中".repeat(210);             // 630 bytes: a reference (hash + 200-character summary) would be bigger
+  const body: Record<string, unknown> = { big: { rows: Array.from({ length: 1500 }, (_, i) => `row number ${i}`) } };
+  for (let i = 0; i < 10; i++) body[`m${i}`] = medium;
+  const m = ledger.append({ from: "agent:main", to: null, kind: "event", word: "agent.tool", body });
+  const stored = m.body as Record<string, unknown>;
+  assert.ok(rowBytes(ledger, m.id) <= ROW_BODY_LIMIT);
+  assert.equal((stored.big as BlobRef).mime, "application/json");
+  for (let i = 0; i < 10; i++) assert.equal(stored[`m${i}`], medium);
+  assert.deepEqual(refs(ledger, m.id).map((r) => r.path), ["/big"]);
+});
+
+test("when moving fields out cannot make the row fit, the whole body goes out and no field file is written", () => {
+  const { ledger, dir } = openLedger();
+  const body: Record<string, string> = {};
+  for (let i = 0; i < 100; i++) body[`k${i}`] = `value ${i} ` + "x".repeat(300);   // 100 fields of ~320 bytes: 32 KB, none worth moving
+  const m = ledger.append({ from: "agent:main", to: null, kind: "event", word: "agent.tool", body });
+  const ref = m.body as BlobRef;
+  assert.deepEqual(refs(ledger, m.id), [{ hash: ref.$blob, path: "" }]);
+  assert.deepEqual(JSON.parse(Buffer.from(ledger.blob.get(ref.$blob)!.bytes).toString()), body);
+  assert.equal((ledger.db().prepare("SELECT count(*) AS n FROM blobs").get() as { n: number }).n, 1);
+  assert.equal(readdirSync(join(dir, "state", "blobs")).flatMap((d) => readdirSync(join(dir, "state", "blobs", d))).length, 1);
+});

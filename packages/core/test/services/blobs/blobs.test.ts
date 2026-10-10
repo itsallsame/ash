@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HandleContext, Message, Reply } from "../../../../sdk/src/message";
+import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import { compileSchema } from "../../../../sdk/src/word";
 import { openLedger, say } from "../../kernel/ledger/helpers";
 import type { BlobRef } from "../../../src/kernel/ledger";
@@ -12,11 +12,13 @@ const request = (word: string, body: unknown): Message => ({ seq: 0, id: "m_req"
 function setup(openStream?: Parameters<typeof createBlobsService>[1]) {
   const { ledger } = openLedger();
   const service = createBlobsService(ledger, openStream);
-  const call = async (word: string, body: unknown) => await service.handle(request(word, body), ctx) as Reply;
+  const call = async (word: string, body: unknown): Promise<WordResult | WordError> => {
+    try { return await service.handle(request(word, body), ctx) as WordResult; } catch (error) { if (error instanceof WordError) return error; throw error; }
+  };
   return { ledger, service, call };
 }
-const okResult = (reply: Reply) => { assert.ok(reply.ok, JSON.stringify(reply)); return reply.result as Record<string, any>; };
-const errorCode = (reply: Reply) => { assert.ok(!reply.ok); return (reply as { ok: false; error: { code: string } }).error.code; };
+const okResult = (reply: WordResult | WordError) => { assert.ok(!(reply instanceof WordError), String(reply)); return (reply as WordResult).data as Record<string, any>; };
+const errorCode = (reply: WordResult | WordError) => { assert.ok(reply instanceof WordError, "expected a WordError"); return (reply as WordError).code; };
 
 test("the member is service:blobs and its words are the contracts of the sdk", () => {
   const { service } = setup();
