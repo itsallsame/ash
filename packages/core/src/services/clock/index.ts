@@ -62,6 +62,9 @@ const realTimer = (fn: () => void, ms: number): (() => void) => {
   return () => clearTimeout(handle);
 };
 
+/** The owner and the hub's services see every timer; an agent or an app only its own. */
+const seesAll = (caller: Caller): boolean => caller.member === OWNER_ID || caller.via === "service";
+
 /** The clock's own identity: only for its own calls to the host. */
 const SELF: Caller = { member: CLOCK_ID, via: "service", local: true };
 
@@ -110,7 +113,8 @@ export class ClockService implements Member {
     switch (msg.word) {
       case "set": return { data: this.set(body, ctx.caller) };
       case "cancel": return { data: this.remove(body, ctx.caller) };
-      case "list": return { data: { timers: this.rows().map(info) } };
+      // An agent or an app sees only the timers it set; the owner and the hub's services see all.
+      case "list": return { data: { timers: this.rows().filter((row) => seesAll(ctx.caller) || row.created_by === ctx.caller.member).map(info) } };
       default: throw new WordError("not_found", `service:clock has no word ${msg.word}`);
     }
   }
@@ -169,7 +173,10 @@ export class ClockService implements Member {
     const msg: Outgoing = { to: row.target, kind: "request", word: row.word, body: JSON.parse(row.body) };
     try {
       // As the one who set it: the router, the callers check and the gate see that caller, not the clock.
-      const caller = JSON.parse(row.created_as) as Caller;
+      // The one narrow case: the owner's reminder to the owner. The recipient is the setter, so nothing is raised,
+      // but `person:owner` words are not for an owner caller (they are for agents and apps), so it goes as the clock.
+      const stored = JSON.parse(row.created_as) as Caller;
+      const caller = stored.member === OWNER_ID && row.target === OWNER_ID ? SELF : stored;
       const reply: Reply = await this.options.router.send(msg, caller);
       if (!reply.ok) this.log(`timer ${row.id} (${row.label}): ${row.target}/${row.word} answered ${reply.error.code}: ${reply.error.message}`);
     } catch (error) { this.log(`timer ${row.id} (${row.label}): sending to ${row.target}/${row.word} failed`, error); }

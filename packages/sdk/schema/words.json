@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "7b7cf1e26dc2c4d2de18501ab321c10a80c689d57e698d7163396d8b745ac483",
+ "hash": "554ce39bead9c6c9848c42a3564792a9f493236600f4e9d2b5ef175bd02cbc05",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8408,7 +8408,7 @@
    "word": "list",
    "kind": "request",
    "direction": "in",
-   "description": "The active timers, to look at before changing them; the result is a snapshot.",
+   "description": "The active timers, to look at before changing them; the result is a snapshot. An agent or an app sees the timers it set; the owner sees all.",
    "input_schema": {
     "type": "object",
     "properties": {},

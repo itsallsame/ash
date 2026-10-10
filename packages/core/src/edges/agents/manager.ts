@@ -273,7 +273,7 @@ export class AgentManager {
     if (wanted && lanes[wanted]) return wanted;
     // Only the owner's `say` is the owner speaking to the agent; their tell and ask are like anyone's.
     const asOwner = from === OWNER_ID && word === "say";
-    const category = word === "wake" ? "wake" : asOwner ? OWNER_ID : from === "service:clock" ? "timer" : kind === "event" ? "event" : "";
+    const category = word === "wake" ? "wake" : asOwner ? OWNER_ID : kind === "event" ? "event" : "";
     const pick = (match: (f: string) => boolean) => Object.entries(lanes).find(([, l]) => l.from?.some(match))?.[0];
     return pick((f) => f === "*" || f === category || (word !== "wake" && from !== OWNER_ID && f === from)) ?? (lanes.back ? "back" : pick((f) => f === "wake")) ?? Object.keys(lanes)[0]!;
   }

@@ -4,6 +4,7 @@ import { WordError, type Caller, type HandleContext, type Message, type Outgoing
 import { compileSchema } from "../../../../sdk/src/word";
 import { Ledger } from "../../../src/kernel/ledger";
 import { createClockService, CLOCK_ID } from "../../../src/services/clock";
+import { reconcileTimers } from "../../../src/services/semantic/shared";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { agent, app, failure, fake, flush, owner, service, success, word, world } from "../../kernel/router/world";
 
@@ -208,8 +209,8 @@ function hub(options: Parameters<typeof world>[0] = {}) {
   const quiet = fake("service:quiet", [word("service:quiet", "tick", { effect: "write", risk: "none" })]);
   const kernelOnly = fake("service:inner", [word("service:inner", "due", { effect: "write", risk: "none", callers: ["kernel"] })]);
   w.registry.add(body); w.registry.add(quiet); w.registry.add(kernelOnly);
-  const setTimerAs = (caller: Caller, to: string, wd: string, label = "t") =>
-    w.router.send({ to: CLOCK_ID, kind: "request", word: "set", body: { at: w.clock.now + 1000, to, word: wd, body: { command: "id" }, label } }, caller);
+  const setTimerAs = (caller: Caller, to: string, wd: string, label = "t", body: unknown = { command: "id" }) =>
+    w.router.send({ to: CLOCK_ID, kind: "request", word: "set", body: { at: w.clock.now + 1000, to, word: wd, body, label } }, caller);
   const fire = async () => { w.clock.now += 2000; clock.check(); await flush(); };
   return { ...w, body, quiet, kernelOnly, setTimerAs, fire, logs };
 }
@@ -276,8 +277,45 @@ test("cancel: one's own timer, any timer for the owner, someone else's is forbid
   assert.equal(failure(await cancel(mine, agent("helper"))).code, "forbidden");
   assert.equal(failure(await cancel(mine, service("semantic"))).code, "forbidden");
   assert.equal(failure(await cancel(mine, app())).code, "forbidden");
-  assert.equal(success(await h.router.send({ to: CLOCK_ID, kind: "request", word: "list", body: {} }, agent("helper"))).timers.length, 2, "list shows all");
+  assert.equal(success(await h.router.send({ to: CLOCK_ID, kind: "request", word: "list", body: {} }, agent("helper"))).timers.length, 0, "an agent lists only its own");
   assert.deepEqual(success(await cancel(mine, agent("main"))), { cancelled: true });
   assert.deepEqual(success(await cancel(other, owner)), { cancelled: true });
   assert.deepEqual(success(await cancel(other, agent("helper"))), { cancelled: false }, "gone: nothing to forbid");
+});
+
+test("list: an agent or an app sees only its own timers; the owner and a service see all", async () => {
+  const h = hub({ appGranted: (id, to) => id === "app:todo" && to === CLOCK_ID });
+  await h.setTimerAs(agent("main"), "service:quiet", "tick", "a-main");
+  await h.setTimerAs(agent("helper"), "service:quiet", "tick", "a-helper");
+  await h.setTimerAs(service("semantic"), "service:quiet", "tick", "s");
+  await h.setTimerAs(owner, "service:quiet", "tick", "o");
+  const labels = async (caller: Caller) =>
+    success(await h.router.send({ to: CLOCK_ID, kind: "request", word: "list", body: {} }, caller)).timers.map((t: any) => t.label).sort();
+  assert.deepEqual(await labels(agent("main")), ["a-main"]);
+  assert.deepEqual(await labels(agent("helper")), ["a-helper"]);
+  assert.deepEqual(await labels(app()), []);
+  assert.deepEqual(await labels(owner), ["a-helper", "a-main", "o", "s"]);
+  assert.deepEqual(await labels(service("other")), ["a-helper", "a-main", "o", "s"]);
+});
+
+test("the owner's reminder to the owner is delivered; the owner still cannot reach a kernel-only word through a timer", async () => {
+  const h = hub();
+  success(await h.setTimerAs(owner, "person:owner", "say", "me", { text: "water" }));
+  success(await h.setTimerAs(owner, "service:inner", "due", "inner"));
+  await h.fire();
+  assert.equal(h.owner.said.length, 1, "the reminder reached the owner");
+  assert.equal(h.kernelOnly.calls.length, 0, "the owner's timer is still the owner's: a kernel-only word stays out of reach");
+  assert.equal(h.logs.filter((l) => /service:inner\/due answered forbidden/.test(l)).length, 1);
+});
+
+test("reconcileTimers only counts the timers its own member set: an agent cannot hold a label of the pulse", async () => {
+  const h = hub();
+  await h.setTimerAs(agent("main"), "service:quiet", "tick", "pulse:wake:1");       // an agent names its timer like the pulse's
+  await h.setTimerAs(service("pulse"), "service:quiet", "tick", "pulse:wake:2");
+  const want = new Map([["pulse:wake:1", { at: h.clock.now + 5000, body: {} }]]);
+  assert.equal(await reconcileTimers(h.router, "service:pulse", "pulse:", "service:quiet", "tick", want), null);
+  const all = success(await h.router.send({ to: CLOCK_ID, kind: "request", word: "list", body: {} }, owner)).timers as any[];
+  assert.equal(all.filter((t) => t.label === "pulse:wake:1" && t.created_by === "agent:main").length, 1, "the agent's own timer is left alone");
+  assert.equal(all.filter((t) => t.label === "pulse:wake:1" && t.created_by === "service:pulse").length, 1, "the pulse laid down its own");
+  assert.equal(all.filter((t) => t.label === "pulse:wake:2").length, 0, "its stale one was taken away");
 });

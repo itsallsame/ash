@@ -414,7 +414,7 @@ add("service:clock", "set", "request", obj({ at: num, every: { type: "integer", 
 add("service:clock", "cancel", "request", obj({ id }, ["id"]), obj({ cancelled: bool }, ["cancelled"]),
   { effect: "write", label: "在取消提醒", description: "Cancel a timer by id; check `cancelled` because it may already have fired." });
 add("service:clock", "list", "request", empty, obj({ timers: array(any) }, ["timers"]),
-  { label: "在看提醒", description: "The active timers, to look at before changing them; the result is a snapshot." });
+  { label: "在看提醒", description: "The active timers, to look at before changing them; the result is a snapshot. An agent or an app sees the timers it set; the owner sees all." });
 add("service:clock", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]), undefined,
   { direction: "in", label: "在响应唤醒闹钟", description: "The host's alarm went off (the device woke); the clock checks which timers are due. Sent by the host module." });
 
