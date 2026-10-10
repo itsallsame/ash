@@ -36,7 +36,7 @@ function validate(value: unknown): string[] {
 /**
  * Reads the launch description named by ASH_HOST_SPEC and checks the contract version, the required capabilities and
  * secure storage. The seal key and the token are taken out of the environment first of all (even when the rest fails),
- * so they only live in the returned object. Never exits: the caller exits with `exitCode` (see hostFatal).
+ * so they only live in the returned object. Never exits: the caller exits with `exitCode` (main.ts).
  */
 export function loadHostBoot(options: LoadHostBootOptions = {}): HostBootResult {
   const env = options.env ?? process.env;
@@ -70,13 +70,4 @@ export function loadHostBoot(options: LoadHostBootOptions = {}): HostBootResult 
   const boot = { spec, specPath } as HostBoot;
   Object.defineProperty(boot, "secrets", { value: Object.freeze({ sealKey, token }), enumerable: false });
   return { ok: true, boot };
-}
-
-/** Logs the reason and exits with the failure's code. `exit` and `log` are injectable for tests. */
-export function hostFatal(
-  failure: HostBootFailure,
-  io: { log?: (line: string) => void; exit?: (code: number) => never } = {},
-): never {
-  (io.log ?? ((line: string) => console.error(line)))(`[host] cannot start: ${failure.reason}`);
-  return (io.exit ?? ((code: number) => process.exit(code)))(failure.exitCode);
 }

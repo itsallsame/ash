@@ -11,10 +11,9 @@ and touches it only through what the outside world can touch:
 | the host | the T15 `FakeHost` (the hub reports to it; the harness plays `wake.fired`) | `startScenario` |
 
 The local token is read from the host's `hands.handoff` call, the way the phone app gets it. Nothing here imports a hub module,
-opens the database, or touches the old code (`world/`, `members/`, `flows/`, `server.ts`, `main.ts`).
+opens the database, or reaches into the hub's internals: everything goes through `startHub` and the one port it opens.
 
-Run: `npm run -s test:scenarios` (not in `npm test`, not in the smoke glob). Until `startHub` is assembled every test fails at the
-same line with `hub not assembled yet`; they turn green as the modules are wired in.
+Run: `npm run -s test:scenarios` (`npm test` runs them too; the smoke glob does not).
 
 ## How the modules map to the tests
 

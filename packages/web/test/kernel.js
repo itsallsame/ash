@@ -196,7 +196,7 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
  */
 export async function serveKernel(options = {}) {
   const { createServer } = await import("node:http");
-  const { UI_HTML, AVATARS } = await import("../../core/src/ui.ts");
+  const { UI_HTML, AVATARS } = await import("../../core/src/edges/link-server/ui.generated.ts");
   const kernel = startKernel(options);
   const http = createServer((req, res) => {
     const path = new URL(req.url, "http://x").pathname;

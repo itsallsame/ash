@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test } from "node:test";
-import { MAIN_RULES } from "../../core/src/workers/rules.generated";
+import { MAIN_RULES } from "../../core/src/prompts/rules.generated";
 // @ts-expect-error plain ESM plugin shipped beside the package
 import { discoverSkills as discoverUntyped } from "../index.mjs";
 
@@ -17,7 +17,7 @@ interface Skill { folder: string; directory: string; locator: string; name: stri
 const discoverSkills = discoverUntyped as (base?: string) => Skill[];
 
 const rulesDir = join(import.meta.dirname, "../../core/src/prompts/rules");
-const generator = join(import.meta.dirname, "../../../tools/gen-worker-rules.mjs");
+const generator = join(import.meta.dirname, "../../../tools/gen-rules.mjs");
 const skills = discoverSkills();
 const names = new Set(skills.map((skill) => skill.name));
 const ruleFiles = readdirSync(rulesDir).filter((file) => file.endsWith(".md")).map((file) => basename(file, ".md")).sort();
@@ -86,9 +86,9 @@ test("sample files in a skill folder are referenced from its SKILL.md, and what 
 
 test("every rules file is either a system rule or a capability introduction, and the prompt builder includes it", () => {
   const listed = /const mainRuleNames = \[([^\]]*)\]/u.exec(readFileSync(generator, "utf8"))?.[1]?.match(/"([^"]+)"/gu)?.map((item) => item.slice(1, -1));
-  assert.ok(listed, "tools/gen-worker-rules.mjs lists the main rules");
+  assert.ok(listed, "tools/gen-rules.mjs lists the main rules");
   assert.deepEqual([...listed!].sort(), ruleFiles, "every file in prompts/rules/ is in mainRuleNames (and none is missing on disk)");
-  assert.equal(MAIN_RULES, listed!.map(rule).join("\n\n"), "rules.generated.ts is current: run npm run gen:worker-rules");
+  assert.equal(MAIN_RULES, listed!.map(rule).join("\n\n"), "rules.generated.ts is current: run npm run gen:rules");
   for (const name of SYSTEM_RULES) assert.ok(ruleFiles.includes(name), `${name}.md is a system rule that no longer exists`);
 });
 

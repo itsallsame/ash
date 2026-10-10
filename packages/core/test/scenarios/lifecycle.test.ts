@@ -1,6 +1,6 @@
 /**
- * SPEC-07 §7: the host stops the kernel (`lifecycle.stop` on its standard input) or the entry program asks the hub to stop;
- * either way `hub.closed` tells when it is over, the port is gone and a second `stop()` is harmless.
+ * SPEC-07 §7: the host stops the kernel (`lifecycle.stop` on its standard input) or the entry program asks the hub to stop,
+ * or the host disappears (its end of the standard input closes); either way `hub.closed` tells when it is over, the port is gone and a second `stop()` is harmless.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -31,4 +31,16 @@ test("stop() twice is one stop, and closed resolves once it is done", async (t) 
 
   await eventually(() => closed, "closed to resolve");
   assert.ok(!(await listening(hub.url)));
+});
+
+test("the host's end of the standard input closes (the host died): the hub stops by itself", async (t) => {
+  const s = await startScenario(t);
+  const hub = s.hub;
+  assert.ok(await listening(hub.url));
+
+  s.host.stdin.end();
+
+  await hub.closed;
+  assert.ok(!(await listening(hub.url)), "nothing is listening any more");
+  await hub.stop();
 });

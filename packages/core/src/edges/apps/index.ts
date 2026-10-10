@@ -4,7 +4,7 @@
 //   registry.add(apps.service);
 //   await apps.start();                 // endpoint for the apps, seed the hub's organs, start what is installed
 //   // on lifecycle.stop:  await apps.stopAll(event.deadline);
-import { cpSync, existsSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Member } from "../../../../sdk/src/word";
 import { AppRuntime, type AppRuntimeOptions } from "./runtime";
@@ -30,11 +30,22 @@ export function createApps(options: AppRuntimeOptions): Apps {
 }
 
 /**
- * The hub's own organs (ash-skills/organs/<id>): each is copied into the apps folder the first time and then left alone,
- * because after that the agent maintains it. Returns their ids, for `builtinApps`.
+ * The hub's own apps, built in with the release: the organs (ash-skills/organs/<id>) and the first-party apps (packages/apps,
+ * bundled into the payload). Each is copied into the apps folder the first time and then left alone, because after that the
+ * agent maintains it. Returns their ids, for `builtinApps` (installed without a card: the release decides, not a card).
  */
 export function installBuiltinOrgans(source: string, root: string): string[] {
   const ids = existsSync(source) ? readdirSync(source, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [];
   for (const id of ids) if (!existsSync(join(root, id))) cpSync(join(source, id), join(root, id), { recursive: true });
   return ids;
+}
+
+/** The app contract as a file in the apps folder (`apps.contract` returns the same text and names this path). Rewritten only when it differs. */
+export function installContractDoc(root: string, doc: string): void {
+  const file = join(root, "APP-CONTRACT.md");
+  try { if (readFileSync(file, "utf8") === doc) return; } catch { /* missing: write it */ }
+  mkdirSync(root, { recursive: true });
+  const temp = `${file}.tmp-${process.pid}`;
+  writeFileSync(temp, doc, { mode: 0o644 });
+  renameSync(temp, file);
 }

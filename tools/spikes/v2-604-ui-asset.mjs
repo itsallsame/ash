@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const sourcePath = join(root, "packages/core/src/ui.ts");
+const sourcePath = join(root, "packages/core/src/edges/link-server/ui.generated.ts");
 const testDirectory = join(root, "build/spikes/ASH-604-origin/static-ui");
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
@@ -18,7 +18,7 @@ export function coreUiBytes(source = readFileSync(sourcePath, "utf8")) {
 }
 
 export function staticManifest(bytes = coreUiBytes()) {
-  return { source: "packages/core/src/ui.ts:UI_HTML", bytes: bytes.length, sha256: digest(bytes) };
+  return { source: "packages/core/src/edges/link-server/ui.generated.ts:UI_HTML", bytes: bytes.length, sha256: digest(bytes) };
 }
 
 export function verifyStaticUi(bytes, manifest, expected = coreUiBytes()) {

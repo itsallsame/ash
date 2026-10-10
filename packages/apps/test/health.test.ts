@@ -13,10 +13,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { BUILTIN_APPS } from "../../core/src/apps/builtin.generated";
-import { appCapabilities } from "../../core/src/apps/runtime";
+import { appToolContract } from "../../sdk/src/app";
+import { bundleApp } from "../bundle.mjs";
 import { checkManifest } from "../../core/src/edges/apps/check";
-import { validateCard } from "../../core/src/members/widgets-card";
+import { validateCard } from "../../core/src/services/widgets/card";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "../health/src");
@@ -171,10 +171,10 @@ test("health alerts: weight change over 1.5 kg in 7 days, three short nights, an
 
 test("the tools' MCP shapes map to ash capabilities with the intended risk; screens are self-contained MCP Apps HTML", async () => {
   const { TOOLS, RESOURCES, readResource, UI_MIME } = await load("tools.mjs");
-  const caps = appCapabilities("健康", TOOLS);
-  assert.deepEqual(caps.map((cap) => [cap.name, cap.effect]), [["health.today", "read"], ["health.trend", "read"], ["health.log", "write"],
-    ["health.goal.set", "write"], ["health.card", "read"], ["health.report", "read"]]);
-  assert.equal(caps[0]!.label, "在健康里看今日健康");
+  const caps = TOOLS.map((tool: Parameters<typeof appToolContract>[1]) => appToolContract("health", tool));
+  assert.deepEqual(caps.map((cap: { word: string; effect: string }) => [cap.word, cap.effect]), [["health.today", "read"], ["health.trend", "read"], ["health.log", "act"],
+    ["health.goal.set", "act"], ["health.card", "read"], ["health.report", "read"]]);
+  assert.equal(caps[0]!.member, "app:health");
   const linked = TOOLS.filter((tool: { _meta?: { ui?: { resourceUri?: string } } }) => tool._meta?.ui?.resourceUri).map((tool: { _meta: { ui: { resourceUri: string } } }) => tool._meta.ui.resourceUri);
   assert.deepEqual(linked, ["ui://health/home", "ui://health/trends", "ui://health/goals"]);
   const ui = join(here, "../health/ui");
@@ -232,7 +232,7 @@ test("the Ash client speaks MCP to the endpoint ash gives the app, with its toke
 });
 
 test("the bundled server the core installs runs over stdio: tools, a call through Ash, and its screens", async () => {
-  const app = BUILTIN_APPS.find((item) => item.id === "health")!;
+  const app = { files: await bundleApp(join(here, "../health")) };
   const dir = mkdtempSync(join(tmpdir(), "ash-health-app-"));
   for (const [name, text] of Object.entries(app.files)) writeFileSync(join(dir, name), text);
   // Data from 1.0.x (next to app.json) moves into data_dir on start.

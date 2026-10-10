@@ -236,3 +236,48 @@ test("in the container, `dsh` becomes /opt/dsh/node_modules/.bin/dsh and the pat
     assert.deepEqual(args.slice(-5), ["/opt/dsh/node_modules/.bin/dsh", "--profile", "acp", "--patch", "/opt/ash/patch.yml"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("in the container, `dsh` runs with telemetry off and DSH's own sandbox off; other programs get only what the caller gives", async () => {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-env-"));
+  try {
+    const record = join(dir, "record");
+    const proot = join(dir, "proot");
+    await writeFile(proot, `#!/bin/sh\nprintf '%s\\n' "$@" > ${record}\n`);
+    await chmod(proot, 0o755);
+    const config: ProotConfig = { root: join(dir, "main"), rootfs: join(dir, "main", "ubuntu"), bin: proot, loader: "", lib: "" };
+    const body = createLocalBody({ isolation: { kind: "proot", proot: config } });
+    const inside = async (argv: string[], env?: Record<string, string>) => {
+      const child = body.spawn(argv, env ? { env } : {});
+      await new Promise((resolve) => child.on("close", resolve));
+      return (await readFile(record, "utf8")).trim().split("\n");
+    };
+    const dsh = await inside(DEFAULT_ARGV, { DEEPSEEK_BASE_URL: "http://x" });
+    for (const pair of ["DSH_PERMISSION_MODE=danger-full-access", "DSH_TELEMETRY_DISABLED=1", "DSH_HOME=/root/.dsh", "DEEPSEEK_BASE_URL=http://x"]) assert.ok(dsh.includes(pair), pair);
+    const other = await inside(["ls"], { A: "1" });
+    assert.ok(other.includes("A=1"));
+    assert.ok(!other.some((arg) => arg.startsWith("DSH_PERMISSION_MODE")), "only the agent runtime is told its sandbox is off");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+withFixture("opening the body writes the host's DNS servers into the container's resolv.conf; spawning does too, once the image exists", async (f) => {
+  const resolv = join(f.rootfs, "etc", "resolv.conf");
+  await writeFile(resolv, "nameserver 10.0.0.1\n");
+  await ask(f.body, "workspace.ls", { path: "/" });
+  assert.equal(await readFile(resolv, "utf8"), "nameserver 223.5.5.5\nnameserver 119.29.29.29\n", "no servers named: the defaults");
+
+  const proot: ProotConfig = { root: join(f.dir, "main"), rootfs: f.rootfs, bin: "/bin/true", loader: "", lib: "", dns: ["1.1.1.1", "not a server; rm", "2606:4700:4700::1111"] };
+  const other = createLocalBody({ isolation: { kind: "proot", proot } });
+  try {
+    other.spawn(["true"]).on("error", () => {});
+    assert.equal(await readFile(resolv, "utf8"), "nameserver 1.1.1.1\nnameserver 2606:4700:4700::1111\n");
+  } finally { await other.close(); }
+});
+
+test("the DNS servers are not written before the image is installed", async () => {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-dns-"));
+  try {
+    const proot: ProotConfig = { root: join(dir, "main"), rootfs: join(dir, "main", "ubuntu"), bin: "/bin/true", loader: "", lib: "", dns: ["9.9.9.9"] };
+    createLocalBody({ isolation: { kind: "proot", proot } }).spawn(["true"]).on("error", () => {});
+    await assert.rejects(readFile(join(dir, "main", "ubuntu", "etc", "resolv.conf"), "utf8"), { code: "ENOENT" });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

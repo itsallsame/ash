@@ -53,7 +53,7 @@ object NodeEnv {
                 // Core's own fetch honours HTTP(S)_PROXY with this.
                 "NODE_USE_ENV_PROXY" to "1",
                 "HOME" to p.files.path,
-                "PATH" to "$pl/bin:$pl/runtime/bin:/system/bin:/system/xbin",
+                "PATH" to "$pl/runtime/bin:/system/bin:/system/xbin",
                 "TMPDIR" to p.tmp.path,
                 "TMP" to p.tmp.path,
                 "LANG" to "C.UTF-8",

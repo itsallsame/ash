@@ -17,8 +17,6 @@ import type { RawSocket } from "../../link/src/socket";
 import { bounded, STEP_MS } from "./bounded";
 
 export { bounded, STEP_MS } from "./bounded";
-// The old core still imports these from here; they go with it (see legacy-link.ts).
-export { ClientLink, Link, fileSigner, type LocalCapabilities, type Signer, type TunnelResponse } from "./legacy-link";
 
 /** The path the hub's tunnel opens on this program (SPEC-03 §8.1). Any other path is refused. */
 export const LINK_PATH = "/link";

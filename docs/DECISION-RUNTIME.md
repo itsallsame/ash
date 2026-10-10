@@ -82,20 +82,18 @@ conversation.control      screen.reconcile       future routes...
 The implemented source layout preserves the existing member dependency boundary:
 
 ```text
-packages/core/src/world/decision/
-  runtime.ts              route registration, scheduling, audit lifecycle
+packages/core/src/services/reflex/
+  index.ts                the reflex service: routes, scheduling, audit lifecycle
   jev.ts                  generic typed JEV transport
-packages/core/src/members/reflex/
-  conversation-control.ts route semantics and restricted cancel/pause executor
-  screen-execution.ts     pre-run screen choice, scoped runner context and constraint
-  screen-reconcile.ts     route semantics and restricted screen executor
+  keywords.ts             exact stop/pause matching
+  screen.ts               pre-run screen choice, scoped runner context, restricted screen executor
 android/.../host/
   ScreenDecisionHost.kt   atomic host comparisons and screen effects
   ScreenDecisionState.kt  turn ownership, epochs and host-side deduplication
 ```
 
-`members/reflex.ts` becomes the small world-member adapter which feeds accepted
-ledger messages to `DecisionRuntime`. It should not contain route semantics.
+The reflex service (`services/reflex`) feeds accepted ledger messages to the routes.
+(The layout above is the new one; the earlier `world/decision` and `members/reflex` files are gone.)
 
 ## 5. Generic route contract
 
@@ -615,14 +613,7 @@ restriction. The subsequent final-version rerun reached an apps.open approval
 card, then the mac-mini device went offline; that rerun was not completed. No
 online JEV model or physical Shizuku display success is claimed.
 
-The isolated simulator probe is `tools/decision-simulator.mjs` (`serve`, `keys`,
-`probe`) with `tools/decision-simulator.config.json`. It targets only
-`ai.ash.agent.probe`; the owner's installed package is never overwritten. Start
-the isolated APK once, copy the override with app-owned permissions, restart its
-core, then configure its test credentials. The script reads the existing
-temporary DeepSeek test key, does not print it, and does not delete it. JEV's
-synthetic credential is used only with the local endpoint. Do not reuse this
-configuration as a production JEV setup.
+(The simulator probe `tools/decision-simulator.mjs` described here has been removed with the old core.)
 
 ## 19. Execution-screen selection and visible app delivery
 
