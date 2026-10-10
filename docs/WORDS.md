@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `3178020aa06491a8`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `2ad15bc7a5b610cb`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -109,7 +109,7 @@
 | `rename` | owner, agent, app | write / structure | - | device*, name* | 在修改设备名称 | Change the name a hand is shown with. |
 | `access_set` | owner, agent, app | write / structure | - | device*, tier, lend, body, local_agents, web_ui | 在调整设备权限 | Change what a hand may do (lend capabilities, serve as a body, run local agents, web chat) and its tier (ask, full). An agent asking for this is always asked about by the owner. |
 | `update` | owner, agent, app | write / structure | - | device*, version*, sha256* | 在更新设备程序 | Have a computer update its Ash program to the given version (checked against sha256). Approved here once; the update itself is then run by the hub. An agent asking for this is always asked about by the owner. |
-| `pair_code` | owner | read / none | local_only | pair_id | 在看配对码 | Show the pairing code of a pairing the owner started, with the address to open on the new computer. Only the owner, from a channel on this machine. |
+| `pair_code` | owner | read / none | local_only | pair_id* | 在看配对码 | Show the pairing code of a pairing the owner started, with the address to open on the new computer. Only the owner, from a channel on this machine. |
 | `pair.changed` | kernel | read / none | event out, record | pair_id*, state*, device | 在记下配对进展 | A pairing moved on (requested, approved, rejected, connected, expired). The one who started it is told by a background message. |
 | `config.changed` | kernel | read / none | event in | item*, state* | 在记下手机设置变化 | A hand reports that one of its own permissions or switches changed (config.*). Sent by the hands module; not recorded. |
 

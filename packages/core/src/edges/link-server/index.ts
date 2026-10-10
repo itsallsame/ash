@@ -111,7 +111,7 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
     authenticate,
     log,
     onSession(session) {
-      const ctx: ChannelContext = { handId: session.handId, hello: session.hello, local: locals.get(session.hello) ?? true };
+      const ctx: ChannelContext = { handId: session.handId, hello: session.hello, local: locals.get(session.hello) ?? false };
       const parts: SessionHandlers[] = [];
       if (granted(session, "device")) parts.push(hands.attach(session, ctx));
       for (const [channel, attach] of channels) if (granted(session, channel)) { const handlers = attach(session, ctx); if (handlers) parts.push(handlers); }

@@ -215,7 +215,7 @@ add("service:devices", "access_set", "request", obj({ device: deviceRef, ...acce
   { effect: "write", risk: "structure", label: "在调整设备权限", description: "Change what a hand may do (lend capabilities, serve as a body, run local agents, web chat) and its tier (ask, full). An agent asking for this is always asked about by the owner." });
 add("service:devices", "update", "request", obj({ device: deviceRef, version: { type: "string", pattern: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$" }, sha256: sha }, ["device", "version", "sha256"]), obj({ started: bool }, ["started"]),
   { effect: "write", risk: "structure", label: "在更新设备程序", description: "Have a computer update its Ash program to the given version (checked against sha256). Approved here once; the update itself is then run by the hub. An agent asking for this is always asked about by the owner." });
-add("service:devices", "pair_code", "request", obj({ pair_id: id }), obj({ code: sensitive(nonempty, "hidden"), url: str, expires_at: nonnegativeSafe }, ["code"]),
+add("service:devices", "pair_code", "request", obj({ pair_id: id }, ["pair_id"]), obj({ code: sensitive(nonempty, "hidden"), url: str, expires_at: nonnegativeSafe }, ["code"]),
   { callers: OWNER, local_only: true, label: "在看配对码", description: "Show the pairing code of a pairing the owner started, with the address to open on the new computer. Only the owner, from a channel on this machine." });
 add("service:devices", "pair.changed", "event", obj({ pair_id: id, state: pairState, device: deviceRef }, ["pair_id", "state"]), undefined,
   { record: true, label: "在记下配对进展", description: "A pairing moved on (requested, approved, rejected, connected, expired). The one who started it is told by a background message." });
