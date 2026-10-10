@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { APP_NAME_PATTERN, OWNER_ID } from "../../../../sdk/src/ids";
 import { appToolContract, ASH_ON_EVENT_TOOL, wakeEvents, type AppJson, type AppNeed, type McpTool } from "../../../../sdk/src/app";
-import { WordError, type Caller, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
+import { WordError, type Caller, type ErrorCode, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import { DEFAULT_CALLERS, type Member, type WordContract } from "../../../../sdk/src/word";
 import type { Ledger } from "../../kernel/ledger";
 import type { Registry, Router } from "../../kernel/types";
@@ -108,7 +108,7 @@ export class AppRuntime {
   private readonly failures = new Map<string, number>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastError = new Map<string, string>();
-  /** What the install card of each app showed (needs and listens); memory only. */
+  /** What the approval card of each install request showed (needs and listens), by request id; memory only. */
   private readonly shown = new Map<string, string>();
   private readonly output = new Map<string, { lines: string[]; exit: LastExit | null }>();
   private closed = false;
@@ -423,18 +423,17 @@ export class AppRuntime {
   // ---- what an app says -------------------------------------------------------------------------------------------
 
   /**
-   * An event from app <id>: it must be one app.json declares. It goes out as an event from `app:<id>` (the router
+   * An event from app <id>: the router refuses one app.json does not declare. It goes out as an event from `app:<id>` (the router
    * records it and delivers it to whoever listens); a `wake_events` entry also wakes its agent, a few times a day at most.
    */
-  async emit(id: string, name: string, body: Record<string, unknown>): Promise<{ ok: true } | { ok: false; code: "forbidden" | "too_large" | "offline" | "failed"; message: string }> {
+  async emit(id: string, name: string, body: Record<string, unknown>): Promise<{ ok: true } | { ok: false; code: ErrorCode; message: string }> {
     // The manifest the app was started with: an edit on disk changes nothing until it is restarted.
     const manifest = this.running.get(id)?.manifest;
     if (!manifest) return { ok: false, code: "offline", message: "app not running" };
     if (JSON.stringify(body).length > EVENT_BODY_MAX) return { ok: false, code: "too_large", message: "event body too large" };
-    if (!(manifest.events ?? []).includes(name)) return { ok: false, code: "forbidden", message: `event ${name} is not declared in app.json` };
     const caller = this.appCaller(id);
     const sent = await this.options.router.send({ to: null, kind: "event", word: name, body }, caller);
-    if (!sent.ok) return { ok: false, code: "failed", message: sent.error.message };
+    if (!sent.ok) return { ok: false, code: sent.error.code, message: sent.error.message };
     const targets = [...new Set(wakeEvents(manifest).filter((item) => item.event === name).map((item) => item.agent ?? this.options.primaryAgent()))];
     if (targets.length && this.grants.take(id, "wake", WAKES_A_DAY)) {
       const context = { app: `app:${id}`, name: manifest.name, role: manifest.role ?? manifest.summary, event: name, body };
@@ -476,11 +475,12 @@ export class AppRuntime {
    * The text the gate adds to the approval card of an `apps.install`, and a note (in memory) of exactly what the owner is
    * shown: the needs and listens. Null when there is no such app.
    */
-  cardDetail(id: string): string | null {
+  cardDetail(id: string, request: string): string | null {
     this.rediscover(id);
     const manifest = this.manifest(id);
     if (!manifest) return null;
-    this.shown.set(id, JSON.stringify([manifest.needs ?? [], manifest.listens ?? []]));
+    this.shown.set(request, JSON.stringify([manifest.needs ?? [], manifest.listens ?? []]));
+    while (this.shown.size > 64) this.shown.delete(this.shown.keys().next().value!);
     return this.installDetail(manifest, /^agent(?::|$)/.test(manifest.publisher) ? "agent" : this.grants.get(id)?.builtin ? "builtin" : "other");
   }
 
@@ -490,7 +490,7 @@ export class AppRuntime {
    * is the approval itself. For an agent's install the approval is for the needs and listens on the card: if they are
    * different now, or the card is not remembered (the hub restarted), nothing is installed.
    */
-  async install(id: string, caller: Caller): Promise<AppInfo> {
+  async install(id: string, caller: Caller, request: string): Promise<AppInfo> {
     this.rediscover(id);
     const first = this.manifest(id);
     if (!first) {
@@ -502,10 +502,13 @@ export class AppRuntime {
     this.rediscover(id);
     const manifest = this.manifest(id) ?? first;
     if (caller.member !== OWNER_ID) {
-      const shown = this.shown.get(id);
-      this.shown.delete(id);
-      if (shown === undefined || shown !== JSON.stringify([manifest.needs ?? [], manifest.listens ?? []]))
-        throw fail("conflict", `${this.agentPath(id)}/app.json 的 needs 或 listens 和主人批准时看到的不一样了（或中枢重启过）；没有安装`, { recovery_hint: "Call apps.install again so the owner sees the current ones." });
+      const shown = this.shown.get(request);
+      this.shown.delete(request);
+      // The gate always asks the owner for an agent's install, and the card is remembered under the request's id (a redeem keeps it).
+      if (shown === undefined)
+        throw fail("conflict", "这次安装没有经过主人的审批卡（或中枢重启过，卡片记录没了）；没有安装", { recovery_hint: "Call apps.install again; the owner will be asked." });
+      if (shown !== JSON.stringify([manifest.needs ?? [], manifest.listens ?? []]))
+        throw fail("conflict", `${this.agentPath(id)}/app.json 的 needs 或 listens 在主人批准之后变了；没有安装`, { recovery_hint: "Call apps.install again so the owner sees the current ones." });
     }
     await this.stop(id);
     this.grants.grant(id, manifest.version, manifest.needs ?? [], manifest.listens ?? []);

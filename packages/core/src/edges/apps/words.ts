@@ -25,7 +25,7 @@ export function createAppsService(runtime: AppRuntime): Member {
         if (!info) throw new WordError("not_found", `no app ${id}`, { recovery_hint: "apps.list shows what exists." });
         return { data: info };
       }
-      case "apps.install": return { data: await runtime.install(id, ctx.caller) };
+      case "apps.install": return { data: await runtime.install(id, ctx.caller, msg.id) };
       case "apps.enable": return { data: await runtime.enable(id) };
       case "apps.disable": return { data: await runtime.disable(id) };
       case "apps.revoke": return { data: await runtime.revoke(id, typeof body.need === "string" ? body.need : undefined) };
@@ -74,7 +74,7 @@ export function createAppsService(runtime: AppRuntime): Member {
     },
     /** The gate puts this under the approval card of an install: what the app needs and listens to. */
     cardDetail(msg: Message): string | null {
-      return msg.word === "apps.install" ? runtime.cardDetail(text(msg.body as Record<string, unknown>, "id")) : null;
+      return msg.word === "apps.install" ? runtime.cardDetail(text(msg.body as Record<string, unknown>, "id"), msg.id) : null;
     },
     handle: run,
   };

@@ -217,13 +217,13 @@
 
 - **`member` 怎么写**：`service:<名字>`（如 `service:llm`、`service:senses`）、`agent:<名字>`、手 `device:<hand_id>`（22 位，区分大小写）、`device:*`（任何一只手）、其他应用 `app:<id>`。应用要用中枢的任何词，包括小模型和叫醒 agent，都要在这里写；没写的一律 `forbidden`。词名用 `capability_list` / `capability_describe` 查；`apps.validate` 会提醒现在查不到的成员和词（可能拼错了，也可能只是暂时不在线）。
 - 同一个成员（或 `notify` / `card` / `widgets`）只能出现一次；不能写自己。
-- **安装**：Agent 调 `apps.install {id}`。先检查（同 `apps.validate`），不通过直接拒绝，不打扰主人；通过后出 Ash 的审批卡（裁判不能替主人批，也没有「总是允许」）。卡上写：
+- **安装**：Agent 调 `apps.install {id}`。先检查（同 `apps.validate`），不通过直接拒绝，不打扰主人；通过后一定出 Ash 的审批卡：安装总是问主人，不经审核模型，也没有「以后都可以」。卡上写：
   - 应用名、版本、来源（「Ash 自带」「Ash 自己写的，没有发布过，也没有别人检查过」或「发布者写的是「X」，Ash 无法核实」）和 `summary`；
   - 「它需要：」逐项列出 `· <why>（device:*：health.read、…）`，没有 needs 就写「不需要用 Ash 的其他东西」；
   - 「它要实时收到这些事件」：`listens`；「这些事件发生时它会叫醒 agent」：`wake_events` 和各自叫醒谁；
   - 文件在哪、会成为 `app:<id>`、可以随时撤销。
 
-  主人批准后，卡上的 `needs` 和 `listens` 写进授权表，应用随即启动。批准的是卡上这一份：批准前后 `app.json` 里的 `needs` 或 `listens` 变了，或中枢重启过，`apps.install` 回 `conflict`，重新装一次让主人看到现在的。主人自己发起的安装就是批准本身，没有卡。
+  主人批准后，卡上的 `needs` 和 `listens` 写进授权表，应用随即启动。批准的是卡上这一份：批准之后 `app.json` 里的 `needs` 或 `listens` 变了，`apps.install` 回 `conflict`；这次安装没有经过审批卡（比如中枢重启丢了卡片记录）也回 `conflict`。两种都是重新调一次 `apps.install`，让主人看到现在的。主人自己发起的安装就是批准本身，没有卡。
 - **授权的效果**：应用每次调用 Ash（§7）都由路由按授权表检查：只有批准过的「成员 + 词」可调，范围不会自己扩大。应用的调用以 `app:<id>` 身份走正常的路由和关口，**只读的和无风险的词才放行，其余一律 `forbidden`**：应用不能发起审批，也没有 pending；该由 Agent 或主人做的事，交给它们。应用发自己 `events` 里声明过的事件不需要授权。
 - 应用更新后新增的 `needs` / `listens` 不会自动生效，要再走一次 `apps.install`（`apps.restart` 遇到变宽了的会拒绝）。
 - 卸载、重启、日志、清数据见 §0「管理已装的应用」。

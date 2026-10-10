@@ -91,12 +91,27 @@ test("install by an agent: app.json asking for more after the owner saw the card
 test("install by an agent with no card remembered (the hub restarted since) -> conflict; the owner installing by hand needs no card", async () => {
   const w = world();
   await w.apps.start();
-  await assert.rejects(w.apps.runtime.install("fixture", AGENT), (error: { code: string }) => error.code === "conflict");
+  await assert.rejects(w.apps.runtime.install("fixture", AGENT, "m_lost"), (error: { code: string; message: string }) => error.code === "conflict" && /没有经过主人的审批卡/.test(error.message));
   assert.equal(w.apps.runtime.grants.get("fixture"), null);
   const by_hand = await call(w, "service:apps", "apps.install", { id: "fixture" }, OWNER);
   assert.equal(by_hand.ok, true);
   assert.equal(w.router.cards.length, 0, "no card: doing it by hand is the approval");
   assert.equal(dataOf(by_hand).running, true);
+});
+
+test("two install cards waiting for the same app do not overwrite each other: each request is judged against its own card", async () => {
+  const w = world();
+  await w.apps.start();
+  const file = join(w.root, "fixture", "app.json");
+  w.apps.runtime.cardDetail("fixture", "m_first");
+  const app = JSON.parse(readFileSync(file, "utf8"));
+  app.listens.push("calendar.event");
+  writeFileSync(file, JSON.stringify(app));
+  w.apps.runtime.cardDetail("fixture", "m_second");
+  await assert.rejects(w.apps.runtime.install("fixture", AGENT, "m_first"), (error: { code: string; message: string }) => error.code === "conflict" && /批准之后/.test(error.message), "the first card showed the old listens");
+  assert.equal(w.apps.runtime.grants.get("fixture"), null);
+  const info = await w.apps.runtime.install("fixture", AGENT, "m_second");
+  assert.deepEqual(info.listens, ["sense.*", "calendar.event"]);
 });
 
 test("tools: a read tool and a write tool become words with the risk of their MCP annotations (SPEC-02 5.3)", async () => {
