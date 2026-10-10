@@ -107,6 +107,46 @@ test("SPEC-08 §5.8: the front and back lanes of one agent run at the same time"
   hold.resolve();
 });
 
+test("SPEC-01 §5.2: a sub-agent speaks to the owner only in the turn where the owner addressed it; its back lane in a turn at once is refused", async (t) => {
+  const s = await startScenario(t, { runtimes: ["scripted"] });
+  const hold = deferred();
+  const state: { created?: ToolResult; back?: ToolResult; front?: ToolResult } = {};
+  s.driver.scriptFor(MAIN, byOwnerText({
+    "找帮手": async (turn) => {
+      state.created = await turn.tool("agent_create", helper({ tools: ["human_say"] }));
+      await turn.tool("agent_start", { agent: HELPER });
+    },
+    "叫帮手": async (turn) => { await turn.tool("agent_tell", { agent: HELPER, text: "后台有事" }); },
+  }));
+  s.driver.scriptFor(HELPER, async (turn) => {
+    if (turn.key === "front") { await turn.until(hold.promise); state.front = await turn.tool("human_say", { text: "你好，我在" }); }
+    else state.back = await turn.tool("human_say", { text: "我自己想说一句" });
+  });
+  const owner = await s.human();
+  accepted(await owner.say("找帮手"));
+  await eventually(() => state.created, "the helper being made");
+  await eventually(async () => { const l = await owner.call("service:agents", "describe", { agent: HELPER }); return l.ok ? true : null; }, "the helper declared");
+
+  const said = await owner.call(HELPER, "say", { text: "在吗" });
+  assert.ok(said.ok, `the owner may speak to the helper directly: ${JSON.stringify(said)}`);
+  const front = await s.driver.turn((r) => r.agent === HELPER && r.key === "front", "the helper's front turn");
+  // another agent, not the owner, sends it news: that lands on the back lane, in a turn the owner did not address
+  accepted(await owner.say("叫帮手"));
+  const back = await s.driver.turn((r) => r.agent === HELPER && r.key === "back", "the helper's back turn");
+  await back.done;
+  assert.equal(front.outcome, "running", "both lanes were in a turn at once");
+  assert.equal(state.back!.isError, true);
+  assert.equal(errorCode(state.back!), "forbidden", "the back lane did not borrow the front lane's turn");
+  await quiet();
+  const spoke = () => owner.messages.filter((m) => m.from === HELPER && m.to === "person:owner" && m.kind === "request");
+  assert.deepEqual(spoke(), [], "nothing of the back lane reached the owner");
+
+  hold.resolve();
+  await front.done;
+  assert.equal(state.front!.isError, false);
+  await eventually(() => spoke().find((m) => textOf(m) === "你好，我在"), "the front lane's words reaching the owner");
+});
+
 test("S170, S171, SPEC-00 §6.5: the hub restarts in the middle of a turn: the batch is not sent again; the agent is told, and a call in flight is not replayed", async (t) => {
   const s = await startScenario(t);
   const hand = await s.hand({ capabilities: [extensionCapability("x.test.act", { effect: "act", risk: "none" })] });

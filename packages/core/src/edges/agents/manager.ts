@@ -37,8 +37,8 @@ export interface AgentsDeps {
   drivers: Record<string, AgentDriverFactory>;
   /** `ash-skills/agents`: the `main` template that plants the first declaration, and the templates for `spawn`. */
   templates: Templates;
-  /** The agent's own address and token on the tool surface; `allowed` is its declared tool list (already narrowed by delegation). */
-  tools(agent: string, allowed?: string[]): { mcp_url: string; token: string; allowed: string[] };
+  /** The agent's own address on the tool surface and one token for each of its lanes (a new set on every call; the one before stops working); `allowed` is its declared tool list (already narrowed by delegation). */
+  tools(agent: string, lanes: string[], allowed?: string[]): { mcp_url: string; tokens: Record<string, string>; allowed: string[] };
   rules?(decl: AgentDecl): string | Promise<string>;
   channels?(): string[];
   now?(): number;
@@ -192,7 +192,7 @@ export class AgentManager {
     try {
       statics = await this.modules.static(decl);
       await live.driver.start(id, {
-        runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, decl.tools),
+        runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, Object.keys(lanes), decl.tools),
         modules: { static: statics }, lanes: Object.keys(lanes), sessions: run.spec.sessions,
       });
     } catch (error) {
@@ -247,6 +247,27 @@ export class AgentManager {
     if (!cut.length) return;
     const doing = cut.slice(0, 3).map((r) => r.text.replace(/\s+/g, " ").slice(0, 80)).join("；");
     this.enqueue(id, { id: this.newId(), from: SERVICE_CALLER.member, word: "wake", text: `${why}，上一轮中断了（当时在处理：${doing}）。要不要接着做，你自己决定。`, attachments: [], at: this.now() });
+  }
+
+  // ----------------------------------------------------------------------------------------------------------------
+  // the router's structural rules about turns (SPEC-01 §5.2). The turn in `caller.turn` is the one of the lane the tool
+  // token was issued for (or the one the manager itself reported), so a lane is judged by its own turn.
+  // ----------------------------------------------------------------------------------------------------------------
+
+  /** A sub-agent (made by another agent) speaks to the owner only in a turn where the owner addressed it directly. The others are not held to a turn here. */
+  mayTalkToOwner(caller: Caller, _word: string): boolean {
+    const run = this.runs.get(caller.member);
+    if (!run || run.spec.decl.depth === 0) return true;
+    if (!caller.turn) return false;
+    return this.inbox.byTurn(caller.turn).some((row) => row.agent === caller.member && row.from === OWNER_ID);
+  }
+
+  /** `service:agents/answer` is for the turn that took the message. A message that is not this agent's is left to the service to refuse. */
+  mayAnswer(caller: Caller, body: unknown): boolean {
+    const id = (body as { in_reply_to?: unknown } | null)?.in_reply_to;
+    const row = typeof id === "string" ? this.inbox.get(id) : null;
+    if (!row || row.agent !== caller.member) return true;
+    return row.turn !== undefined && row.turn === caller.turn;
   }
 
   // ----------------------------------------------------------------------------------------------------------------

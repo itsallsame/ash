@@ -139,6 +139,8 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     onParked: (pending) => late.gateService!.issueCard(pending),
     onError: (where, error) => log(where, error),
     agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords,
+    mayTalkToOwner: (caller, word) => late.agents?.mayTalkToOwner(caller, word) ?? true,
+    mayAnswer: (caller, body) => late.agents?.mayAnswer(caller, body) ?? true,
     appGranted: (app, to, word) => late.apps!.runtime.granted(app, to, word),
   });
 
@@ -190,7 +192,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   link.onChannel("agent", remote.attach);
 
   let url = "";
-  const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id) => late.agents?.currentTurn(id) ?? null });
+  const tools = createToolsEdge({ router, registry, ledger, now, log, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id, lane) => late.agents?.currentTurn(id, lane) ?? null });
   const drivers: Record<string, AgentDriverFactory> = {
     dsh: (report) => createDshDriver({ report, spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), readBlob: (ref) => ledger.blob.get(ref) }),
     ...remote.factories,
@@ -199,7 +201,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
     templatesDir: join(SKILLS, "agents"),
-    tools: (agent, allowed) => ({ mcp_url: `${url}/mcp`, token: tools.issueToken(agent), allowed: allowed ?? [...TOOL_NAMES] }),
+    tools: (agent, lanes, allowed) => ({ mcp_url: `${url}/mcp`, tokens: tools.issueTokens(agent, lanes), allowed: allowed ?? [...TOOL_NAMES] }),
   });
   const launcher = body.appLauncher();
   const apps = late.apps = createApps({

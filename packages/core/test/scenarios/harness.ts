@@ -178,11 +178,11 @@ export interface Delivery { via: "send" | "followup" | "steer"; agent: string; k
 /** The tool surface as one agent sees it: a Streamable HTTP MCP client with the agent's own bearer token. */
 class ToolLine {
   private client: Promise<Client> | undefined;
-  constructor(private readonly tools: AgentStartSpec["tools"]) {}
+  constructor(private readonly tools: AgentStartSpec["tools"], private readonly lane: string) {}
   private connect(): Promise<Client> {
     this.client ??= (async () => {
       const client = new Client({ name: "scripted-driver", version: "0.0.0" });
-      await client.connect(new StreamableHTTPClientTransport(new URL(this.tools.mcp_url), { requestInit: { headers: { Authorization: `Bearer ${this.tools.token}` } } }));
+      await client.connect(new StreamableHTTPClientTransport(new URL(this.tools.mcp_url), { requestInit: { headers: { Authorization: `Bearer ${this.tools.tokens[this.lane]}` } } }));
       return client;
     })();
     return this.client;
@@ -257,6 +257,10 @@ export class ScriptedDriver {
     for (const list of [this.turns, this.calls, this.deliveries]) list.length = 0;
   }
 
+  private async closeLines(agent: string): Promise<void> {
+    for (const [slot, line] of [...this.lines]) if (slot.startsWith(`${agent}/`)) { this.lines.delete(slot); await line.close(); }
+  }
+
   /** Ends everything (the scenario is over or the hub is being restarted). */
   async dispose(): Promise<void> {
     for (const run of this.running.values()) run.abort.abort();
@@ -287,15 +291,14 @@ export class ScriptedDriver {
       plugins: async () => ({}),
       start: async (agent, spec) => {
         this.starts.push({ agent, spec });
-        await this.lines.get(agent)?.close();
-        this.lines.set(agent, new ToolLine(spec.tools));
+        await this.closeLines(agent);
+        for (const key of spec.lanes) this.lines.set(`${agent}/${key}`, new ToolLine(spec.tools, key));
         for (const key of spec.lanes) if (!spec.sessions[key]) open(agent, key);
       },
       stop: async (agent, reason) => {
         this.stops.push({ agent, reason });
         for (const [slot, run] of this.running) if (slot.startsWith(`${agent}/`)) run.abort.abort();
-        await this.lines.get(agent)?.close();
-        this.lines.delete(agent);
+        await this.closeLines(agent);
       },
       send: async (agent, key, batch) => {
         this.deliveries.push({ via: "send", agent, key, messages: batch });
@@ -338,8 +341,8 @@ export class ScriptedDriver {
 
     const aborted = new Promise<undefined>((resolve) => abort.signal.addEventListener("abort", () => resolve(undefined), { once: true }));
     const tool = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
-      const line = this.lines.get(agent);
-      if (!line) throw new Error(`${agent} has no tool line (the hub never called start())`);
+      const line = this.lines.get(slot);
+      if (!line) throw new Error(`${slot} has no tool line (the hub never called start())`);
       report({ event: "tool", agent, key, turn, phase: "start", name });
       const result = await line.call(name, args);
       this.calls.push({ agent, key, turn, name, args, result });
