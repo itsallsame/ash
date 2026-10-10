@@ -413,7 +413,7 @@ export const REMEDY = {
   kernel_battery_optimization: "adb -s {ser} shell dumpsys deviceidle whitelist +{kpkg}",
   shizuku: "start Shizuku (adb -s {ser} shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh) and authorize Ash in the Shizuku app",
   "notification-sense": "turn on 通知读取 in the Ash app (the opt-in is a switch in the app, not a system permission) and grant the listener: adb -s {ser} shell cmd notification allow_listener {pkg}/ai.ash.caps.senses.NotificationSense",
-  kill: "the hub process can be killed from adb only on a debuggable kernel build (run-as {kpkg}) or a rooted/emulator shell",
+  kill: "the hub process can be killed from adb only on a debuggable kernel build where SELinux allows run-as to signal it (emulators), or with root (su) on the phone",
   "network": "give the phone internet access",
 };
 
@@ -530,8 +530,12 @@ export class Ctx {
   /** SIGKILL for these pids, as the kernel app (run-as, debuggable build) or, failing that, as the shell. Returns the pids that are gone. */
   async kill(pids) {
     for (const pid of pids) {
+      // run-as works on a debuggable build where SELinux lets it (emulators); Android 12 phones deny runas_app a SIGKILL
+      // to the app's own processes, so a rooted test phone falls back to su, then to the plain shell.
       const viaApp = await this.adb.shell(`run-as ${this.kpkg} kill -9 ${pid}`);
-      if (viaApp.code !== 0 || /not permitted|not debuggable|unknown package/i.test(viaApp.out + viaApp.err)) await this.adb.shell(`kill -9 ${pid}`);
+      if (viaApp.code === 0 && !/not permitted|not debuggable|unknown package|unknown pid/i.test(viaApp.out + viaApp.err)) continue;
+      const viaSu = await this.adb.shell(`su -c 'kill -9 ${pid}'`);
+      if (viaSu.code !== 0) await this.adb.shell(`kill -9 ${pid}`);
     }
     await sleep(1500);
     const alive = new Set([...(await this.hubPids()), ...(await this.dshPids())]);
