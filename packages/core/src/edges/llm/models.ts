@@ -10,7 +10,7 @@ export const DEFAULT_MODEL = "deepseek-flash";
 /**
  * DeepSeek models newer than pi-ai's bundled catalog, on the same OpenAI-compatible endpoint with the same request
  * rules as the catalog's DeepSeek entries. No rates are written down for them: all zero means "price unknown", and
- * a call on such a model is reported without a cost.
+ * a call on such a model is reported without a cost, and service:cost prices it from its own table of published rates.
  */
 const DEEPSEEK_ADDED: Record<string, Model<"openai-completions">> = {
   "deepseek-flash": {

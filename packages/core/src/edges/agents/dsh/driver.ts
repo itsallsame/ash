@@ -11,6 +11,7 @@
  *   session.get/set   session/resume                   plugins    _ash/plugins
  */
 import { randomBytes } from "node:crypto";
+import { localStamp } from "../../../../../sdk/src/time";
 import { WordError } from "../../../../../sdk/src/message";
 import {
   ASH_BUSY_CODE, ASH_METHODS, type AgentDriver, type AgentEvent, type AgentStartSpec, type AgentStatus, type DriverMessage, type DriverUsage,
@@ -32,6 +33,8 @@ export interface DshDriverDeps {
   /** An attachment's bytes (`ledger.blob.get`); without it attachments are only named in the message. */
   readBlob?(ref: string): { bytes: Uint8Array; mime: string } | null;
   argv?: string[];
+  /** The owner's time zone (IANA), asked at every message; absent: the zone this process runs in. */
+  timeZone?(): string;
   log?(...args: unknown[]): void;
 }
 
@@ -99,7 +102,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
   // -- the message in the agent's words ----------------------------------------------------------------------------
 
   const envelope = (m: DriverMessage) =>
-    `[ash] ${new Date(m.at).toISOString()} · ${m.origin?.label ?? m.from} · lane ${m.lane} · ${m.word} · id ${m.id}${m.thread ? ` · thread ${m.thread}` : ""}`;
+    `[ash] ${localStamp(m.at, deps.timeZone?.())} · ${m.origin?.label ?? m.from} · lane ${m.lane} · ${m.word} · id ${m.id}${m.thread ? ` · thread ${m.thread}` : ""}`;
 
   function content(batch: DriverMessage[]): unknown[] {
     const blocks: unknown[] = [];

@@ -29,6 +29,7 @@ function setup(env: Record<string, string> = {}) {
     report: (e) => events.push(e),
     spawn: (argv) => { spawned.push(argv); return nodeSpawn(process.execPath, [SCRIPT], { env: { ...process.env, FAKE_LOG: logFile, ...env }, stdio: ["pipe", "pipe", "pipe"] }); },
     writeFile: async (path, content) => { written[path] = content; },
+    timeZone: () => "Asia/Shanghai",
     readBlob: (ref) => (ref === "img" ? { bytes: Buffer.from("png"), mime: "image/png" } : null),
   });
   drivers.push(driver);
@@ -60,7 +61,7 @@ test("start: baseline file, a process, one session per lane with the tool surfac
   assert.equal(t.driver.session.get("agent:main", "nope"), null);
 });
 
-test("send: the turn is reported started, then speech as whole messages, thoughts apart, then ended; the envelope names time, source, lane and id", async () => {
+test("send: the turn is reported started, then speech as whole messages, thoughts apart, then ended; the envelope names the local time with its zone (not UTC), source, lane and id", async () => {
   const t = setup();
   await t.driver.start("agent:main", spec());
   await t.driver.send("agent:main", "front", [msg("hello TWO", { origin: { channel: "app", client: "client:a", label: "手机 · 对话" } })]);
@@ -73,7 +74,7 @@ test("send: the turn is reported started, then speech as whole messages, thought
   assert.deepEqual(started.ids, ["m_hello "]);
   assert.equal((t.of("turn.ended")[0] as any).outcome, "completed");
   const seen = t.log().find((l) => l.prompt)!;
-  assert.match(seen.text, /^\[ash\] 2023-11-14T22:13:20\.000Z · 手机 · 对话 · lane front · say · id m_hello /);
+  assert.match(seen.text, /^\[ash\] 2023-11-15 06:13:20 Asia\/Shanghai \(UTC\+08:00\) · 手机 · 对话 · lane front · say · id m_hello /);
 });
 
 test("tool calls become tool events with start and end", async () => {

@@ -743,7 +743,7 @@ export class AgentManager {
         cursor = Math.max(cursor, Number(r.done ?? r.at ?? 0));
         const reply = await this.deps.router.send({ to: "service:cost", kind: "event", word: "usage.recorded", body: {
           caller: live.id, provider: String(r.provider || "unknown"), model: String(r.model || "unknown"),
-          input_tokens: Number(r.input) || 0, output_tokens: Number(r.output) || 0, ok: r.ok !== false, at: Number(r.at ?? r.done ?? this.now()),
+          input_tokens: Number(r.input) || 0, output_tokens: Number(r.output) || 0, ...(Number(r.cacheRead) > 0 ? { cache_read_tokens: Number(r.cacheRead) } : {}), ok: r.ok !== false, at: Number(r.at ?? r.done ?? this.now()),
           ...(typeof r.cost === "number" && r.cost >= 0 ? { cost: r.cost } : {}), // no price known: no cost, never a made-up one
         } }, SERVICE_CALLER);
         if (!reply.ok && reply.error.code === "offline") break;

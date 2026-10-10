@@ -272,12 +272,12 @@ test("usage: every ten minutes the runtime's records go to service:cost; the cur
   await f.start();
   const d = f.driver();
   assert.equal(f.timers.everies[0]!.ms, 600_000);
-  d.usageRecords = [{ at: 5, done: 100, provider: "deepseek-official", model: "deepseek-flash", input: 10, output: 20, ok: true }, { at: 6, done: 250, provider: "openrouter", model: "x/y", input: 1, output: 2, ok: false, cost: 0.002 }];
+  d.usageRecords = [{ at: 5, done: 100, provider: "deepseek-official", model: "deepseek-flash", input: 10, output: 20, cacheRead: 300, ok: true }, { at: 6, done: 250, provider: "openrouter", model: "x/y", input: 1, output: 2, ok: false, cost: 0.002 }];
   f.router.on("service:cost/usage.recorded", () => ({ ok: true }));
   await f.agents.manager.pollUsage();
   const got = f.router.to("service:cost", "usage.recorded");
   assert.deepEqual(got.map((g) => g.msg.body), [
-    { caller: M, provider: "deepseek-official", model: "deepseek-flash", input_tokens: 10, output_tokens: 20, ok: true, at: 5 },
+    { caller: M, provider: "deepseek-official", model: "deepseek-flash", input_tokens: 10, output_tokens: 20, cache_read_tokens: 300, ok: true, at: 5 },
     { caller: M, provider: "openrouter", model: "x/y", input_tokens: 1, output_tokens: 2, ok: false, at: 6, cost: 0.002 },
   ]);
   assert.equal(got[0]!.msg.kind, "event");

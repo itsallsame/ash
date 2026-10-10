@@ -9,11 +9,16 @@ import { fileURLToPath } from "node:url";
 
 export const CONTAINER_PACKAGES = ["dsh-ash-control", "ash-cost", "ash-skills"];
 
+/** DeepSeek's current Flash model, which reads images; the model a fresh install starts with. */
+export const CONTAINER_DEFAULT_MODEL = { provider: "deepseek-official", model: "deepseek-flash" };
+
 /**
  * The DSH patch the container carries at /opt/ash/patch.yml (`dsh --profile acp --patch /opt/ash/patch.yml`, which the main
  * body starts). DSH refuses a `--patch` file that does not exist, so the image must have it. The official ACP row is replaced by
  * ash's control plugin (ACP plus steer and inject, and the `_ash/*` methods); ash-cost taps every model call for `_ash/usage`;
- * ash-skills is the skills provider. The model is DSH's own setting (not written here). DSH's sandbox is off by environment
+ * ash-skills is the skills provider. ash-control's `config` is only the DEFAULT model: ACP uses it as the selection of a new session
+ * (and for one that has no recorded choice); once a session's model is changed (`model.set`), DSH's own record of that session wins.
+ * Without it a fresh install has no model at all and every turn fails. DSH's sandbox is off by environment
  * (DSH_PERMISSION_MODE, set by the body): the container is the sandbox.
  */
 export const CONTAINER_PATCH = [
@@ -23,6 +28,9 @@ export const CONTAINER_PATCH = [
   "    - id: ash-control",
   "      name: '/opt/ash/dsh-ash-control/index.mjs'",
   "      inject: [acpAppStartup]",
+  "      config:",
+  `        provider: '${CONTAINER_DEFAULT_MODEL.provider}'`,
+  `        model: '${CONTAINER_DEFAULT_MODEL.model}'`,
   "    - id: ash-cost",
   "      name: '/opt/ash/ash-cost/index.mjs'",
   "    - id: ash-skills",
