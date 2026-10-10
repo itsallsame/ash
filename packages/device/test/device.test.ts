@@ -178,7 +178,7 @@ test("agent channel: a Codex session is started, driven, steered, interrupted, c
   const spec = (sessions: Record<string, string> = {}) => ({
     runtime: { kind: "codex", model: "test-model" },
     native: { on: s.id, cwd: join(dir, "cwd"), env: { FIXTURE_LOG: log } },
-    tools: { mcp_url: "http://127.0.0.1:1/mcp", token: "unused", allowed: ["agent_list"] },
+    tools: { mcp_url: "http://127.0.0.1:1/mcp", tokens: { front: "unused" }, allowed: ["agent_list"] },
     modules: { static: [{ id: "identity", version: "v1", content: "You are Ash." }] },
     lanes: ["front", "back"], sessions,
   });
@@ -269,7 +269,7 @@ test("the agent keeps running while the connection is down; what it did is sent 
   await s.device.client.ready();
   const { remote } = s.kernel;
   const agent = "agent:main";
-  const spec = { runtime: { kind: "codex" }, native: { on: s.id, cwd: join(dir, "cwd") }, tools: { mcp_url: "x", token: "x", allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {} };
+  const spec = { runtime: { kind: "codex" }, native: { on: s.id, cwd: join(dir, "cwd") }, tools: { mcp_url: "x", tokens: { front: "x" }, allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {} };
   await remote.ok("agent.start", { agent, spec });
   await remote.ok("send", { agent, key: "front", messages: [{ id: "m1", from: "person:owner", word: "say", text: "work", lane: "front", at: 1 }] });
   await remote.waitFor("turn.started");
@@ -304,7 +304,7 @@ test("when the hub does not return in time the agents are stopped", async (t) =>
   t.after(() => { process.env.PATH = original; });
   const s = await setup(t, { detect: codexOnly, deps: { graceMs: 50 } });
   await s.device.client.ready();
-  await s.kernel.remote.ok("agent.start", { agent: "agent:main", spec: { runtime: { kind: "codex" }, native: { on: s.id, cwd: join(dir, "cwd") }, tools: { mcp_url: "x", token: "x", allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {} } });
+  await s.kernel.remote.ok("agent.start", { agent: "agent:main", spec: { runtime: { kind: "codex" }, native: { on: s.id, cwd: join(dir, "cwd") }, tools: { mcp_url: "x", tokens: { front: "x" }, allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {} } });
   assert.equal(s.device.agents.list().length, 1);
   s.tunnel.cut();
   await eventually(() => s.device.agents.list().length === 0, "the agents being stopped");

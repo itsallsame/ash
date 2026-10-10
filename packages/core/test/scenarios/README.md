@@ -197,7 +197,7 @@ Decisions of the coordinator (BUILD-PROGRESS §7, "T20 发现的规格缺口和�
 5. **Tool result envelope: decided (5).** Success = `{content, structuredContent: data}`, failure = `isError` + `structuredContent: {error}`;
    a receipt's id is `request_id` (long call) or `pending_id` (approval). `ToolResult` is `{isError, data, text}`, `errorCode` reads `data.error.code`.
 6. **Driver contract: decided (6).** Full `DriverMessage`, `session.*`/`compact`/`configure`/`plugins` on `AgentDriver`, `start(spec)` with
-   `tools:{mcp_url, token}`, seeded `main` on runtime `dsh`. The harness registers only `dsh`; a scenario that declares another runtime lists it
+   `tools:{mcp_url, tokens: {<lane>: token}}`, seeded `main` on runtime `dsh`. The harness registers only `dsh`; a scenario that declares another runtime lists it
    in `startScenario(t, { runtimes })`. The minimal types in `next.ts` are replaced by T17a's `sdk/driver.ts`.
 7. **A computer cannot pair through the local connection.** `hello` has no field for a pairing code; pairing (`waiting → requested →
    approved → connected`) can only be driven through the gateway, so the "initiator is told at each step" rule is tested on the relay

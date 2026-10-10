@@ -114,6 +114,7 @@ export async function startRig(over: Partial<ToolsEdgeOptions> & { dir?: string;
     router, registry: fakeRegistry(), ledger,
     agentPolicy: (id) => policies.get(id) ?? null,
     currentTurn: (id, lane) => turns.get(lane === "front" ? id : `${id}/${lane}`) ?? null,
+    turnActive: (id, turn) => [...turns].some(([key, value]) => value === turn && (key === id || key.startsWith(`${id}/`))),
     fastPathMs: 60, maxWaitMs: 400, settleMs: 40,
     ...over,
   });

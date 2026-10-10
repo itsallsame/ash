@@ -39,6 +39,10 @@ export interface AgentsDeps {
   templates: Templates;
   /** The agent's own address on the tool surface and one token for each of its lanes (a new set on every call; the one before stops working); `allowed` is its declared tool list (already narrowed by delegation). */
   tools(agent: string, lanes: string[], allowed?: string[]): { mcp_url: string; tokens: Record<string, string>; allowed: string[] };
+  /** The agent's tokens stop working (it was stopped, removed, or its process ended). */
+  revokeTools?(agent: string): void;
+  /** The agent's process is up and the agent is registered (after every start, also after a crash): the tool surface tells it what it owes. */
+  started?(agent: string): void;
   rules?(decl: AgentDecl): string | Promise<string>;
   channels?(): string[];
   now?(): number;
@@ -207,6 +211,7 @@ export class AgentManager {
     const hash = staticHash(statics);
     this.runs.patch(id, (spec) => { for (const key of Object.keys(lanes)) if (!spec.sessions[key] || !spec.static_hash[key]) spec.static_hash[key] ??= hash; });
     this.deps.registry.add(this.memberFor(id));
+    this.deps.started?.(id);
     this.interruptedNotice(id, why);
     await this.syncCredentials(live);
     for (const lane of live.lanes.values()) this.bg(this.drain(live, lane), `drain ${id}/${lane.key}`);
@@ -216,6 +221,7 @@ export class AgentManager {
     live.state = "failed";
     live.stopping = true;
     this.live.set(id, live);
+    this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
     this.tellOwner(`${id} 起不来了：连着失败了三次（${reason}）。我先停下它，不再自动重试；你可以在设置里让它重启。`);
   }
@@ -223,6 +229,7 @@ export class AgentManager {
   async stopAgent(id: string, reason: string, off = false): Promise<void> {
     const live = this.live.get(id);
     if (off) this.runs.setDesired(id, "off");
+    this.deps.revokeTools?.(id);
     if (!live) return;
     live.stopping = true;
     this.deps.registry.remove(id);
@@ -254,10 +261,10 @@ export class AgentManager {
   // token was issued for (or the one the manager itself reported), so a lane is judged by its own turn.
   // ----------------------------------------------------------------------------------------------------------------
 
-  /** A sub-agent (made by another agent) speaks to the owner only in a turn where the owner addressed it directly. The others are not held to a turn here. */
+  /** A sub-agent (made by another agent) speaks to the owner only in a turn where the owner addressed it directly. The primary agent (even one that `primary.set` made from a sub-agent) and the top-level ones are not held to a turn here. */
   mayTalkToOwner(caller: Caller, _word: string): boolean {
     const run = this.runs.get(caller.member);
-    if (!run || run.spec.decl.depth === 0) return true;
+    if (!run || run.spec.decl.primary || run.spec.decl.depth === 0) return true;
     if (!caller.turn) return false;
     return this.inbox.byTurn(caller.turn).some((row) => row.agent === caller.member && row.from === OWNER_ID);
   }
@@ -576,6 +583,7 @@ export class AgentManager {
     const live = this.live.get(id);
     if (!live || live.stopping || live.state !== "running") return;
     this.live.delete(id);
+    this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
     this.rejectWaiters(id, new WordError("failed", `${id} stopped unexpectedly`));
     this.log(`agents: ${id} ended: ${reason ?? "?"}`);

@@ -198,7 +198,7 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-const startSpec = { runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "agents/main" }, tools: { mcp_url: "http://127.0.0.1:1/mcp", token: "t", allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {} };
+const startSpec = { runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "agents/main" }, tools: { mcp_url: "http://127.0.0.1:1/mcp", tokens: { front: "t" }, allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {} };
 
 test("the dsh driver's default argv, through a native body: it is the host's dsh_bin, with DSH_HOME and the host's patch file", async () => {
   const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-dsh-"));

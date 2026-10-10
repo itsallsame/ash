@@ -24,6 +24,8 @@ export interface Agents {
   policyOf(id: string): AgentPolicy | null;
   /** The turn the agent is in now on that lane, or null. A lane never gets another lane's turn. */
   currentTurn(id: string, lane: string): string | null;
+  /** Whether that turn of the agent is still running, on any of its lanes. */
+  turnActive(id: string, turn: string): boolean;
   /** Router rule: a sub-agent speaks to the owner only in a turn where the owner addressed it directly (judged on the caller's own lane's turn). */
   mayTalkToOwner(caller: Caller, word: string): boolean;
   /** Router rule: `service:agents/answer` only from the turn that took the message. */
@@ -53,7 +55,11 @@ export function createAgents({ templatesDir, templates, ...rest }: AgentsOptions
     },
     mayTalkToOwner: (caller, word) => manager.mayTalkToOwner(caller, word),
     mayAnswer: (caller, body) => manager.mayAnswer(caller, body),
-    currentTurn: (id, lane) => manager.liveOf(id)?.lanes.get(lane)?.turn ?? null };
+    currentTurn: (id, lane) => manager.liveOf(id)?.lanes.get(lane)?.turn ?? null,
+    turnActive(id, turn) {
+      for (const lane of manager.liveOf(id)?.lanes.values() ?? []) if (lane.turn === turn) return true;
+      return false;
+    } };
 }
 
 /** The DSH driver's `writeFile`: a file in the main body through `workspace.write` (the hub's own call, not an agent's). */

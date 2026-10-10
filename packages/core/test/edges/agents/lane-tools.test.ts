@@ -35,7 +35,7 @@ async function hub() {
   });
   const tools = createToolsEdge({
     router, registry, ledger, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id, lane) => late.agents?.currentTurn(id, lane) ?? null,
-    fastPathMs: 500, maxWaitMs: 2000, settleMs: 40,
+    turnActive: (id, turn) => late.agents?.turnActive(id, turn) ?? false, fastPathMs: 500, maxWaitMs: 2000, settleMs: 40,
   });
   const server = createServer((req, res) => tools.handler(req, res));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -47,6 +47,7 @@ async function hub() {
     drivers: { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
     templates: { read: (name) => (name === "main" ? MAIN_TEMPLATE : null) },
     tools: (agent, lanes, allowed) => ({ mcp_url: url, tokens: (issued[agent] = tools.issueTokens(agent, lanes)), allowed: allowed ?? [...TOOL_NAMES] }),
+    revokeTools: (agent) => tools.revoke(agent),
     rules: () => "rules",
   });
   const owner = fakeOwner();
@@ -188,4 +189,66 @@ test("an answer to a message is accepted only from the lane's turn that took it"
   assert.equal(borrowed.data.error.code, "forbidden", `the front turn ${front} did not take it`);
   const own = await answer(onBack);
   assert.equal(own.isError, false, own.text);
+});
+
+const rawList = (url: string, token: string) => fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+
+test("a sub-agent that primary.set made the primary agent may speak from its back lane without the owner having addressed it", async () => {
+  const h = await hub();
+  const sub = "agent:helper";
+  const made = await h.router.send({ to: "service:agents", kind: "request", word: "declare", body: { id: sub, name: "helper", summary: "helps", brief: "help", runtime: { kind: "dsh" } } }, { member: M, via: "agent", local: true, turn: "t-made" });
+  assert.equal(made.ok, true);
+  assert.equal(h.agents.manager.run(sub).spec.decl.depth, 1);
+  await settle();
+  const quiet = { member: sub, via: "agent" as const, local: true, turn: "t-x" };
+  assert.equal(h.agents.mayTalkToOwner(quiet, "say"), false, "a sub-agent is held to the owner having addressed it");
+  const set = await h.router.send({ to: "service:agents", kind: "request", word: "primary.set", body: { agent: sub } }, OWNER);
+  assert.equal(set.ok, true, JSON.stringify(set));
+  assert.equal(h.agents.manager.run(sub).spec.decl.depth, 1, "still a depth 1 agent");
+  assert.equal(h.agents.mayTalkToOwner(quiet, "say"), true, "the primary agent is not held to it");
+  // through the real door: its back lane, woken by a timer, speaks
+  const d = h.drivers[0]!;
+  h.agents.manager.enqueue(sub, { id: "w9", from: "service:clock", word: "wake", text: "Wake · pulse", attachments: [], at: Date.now() }, "back");
+  await waitFor(() => d.running.has(`${sub}/back`), "the back turn");
+  const onBack = await h.client(h.issued[sub]!.back!);
+  const said = await call(onBack, "human_say", { text: "proactive" });
+  assert.equal(said.isError, false, said.text);
+  // and the one that is no longer primary is held to it, if it is a sub-agent: main is depth 0, so it is not
+  assert.equal(h.agents.mayTalkToOwner({ member: M, via: "agent", local: true, turn: "t-y" }, "say"), true);
+});
+
+test("the tool tokens stop when the agent is stopped, when it is removed, and when a temporary worker is done", async () => {
+  const h = await hub();
+  // stopped
+  const before = await rawList(h.url, h.issued[M]!.front!);
+  assert.equal(before.status, 200);
+  const stale = { ...h.issued[M]! };
+  await h.agents.manager.stopAgent(M, "test");
+  for (const token of Object.values(stale)) assert.equal((await rawList(h.url, token)).status, 401, "a stopped agent's tokens do not work");
+
+  // removed
+  const sub = "agent:helper";
+  const made = await h.router.send({ to: "service:agents", kind: "request", word: "declare", body: { id: sub, name: "helper", summary: "helps", brief: "help", runtime: { kind: "dsh" } } }, OWNER);
+  assert.equal(made.ok, true, JSON.stringify(made));
+  await settle();
+  const tokens = { ...h.issued[sub]! };
+  assert.equal((await rawList(h.url, tokens.front!)).status, 200);
+  const removed = await h.router.send({ to: "service:agents", kind: "request", word: "remove", body: { agent: sub } }, OWNER);
+  assert.equal(removed.ok, true, JSON.stringify(removed));
+  for (const token of Object.values(tokens)) assert.equal((await rawList(h.url, token)).status, 401, "a removed agent's tokens do not work");
+
+  // a temporary worker: its process ends with the work
+  const spawned = h.router.send({ to: "service:agents", kind: "request", word: "spawn", body: { task: "work", timeout: 30 } }, { member: M, via: "agent", local: true, turn: "t-spawn" });
+  await waitFor(() => Object.keys(h.issued).some((id) => id.startsWith("agent:w-")), "the worker's tokens");
+  const id = Object.keys(h.issued).find((x) => x.startsWith("agent:w-"))!;
+  const workerTokens = { ...h.issued[id]! };
+  assert.deepEqual(Object.keys(workerTokens), ["work"]);
+  assert.equal((await rawList(h.url, workerTokens.work!)).status, 200);
+  const d = h.drivers[0]!;
+  await waitFor(() => d.running.has(`${id}/work`), "the worker's turn");
+  d.say(id, "work", "done");
+  d.finish(id, "work");
+  const result = await spawned;
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal((await rawList(h.url, workerTokens.work!)).status, 401, "a finished worker's token does not work");
 });

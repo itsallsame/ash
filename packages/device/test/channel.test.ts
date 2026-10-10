@@ -38,7 +38,7 @@ function channel(o: { graceMs?: number; offers?: (kind: Kind) => boolean; kinds?
   return { chan, sent, sessions, call, disconnect: () => { connected = false; chan.closed(); }, reconnect: () => { connected = true; chan.opened(); } };
 }
 const spec = (kind: Kind = "codex", over: Frame = {}) => ({
-  runtime: { kind }, tools: { mcp_url: "x", token: "x", allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {}, ...over,
+  runtime: { kind }, tools: { mcp_url: "x", tokens: { front: "x" }, allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {}, ...over,
 });
 const msg = (id: string, text = "hi") => ({ id, from: "person:owner", word: "say", text, lane: "front", at: 1 });
 const events = (sent: Frame[], name?: string) => sent.filter((f) => typeof f.event === "string" && (!name || f.event === name));
