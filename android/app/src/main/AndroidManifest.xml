@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Signature permissions shared with the kernel package (both packages declare both, so whichever is installed first can use them):
+         HAND protects HandService, which the kernel host binds to hand over the link's port and token;
+         KERNEL protects the kernel's own service, which this app starts when the kernel is not running. -->
+    <permission android:name="ai.ash.permission.HAND" android:protectionLevel="signature" />
+    <permission android:name="ai.ash.permission.KERNEL" android:protectionLevel="signature" />
+    <uses-permission android:name="ai.ash.permission.KERNEL" />
+
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -108,7 +115,13 @@
             android:exported="false"
             android:label="Ash 诊断" />
 
-        <!-- Keeps ash core alive and serves the host bridge (the phone's capabilities). -->
+        <!-- The kernel host binds this and calls IHand.attach(port, token, kernelVersion); then the app connects to the kernel's link server. -->
+        <service
+            android:name=".link.HandService"
+            android:exported="true"
+            android:permission="ai.ash.permission.HAND" />
+
+        <!-- Keeps ash core alive. -->
         <service
             android:name=".host.CoreService"
             android:exported="false"

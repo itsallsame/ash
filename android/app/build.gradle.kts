@@ -53,6 +53,14 @@ val copyContainer by tasks.registering(Sync::class) {
     rename("ash-container-.*\\.tar\\.gz", "ash-container.tgz")
 }
 
+// The ash-link/1 frame schemas that packages/sdk generates (npm run gen:link-schema): the app checks every frame against them.
+val linkSchemaDir = rootProject.file("../packages/sdk/schema/link")
+val linkSchemaAssets = layout.buildDirectory.dir("generated/link-schema-assets")
+val copyLinkSchema by tasks.registering(Sync::class) {
+    from(linkSchemaDir) { include("*.json") }
+    into(linkSchemaAssets.map { it.dir("link-schema") })
+}
+
 android {
     namespace = "ai.ash"
     compileSdk = 35
@@ -67,8 +75,6 @@ android {
         versionCode = 12
         versionName = "0.4.0"
         buildConfigField("int", "CORE_PORT", "4700")
-        buildConfigField("int", "HOST_PORT", "4710")
-        buildConfigField("int", "SENSE_PORT", "4700")
         buildConfigField("boolean", "ISOLATED_PROBE", "false")
         buildConfigField("long", "SENSE_RESCAN_MS", "21600000L")
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -94,8 +100,6 @@ android {
             if (providers.gradleProperty("ashIsolatedProbe").orNull == "true") {
                 applicationIdSuffix = ".probe"
                 buildConfigField("int", "CORE_PORT", "14763")
-                buildConfigField("int", "HOST_PORT", "14764")
-                buildConfigField("int", "SENSE_PORT", "14763")
                 buildConfigField("boolean", "ISOLATED_PROBE", "true")
             }
             // Production debug updates must match Claude's last installed/re-signed APK.
@@ -123,9 +127,7 @@ android {
             matchingFallbacks += listOf("debug")
             applicationIdSuffix = ".sensesprobe"
             buildConfigField("int", "CORE_PORT", "4700")
-            buildConfigField("int", "HOST_PORT", "4710")
             buildConfigField("boolean", "ISOLATED_PROBE", "false")
-            buildConfigField("int", "SENSE_PORT", "4870")
             // Isolated emulator probe only; release keeps the six-hour rolling scan.
             buildConfigField("long", "SENSE_RESCAN_MS", "90000L")
         }
@@ -136,8 +138,9 @@ android {
     }
 
     sourceSets["main"].assets.srcDir(payloadAssets)
+    sourceSets["main"].assets.srcDir(linkSchemaAssets)
     sourceSets["main"].assets.srcDir(containerAssets)
-    buildFeatures { buildConfig = true }
+    buildFeatures { buildConfig = true; aidl = true }
 
     androidResources {
         // The payload is extracted with java.util.zip and the container with tar -z: store both,
@@ -155,7 +158,7 @@ android {
     lint { abortOnError = false; checkReleaseBuilds = false }
 }
 
-tasks.named("preBuild") { dependsOn(copyPayload) }
+tasks.named("preBuild") { dependsOn(copyPayload, copyLinkSchema) }
 // Only packaging needs the container (unit tests do not merge assets, so they run without it).
 tasks.matching { it.name.matches(Regex("merge.*Assets")) }.configureEach { dependsOn(copyContainer) }
 // The card cases the core checks too (npm run gen:widget-cards): the phone's tests read them, so they rerun when they change.
@@ -170,6 +173,9 @@ dependencies {
     // 1.1.0-beta01: the last release that builds with compileSdk 35 and this Android Gradle plugin (1.1.0 needs 36 / 8.9.1).
     implementation("androidx.health.connect:connect-client:1.1.0-beta01")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // The WebSocket under ash-link/1.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

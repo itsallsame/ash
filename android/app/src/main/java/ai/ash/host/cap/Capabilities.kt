@@ -2,10 +2,9 @@ package ai.ash.host.cap
 
 import android.content.Context
 import android.util.Log
-import org.json.JSONArray
 import org.json.JSONObject
 
-/** The phone's capability registry: what `GET /manifest` lists and `POST /call` runs. */
+/** The phone's capability registry: what the device channel's manifest lists and its calls run. */
 object Capabilities {
     private const val TAG = "ash.cap"
 
@@ -19,18 +18,20 @@ object Capabilities {
      */
     private fun current(): List<Capability> = all + ai.ash.host.screen.ScreenBridge.tools() + ai.ash.host.senses.SensesBridge.tools()
 
-    fun manifest(ctx: Context): JSONObject {
-        val caps = JSONArray()
+    /**
+     * The capabilities that can work right now, each with Ash's policy for it. Ash sets what a tool may do to the
+     * owner, whoever runs it: a tool Ash has no policy for is not offered. The device channel's manifest is made from this.
+     */
+    fun offered(ctx: Context): List<Pair<Capability, CapabilityPolicy>> {
+        val out = ArrayList<Pair<Capability, CapabilityPolicy>>()
         for (c in current()) {
             val ok = try { c.available(ctx) } catch (e: Throwable) { false }
             if (!ok) continue
-            // Ash sets what a tool may do to the owner, whoever runs it: a helper's tool Ash has no policy for is not offered.
             val policy = runCatching { CapabilityPolicies.require(c.name) }.getOrNull()
             if (policy == null) { Log.w(TAG, "no policy for ${c.name}"); continue }
-            caps.put(JSONObject().put("name", c.name).put("description", c.description).put("input_schema", c.schema)
-                .put("risk", policy.risk).put("effect", policy.effect).put("label", policy.label).apply { if (c.confirm) put("confirm", true) })
+            out.add(c to policy)
         }
-        return JSONObject().put("name", deviceName()).put("kind", "phone").put("capabilities", caps)
+        return out
     }
 
     fun call(ctx: Context, name: String, args: JSONObject): CapResult {
@@ -44,7 +45,7 @@ object Capabilities {
         }
     }
 
-    private fun deviceName(): String {
+    fun deviceName(): String {
         val m = android.os.Build.MODEL ?: "Android"
         val b = android.os.Build.MANUFACTURER ?: ""
         return if (m.startsWith(b, ignoreCase = true)) "手机 · $m" else "手机 · $b $m"

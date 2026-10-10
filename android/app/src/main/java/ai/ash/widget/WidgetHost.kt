@@ -1,5 +1,6 @@
 package ai.ash.widget
 
+import ai.ash.link.HumanSend
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
@@ -16,7 +17,6 @@ import android.os.Looper
 import android.util.Log
 import android.widget.RemoteViews
 import android.widget.Toast
-import ai.ash.host.CoreClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -269,7 +269,9 @@ object WidgetHost {
     /** Same authenticated owner path as notification replies; waits for the core's answer. Call off the main thread. */
     private fun send(ctx: Context, word: String, body: JSONObject, done: (Boolean, String) -> Unit) {
         val result = runCatching {
-            val out = CoreClient(ctx).sendPresentAction(JSONObject().put("to", "service:widgets").put("kind", "request").put("word", word)
+            // TODO(T11b-2): widget.tap is a human channel `send`; until then HumanSend fails.
+            // TODO(T11c): widget.placed and widget.bind are device-channel events (Link.emit), not human sends; they go through HumanSend only until then.
+            val out = HumanSend.send(JSONObject().put("to", "service:widgets").put("kind", "request").put("word", word)
                 .put("body", body).put("wait", true).put("client_id", "widget:${UUID.randomUUID()}"))
             val reply = out.optJSONObject("reply")?.optJSONObject("body")
             (reply?.optBoolean("ok") == true) to (reply?.optJSONObject("error")?.optString("message") ?: "")

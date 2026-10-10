@@ -1,6 +1,6 @@
 package ai.ash.host.senses
 
-import ai.ash.host.CoreClient
+import ai.ash.link.Link
 import ai.ash.host.cap.CapResult
 import ai.ash.host.cap.Capability
 import ai.ash.senses.SenseCapabilities
@@ -18,7 +18,8 @@ import java.util.concurrent.Executors
 /**
  * Ash's face to the senses (location, motion, steps and health, recorded inside this same app). Their tools join the
  * phone's manifest (each needs a policy of Ash's to be offered). The rows they record arrive here in batches and go on
- * to the core as sense.* events, the way the phone's other senses do; a batch is acknowledged only once the core took it.
+ * to the kernel as sense.* device events, the way the phone's other senses do; a batch is acknowledged once the link's
+ * event queue holds it (the queue keeps it until the kernel acks it).
  */
 object SensesBridge {
     private const val TAG = "ash.senses"
@@ -38,7 +39,7 @@ object SensesBridge {
         delivery.execute { deliver(ctx, batch) }
     }
 
-    /** One batch to the core; acknowledged only once the core took it (otherwise it is offered again). */
+    /** One batch into the link's event queue; acknowledged once the queue holds it (otherwise it is offered again). */
     private fun deliver(ctx: Context, raw: String) {
         val event = SensesEvents.parse(raw)
         if (event == null) {
@@ -49,14 +50,14 @@ object SensesBridge {
             return
         }
         try {
-            CoreClient(ctx).sendSense(event.word, event.body, event.id)
+            Link.emit(ctx, event.word, event.body, event.id)
             SenseLink.ack(event.id)
         } catch (e: Exception) {
             Log.w(TAG, "senses batch not delivered yet: ${e.javaClass.simpleName}: ${e.message?.take(80)}")
         }
     }
 
-    /** The core is back: batches it missed are offered again. */
+    /** The kernel is back: batches not acknowledged are offered again. */
     fun pull() { SenseLink.flush(resendAll = true) }
 
     fun status(): JSONObject = app?.let { SenseLink.status(it) } ?: JSONObject()

@@ -69,14 +69,4 @@ class SensesEventsTest {
         assertNull(SensesEvents.parse(batch("sense.location", *tooMany)))
         assertNotNull(SensesEvents.parse(batch("sense.location", *tooMany.copyOf(500).requireNoNulls())))
     }
-
-    @Test fun theTransportAcceptsTheNewWords() {
-        val t = SenseTransport("http://127.0.0.1:1", "t")
-        for (w in SensesEvents.WORDS) {
-            // Refused only by the closed port, not by the word check.
-            val e = runCatching { t.send(w, JSONObject(), "id") }.exceptionOrNull()
-            assertNotNull(e)
-            assert(e !is IllegalArgumentException) { "$w refused: $e" }
-        }
-    }
 }

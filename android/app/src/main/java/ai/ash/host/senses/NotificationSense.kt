@@ -10,7 +10,7 @@ import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import ai.ash.host.CoreClient
+import ai.ash.link.Link
 import org.json.JSONObject
 import java.util.UUID
 
@@ -44,12 +44,15 @@ class NotificationSense : NotificationListenerService() {
                     NotificationSenseSettings.enabled(this),
                     NotificationSenseSettings.granted(this),
                 ) ?: return@submit
-                // No durable queue: revocation must not release old notification content later.
+                // No durable queue: revocation must not release old notification content later. The event goes out only
+                // if the device channel is open right now, and is dropped otherwise.
                 if (!connected || !NotificationSenseSettings.allowed(this)) return@submit
-                CoreClient(this).sendSense(
+                Link.emit(
+                    this,
                     "sense.notification",
                     JSONObject().put("app", item.app).put("title", item.title).put("text", item.text),
                     UUID.randomUUID().toString(),
+                    durable = false,
                 )
             } catch (e: Exception) {
                 Log.w("sense.notification", "delivery unavailable: ${e.javaClass.simpleName}")

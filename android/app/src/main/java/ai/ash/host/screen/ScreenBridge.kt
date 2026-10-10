@@ -33,7 +33,11 @@ object ScreenBridge {
     }
 
     /** The accessibility service came or went, or the island appeared or left. */
-    fun changed() { main.post { TaskStatus.refresh() } }
+    fun changed() {
+        main.post { TaskStatus.refresh() }
+        // The screen tools are offered only while the accessibility service runs: the kernel is told the new manifest.
+        ai.ash.link.Link.manifestChanged()
+    }
 
     // ---- what Ash asks of the screen side ----
 
