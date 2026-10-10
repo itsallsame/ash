@@ -28,7 +28,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
-import ai.ash.host.shizuku.VScreenClient
+import ai.ash.caps.vscreen.VScreenClient
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicInteger
 

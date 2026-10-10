@@ -1,50 +1,13 @@
 package ai.ash.screen
 
-import ai.ash.host.cap.CapResult
 import ai.ash.host.screen.ScreenBridge
-import ai.ash.screen.a11y.A11yService
 import ai.ash.screen.island.NativeIsland
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-
-/**
- * The screen abilities, inside Ash: the accessibility service's tools and the task island. [ScreenBridge] is the face
- * the rest of Ash uses; this is what it calls.
- */
-object ScreenHost {
-    /** The island stays out of a capture of the main screen, and lets the agent's own touches pass under it. */
-    fun run(ctx: Context, name: String, args: JSONObject): CapResult {
-        val c = (ScreenCapabilities.list + ScreenCapabilities.hidden).firstOrNull { it.name == name }
-            ?: return CapResult.fail("the phone has no capability $name")
-        if (!c.available(ctx)) return CapResult.fail("$name is not available right now (the accessibility service is off)")
-        val call = {
-            try { c.run(ctx, args) } catch (e: Throwable) {
-                Log.w("ash.screen", "$name failed", e)
-                CapResult.fail("$name failed: ${e.message ?: e.javaClass.simpleName}")
-            }
-        }
-        return try {
-            when {
-                name in setOf("screen.see", "screen.capture") && args.optInt("display", 0) != 0 -> call()
-                name in setOf("screen.see", "screen.capture") -> NativeIsland.withoutOverlay(call)
-                name !in setOf("screen.read", "screen.touch_status", KeepAliveSwitches.CAPABILITY) -> NativeIsland.withTouchPassthrough(call)
-                else -> call()
-            }
-        } catch (e: IllegalStateException) { CapResult.fail(e.message ?: "owner_input_busy") }
-    }
-
-    /** {foreground_package, epoch}; [settle] first waits for the screen to settle. */
-    fun screenState(settle: Boolean): JSONObject {
-        val service = A11yService.instance
-        if (settle) service?.awaitIdle(250, 1000)
-        return JSONObject().put("foreground_package", service?.foregroundPackage().orEmpty()).put("epoch", A11yService.screenEpoch.get())
-    }
-}
 
 /** Between the island and the rest of Ash: what the island asks of Ash, and what the screen side says when its state changes. */
 internal object ScreenLink : NativeIsland.Ash {

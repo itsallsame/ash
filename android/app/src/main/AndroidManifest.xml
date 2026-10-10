@@ -124,7 +124,7 @@
 
         <!-- Optional special access; app opt-in remains off until the owner enables it locally. -->
         <service
-            android:name=".host.senses.NotificationSense"
+            android:name=".caps.senses.NotificationSense"
             android:exported="false"
             android:label="Ash 通知读取"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
@@ -136,7 +136,7 @@
         <receiver android:name=".host.PresentActionReceiver" android:exported="false" />
         <receiver android:name=".host.TaskStopReceiver" android:exported="false" />
         <receiver android:name=".host.PresentExpiryReceiver" android:exported="false" />
-        <receiver android:name=".host.senses.CalendarAlarmReceiver" android:exported="false" />
+        <receiver android:name=".caps.senses.CalendarAlarmReceiver" android:exported="false" />
 
         <!-- Home-screen widgets: Ash itself, and one card from service:widgets. -->
         <receiver android:name=".widget.AshWidgetProvider" android:exported="true" android:label="Ash">
@@ -175,20 +175,20 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <!-- camera.capture: the system camera, opened for the owner to press the shutter; see-through, outside Ash's task. -->
-        <activity android:name=".host.media.CameraActivity" android:exported="false"
+        <activity android:name=".ui.CameraActivity" android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true"
             android:taskAffinity="ai.ash.camera" android:configChanges="orientation|screenSize|keyboardHidden|uiMode" />
 
         <!-- Where the system camera writes a photo or video Ash asked for (one granted file at a time). -->
         <provider
-            android:name=".host.media.CaptureProvider"
+            android:name=".caps.camera.CaptureProvider"
             android:authorities="${applicationId}.capture"
             android:exported="false"
             android:grantUriPermissions="true" />
 
         <!-- Screen reading and operation for Ash (the owner turns it on in system settings). -->
         <service
-            android:name=".screen.a11y.A11yService"
+            android:name=".caps.screen.A11yService"
             android:exported="false"
             android:label="@string/a11y_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -212,9 +212,16 @@
             android:label="Ash"
             android:taskAffinity="ai.ash.screen.lock" />
 
+        <!-- config.permission.request: shows one permission prompt (or settings page) over whatever is in front. -->
+        <activity
+            android:name=".caps.config.PermissionRequestActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Senses: the owner's page, each permission and source with a button to grant it. -->
         <activity
-            android:name=".senses.SetupActivity"
+            android:name=".caps.senses.SetupActivity"
             android:exported="true"
             android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
             <!-- Health Connect (Android 13 and lower) shows the owner why the app asks. -->
@@ -227,7 +234,7 @@
         <activity-alias
             android:name="ViewPermissionUsageActivity"
             android:exported="true"
-            android:targetActivity=".senses.SetupActivity"
+            android:targetActivity=".caps.senses.SetupActivity"
             android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
@@ -237,14 +244,14 @@
 
         <!-- Runs only while the owner has recording on. -->
         <service
-            android:name=".senses.RecordingService"
+            android:name=".caps.senses.RecordingService"
             android:exported="false"
             android:foregroundServiceType="location|health" />
 
         <!-- The system's scan for the owner's scale delivers here (a PendingIntent of this app's own). -->
-        <receiver android:name=".senses.health.ScaleReceiver" android:exported="false" />
+        <receiver android:name=".caps.senses.health.ScaleReceiver" android:exported="false" />
 
-        <receiver android:name=".senses.AlarmReceiver" android:exported="false">
+        <receiver android:name=".caps.senses.AlarmReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />

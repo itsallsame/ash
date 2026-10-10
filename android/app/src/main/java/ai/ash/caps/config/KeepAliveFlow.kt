@@ -1,0 +1,72 @@
+package ai.ash.caps.config
+
+import ai.ash.caps.screen.KeepAliveSwitches
+import ai.ash.caps.screen.KeepAliveSwitches.Report
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
+import java.util.concurrent.atomic.AtomicBoolean
+import ai.ash.caps.screen.Screen
+
+/**
+ * 「帮我打开」: on ColorOS Ash's accessibility service turns on, in the system's settings, the switches that keep Ash
+ * alive. The owner's tap starts it here — on the keep-alive entry, or on 「确定」 when Ash asks once after an upgrade
+ * (Permissions.recheckAfterUpgrade) — and an agent can ask for the same run through `config.keepalive.fix` (a structural
+ * change, so the kernel's gate asks the owner first). Both run [KeepAliveFix]. Anything short of a clean run falls back
+ * to the written guidance.
+ */
+object KeepAliveFlow {
+    private val running = AtomicBoolean(false)
+    private val main = Handler(Looper.getMainLooper())
+
+    /** The permission entry each app's switches settle. */
+    private val keys = mapOf(KeepAliveSwitches.ASH_PACKAGE to "autostart")
+
+    /** The flow needs Ash's accessibility service on, on a phone whose settings it knows. */
+    fun available(ctx: Context): Boolean = PhoneMaker.current == PhoneMaker.COLOROS && Screen.accessibility()
+
+    /**
+     * Asks the owner, then runs; [guidance] is the old way (written steps), used when this cannot be offered or does not
+     * finish. [why]: a line saying why it is asked now, when Ash brings it up itself (after an upgrade).
+     */
+    fun offer(a: Activity, why: String? = null, guidance: () -> Unit) {
+        if (!available(a)) return guidance()
+        if (running.get()) { Toast.makeText(a, "正在打开中，请稍等", Toast.LENGTH_SHORT).show(); return }
+        AlertDialog.Builder(a).setTitle("帮我打开")
+            .setMessage("${why.orEmpty()}让 Ash 替你打开它的开机自启动、后台自启动和后台行为？已经开着的不会动。期间请不要操作手机。")
+            .setPositiveButton("确定") { _, _ -> start(a, guidance) }
+            .setNegativeButton("取消", null).show()
+    }
+
+    private fun start(a: Activity, guidance: () -> Unit) {
+        if (!running.compareAndSet(false, true)) return
+        val ctx = a.applicationContext
+        val asked = KeepAliveFix.targets(ctx, emptyList())
+        Thread({
+            val report = try { run(ctx, asked) } finally { running.set(false) }
+            main.post { finish(a, asked, report, guidance) }
+        }, "ash-keepalive-switches").start()
+    }
+
+    /** The run's report; null when it could not run (the accessibility service is off, or another run is going). */
+    private fun run(ctx: Context, asked: List<KeepAliveSwitches.Target>): Report? = runCatching { KeepAliveFix.run(ctx, asked) }.getOrNull()
+
+    private fun finish(a: Activity, asked: List<KeepAliveSwitches.Target>, report: Report?, guidance: () -> Unit) {
+        if (report == null || report.outcome == KeepAliveSwitches.Outcome.UNSUPPORTED) {
+            Toast.makeText(a, "没能代你打开，请按提示自己打开", Toast.LENGTH_LONG).show()
+            return guidance()
+        }
+        // Only a switch seen on again counts as done.
+        for (t in asked) if (report.verified(t.pkg)) keys[t.pkg]?.let { Permissions.confirm(a.applicationContext, it) }
+        val all = asked.all { report.verified(it.pkg) }
+        val text = report.summary(asked)
+        if (a.isFinishing || a.isDestroyed) return run { Toast.makeText(a.applicationContext, text, Toast.LENGTH_LONG).show() }
+        AlertDialog.Builder(a).setTitle(if (all) "都打开了" else "没有全部打开").setMessage(text)
+            .setPositiveButton("好的", null)
+            .apply { if (!all) setNeutralButton("自己去开") { _, _ -> guidance() } }
+            .show()
+    }
+}

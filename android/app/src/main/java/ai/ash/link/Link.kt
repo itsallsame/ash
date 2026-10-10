@@ -1,13 +1,15 @@
 package ai.ash.link
 
 import ai.ash.BuildConfig
-import ai.ash.host.cap.Capabilities
+import ai.ash.caps.Capabilities
 import android.content.Context
 import android.os.Build
 import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import ai.ash.caps.DeviceCalls
+import ai.ash.caps.Manifest
 
 /**
  * The app's one connection to the kernel (SPEC-05 §4): the process-wide [LinkClient], with the phone's identity, event
@@ -79,11 +81,11 @@ object Link {
 
         /** Tells the client the manifest when the capabilities that work now are not the ones it holds. */
         @Synchronized private fun refresh() {
-            val capabilities = DeviceManifest.capabilities(ctx)
+            val capabilities = Manifest.capabilities(ctx)
             val key = capabilities.joinToString("\n") { it.toString() }
             if (key == lastManifest) return
             lastManifest = key
-            client.setManifest(capabilities, DeviceManifest.EVENTS)
+            client.setManifest(capabilities, Manifest.events)
         }
     }
 }

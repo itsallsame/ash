@@ -35,9 +35,9 @@ import ai.ash.R
 import ai.ash.BuildConfig
 import ai.ash.host.HandRuntime
 import ai.ash.host.KernelLauncher
-import ai.ash.host.Permissions
+import ai.ash.caps.config.Permissions
 import ai.ash.link.Link
-import ai.ash.host.media.CaptureProvider
+import ai.ash.caps.camera.CaptureProvider
 import ai.ash.ui.transport.CoreCancellation
 import ai.ash.ui.transport.CoreUiRequest
 import ai.ash.ui.transport.FixedCoreClient
@@ -291,7 +291,7 @@ class HomeActivity : Activity() {
         if (!Regex("[1-9][0-9]{0,11}").matches(id) || input.optString("operation") != "clear") return
         val epoch = pageEpoch
         Thread {
-            val ok = ai.ash.host.browser.BrowserSession.clearLogins(applicationContext)
+            val ok = ai.ash.caps.browser.BrowserSession.clearLogins(applicationContext)
             runOnUiThread { if (pageEpoch == epoch) reply.postMessage(JSONObject().put("type", "browser_logins_result").put("id", id).put("ok", ok).toString()) }
         }.start()
     }

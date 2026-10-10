@@ -1,8 +1,8 @@
 package ai.ash.host
 
 import ai.ash.BuildConfig
-import ai.ash.host.senses.CalendarSense
-import ai.ash.host.senses.DeviceSense
+import ai.ash.caps.senses.CalendarSense
+import ai.ash.caps.senses.DeviceSense
 import android.content.Context
 
 /**

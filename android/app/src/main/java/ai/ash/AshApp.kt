@@ -3,6 +3,7 @@ package ai.ash
 import android.app.Application
 import android.os.Build
 import android.webkit.WebView
+import ai.ash.caps.config.ConfigWatch
 import ai.ash.host.Notifications
 
 class AshApp : Application() {
@@ -15,6 +16,7 @@ class AshApp : Application() {
             return
         }
         Notifications.createChannels(this)
+        ConfigWatch.install(this)
         ai.ash.host.HandRuntime.start(this)
     }
 }
