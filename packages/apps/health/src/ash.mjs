@@ -32,6 +32,8 @@ export function ashClient(url, token) {
   };
   return {
     call: (member, word, body) => tool("capability_call", { member, word, body }),
+    /** The members this app may use and the words it may call on each (capability_list). */
+    members: async () => (await tool("capability_list", {}))?.members ?? [],
     event: (name, body) => tool("ash_event", { name, body }),
   };
 }
