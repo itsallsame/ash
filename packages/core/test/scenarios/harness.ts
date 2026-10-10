@@ -60,7 +60,7 @@ export const textOf = (m: { body: unknown }): string => {
 
 /** Predicates over ledger messages (what a person's `sync` shows). */
 export const sentBy = (from: string, word?: string) => (m: Message): boolean => m.from === from && (word === undefined || m.word === word);
-export const toOwner = (word: string, from?: string) => (m: Message): boolean => m.to === OWNER && m.word === word && (from === undefined || m.from === from);
+export const toOwner = (word: string, from?: string) => (m: Message): boolean => m.kind !== "response" && m.to === OWNER && m.word === word && (from === undefined || m.from === from);
 /** The approval card: the gate asks the owner. */
 export const isApprovalAsk = (m: Message): boolean => m.kind === "request" && m.from === GATE && m.to === OWNER && m.word === "ask";
 

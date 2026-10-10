@@ -30,13 +30,13 @@ import { Devices } from "./edges/link-server/hands/devices";
 import { createBodies, splitBodyCapabilities } from "./edges/link-server/hands/bodies";
 import { HandRegistry } from "./edges/link-server/hands/registry";
 import { createHuman, summaryRequest } from "./edges/link-server/human";
-import { createToolsEdge, toolWords } from "./edges/tools";
+import { createToolsEdge, TOOL_NAMES, toolWords } from "./edges/tools";
 import { createGate, GateStore } from "./kernel/gate";
 import { Ledger } from "./kernel/ledger";
 import { createRedact } from "./kernel/redact";
 import { createRegistry } from "./kernel/registry";
 import { createRouter } from "./kernel/router";
-import { openVault, parseSealKey } from "./kernel/vault";
+import { openVault } from "./kernel/vault";
 import type { Vault } from "./kernel/types";
 import { createAdminService } from "./services/admin";
 import { createBlobsService } from "./services/blobs";
@@ -122,11 +122,11 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const { spec, secrets } = booted.boot;
   const host = new HostClient({ endpoint: spec.endpoint, token: secrets.token, capabilities: spec.capabilities });
 
-  // 2. ledger  3. vault (no seal key, no vault: nothing is stored unsealed)
+  // 2. ledger  3. vault (the host boot has already refused a start without the seal key: nothing is stored unsealed)
   mkdirSync(opts.dataDir, { recursive: true });
   const ledger = Ledger.open(join(opts.dataDir, "ash.db"));
-  let vault: Vault | null = null;
-  try { vault = openVault({ file: join(opts.dataDir, "vault.json"), sealKey: parseSealKey(secrets.sealKey.toString("base64url")), now }); } catch (error) { ledger.close(); throw error; }
+  let vault: Vault;
+  try { vault = openVault({ file: join(opts.dataDir, "vault.json"), sealKey: secrets.sealKey, now }); } catch (error) { ledger.close(); throw error; }
 
   // 4. kernel
   const registry = createRegistry();
@@ -155,7 +155,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   // 5. services
   const llmBase = opts.llm?.baseUrl.replace(/\/+$/, "");
   const llm = createLlm({
-    key: (ref) => vault?.use(ref) ?? null,
+    key: (ref) => vault.use(ref),
     report: (usage) => void router.send({ to: "service:cost", kind: "event", word: "usage.recorded", body: usage }, service("service:cost"))
       .then((reply) => { if (!reply.ok) log(`usage.recorded: ${reply.error.code}`); }, (error) => log("usage.recorded failed", error)),
     ...(llmBase ? {
@@ -176,7 +176,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const admin = createAdminService({ ledger, router, registry, version: hubVersion(), now, startedAt });
   const widgets = createWidgetsService({ ledger, router, now });
   const directory = createDirectoryService({ registry, agentPolicy, toolWords, appGranted: (app, member, word) => late.apps!.runtime.granted(app, member, word) });
-  const vaultService = vault ? createVaultService({ vault, ledger, router }) : null;
+  const vaultService = createVaultService({ vault, ledger, router });
 
   // 6. edges
   const isolation = spec.isolation;
@@ -217,17 +217,17 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     ...opts.drivers,
   };
   const agents = late.agents = createAgents({
-    router, registry, ledger, vault: { use: (ref) => vault?.use(ref) ?? null }, drivers, now, log,
+    router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
     templates: fileTemplates(SKILLS_AGENTS),
-    tools: (agent, allowed) => ({ mcp_url: `${url}/mcp`, token: tools.issueToken(agent), allowed: allowed ?? [] }),
+    tools: (agent, allowed) => ({ mcp_url: `${url}/mcp`, token: tools.issueToken(agent), allowed: allowed ?? [...TOOL_NAMES] }),
   });
-  const launcher: AppLauncher = isolation.kind === "native" ? hostLauncher(join(isolation.native.workspace, "apps")) : isolation.kind === "proot" ? {
+  const launcher: AppLauncher | null = isolation.kind === "native" ? hostLauncher(join(isolation.native.workspace, "apps")) : isolation.kind === "proot" ? {
     root: join(isolation.proot.rootfs, "root", "apps"), agentRoot: "/root/apps",
     spawn: (app, dir, env) => {
       const run = prootCommand(isolation.proot, [app.server.command, ...(app.server.args ?? [])], { workdir: `/root/apps/${dir.split("/").pop()}`, env: { ...(app.server.env ?? {}), ...env } });
       return { command: run.command, args: run.args, env: run.env };
     },
-  } : null as never;
+  } : null;
   const apps = late.apps = createApps({ router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log });
   const llmService = createLlmService(llm);
   const settings = (): Record<string, unknown> => Object.fromEntries(
@@ -241,7 +241,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
 
   // 7. everybody into the registry
   for (const member of [
-    blobs, gateService, clock, senses, cost, reflex, history, admin, widgets, directory, ...(vaultService ? [vaultService] : []),
+    blobs, gateService, clock, senses, cost, reflex, history, admin, widgets, directory, vaultService,
     body, devices, bodies, human.member, agents.service, apps.service, llmService, hostMember(host),
   ]) registry.add(member);
 
@@ -281,7 +281,10 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   }
 
   events = readHostEvents(opts.stdin ?? process.stdin, async (event: HostEvent) => {
-    const send = (to: string, word: string, body: object) => router.send({ to, kind: "event", word, body }, service(to));
+    const send = async (to: string, word: string, body: object) => {
+      const reply = await router.send({ to, kind: "event", word, body }, service("service:host"));
+      if (!reply.ok) log(`${word} to ${to}: ${reply.error.code}: ${reply.error.message}`);
+    };
     switch (event.event) {
       case "wake.fired": await send("service:clock", "wake.fired", { at: event.at }); return;
       case "env.changed": { const { event: _name, ...rest } = event; await send("service:agents", "env.changed", rest); return; }

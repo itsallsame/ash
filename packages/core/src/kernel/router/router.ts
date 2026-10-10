@@ -8,7 +8,7 @@
  * is answered in step 4, after authorization. Events go through 1 to 4 and 6, never the gate.
  */
 import { randomBytes } from "node:crypto";
-import { idKind, isAgentId, isMemberId } from "../../../../sdk/src/ids";
+import { idKind, isAgentId, isMemberId, OWNER_ID } from "../../../../sdk/src/ids";
 import { CALLER_VIAS, errorBody, WordError, type ErrorBody, type Outgoing, type Reply } from "../../../../sdk/src/message";
 import { compileSchema, WORD_NAME_PATTERN, type Member, type WordContract } from "../../../../sdk/src/word";
 import { DEFAULT_TTL_MINUTES, type GateStore, type PendingRecord } from "../gate";
@@ -55,7 +55,9 @@ function validate(msg: Outgoing, caller: Caller): ErrorBody | null {
   if (!caller || typeof caller !== "object" || !(CALLER_VIAS as readonly string[]).includes(caller.via) || typeof caller.local !== "boolean") return errorBody("unauthorized", "the caller is not valid");
   const kind = idKind(caller.member);
   const wanted = { human: "person", agent: "agent", hand: "device", app: "app", service: "service" }[caller.via];
-  if (kind !== wanted) return errorBody("unauthorized", `${String(caller.member)} cannot call as ${caller.via}`);
+  // The human edge acts as the owner without a channel (the owner's events, reading the widget state): the hub's own code, not the owner speaking.
+  const asOwnerService = caller.via === "service" && caller.member === OWNER_ID;
+  if (kind !== wanted && !asOwnerService) return errorBody("unauthorized", `${String(caller.member)} cannot call as ${caller.via}`);
   return null;
 }
 

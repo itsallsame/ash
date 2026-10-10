@@ -319,7 +319,7 @@ add("person:owner", "open", "request", obj({ target: choice("activity", "upcomin
 add("agent:*", "say", "request", { type: "object", properties: {
     text: { type: "string" }, attachments: { type: "array", items: attachmentInput, minItems: 1 }, in_reply_to: id, option_id: id,
   }, additionalProperties: false, dependentRequired: { in_reply_to: ["option_id"], option_id: ["in_reply_to"] },
-  anyOf: [{ required: ["text"], properties: { text: { type: "string", minLength: 1 } } }, { required: ["attachments"], properties: { attachments: { type: "array", minItems: 1 } } }] }, accepted,
+  anyOf: [{ required: ["text"], properties: { text: { type: "string", minLength: 1 } } }, { required: ["attachments"], properties: { attachments: { type: "array", minItems: 1 } } }, { required: ["in_reply_to", "option_id"], properties: { in_reply_to: id, option_id: id } }] }, accepted,
   { callers: OWNER, effect: "act", label: "在读你的消息", description: "The owner speaks to the agent, or answers an option card (in_reply_to and option_id together). Acknowledged at once and queued on the front lane; the agent's answer arrives later as a message." });
 add("agent:*", "tell", "request", obj({ text: nonempty, attachments: array(attachmentInput) }, ["text"]), accepted,
   { effect: "act", label: "在告诉帮手", description: "Tell the agent something. It joins the agent's back lane and the agent decides what to do with it; there is no direct answer to the sender." });
@@ -541,6 +541,10 @@ add("service:host", "wake.clear", "request", empty, empty, { callers: KERNEL, ef
 add("service:host", "power.hold", "request", obj({ ms: { type: "integer", minimum: 1, maximum: 600000 }, reason: nonempty }, ["ms", "reason"]), empty,
   { callers: KERNEL, effect: "act", label: "在保持唤醒", description: "Keep the device awake for a while (at most 10 minutes) for a stated reason; released by itself when the time is up." });
 add("service:host", "power.release", "request", empty, empty, { callers: KERNEL, effect: "act", label: "在放开唤醒锁", description: "Release the wake lock before its time is up." });
+add("service:host", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]), undefined,
+  { callers: KERNEL, direction: "out", label: "在转达唤醒闹钟", description: "The host's alarm went off (the device woke): the host module passes it on to service:clock." });
+add("service:host", "env.changed", "event", ENV_CHANGED, undefined,
+  { callers: KERNEL, direction: "out", label: "在转达环境变化", description: "The network or the power state changed: the host module passes it on to service:agents (and service:link once it exists)." });
 add("service:host", "hands.handoff", "request", obj({ port: { type: "integer", minimum: 1, maximum: 65535 }, token: secret({ type: "string", minLength: 1 }) }, ["port", "token"]), obj({ delivered: strings }, ["delivered"]),
   { callers: KERNEL, effect: "act", label: "在交接本机的手", description: "Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down." });
 add("service:host", "update.install", "request", obj({ version: nonempty, url: nonempty, sha256: sha }, ["version", "url", "sha256"]), empty,
@@ -644,7 +648,7 @@ add("service:widgets", "widget.action", "event", obj({ card: widgetCardId, actio
     "On an app's card (owner app:<id>) the tap goes to the app's own action tool, which changes the app's data; otherwise the tap itself does nothing else." });
 add("person:owner", "widget.preview", "request", obj({ card: nonempty, size: choice("2x2", "4x2", "4x4") }, ["card"]), obj({}, [], true),
   { callers: KERNEL, effect: "read", label: "在画卡片预览", description: "Ask a channel that shows widgets to draw a card and return the picture (an image part), for service:widgets." });
-add("person:owner", "widget.state", "event", obj({}, [], true), undefined,
+add("service:widgets", "widget.state", "event", obj({}, [], true), undefined,
   { callers: KERNEL, direction: "out", label: "在更新桌面卡片", description: "The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list." });
 add("service:widgets", "widget.problem", "event", obj({ card: widgetCardId, owner: id, title: str, problem: nonempty }, ["card", "owner", "problem"]), undefined,
   { direction: "out", label: "在转达卡片画不出来", description: "The phone could not fully draw a home-screen card (problem says what and why); the card's creator should fix it." });
