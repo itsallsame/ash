@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { failureCause } from "../../../src/edges/agents/failure";
-import { KEY_SYNC_TIMEOUT_MS } from "../../../src/edges/agents/manager";
+import { KEY_SYNC_TIMEOUT_MS, RETRY_STEPS_MS } from "../../../src/edges/agents/manager";
 import { caller, fixture, settle, waitFor, type FakeDriver } from "./helpers";
 
 const M = "agent:main";
@@ -200,7 +200,77 @@ test("a key saved while the agent is still starting is written over the one the 
   await f.agents.manager.onVaultChanged(KEY, "saved"); // nothing is running yet to hand it to
   start.open();
   await waitFor(() => f.agents.manager.stateOf(M) === "idle");
+  await f.call(M, "say", { text: "hi" });
+  await waitFor(() => d.of("send").length === 1);
   assert.equal(d.credentials.get(KEY), "sk-right");
+  assert.ok(d.calls.map((c) => c[0]).lastIndexOf("credentialsSet") < d.calls.findIndex((c) => c[0] === "send"), "the key went in before the turn");
+});
+
+test("a key saved while the agent waits for its next start try is in the runtime before its first turn on the new process", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-wrong" } });
+  f.agents.manager.driver("dsh");
+  const d = f.drivers[0]!;
+  d.credentials.set(KEY, "sk-wrong");
+  d.startFailures = 1;
+  void f.agents.startAll();
+  await waitFor(() => f.agents.manager.stateOf(M) === "starting" && f.waiting(RETRY_STEPS_MS[0]).length === 1, "waiting for the next try");
+  f.secrets[KEY] = "sk-right";
+  await f.agents.manager.onVaultChanged(KEY, "saved"); // nothing runs: nothing to hand it to
+  assert.ok(f.fire(RETRY_STEPS_MS[0]!));
+  await waitFor(() => f.agents.manager.stateOf(M) === "idle");
+  await f.call(M, "say", { text: "hi" });
+  await waitFor(() => d.of("send").length === 1);
+  assert.equal(d.credentials.get(KEY), "sk-right");
+  assert.ok(d.calls.map((c) => c[0]).lastIndexOf("credentialsSet") < d.calls.findIndex((c) => c[0] === "send"), "the key went in before the first turn");
+});
+
+test("a key saved in the gap between the start's key sync and the agent being up is written before its first turn", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-old" } });
+  f.agents.manager.driver("dsh");
+  const d = f.drivers[0]!;
+  d.credentials.set(KEY, "sk-old");
+  const has = d.credentialsHas.bind(d);
+  let once = true;
+  d.credentialsHas = async (agent: string, ref: string) => {
+    const had = await has(agent, ref);
+    if (once) { once = false; f.secrets[KEY] = "sk-newer"; void f.agents.manager.onVaultChanged(KEY, "saved"); } // the agent is not up yet
+    return had;
+  };
+  await f.start();
+  await waitFor(() => f.agents.manager.stateOf(M) === "idle");
+  await f.call(M, "say", { text: "hi" });
+  await waitFor(() => d.of("send").length === 1);
+  assert.equal(d.credentials.get(KEY), "sk-newer");
+  assert.ok(d.calls.map((c) => c[0]).lastIndexOf("credentialsSet") < d.calls.findIndex((c) => c[0] === "send"));
+});
+
+test("an old write that lands after its timeout puts the old key back; the next turn writes the latest over it", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-v1" } });
+  await f.start();
+  const d = f.driver();
+  const late = gate();
+  let first = true;
+  d.credentialsSet = async (agent: string, ref: string, value: string) => {
+    d.calls.push(["credentialsSet", agent, ref]);
+    if (first) { first = false; await late.promise; }
+    d.credentials.set(ref, value);
+  };
+  f.secrets[KEY] = "sk-v2";
+  const one = f.service("vault.changed", { ref: KEY, action: "saved" }, vault); // hangs on the runtime
+  await settle();
+  assert.ok(f.fire(KEY_SYNC_TIMEOUT_MS));
+  await one;
+  f.secrets[KEY] = "sk-v3";
+  await f.service("vault.changed", { ref: KEY, action: "saved" }, vault);
+  assert.equal(d.credentials.get(KEY), "sk-v3");
+  late.open(); // the first write lands now, with the key it began with
+  await settle();
+  assert.equal(d.credentials.get(KEY), "sk-v2");
+
+  await f.call(M, "say", { text: "hi" });
+  await waitFor(() => d.of("send").length === 1);
+  assert.equal(d.credentials.get(KEY), "sk-v3", "corrected before the turn");
+  assert.ok(d.calls.map((c) => c[0]).lastIndexOf("credentialsSet") < d.calls.findIndex((c) => c[0] === "send"));
 });
 
 test("a lane that cannot be ended tells those who asked in its turn: result_unknown, not a wait for the router's timeout", async () => {

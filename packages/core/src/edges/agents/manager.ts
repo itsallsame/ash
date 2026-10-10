@@ -91,6 +91,8 @@ export const retryDelay = (failures: number): number => RETRY_STEPS_MS[Math.min(
 export const TROUBLE_NOTICE_AT = 4;
 /** A start that has not finished by then counts as failed (the runtime hung). Under the host's own five minutes for a core to say it is ready. */
 export const START_TIMEOUT_MS = 180_000;
+/** Before a turn opens, the keys are written again while the owner keeps saving new ones, at most this many times. */
+const KEY_SYNC_TRIES = 3;
 /** A runtime that has not taken a key by then is let go of (the answer is lost, not the turns of every agent behind it). */
 export const KEY_SYNC_TIMEOUT_MS = 15_000;
 /** A temporary worker is tried this many times at once and is not waited for: its asker is waiting. */
@@ -151,6 +153,10 @@ interface Slot {
   gaveUp: boolean;
   /** Names the reason in the notice an interrupted turn leaves. */
   why: string;
+  /** The `keySaves` that stood when the last key write to this agent's runtime was started and landed (none: nothing was saved at boot, the runtime keeps its own). Kept across restarts: the runtime keeps the keys. */
+  keysSeen?: number;
+  /** The `keySaves` for which a key write failed or timed out: the turn that finds this goes on without trying again at once (the next one does). */
+  keysGaveUp?: number;
   /** The proxy the attempt began with. */
   proxy: string;
   /** Ends the wait of `backoff`. */
@@ -420,17 +426,14 @@ export class AgentManager {
     try {
       statics = await this.modules.static(decl);
       if (!current()) return; // voided while the files were read: no process exists yet
-      const saved = this.keySaves; // keys saved from here on, while the process comes up, are written over
+      const baseline = this.keySaves; // keys saved from here on are not in what the start writes
       await this.within(START_TIMEOUT_MS, `${id} did not finish starting`, (async () => {
         await live.driver.start(id, {
           runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, Object.keys(lanes), decl.tools),
           modules: { static: statics }, lanes: Object.keys(lanes), sessions: run.spec.sessions,
         });
-        if (!current()) return;
-        // A key saved while the process was coming up is missed by `onVaultChanged` (only running agents): write it over, not just the missing ones.
-        let seen = saved;
-        await this.syncCredentials(live);
-        while (current() && this.keySaves !== seen) { seen = this.keySaves; await this.syncCredentials(live, undefined, true); }
+        // The runtime keeps its own keys: a key it has is left alone, unless the owner saved one since this agent last took keys.
+        if (current()) await this.syncKeys(live, (slot.keysSeen ?? 0) !== baseline, baseline);
       })());
     } catch (error) {
       if (!current()) return; // voided while it started: the one that voided it has stopped the process
@@ -656,7 +659,7 @@ export class AgentManager {
     let sent = false;
     try {
       if (!(await this.quotaAllows(live, lane))) return;
-      await this.keySync.get(live.id); // a key the owner has just saved is written first, or this turn would meet the old one
+      await this.ensureKeys(live); // a key the owner has saved is in the runtime first, or this turn would meet the old one
       if (lane.busy || !this.isUp(live) || this.paused) return; // (the owner may have paused meanwhile)
       await this.inject(live, lane);
       const screen = await this.screenPlan(live, lane, rows);
@@ -969,34 +972,72 @@ export class AgentManager {
   // ----------------------------------------------------------------------------------------------------------------
 
   /**
-   * Give the runtime the keys. At start it keeps and reads its own, so a key it already has is left alone; `force` (the owner
-   * has just saved this key) writes it over whatever the runtime holds, for a key that was wrong is made right that way.
+   * Give the runtime the keys; true when every one that was to go in is in (a failed write is logged, the next turn tries again).
+   * A key the runtime has is left alone unless `force`: the owner has saved one, which wins over whatever the runtime holds.
    */
-  async syncCredentials(live: Live, refs = this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS, force = false): Promise<void> {
+  async syncCredentials(live: Live, refs = this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS, force = false): Promise<boolean> {
     const driver = live.driver;
-    if (!driver.credentialsHas || !driver.credentialsSet) return;
+    if (!driver.credentialsHas || !driver.credentialsSet) return true;
+    let all = true;
     for (const ref of refs) {
       const value = this.deps.vault.use(ref);
       if (!value) continue;
       try {
         if (force || !(await driver.credentialsHas(live.id, ref))) await driver.credentialsSet(live.id, ref, value);
-      } catch (error) { this.log(`agents: credential ${ref} for ${live.id}: ${(error as { code?: string }).code ?? "failed"}`); }
+      } catch (error) { all = false; this.log(`agents: credential ${ref} for ${live.id}: ${(error as { code?: string }).code ?? "failed"}`); }
+    }
+    return all;
+  }
+
+  /**
+   * One key write to the agent's runtime, after the ones before it (they follow each other). It lets go after KEY_SYNC_TIMEOUT_MS
+   * when the runtime does not answer, and says whether it landed in time. What the slot learns from it is `keysSeen`, the count
+   * that stood when the write began, and only when it landed: a write that lands late still records its own, older count, and
+   * `ensureKeys` writes the newer keys over it before the next turn.
+   */
+  private syncKeys(live: Live, force: boolean, at?: number): Promise<boolean> {
+    const slot = this.slots.get(live.id);
+    const land = async (): Promise<boolean> => {
+      const seen = at ?? this.keySaves;
+      const ok = await this.syncCredentials(live, undefined, force);
+      if (ok && slot && slot.live === live) slot.keysSeen = seen;
+      return ok;
+    };
+    const work = (this.keySync.get(live.id) ?? Promise.resolve()).then(async () => {
+      const ok = await this.within(KEY_SYNC_TIMEOUT_MS, `${live.id} did not take the key`, land()).catch((error) => { this.log(`agents: keys for ${live.id}: ${errorText(error)}`); return false; });
+      if (!ok && slot) slot.keysGaveUp = this.keySaves;
+      return ok;
+    });
+    const tail = work.then(() => {});
+    this.keySync.set(live.id, tail);
+    return work.finally(() => { if (this.keySync.get(live.id) === tail) this.keySync.delete(live.id); });
+  }
+
+  /**
+   * Before a turn opens: wait for the key writes on their way, then, if the owner has saved a key since the last one that landed,
+   * write the latest (and again when more were saved meanwhile, a few times at most). This is the one place the keys' being in
+   * time depends on; `onVaultChanged` only makes them arrive early.
+   */
+  private async ensureKeys(live: Live): Promise<void> {
+    const slot = this.slots.get(live.id);
+    if (!slot) return;
+    for (let tries = 0; ; tries++) {
+      await this.keySync.get(live.id);
+      if ((slot.keysSeen ?? 0) === this.keySaves || !this.isUp(live)) return;
+      if (slot.keysGaveUp === this.keySaves) { slot.keysGaveUp = undefined; return; }
+      if (tries >= KEY_SYNC_TRIES) { this.log(`agents: ${live.id} still lacks the latest keys after ${KEY_SYNC_TRIES} tries; the turn goes on`); return; }
+      if (!(await this.syncKeys(live, true))) return; // it did not take them in time: the next turn tries again
     }
   }
 
   async onVaultChanged(ref: string, action: string): Promise<void> {
     // Only the keys a runtime may hold for itself; the vault keeps others (gateway, cloud) to itself.
     if (action !== "saved" || !(this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS).includes(ref)) return;
-    // Set before the first await: the owner's words or a wake that comes right after the save (from another service, in the
-    // same breath) find the key being written and wait for it (see `drain`). Writes follow each other.
+    // Counted before the first await, and the writes queued right away: a turn that is opened in the same breath (a wake from
+    // another service) finds them on the way and waits (see `ensureKeys`). A running agent gets the key at once; any other
+    // gets it when it starts or before its next turn.
     this.keySaves++;
-    const works = this.ups().map((live) => {
-      const work = (this.keySync.get(live.id) ?? Promise.resolve()).then(() =>
-        this.within(KEY_SYNC_TIMEOUT_MS, `${live.id} did not take the key`, this.syncCredentials(live, [ref], true)).catch((error) => this.log(`agents: credential ${ref} for ${live.id}: ${errorText(error)}`)));
-      this.keySync.set(live.id, work);
-      return work.finally(() => { if (this.keySync.get(live.id) === work) this.keySync.delete(live.id); });
-    });
-    await Promise.all(works);
+    await Promise.all(this.ups().map((live) => this.syncKeys(live, true)));
   }
 
   // ----------------------------------------------------------------------------------------------------------------
