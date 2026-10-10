@@ -4,30 +4,44 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAIN, OWNER, accepted, bodyOf, byOwnerText, quiet, startScenario, textOf, toOwner, dataOf } from "./harness";
+import { MAIN, OWNER, accepted, bodyOf, byOwnerText, startScenario, textOf, toOwner, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
+/*
+ * These tests move the hub's clock (`fakeNow`) and play the host's `wake.fired` instead of waiting for a real second to
+ * pass. A timer set for "now + 400 ms" on the real clock is refused ("at is in the past") when the machine is loaded
+ * and the set reaches the clock more than 400 ms later (seen: 640 ms), and then nothing fires and the test waits for
+ * the bound. The clock itself is exact: its in-process timeout is covered with an injected timer in
+ * `test/services/clock/clock.test.ts`.
+ */
+
 test("S082: a reminder the owner sets for themselves arrives as a message to the owner at the time", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { fakeNow: true });
   const owner = await s.human();
 
-  const set = await owner.call("service:clock", "set", { at: Date.now() + 400, to: OWNER, word: "say", body: { text: "该喝水了", kind: "due" }, label: "喝水" });
+  const set = await owner.call("service:clock", "set", { at: s.clock.t + 400, to: OWNER, word: "say", body: { text: "该喝水了", kind: "due" }, label: "喝水" });
 
   assert.ok(set.ok, "the timer is accepted");
+  s.advance(401);
+  s.hostEvent({ event: "wake.fired", at: s.clock.t });
   const reminder = await owner.seen((m) => toOwner("say")(m) && textOf(m) === "该喝水了", "the reminder");
   assert.equal(textOf(reminder), "该喝水了");
 });
 
 test("S083, agent 9: an agent sets a timer that wakes it later; the wake comes on its back lane", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { fakeNow: true });
   s.driver.script(byOwnerText({
     "过一会叫我": async (turn) => {
-      await turn.tool("timer_set", { at: Date.now() + 400, to: MAIN, word: "wake", body: { reason: "timer", context: { note: "喝茶" } }, label: "喝茶" });
+      await turn.tool("timer_set", { at: s.clock.t + 400, to: MAIN, word: "wake", body: { reason: "timer", context: { note: "喝茶" } }, label: "喝茶" });
     },
   }));
   const owner = await s.human();
 
   accepted(await owner.say("过一会叫我"));
+
+  await eventually(async () => JSON.stringify(dataOf(await owner.call("service:clock", "list"))).includes("喝茶"), "the agent's timer is stored");
+  s.advance(401);
+  s.hostEvent({ event: "wake.fired", at: s.clock.t });
 
   const { message } = await s.driver.delivery((m) => m.word === "wake", "the timer waking the agent");
   assert.equal(message.lane, "back");
@@ -37,9 +51,9 @@ test("S083, agent 9: an agent sets a timer that wakes it later; the wake comes o
 });
 
 test("S084: a timer is listed and can be cancelled; a cancelled timer does not fire", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { fakeNow: true });
   const owner = await s.human();
-  const set = await owner.call("service:clock", "set", { at: Date.now() + 600, to: OWNER, word: "say", body: { text: "不该出现" }, label: "取消我" });
+  const set = await owner.call("service:clock", "set", { at: s.clock.t + 600, to: OWNER, word: "say", body: { text: "不该出现" }, label: "取消我" });
   assert.ok(set.ok);
   const id = (dataOf(set) as { id: string }).id;
 
@@ -48,7 +62,11 @@ test("S084: a timer is listed and can be cancelled; a cancelled timer does not f
   const cancelled = await owner.call("service:clock", "cancel", { id });
   assert.deepEqual(dataOf(cancelled), { cancelled: true });
 
-  await quiet(900);
+  // A second timer for the same time is the fence: when it has arrived, the clock has looked at everything due.
+  assert.ok((await owner.call("service:clock", "set", { at: s.clock.t + 600, to: OWNER, word: "say", body: { text: "栅栏" }, label: "栅栏" })).ok);
+  s.advance(601);
+  s.hostEvent({ event: "wake.fired", at: s.clock.t });
+  await owner.seen((m) => toOwner("say")(m) && textOf(m) === "栅栏", "the fence timer");
   assert.equal(owner.messages.filter((m) => textOf(m) === "不该出现").length, 0);
 });
 
