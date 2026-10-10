@@ -52,6 +52,9 @@ async function pairing(t: Parameters<typeof startScenario>[0]) {
   const owner = await s.human();
   const used = await owner.call("service:link", "gateway.use", { url: relay.url });
   assert.ok(used.ok, "the owner points the hub at their relay");
+  // gateway.use answers once the address is saved; the hub's tunnel to the relay comes up a moment later. Pairing needs it.
+  await eventually(async () => (dataOf(await owner.call("service:link", "gateway.status", {})) as { connected?: boolean } | undefined)?.connected === true,
+    "the hub connected to the relay", 60_000, 200);
 
   accepted(await owner.say("配对一台电脑"));
 
