@@ -6,12 +6,13 @@
  *   sent         handed to the driver (a turn was opened with it, or it was queued behind one)
  *   done         the turn it went into has ended
  *   interrupted  the turn it went into was cut off by a restart; never sent again
+ *   failed       the turn it went into failed while answering the owner; delivered again if the owner chooses retry
  */
 import type { HumanOrigin } from "../../../../sdk/src/message";
 import type { DriverAttachment, DriverMessage } from "../../../../sdk/src/driver";
 import type { Db } from "../../kernel/ledger";
 
-export type InboxState = "pending" | "sent" | "done" | "interrupted";
+export type InboxState = "pending" | "sent" | "done" | "interrupted" | "failed";
 export interface InboxRow {
   id: string; agent: string; lane: string; from: string; word: string; text: string;
   attachments: DriverAttachment[]; thread?: string; at: number; origin?: HumanOrigin; state: InboxState; turn?: string;
@@ -78,9 +79,16 @@ export class Inbox {
     const stmt = this.db.prepare("UPDATE agent_inbox SET turn=? WHERE id=?");
     for (const id of ids) stmt.run(turn, id);
   }
-  finish(turn: string, state: "done" | "interrupted" = "done"): void {
+  finish(turn: string, state: "done" | "interrupted" | "failed" = "done"): void {
     this.db.prepare("UPDATE agent_inbox SET state=? WHERE turn=? AND state='sent'").run(state, turn);
   }
+  /** The turn of the most recent failed batch on a lane, or null. */
+  latestFailed(agent: string, lane: string): string | null {
+    const r = this.db.prepare("SELECT turn FROM agent_inbox WHERE agent=? AND lane=? AND state='failed' ORDER BY seq DESC LIMIT 1").get(agent, lane) as { turn: string } | undefined;
+    return r?.turn ?? null;
+  }
+  /** A failed batch waits for delivery again, in its old order. */
+  requeue(turn: string): void { this.db.prepare("UPDATE agent_inbox SET state='pending', turn=NULL WHERE turn=? AND state='failed'").run(turn); }
   drop(agent: string): void { this.db.prepare("DELETE FROM agent_inbox WHERE agent=?").run(agent); }
-  prune(before: number): void { this.db.prepare("DELETE FROM agent_inbox WHERE state IN ('done','interrupted') AND at<?").run(before); }
+  prune(before: number): void { this.db.prepare("DELETE FROM agent_inbox WHERE state IN ('done','interrupted','failed') AND at<?").run(before); }
 }

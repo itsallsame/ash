@@ -418,3 +418,87 @@ test("the member declares what it hears and what it emits: say, tell, ask, wake,
   await f.start();
   assert.deepEqual(f.registry.members.get(M)!.words().map((w) => w.word).sort(), ["agent.tool", "ask", "say", "tell", "turn.ended", "turn.started", "typing", "wake"]);
 });
+
+test("only the owner's say goes to the front lane: their tell and ask go to back, and the two lanes run at the same time", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  const decl = f.agents.manager.run(M).spec.decl;
+  for (const word of ["tell", "ask", "wake"]) assert.equal(f.agents.manager.laneFor(decl, "person:owner", word, "request"), "back", word);
+  assert.equal(f.agents.manager.laneFor(decl, "person:owner", "say", "request"), "front");
+  await f.call(M, "tell", { text: "note to self" }); // from the owner
+  await waitFor(() => sends(d, "back").length === 1);
+  assert.equal(sends(d, "front").length, 0);
+  assert.deepEqual(texts(sends(d, "back")[0]!), ["note to self"]);
+  await f.call(M, "say", { text: "hello" });
+  await waitFor(() => sends(d, "front").length === 1);
+  assert.ok(d.running.has(`${M}/front`) && d.running.has(`${M}/back`)); // both at once
+  const asked = f.call(M, "ask", { text: "question" }) as Promise<any>;
+  await settle();
+  assert.equal(d.of("followup").length, 1); // queued behind the back lane's turn, not on the front lane
+  assert.equal(d.of("followup")[0]![2], "back");
+  d.finish(M, "back");
+  await waitFor(() => d.running.has(`${M}/back`)); // the queued question became the next back turn
+  d.say(M, "back", "answer");
+  d.finish(M, "back");
+  assert.deepEqual((await asked).data, { answer: "answer" });
+});
+
+test("a front turn that fails tells the owner in a sentence and offers a retry card; choosing it delivers the same batch again", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "say", { text: "do the thing" });
+  await waitFor(() => sends(d, "front").length === 1);
+  const batch = f.agents.manager.inbox.byTurn(d.running.get(`${M}/front`)!.turn);
+  assert.equal(batch.length, 1);
+  d.report({ event: "turn.ended", agent: M, key: "front", turn: d.running.get(`${M}/front`)!.turn, outcome: "error", error: "401 invalid api key" });
+  d.running.delete(`${M}/front`);
+  await waitFor(() => f.router.to("person:owner", "show").length === 1);
+  const said = f.router.says();
+  assert.equal(said.length, 1);
+  assert.deepEqual(said[0]!.from, M);
+  assert.match(said[0]!.text, /没做成：模型那边没认我的 Key/);
+  assert.ok(!said[0]!.text.includes("401"), "no raw error text");
+  assert.deepEqual((f.router.to("person:owner", "show")[0]!.msg.body as any).card, { type: "options", prompt: "要我再试一次吗？", options: [{ id: "retry", text: "重试" }] });
+  assert.equal(sends(d, "front").length, 1);
+  // the owner chooses 重试: the same message goes again, the click is not a message of its own
+  await f.call(M, "say", { in_reply_to: "card_1", option_id: "retry", text: "重试" });
+  await waitFor(() => sends(d, "front").length === 2);
+  assert.deepEqual(texts(sends(d, "front")[1]!), ["do the thing"]);
+  assert.equal(f.ledger.db().prepare("SELECT count(*) AS n FROM agent_inbox WHERE text LIKE '%重试%'").get()!.n, 0);
+  // it fails again: a new notice, and another retry works; once nothing is left to retry the click is an ordinary reply
+  d.finish(M, "front", "error");
+  await waitFor(() => f.router.to("person:owner", "show").length === 2);
+  await f.call(M, "say", { in_reply_to: "card_2", option_id: "retry", text: "重试" });
+  await waitFor(() => sends(d, "front").length === 3);
+  d.finish(M, "front");
+  await settle();
+  await f.call(M, "say", { in_reply_to: "card_2", option_id: "retry", text: "重试" });
+  await waitFor(() => sends(d, "front").length === 4);
+  assert.match(texts(sends(d, "front")[3]!)[0]!, /重试/);
+});
+
+test("no failure notice for a back lane, a lane that does not speak, a cancelled turn, or a batch the owner did not write", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "wake", { reason: "r" }, caller("service:pulse", "service"));
+  await waitFor(() => sends(d, "back").length === 1);
+  d.finish(M, "back", "error");
+  await f.call(M, "say", { text: "x" });
+  await waitFor(() => sends(d, "front").length === 1);
+  d.finish(M, "front", "cancelled");
+  await settle();
+  assert.deepEqual(f.router.says(), []);
+  assert.equal(f.router.to("person:owner", "show").length, 0);
+  // and an error with no owner message in the batch (a followup of the agent's own lane trigger) says nothing
+  await f.service("declare", { id: "agent:r", name: "r", summary: "reflective", brief: "reflect", lanes: { front: { from: ["person:owner"] }, reflect: { on: ["front:turn.ended"], speak: false } } });
+  await f.call("agent:r", "say", { text: "hi" });
+  await waitFor(() => sends(d, "front").some((c) => c[1] === "agent:r"));
+  d.finish("agent:r", "front");
+  await waitFor(() => sends(d, "reflect").length === 1);
+  d.finish("agent:r", "reflect", "error");
+  await settle();
+  assert.deepEqual(f.router.says(), []);
+});

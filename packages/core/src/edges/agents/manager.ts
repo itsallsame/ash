@@ -13,6 +13,7 @@ import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger } from "../../kernel/ledger";
 import type { Registry, Router, Vault } from "../../kernel/types";
+import { failureText, RETRY_OPTION } from "./failure";
 import { Inbox, toDriverMessage, type InboxRow } from "./inbox";
 import { Modules, SERVICE_CALLER } from "./modules";
 import { lanesOf, Runs, type AgentDecl, type LaneDecl, type Run, type Templates } from "./runs";
@@ -270,9 +271,11 @@ export class AgentManager {
   laneFor(decl: AgentDecl, from: string, word: string, kind: string, wanted?: string): string {
     const lanes = lanesOf(decl);
     if (wanted && lanes[wanted]) return wanted;
-    const category = word === "wake" ? "wake" : from === OWNER_ID ? OWNER_ID : from === "service:clock" ? "timer" : kind === "event" ? "event" : "";
+    // Only the owner's `say` is the owner speaking to the agent; their tell and ask are like anyone's.
+    const asOwner = from === OWNER_ID && word === "say";
+    const category = word === "wake" ? "wake" : asOwner ? OWNER_ID : from === "service:clock" ? "timer" : kind === "event" ? "event" : "";
     const pick = (match: (f: string) => boolean) => Object.entries(lanes).find(([, l]) => l.from?.some(match))?.[0];
-    return pick((f) => f === "*" || (word !== "wake" && f === from) || f === category) ?? (lanes.back ? "back" : pick((f) => f === "wake")) ?? Object.keys(lanes)[0]!;
+    return pick((f) => f === "*" || f === category || (word !== "wake" && f === from && (from !== OWNER_ID || asOwner))) ?? (lanes.back ? "back" : pick((f) => f === "wake")) ?? Object.keys(lanes)[0]!;
   }
 
   /** A request or event addressed to an agent. */
@@ -286,6 +289,8 @@ export class AgentManager {
     if (msg.word === "wake") words = `Wake · ${text(body.reason)}${body.context === undefined ? "" : `\n${JSON.stringify(body.context)}`}`;
     if (!words && attachments.length) words = "(attachments)";
     const lane = this.laneFor(decl, msg.from, msg.word, msg.kind, msg.word === "wake" ? text(body.lane) : undefined);
+    // The owner chose 「重试」 on a failure card: the batch that failed is delivered again, and the click is not a message of its own.
+    if (msg.word === "say" && body.option_id === RETRY_OPTION && this.retryFailed(id, lane)) return { data: { accepted: true } };
     const row = { id: msg.id, from: msg.from, word: msg.word, text: words, attachments, at: msg.ts, ...(msg.thread ? { thread: msg.thread } : {}), ...(msg.origin ? { origin: msg.origin } : {}) };
     if (msg.word !== "ask") {
       this.enqueue(id, row, lane);
@@ -490,6 +495,24 @@ export class AgentManager {
     }
   }
 
+  /** Tell the owner in one line what went wrong, and offer a retry card. */
+  private failureNotice(agent: string, turn: string, error?: string): void {
+    const who = agentCaller(agent, turn);
+    this.bg(this.deps.router.send({ to: OWNER_ID, kind: "request", word: "say", body: { text: failureText(error), kind: "reply" } }, who), "failure notice");
+    this.bg(this.deps.router.send({ to: OWNER_ID, kind: "request", word: "show", body: { card: { type: "options", prompt: "要我再试一次吗？", options: [{ id: RETRY_OPTION, text: "重试" }] } } }, who), "retry card");
+  }
+
+  /** Put the latest failed batch of a lane back in the inbox. False when there is none. */
+  private retryFailed(id: string, lane: string): boolean {
+    const turn = this.inbox.latestFailed(id, lane);
+    if (!turn) return false;
+    this.inbox.requeue(turn);
+    const live = this.live.get(id);
+    const l = live?.lanes.get(lane);
+    if (live && l && live.state === "running" && !this.paused) this.bg(l.busy ? Promise.resolve() : this.drain(live, l), `retry ${id}/${lane}`);
+    return true;
+  }
+
   private speaks(id: string, key: string): boolean {
     const lane: LaneDecl | undefined = lanesOf(this.run(id).spec.decl)[key];
     return lane?.speak ?? !!lane?.from?.includes(OWNER_ID);
@@ -499,7 +522,9 @@ export class AgentManager {
     lane.busy = false;
     lane.turn = undefined;
     const rows = this.inbox.byTurn(ev.turn);
-    this.inbox.finish(ev.turn, ev.outcome === "interrupted" ? "interrupted" : "done");
+    // A turn that was answering the owner and failed is kept as failed, so 「重试」 can deliver the same batch again.
+    const failed = ev.outcome === "error" && this.speaks(live.id, ev.key) && rows.some((r) => r.from === OWNER_ID);
+    this.inbox.finish(ev.turn, ev.outcome === "interrupted" ? "interrupted" : failed ? "failed" : "done");
     const said = (this.outputs.get(ev.turn) ?? []).join("\n\n");
     this.outputs.delete(ev.turn);
     for (const row of rows) {
@@ -509,6 +534,7 @@ export class AgentManager {
       if (ev.outcome === "completed") waiter.resolve(said);
       else waiter.reject(new WordError(ev.outcome === "cancelled" ? "cancelled" : "failed", ev.error ?? `the turn ended: ${ev.outcome}`));
     }
+    if (failed) this.failureNotice(live.id, ev.turn, ev.error);
     this.emit(live.id, "turn.ended", { turn: ev.turn, lane: ev.key, outcome: ev.outcome, ...(ev.error ? { error: ev.error } : {}) }, ev.turn);
     if (lane.screenPlanned) { lane.screenPlanned = false; this.bg(this.screenReconcile(live, ev), "screen reconcile"); }
     // A turn that another lane's `on` started does not start further lanes: that would loop.
