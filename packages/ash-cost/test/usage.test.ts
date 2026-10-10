@@ -39,34 +39,10 @@ test("failed calls that reported usage are kept with ok:false; calls with no usa
   assert.deepEqual(mine.map((r: any) => [r.model, r.ok]), [["failed", false]]);
 });
 
-test("lastBalance is null until a balance read succeeds, then holds it with the time it was read", async () => {
-  const collector = cost.collector;
-  assert.equal(collector.lastBalance(), null);
-  const key = "FAKE_COST_TEST_KEY";
-  const realFetch = globalThis.fetch;
-  let auth = "";
-  globalThis.fetch = (async (_url: string, init: any) => { auth = init.headers.authorization; return new Response(JSON.stringify({ is_available: true,
-    balance_infos: [{ currency: "CNY", total_balance: "9.50", granted_balance: "0", topped_up_balance: "9.50" }] })); }) as typeof fetch;
-  collector.attach({ get: () => ({ resolve: async () => ({ value: "fake-key-value" }) }) });
-  try {
-    const before = Date.now();
-    const result = await collector.balance({ credential: key });
-    assert.equal(auth, "Bearer fake-key-value");
-    const last = collector.lastBalance();
-    assert.deepEqual({ available: last.available, balances: last.balances }, result);
-    assert.ok(last.at >= before);
-    assert.ok(!JSON.stringify(last).includes("fake-key-value"));
-    globalThis.fetch = (async () => new Response("no", { status: 500 })) as typeof fetch;
-    await assert.rejects(collector.balance({ credential: key }));
-    assert.equal(collector.lastBalance().at, last.at); // a failed read leaves the last good one alone
-  } finally { globalThis.fetch = realFetch; }
-});
-
-test("apply publishes the collector for the control plugin and takes it back on dispose", () => {
+test("apply provides the collector as the ashCost service and still taps llm/stream", () => {
   const hooks: Record<string, unknown> = {};
-  cost.apply({ on: (event: string, fn: unknown) => { hooks[event] = fn; } });
-  assert.equal((globalThis as any)[cost.COLLECTOR_KEY], cost.collector);
+  const provided: Record<string, unknown> = {};
+  cost.apply({ on: (event: string, fn: unknown) => { hooks[event] = fn; }, provide: (name: string, value: unknown) => { provided[name] = value; } });
+  assert.equal(provided.ashCost, cost.collector);
   assert.equal(typeof hooks["llm/stream"], "function");
-  (hooks.dispose as () => void)();
-  assert.equal((globalThis as any)[cost.COLLECTOR_KEY], undefined);
 });

@@ -6,19 +6,18 @@ export const KEY_REF: Record<Provider, string> = { deepseek: "DEEPSEEK_API_KEY",
 
 /** Used when a caller names no model: DeepSeek's Flash model, which the approval reviewer and the progress summary run on. */
 export const DEFAULT_MODEL = "deepseek-flash";
-/** Used when a caller names the OpenRouter provider but no model: the JEV judge. */
-export const OPENROUTER_DEFAULT_MODEL = "typesafe/jev-1.13";
 
 /**
  * DeepSeek models newer than pi-ai's bundled catalog, on the same OpenAI-compatible endpoint with the same request
- * rules as the catalog's DeepSeek entries. Rates are the Flash rates (USD per million tokens).
+ * rules as the catalog's DeepSeek entries. No rates are written down for them: all zero means "price unknown", and
+ * a call on such a model is reported without a cost.
  */
 const DEEPSEEK_ADDED: Record<string, Model<"openai-completions">> = {
   "deepseek-flash": {
     id: "deepseek-flash", name: "DeepSeek V4.1 Flash", api: "openai-completions", provider: "deepseek", baseUrl: "https://api.deepseek.com",
     compat: { requiresReasoningContentOnAssistantMessages: true, thinkingFormat: "deepseek" },
     reasoning: true, thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "max" },
-    input: ["text", "image"], cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+    input: ["text", "image"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1_000_000, maxTokens: 384_000,
   },
 };
@@ -28,6 +27,9 @@ function openrouterGeneric(id: string): Model<"openai-completions"> {
   return { id, name: id, api: "openai-completions", provider: "openrouter", baseUrl: "https://openrouter.ai/api/v1",
     reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128_000, maxTokens: 16_000 };
 }
+
+/** Where each provider's API lives. Calls go to these hosts and nowhere else. */
+export const ORIGIN: Record<Provider, string> = { deepseek: "https://api.deepseek.com", openrouter: "https://openrouter.ai" };
 
 export interface Target { provider: Provider; id: string }
 
@@ -42,7 +44,7 @@ export function parseTarget(model: string | undefined): Target | null {
   if (prefixed) {
     const provider = prefixed[1] as Provider;
     const id = prefixed[2]!.trim();
-    return { provider, id: id || (provider === "openrouter" ? OPENROUTER_DEFAULT_MODEL : DEFAULT_MODEL) };
+    return /^[\w.\-/:@+]+$/.test(id) ? { provider, id } : null;
   }
   return /^[\w.\-/:@+]+$/.test(text) ? { provider: "deepseek", id: text } : null;
 }

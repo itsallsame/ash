@@ -7,14 +7,11 @@ import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 
 export const name = "dsh-ash-control";
-export const inject = ["agents", "llm", "sessionPersistence", "sessions", "acpAppStartup", "credentials"];
+export const inject = ["agents", "llm", "sessionPersistence", "sessions", "acpAppStartup"];
 
-// ash-cost (a sibling DSH plugin in this process) leaves its collector here; see packages/ash-cost.
-const COST_COLLECTOR = Symbol.for("ash.cost.collector");
 const CREDENTIAL_REF = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_SECRET = 8192;
-// A balance read this recent is reused; an older one is refreshed (best effort) when ash pulls usage.
-const BALANCE_FRESH_MS = 5 * 60_000;
+const BALANCE_TIMEOUT_MS = 5000;
 
 class RpcError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -27,10 +24,12 @@ const unavailable = (message) => new RpcError(-32603, message);
  * one, and pulls the usage ash-cost recorded. Each takes the request params and returns the result, or throws RpcError.
  * No method ever returns a credential value, and none writes one to a log.
  */
-export function createAshMethods(ctx, findCollector = () => globalThis[COST_COLLECTOR]) {
+export function createAshMethods(ctx) {
+  // Looked up per call, like the plugin manager: a missing service fails that one method, never the ACP bridge.
   const store = () => {
-    if (!ctx.credentials) throw unavailable("credential service unavailable");
-    return ctx.credentials;
+    const service = ctx.get?.("credentials");
+    if (!service) throw unavailable("credential service unavailable");
+    return service;
   };
   const refOf = (params) => {
     const ref = params?.ref;
@@ -38,14 +37,16 @@ export function createAshMethods(ctx, findCollector = () => globalThis[COST_COLL
     return ref;
   };
   return {
-    // {ref} -> {has, source?}: whether DSH resolves this key, and which of its sources supplied it. Never the value.
+    // {ref} -> {has, source?, writable?}: whether DSH has this key, which source supplies it, and whether ash may
+    // replace it. DSH's describe() answers from metadata, so the value is never read.
     "_ash/credentials.has": async (params) => {
       const ref = refOf(params);
       const service = store();
-      let hit;
-      try { hit = await service.resolve(ref); } catch { throw unavailable("credential lookup failed"); }
-      if (typeof hit?.value !== "string" || !hit.value) return { has: false };
-      return typeof hit.source === "string" ? { has: true, source: hit.source } : { has: true };
+      let info;
+      try { info = await service.describe(ref); } catch { throw unavailable("credential lookup failed"); }
+      if (!info?.configured) return { has: false, ...(typeof info?.writable === "boolean" ? { writable: info.writable } : {}) };
+      return { has: true, ...(typeof info.source === "string" ? { source: info.source } : {}),
+        ...(typeof info.writable === "boolean" ? { writable: info.writable } : {}) };
     },
     // {ref, value} -> {ok: true}: store the key in DSH's own credential file. The value is neither echoed nor logged.
     "_ash/credentials.set": async (params) => {
@@ -62,13 +63,11 @@ export function createAshMethods(ctx, findCollector = () => globalThis[COST_COLL
     "_ash/usage": async (params) => {
       const since = params?.since ?? 0;
       if (typeof since !== "number" || !Number.isFinite(since) || since < 0) throw invalid("since must be a millisecond timestamp");
-      const collector = findCollector();
+      const collector = ctx.get?.("ashCost");
       if (!collector || typeof collector.since !== "function") throw unavailable("ash-cost is not loaded");
-      const known = collector.lastBalance?.();
-      if (typeof collector.balance === "function" && (!known || Date.now() - known.at > BALANCE_FRESH_MS)) {
-        try { await collector.balance({ timeoutMs: 5000 }); } catch { /* a missing or unreachable balance is simply left out */ }
-      }
-      const balance = collector.lastBalance?.();
+      // Each pull asks the provider once; when it cannot answer, the reply simply carries no balance.
+      let balance;
+      try { balance = { ...(await collector.balance({ timeoutMs: BALANCE_TIMEOUT_MS })), at: Date.now() }; } catch { /* left out */ }
       return { records: collector.since(since), ...(balance ? { balance } : {}) };
     },
   };
