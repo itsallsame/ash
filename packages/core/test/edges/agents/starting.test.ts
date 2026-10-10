@@ -99,7 +99,7 @@ test("an ask to an agent that is starting waits for the new process and gets its
 test("an agent that is stopped for good is offline: off, removed, or given up on", async () => {
   const f = fixture();
   await f.start();
-  await f.agents.manager.stopAgent(M, "owner", true);
+  await f.agents.manager.stopAgent(M, "owner");
   assert.ok(!reachable(f));
   assert.equal(f.agents.manager.reachable(M), false);
   assert.equal(f.agents.manager.stateOf(M), "stopped");
@@ -128,7 +128,7 @@ test("a stop that comes while the process is starting leaves no member, and the 
   const { f, d, g } = slowStart();
   const starting = f.agents.startAll();
   await waitFor(() => d.of("start").length === 1);
-  await f.agents.manager.stopAgent(M, "owner", true);
+  await f.agents.manager.stopAgent(M, "owner");
   assert.ok(!reachable(f));
   g.open();
   await starting;

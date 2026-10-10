@@ -179,7 +179,7 @@ test("the host saying the network is back ends the wait; going offline does not;
   await g.agents.startAll();
   await settle();
   assert.deepEqual(waits(g), [2000]);
-  await g.agents.manager.stopAgent(M, "owner", true);
+  await g.agents.manager.stopAgent(M, "owner");
   assert.deepEqual(waits(g), []);
   assert.ok(!reachable(g));
   assert.equal(g.agents.manager.stateOf(M), "stopped");

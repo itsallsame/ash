@@ -223,7 +223,9 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     revokeTools: (agent) => tools.revoke(agent),
     started: (agent) => {
       tools.catchUp(agent);
-      if (!provisioned && agent === late.agents?.primary()) { provisioned = true; body.provisionLater(); } // the main agent is up: now the container may spend its time on python3
+      // The main agent is up: now the container may spend its time on python3. Only after its first successful start, on purpose:
+      // while it cannot start (a container still not ready) the provisioning would only compete with it.
+      if (!provisioned && agent === late.agents?.primary()) { provisioned = true; body.provisionLater(); }
     },
     ...(spec.network ? { network: spec.network } : {}),
   });

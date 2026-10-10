@@ -174,6 +174,8 @@ export class AgentManager {
   private readonly outputs = new Map<string, string[]>();
   private readonly typingUntil = new Map<string, number>();
   private paused = false;
+  /** The module is stopping: no attempt starts and no member comes back, whatever restart is still on its way. */
+  private closing = false;
   private proxy: string;
   private readonly stoppers: (() => void)[] = [];
   /** Agents whose usage pull after a turn is waiting on the debounce, with the way to cancel it. */
@@ -203,6 +205,7 @@ export class AgentManager {
 
   /** Does not wait for the agents: their processes come up on their own time, and what the owner says meanwhile waits in the inbox. */
   async startAll(): Promise<void> {
+    this.closing = false;
     this.runs.seed(this.deps.templates);
     this.inbox.prune(this.now() - 7 * 86_400_000);
     // From here on the declared agents are members. A kind with no driver here is not: nothing would ever start it.
@@ -217,6 +220,7 @@ export class AgentManager {
     for (const stop of this.stoppers.splice(0)) stop();
     for (const stop of this.usageDue.values()) stop();
     this.usageDue.clear();
+    this.closing = true;
     await Promise.allSettled([...this.slots.values()].map(async (slot) => {
       await this.halt(slot, "hub stopping");
       this.deps.registry.remove(slot.id);
@@ -294,6 +298,7 @@ export class AgentManager {
    * is stopping is looked at again when the process is gone. Resolves when the first attempt it started is over.
    */
   private async reconcile(slot: Slot, why: string): Promise<void> {
+    if (this.closing) return;
     const want = this.runs.get(slot.id)?.desired === "on" && !slot.gaveUp;
     if (!want) { if (slot.phase !== "stopped") await this.halt(slot, why); return; }
     if (slot.phase === "stopping") { await slot.stopped; return this.reconcile(slot, why); }
@@ -313,29 +318,33 @@ export class AgentManager {
     slot.why = why;
     slot.gaveUp = false;
     if (slot.phase === "starting" || slot.phase === "running") return;
-    if (slot.phase === "backoff") await this.halt(slot, "start now");
+    // A try that waits for its time, or a failed one whose process is still being stopped: the start by hand takes over (voids what follows).
+    if (slot.phase === "backoff" || slot.phase === "stopping") await this.halt(slot, "start now");
     slot.failures = 0;
     await this.reconcile(slot, why);
   }
 
-  /** `keepWaiters`: the new process answers those who ask and wait, not the old one's end (a planned restart). The member stays meanwhile. */
-  async restartAgent(id: string, why = "重启", keepWaiters = false): Promise<void> {
-    await this.stopAgent(id, "restart", false, keepWaiters);
+  /** The process is stopped and started again; the member stays in the registry meanwhile, and those who ask and wait are told it was stopped. */
+  async restartAgent(id: string, why = "重启"): Promise<void> {
+    const slot = this.slots.get(id);
+    this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
+    if (slot) await this.halt(slot, "restart");
     this.runs.setDesired(id, "on");
     await this.startAgent(id, why);
   }
 
-  /** Stop an agent. `off`: for good (the intent turns off and the member leaves the registry); else it is a step of a restart and the member stays. */
-  async stopAgent(id: string, reason: string, off = false, keepWaiters = false): Promise<void> {
+  /** Stop an agent for good: the intent turns off and the member leaves the registry, so words sent to it answer offline. */
+  async stopAgent(id: string, reason: string): Promise<void> {
     const slot = this.slots.get(id);
-    if (off) { this.runs.setDesired(id, "off"); this.deps.registry.remove(id); if (slot) slot.troubled = false; }
-    if (!keepWaiters) this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
-    if (slot) await this.halt(slot, reason);
+    this.runs.setDesired(id, "off");
+    this.deps.registry.remove(id);
+    this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
+    if (slot) { slot.troubled = false; await this.halt(slot, reason); }
   }
 
   /** Remove an agent altogether: stop it, drop its inbox and its declaration. */
   async forget(id: string, reason: string): Promise<void> {
-    await this.stopAgent(id, reason, true).catch(() => {});
+    await this.stopAgent(id, reason).catch(() => {});
     this.slots.delete(id);
     this.inbox.drop(id);
     this.runs.remove(id);
@@ -368,6 +377,7 @@ export class AgentManager {
    * next one; a temporary worker's tries follow each other at once and are all inside this).
    */
   private async attempt(slot: Slot): Promise<void> {
+    if (this.closing) return;
     const id = slot.id;
     const gen = ++slot.gen;
     const run = this.run(id);
@@ -414,8 +424,9 @@ export class AgentManager {
     const n = ++slot.failures;
     if (why) slot.why = why;
     this.log(`agents: ${id} ${died ? "ended" : "did not start"}: ${reason}`);
-    const mine = slot.gen + 1; // what halt makes of it
-    await this.halt(slot, "start failed", died);
+    const done = this.halt(slot, "start failed", died);
+    const mine = slot.gen; // a stop or a start by hand that comes while the process is stopped makes it another number
+    await done;
     if (slot.gen !== mine || !decl || this.runs.get(id)?.desired !== "on") return; // stopped or started over meanwhile: not ours to go on
     if (decl.ephemeral ? n >= EPHEMERAL_TRIES : !decl.primary && n >= MAX_FAILURES) return this.giveUp(slot, reason, n);
     if (decl.primary && n >= TROUBLE_NOTICE_AT && !slot.troubled) {
@@ -431,24 +442,15 @@ export class AgentManager {
     if (delay <= 0) return this.attempt(slot);
     const gen = slot.gen;
     slot.phase = "backoff";
-    slot.cancelWait = this.timers.after(delay, () => {
-      if (slot.gen !== gen) return;
-      slot.cancelWait = undefined;
-      slot.phase = "stopped"; // the wait is over: the intent decides whether another try is made
-      this.bg(this.reconcile(slot, slot.why), `retry ${slot.id}`);
-    });
+    slot.cancelWait = this.timers.after(delay, () => { if (slot.gen === gen) this.tryNow(slot); });
     return Promise.resolve();
   }
 
-  /** Whatever waits for its next try tries now (the host says the network came back, or the like). The count of failures goes on. */
-  retryNow(): void {
-    for (const slot of [...this.slots.values()]) {
-      if (slot.phase !== "backoff") continue;
-      this.log(`agents: ${slot.id}: trying the start again now`);
-      this.endWait(slot);
-      slot.phase = "stopped";
-      this.bg(this.reconcile(slot, slot.why), `retry ${slot.id}`);
-    }
+  /** Whatever waits for its next try (or is about to: its failed attempt is still being stopped) tries now. The count of failures goes on. */
+  retryNow(): void { for (const slot of [...this.slots.values()]) this.tryNow(slot); }
+  private tryNow(slot: Slot): void {
+    if (slot.phase !== "backoff" && slot.phase !== "stopping") return;
+    this.bg((async () => { await this.halt(slot, "retry now"); await this.reconcile(slot, slot.why); })(), `retry ${slot.id}`);
   }
 
   /** A round done, or a stay long enough: earlier failures no longer count, and a troubled agent is back. */
@@ -489,7 +491,9 @@ export class AgentManager {
     if (!run || slot.phase !== "running" || slot.proxy === this.proxy || run.desired !== "on" || run.spec.decl.ephemeral) return;
     if (!(this.deps.localKinds ?? ["dsh"]).includes(run.spec.decl.runtime.kind)) return;
     this.log(`agents: ${slot.id}: the proxy changed, restarting its process`);
-    this.bg(this.restartAgent(slot.id, "代理换了", true), `restart ${slot.id} for the new proxy`);
+    // Not a restart by hand: the intent is not touched, so a stop that comes meanwhile stays a stop. Those who wait for an answer keep waiting for the new process.
+    slot.why = "代理换了";
+    this.bg((async () => { await this.halt(slot, "restart"); await this.reconcile(slot, slot.why); })(), `restart ${slot.id} for the new proxy`);
   }
 
   /** What was in flight when the agent went away is not sent again; the agent hears that it was cut off and decides. */
@@ -797,7 +801,8 @@ export class AgentManager {
   }
 
   private finishTurn(live: Live, lane: Lane, ev: Extract<AgentEvent, { event: "turn.ended" }>): void {
-    if (ev.outcome === "completed") this.stable(this.slot(live.id)); // a round done: earlier failures no longer count, and a troubled agent is back
+    const slot = this.slots.get(live.id);
+    if (ev.outcome === "completed" && slot) this.stable(slot); // a round done: earlier failures no longer count, and a troubled agent is back
     lane.busy = false;
     lane.turn = undefined;
     const rows = this.inbox.byTurn(ev.turn);

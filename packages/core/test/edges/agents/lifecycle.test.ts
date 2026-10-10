@@ -27,7 +27,7 @@ test("a planned restart keeps the member while the old process stops: the owner'
   const g = gate();
   const stop = d.stop.bind(d);
   d.stop = async (agent, reason) => { await g.promise; return stop(agent, reason); };
-  const restarting = f.agents.manager.restartAgent(M, "代理换了", true);
+  const restarting = f.agents.manager.restartAgent(M, "代理换了");
   await settle();
   assert.ok(reachable(f), "still a member while the old process is being stopped");
   assert.equal(f.agents.manager.reachable(M), true);
@@ -56,7 +56,7 @@ test("a stop for good that comes while a failed start is being cleaned up wins: 
   assert.ok(f.fire(waits(f)[0]!));
   await waitFor(() => starts(f) === 4); // the fourth try fails; its process is being stopped (held)
   await settle();
-  const stopping = f.agents.manager.stopAgent(M, "stopped", true);
+  const stopping = f.agents.manager.stopAgent(M, "stopped");
   assert.equal(f.agents.manager.reachable(M), false, "off at once, before the old process is gone");
   g.open();
   await stopping;
@@ -130,7 +130,7 @@ test("a stop that comes while the process is starting voids the attempt: nothing
   d.startGate = g.promise;
   await f.agents.startAll();
   await waitFor(() => starts(f) === 1);
-  await f.agents.manager.stopAgent(M, "owner", true);
+  await f.agents.manager.stopAgent(M, "owner");
   g.open();
   await settle();
   assert.equal(f.agents.manager.stateOf(M), "stopped");
@@ -182,4 +182,110 @@ test("a process that dies before the attempt took it as up is a failure of that 
   await settle();
   assert.equal(f.agents.manager.stateOf(M), "idle", "started again at once, as the first quick crash is");
   assert.equal(starts(f), 2);
+});
+
+/** Hold the driver's stop for `reason` until the returned function is called. */
+function holdStop(f: F, reason: string): () => void {
+  const g = gate();
+  const d = f.driver();
+  const stop = d.stop.bind(d);
+  d.stop = async (agent, why) => { if (why === reason) await g.promise; return stop(agent, why); };
+  return g.open;
+}
+const NEW_PROXY = { proxy: { http: "http://10.0.2.2:7891" } } as HostNetwork;
+
+test("a start by hand that comes while a failed attempt's process is being stopped is not swallowed: the agent starts at once", async () => {
+  const f = fixture();
+  f.agents.manager.driver("dsh");
+  const d = f.driver();
+  d.startFailures = 3;
+  await f.agents.startAll();
+  await settle();
+  await pass(f); // two failures so far
+  const release = holdStop(f, "start failed");
+  assert.ok(f.fire(waits(f)[0]!));
+  await waitFor(() => starts(f) === 3); // the third fails; its process is being stopped (held)
+  await settle();
+  const started = f.service("start", { agent: M });
+  await settle();
+  release();
+  await started;
+  await settle();
+  assert.equal(starts(f), 4, "started by hand, not left to wait 15 s");
+  assert.equal(f.agents.manager.stateOf(M), "idle");
+  assert.deepEqual(waits(f), []);
+});
+
+test("the same for an agent that is not the primary one: it is not given up on, and stays a member", async () => {
+  const W = { id: "agent:w", name: "w", summary: "a helper agent", brief: "help", runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "/root/w" }, lanes: { front: { from: ["person:owner"] } } };
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  d.startFailures = 100;
+  await f.service("declare", W);
+  await settle();
+  for (let i = 0; i < 3; i++) await pass(f); // four failures so far; the fifth would give up
+  const release = holdStop(f, "start failed");
+  assert.ok(f.fire(waits(f)[0]!));
+  await settle();
+  d.startFailures = 0;
+  const started = f.service("start", { agent: W.id });
+  await settle();
+  release();
+  await started;
+  await settle();
+  assert.equal(f.agents.manager.stateOf(W.id), "idle");
+  assert.equal(f.agents.manager.reachable(W.id), true);
+  assert.ok(!notices(f).some((t) => t.includes("起不来了")), "not given up on");
+});
+
+test("a restart for the new proxy does not override a stop that comes meanwhile: the agent stays off", async () => {
+  const f = fixture();
+  await f.start();
+  const release = holdStop(f, "restart");
+  f.agents.manager.onNetwork(NEW_PROXY);
+  await settle();
+  const stopped = f.service("stop", { agent: M });
+  await settle();
+  release();
+  await stopped;
+  await settle();
+  assert.equal(f.agents.manager.runs.get(M)!.desired, "off");
+  assert.equal(f.agents.manager.stateOf(M), "stopped");
+  assert.equal(f.agents.manager.reachable(M), false);
+  assert.equal(starts(f), 1, "no process was started again");
+});
+
+test("stopping the module while a restart is on its way: no process starts and no member comes back", async () => {
+  const f = fixture();
+  await f.start();
+  const release = holdStop(f, "restart");
+  f.agents.manager.onNetwork(NEW_PROXY);
+  await settle();
+  const closing = f.agents.stopAll();
+  await settle();
+  release();
+  await closing;
+  await settle();
+  assert.equal(starts(f), 1);
+  assert.equal(f.agents.manager.stateOf(M), "stopped");
+  assert.equal(f.agents.manager.reachable(M), false);
+});
+
+test("the host saying the network is back reaches an agent whose failed attempt is still being stopped", async () => {
+  const f = fixture();
+  f.agents.manager.driver("dsh");
+  const d = f.driver();
+  d.startFailures = 1;
+  const release = holdStop(f, "start failed");
+  await f.agents.startAll();
+  await waitFor(() => starts(f) === 1);
+  await settle();
+  f.agents.manager.retryNow();
+  await settle();
+  release();
+  await settle();
+  assert.equal(starts(f), 2, "tried at once, and the failed attempt did not also set a wait");
+  assert.equal(f.agents.manager.stateOf(M), "idle");
+  assert.deepEqual(waits(f), []);
 });
