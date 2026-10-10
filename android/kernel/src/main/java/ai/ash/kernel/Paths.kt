@@ -10,7 +10,7 @@ import java.io.File
 class Paths(val files: File, val cache: File) {
     constructor(ctx: Context) : this(ctx.filesDir, ctx.cacheDir)
 
-    /** Extracted payload: runtime/ (node, git, python ...), dsh/ (DSH as published), ash/ (ash core), bin/, profile/. */
+    /** Extracted payload: runtime/ (node, git, python ...), ash/ (ash core and its preload), ash-skills/, ash-apps/. */
     val payload = File(files, "payload")
     val payloadStaging = File(files, "payload.new")
     val payloadOld = File(files, "payload.old")
@@ -45,6 +45,6 @@ class Paths(val files: File, val cache: File) {
     // ---- the payload's own layout
     val node = File(payload, "runtime/bin/node")
     val coreBundle = File(payload, "ash/ash-core.mjs")
-    val compatPreload = File(payload, "dsh/lib/node_modules/android-node-compat/index.cjs")
+    val compatPreload = File(payload, "ash/android-node-compat/index.cjs")
     val buildMarker = File(payload, ".build")
 }
