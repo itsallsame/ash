@@ -229,6 +229,11 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     if (table.claimWake(id)) wakeAgent(table.get(id)!);
   }
 
+  /** The sweeps at start leave the wakes of agents that are not running to their own start (`catchUp`): no attempt, no log line. */
+  function sweep(ids: string[]): void {
+    for (const id of ids) { const row = table.get(id); if (row && registry.describe(row.agent)) wakeIfDue(id); }
+  }
+
   const stopListening = router.subscribe?.({ word: "turn.ended" }, (m) => {
     const turn = (m.body as { turn?: unknown } | null)?.turn;
     if (typeof turn === "string") for (const id of table.owing(m.from, turn)) wakeIfDue(id);
@@ -285,13 +290,17 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     } finally { signal.removeEventListener("abort", abort); }
   }
 
-  async function awaitResult(agent: string, id: string, timeoutMs: number, signal: AbortSignal): Promise<Shaped> {
+  async function awaitResult(agent: string, lane: string, id: string, timeoutMs: number, signal: AbortSignal): Promise<Shaped> {
     const job = live.get(id);
     if (job && job.agent === agent) {
       if (!job.shaped) {
+        const callerTurn = options.currentTurn(agent, lane);
         job.awaiting++;
         try { await within(Promise.race([job.done, new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))]), timeoutMs); }
         finally { job.awaiting--; }
+        // The one who waited may be gone (the owner interrupted the turn and the runtime dropped the call): nobody reads this
+        // answer, so it is not taken; it is told like any other answer that was not fetched.
+        if (signal.aborted || (callerTurn !== null && !turnActive(agent, callerTurn))) { wakeIfDue(id); return plain(receiptData(job)); }
         if (!job.shaped) return plain(receiptData(job));
       }
       table.take(id);
@@ -354,7 +363,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       }
       const problem = num(args.timeout_ms, "timeout_ms", 0, maxWaitMs);
       if (problem) return failure("bad_request", problem);
-      return awaitResult(agent, args.request_id, (args.timeout_ms as number | undefined) ?? maxWaitMs, signal);
+      return awaitResult(agent, lane, args.request_id, (args.timeout_ms as number | undefined) ?? maxWaitMs, signal);
     }
 
     if (!toolAllowed(policy, name)) return failure("forbidden", `${name} is not one of your tools`, { recovery_hint: "Your declaration does not include this tool; use another way or ask the owner." });
@@ -395,6 +404,10 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     res.writeHead(status, { "content-type": "application/json", ...headers }).end(JSON.stringify({ error: errorBody(code, message) }));
   }
 
+  // The MCP door is stateless, so a `notifications/cancelled` is a POST of its own and never reaches the handler of the call it
+  // names. The running tools/call of a (agent, lane) are kept by their JSON-RPC id, so that POST can stop the right one.
+  const calling = new Map<string, AbortController>();
+
   async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // A web page on the phone could reach a loopback port; only the agent runtime (no Origin) may talk here.
     if (req.headers.origin !== undefined) return reply(res, 403, "forbidden", "requests with an Origin header are refused");
@@ -414,6 +427,16 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     let body: unknown;
     try { body = raw ? JSON.parse(raw) : undefined; } catch { return reply(res, 400, "bad_request", "the body is not JSON"); }
 
+    const rpc = isObject(body) ? body : null;
+    const callKey = (id: unknown) => `${agent}/${lane}/${typeof id}:${String(id)}`;
+    if (rpc?.method === "notifications/cancelled" && isObject(rpc.params)) calling.get(callKey(rpc.params.requestId))?.abort();
+    let own: AbortController | undefined;
+    if (rpc?.method === "tools/call" && (typeof rpc.id === "number" || typeof rpc.id === "string")) {
+      const key = callKey(rpc.id), mine = own = new AbortController();
+      calling.set(key, mine);
+      res.on("close", () => { if (calling.get(key) === mine) calling.delete(key); });
+    }
+
     // Stateless: one MCP server per request, so nothing of an agent survives in the transport.
     const server = new Server({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION }, { capabilities: { tools: {}, resources: {} } });
     // No resources, said explicitly: the agent runtime asks, and otherwise prints a warning on its protocol stream.
@@ -423,7 +446,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       const policy = options.agentPolicy(agent);
       return { tools: policy ? toolDefinitions().filter((tool) => toolAllowed(policy, tool.name)).map((tool) => ({ ...tool })) : [] };
     });
-    server.setRequestHandler(CallToolRequestSchema, async (call, extra) => await callTool(agent, lane, call.params.name, call.params.arguments, extra.signal) as never);
+    server.setRequestHandler(CallToolRequestSchema, async (call, extra) => await callTool(agent, lane, call.params.name, call.params.arguments, own ? AbortSignal.any([extra.signal, own.signal]) : extra.signal) as never);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { void transport.close(); void server.close(); });
     await server.connect(transport);
@@ -441,10 +464,10 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     revoke,
     recover() {
       // Whatever is owed, from any turn: a turn the last process was in is not running now.
-      for (const id of table.owed()) wakeIfDue(id);
+      sweep(table.owed());
     },
     catchUp(agentId) {
-      for (const id of table.owed(agentId)) wakeIfDue(id);
+      sweep(table.owed(agentId));
     },
     close() {
       closed = true;

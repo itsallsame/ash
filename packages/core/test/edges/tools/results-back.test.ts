@@ -339,3 +339,77 @@ test("after a restart the calls that were running are told once as result_unknow
   assert.equal(context.outcome.error.code, "result_unknown");
   again.close();
 });
+
+const row = (s: Setup, id: string) => ({ ...(s.w.ledger.db().prepare("SELECT state, taken, woken FROM agent_jobs WHERE id=?").get(id) as any) });
+
+test("the owner interrupts a turn that is in await_result and the call is cancelled: the answer that comes after is told, not lost", async () => {
+  const s = await setup();
+  const rig = await rigOver(s, { maxWaitMs: 2000 });
+  await startTurn(s);
+  const client = await rig.client();
+  const id = await slowReceipt(client);
+  await endTurn(s);
+  await startTurn(s);
+  const ac = new AbortController();
+  const waiting = client.client.callTool({ name: "await_result", arguments: { request_id: id } }, undefined, { signal: ac.signal }).catch(() => "aborted");
+  await tick(50);
+  ac.abort(); // the runtime drops the call: notifications/cancelled is a POST of its own
+  s.driver.finish(MAIN, "front");
+  await settle();
+  await tick(50);
+  s.slow[0]!.resolve({ data: { n: 7 } });
+  assert.equal(await waiting, "aborted");
+  await waitFor(() => backWakes(s).length === 1, "the wake");
+  await tick();
+  assert.equal(backWakes(s).length, 1);
+  assert.deepEqual(row(s, id), { state: "done", taken: 0, woken: 1 });
+});
+
+test("an await_result whose turn is over when the answer comes does not take it, even if the cancellation never reached the door", async () => {
+  const s = await setup();
+  const rig = await rigOver(s, { maxWaitMs: 2000 });
+  await startTurn(s);
+  const client = await rig.client();
+  const id = await slowReceipt(client);
+  await endTurn(s);
+  await startTurn(s);
+  const waiting = client.call("await_result", { request_id: id });
+  await tick(50);
+  s.driver.finish(MAIN, "front"); // the turn ends; the call is not cancelled
+  await settle();
+  s.slow[0]!.resolve({ data: { n: 8 } });
+  const got = await waiting;
+  assert.equal(got.data.status, "accepted", "nobody is told the answer through a call nobody reads");
+  await waitFor(() => backWakes(s).length === 1, "the wake");
+  assert.deepEqual(row(s, id), { state: "done", taken: 0, woken: 1 });
+});
+
+test("the sweeps at start leave an agent that is not running alone: no attempt, no log line; its own start sends the wake", async () => {
+  const s = await setup();
+  const first = await rigOver(s);
+  await startTurn(s);
+  const id = await slowReceipt(await first.client());
+  await endTurn(s);
+  s.slow[0]!.resolve({ data: { n: 2 } });
+  await waitFor(() => backWakes(s).length === 1, "the wake");
+  // a second answer, owed while the agent is stopped
+  await startTurn(s);
+  const second = await slowReceipt(await first.client());
+  await endTurn(s);
+  await s.agents.manager.stopAgent(MAIN, "test");
+  s.slow[1]!.resolve({ data: { n: 3 } });
+  await tick();
+  const logged = s.logs.length;
+  first.edge.close();
+  const again = createToolsEdge({ router: s.w.router, registry: s.w.registry as never, ledger: s.w.ledger, agentPolicy: (a) => s.agents.policyOf(a), currentTurn: () => null, turnActive: () => false, log: (...a) => s.logs.push(a) });
+  s.late.edge = again;
+  again.recover();
+  await tick();
+  assert.equal(s.logs.length, logged, "nothing was logged");
+  assert.equal(row(s, second).woken, 0, "still owed");
+  await s.agents.manager.restartAgent(MAIN);
+  await waitFor(() => backWakes(s).length === 2, "the wake at the agent's start");
+  assert.equal((backWakes(s)[1]!.body as any).context.request_id, second);
+  void id;
+  again.close();
+});
