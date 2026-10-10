@@ -23,6 +23,7 @@ test("SPEC-08 §5.1: kill the DSH process -> the driver reports ended -> the mod
     spawn: () => { const p = spawn(process.execPath, [SCRIPT], { env: { ...process.env, FAKE_EXT: "1", FAKE_LOG: logFile }, stdio: ["pipe", "pipe", "pipe"] }); procs.push(p); return p; },
   }) } });
   await f.start();
+  await waitFor(() => f.agents.manager.stateOf("agent:main") === "idle");
   const log = () => (existsSync(logFile) ? readFileSync(logFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []) as Record<string, any>[];
   try {
     assert.match(written["/root/work/AGENTS.md"]!, /soul v1/);

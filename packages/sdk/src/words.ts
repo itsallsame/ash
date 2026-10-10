@@ -347,7 +347,7 @@ const agentFields: Record<string, JsonSchema> = {
   name: nonempty, summary: nonempty, brief: nonempty, runtime: AGENT_RUNTIME, native: AGENT_NATIVE, tools: strings, words: strings,
   lanes: AGENT_LANES, modules: AGENT_MODULES, primary: bool,
 };
-const agentInfo = obj({ id: agentRef, name: str, summary: str, state: choice("idle", "working", "stopped", "error"), available: bool, primary: bool, ephemeral: bool,
+const agentInfo = obj({ id: agentRef, name: str, summary: str, state: choice("idle", "working", "starting", "stopped", "error"), available: bool, reachable: bool, primary: bool, ephemeral: bool,
   brief: str, runtime: AGENT_RUNTIME, native: AGENT_NATIVE, created_by: str, tools: nullable(strings), words: nullable(strings), lanes: AGENT_LANES, modules: nullable(AGENT_MODULES) },
 ["id", "name", "summary", "state"]);
 const sessionKey = nonempty;

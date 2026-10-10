@@ -56,14 +56,16 @@ test("the recipient is the hub's primary agent until the owner picks another", a
 });
 
 test("a picked agent that is gone from the list falls back to the primary agent; unavailable agents cannot be picked", async () => {
-  const agents = [{ id: "agent:ash", name: "小舟", summary: "", state: "idle", primary: true }, { id: "agent:other", name: "帮手", summary: "", state: "stopped" }];
+  const agents = [{ id: "agent:ash", name: "小舟", summary: "", state: "idle", primary: true }, { id: "agent:other", name: "帮手", summary: "", state: "stopped", available: false, reachable: false }, { id: "agent:slow", name: "慢热", summary: "", state: "starting", available: false, reachable: true }];
   const t = await setup(agents);
   try {
     const picker = agentPicker(t.form, t.input, t.net);
     const control = t.form.children[0];
     await control.onclick();
-    await until(() => t.form.before_.children.length === 2);
+    await until(() => t.form.before_.children.length === 3);
     assert.equal(t.form.before_.children[1].disabled, true, "a stopped agent is shown but not selectable");
+    assert.equal(t.form.before_.children[2].disabled, false, "one that is starting takes messages (they wait in its inbox): selectable");
+    assert.match(t.form.before_.children[2].textContent, /启动中/);
     t.kernel.on("service:agents", "list", { agents: [agents[0], { id: "agent:third", name: "第三", summary: "", state: "idle" }] });
     t.form.before_.children[0].onclick();
     assert.equal(picker.target(), "agent:ash");

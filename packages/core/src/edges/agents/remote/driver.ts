@@ -17,6 +17,9 @@ const fallbackInfo = (kind: string): RuntimeInfo => ({ kind, models: [], abiliti
 const str = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 
 export class RemoteDriver implements AgentDriver {
+  /** The start in flight for each agent. A stop (or a start over) takes it away: the start that finds it gone does not go on. */
+  private readonly starting = new Map<string, object>();
+
   constructor(private readonly dir: Directory, readonly kind: string, report: (event: AgentEvent) => void) {
     dir.reporters.set(kind, report);
   }
@@ -46,7 +49,15 @@ export class RemoteDriver implements AgentDriver {
 
   async start(agent: string, spec: AgentStartSpec): Promise<void> {
     if (spec.runtime.kind !== this.kind) throw new WordError("bad_request", `this driver runs ${this.kind}, not ${spec.runtime.kind}`);
+    const ticket = {};
+    this.starting.set(agent, ticket);
+    try { await this.begin(agent, spec, ticket); } finally { if (this.starting.get(agent) === ticket) this.starting.delete(agent); }
+  }
+
+  private async begin(agent: string, spec: AgentStartSpec, ticket: object): Promise<void> {
+    const gone = () => new WordError("cancelled", `${agent} was stopped while it started`);
     const conn = await this.dir.computerFor(spec.native?.on, this.kind);
+    if (this.starting.get(agent) !== ticket) throw gone();
     const entry: Entry = { agent, kind: this.kind, conn, spec, state: "starting", handles: new Map(), stopping: false, ended: false, turns: new Map() };
     this.dir.entries.set(agent, entry);
     // What the computer kept while the hub was away comes first, in order. Whatever it says of an earlier incarnation's end is of no use now.
@@ -59,6 +70,7 @@ export class RemoteDriver implements AgentDriver {
     try {
       result = await conn.request("agent.start", { agent, spec: sent }, this.dir.startMs);
       if (entry.ended || conn.closed) throw new WordError("failed", entry.detail ?? `computer ${conn.name} lost ${agent} while it started`);
+      if (this.starting.get(agent) !== ticket) throw gone(); // stopped meanwhile (the stop has told the computer)
     } catch (error) {
       if (this.dir.entries.get(agent) === entry) this.dir.entries.delete(agent);
       entry.stopping = true;
@@ -75,6 +87,7 @@ export class RemoteDriver implements AgentDriver {
   }
 
   async stop(agent: string, reason: string): Promise<void> {
+    this.starting.delete(agent);
     const entry = this.dir.entries.get(agent);
     if (!entry || entry.kind !== this.kind) return;
     const asked = entry.state === "running" || entry.state === "starting";

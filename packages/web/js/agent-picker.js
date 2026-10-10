@@ -23,8 +23,9 @@ export function agentPicker(form, input, net, changed = () => {}) {
       const agents = await list(); panel.replaceChildren();
       for (const agent of agents) {
         const button = document.createElement("button"); button.type = "button";
-        button.disabled = agent.available === false || agent.state === "stopped";
-        button.textContent = `${agent.name} · ${agent.available === false ? "不可用" : agent.state === "working" ? "工作中" : agent.summary || "就绪"}`;
+        // Reachable: the agent takes messages (its process may still be starting; what is said waits in its inbox).
+        button.disabled = agent.reachable === false;
+        button.textContent = `${agent.name} · ${agent.reachable === false ? "不可用" : agent.state === "starting" ? "启动中" : agent.state === "working" ? "工作中" : agent.summary || "就绪"}`;
         button.title = button.textContent;
         button.onclick = () => { selected = agent; label(); panel.hidden = true; input.value = input.value.replace(/^@\s*/, ""); input.placeholder = `跟 ${agent.name} 说点什么…`; input.focus(); };
         panel.append(button);

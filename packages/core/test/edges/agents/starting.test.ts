@@ -56,6 +56,7 @@ test("agents/list tells being there from the process running: available is the p
   assert.deepEqual([(await info()).state, (await info()).available, (await info()).reachable], ["starting", false, true]);
   g.open();
   await starting;
+  await waitFor(() => f.agents.manager.stateOf(M) === "idle");
   assert.deepEqual([(await info()).state, (await info()).available, (await info()).reachable], ["idle", true, true]);
 });
 
@@ -98,7 +99,7 @@ test("an ask to an agent that is starting waits for the new process and gets its
 test("an agent that is stopped for good is offline: off, removed, or given up on", async () => {
   const f = fixture();
   await f.start();
-  await f.agents.manager.stopAgent(M, "owner", true);
+  await f.agents.manager.stopAgent(M, "owner");
   assert.ok(!reachable(f));
   assert.equal(f.agents.manager.reachable(M), false);
   assert.equal(f.agents.manager.stateOf(M), "stopped");
@@ -114,6 +115,7 @@ test("an agent that is stopped for good is offline: off, removed, or given up on
   const live = () => h.driver().of("start").filter((c) => c[1] === "agent:b").length;
   for (let i = 1; i <= MAX_FAILURES; i++) {
     h.driver().die("agent:b");
+    await settle();
     if (i < MAX_FAILURES) { if (h.waiting().length) { h.waiting()[0]!.fn(); } await waitFor(() => live() === i + 1); }
   }
   await settle();
@@ -126,7 +128,7 @@ test("a stop that comes while the process is starting leaves no member, and the 
   const { f, d, g } = slowStart();
   const starting = f.agents.startAll();
   await waitFor(() => d.of("start").length === 1);
-  await f.agents.manager.stopAgent(M, "owner", true);
+  await f.agents.manager.stopAgent(M, "owner");
   assert.ok(!reachable(f));
   g.open();
   await starting;

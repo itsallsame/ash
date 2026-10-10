@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "e93132eaab2a76b05dfce4c1f3c7102cfe98e5f013d0447baa6077a2097e911c",
+ "hash": "8a76a4bfba204a6d65effdb7f2600fc95ca44338e8616972f80e76bdd42690bd",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -3554,11 +3554,15 @@
          "enum": [
           "idle",
           "working",
+          "starting",
           "stopped",
           "error"
          ]
         },
         "available": {
+         "type": "boolean"
+        },
+        "reachable": {
          "type": "boolean"
         },
         "primary": {
@@ -3876,11 +3880,15 @@
       "enum": [
        "idle",
        "working",
+       "starting",
        "stopped",
        "error"
       ]
      },
      "available": {
+      "type": "boolean"
+     },
+     "reachable": {
       "type": "boolean"
      },
      "primary": {
@@ -4337,11 +4345,15 @@
       "enum": [
        "idle",
        "working",
+       "starting",
        "stopped",
        "error"
       ]
      },
      "available": {
+      "type": "boolean"
+     },
+     "reachable": {
       "type": "boolean"
      },
      "primary": {
@@ -4645,11 +4657,15 @@
       "enum": [
        "idle",
        "working",
+       "starting",
        "stopped",
        "error"
       ]
      },
      "available": {
+      "type": "boolean"
+     },
+     "reachable": {
       "type": "boolean"
      },
      "primary": {
@@ -4840,11 +4856,15 @@
       "enum": [
        "idle",
        "working",
+       "starting",
        "stopped",
        "error"
       ]
      },
      "available": {
+      "type": "boolean"
+     },
+     "reachable": {
       "type": "boolean"
      },
      "primary": {
@@ -5035,11 +5055,15 @@
       "enum": [
        "idle",
        "working",
+       "starting",
        "stopped",
        "error"
       ]
      },
      "available": {
+      "type": "boolean"
+     },
+     "reachable": {
       "type": "boolean"
      },
      "primary": {
@@ -5230,11 +5254,15 @@
       "enum": [
        "idle",
        "working",
+       "starting",
        "stopped",
        "error"
       ]
      },
      "available": {
+      "type": "boolean"
+     },
+     "reachable": {
       "type": "boolean"
      },
      "primary": {
@@ -5467,11 +5495,15 @@
       "enum": [
        "idle",
        "working",
+       "starting",
        "stopped",
        "error"
       ]
      },
      "available": {
+      "type": "boolean"
+     },
+     "reachable": {
       "type": "boolean"
      },
      "primary": {

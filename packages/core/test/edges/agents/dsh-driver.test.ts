@@ -275,3 +275,24 @@ test("a runtime that cannot start fails the start with a reason", async () => {
   await assert.rejects(driver.start("agent:main", spec()), (e: any) => e.code === "failed");
   assert.equal(driver.status("agent:main").state, "failed");
 });
+
+test("a stop that comes while the baseline file is still being written voids that start: the late boot spawns nothing, and the retry is the only process", async () => {
+  const kids: ReturnType<typeof nodeSpawn>[] = [];
+  const write = { calls: 0, release: () => {} };
+  const held = new Promise<void>((r) => { write.release = r; });
+  const driver = createDshDriver({ report: () => {},
+    writeFile: async () => { if (write.calls++ === 0) await held; },
+    spawn: () => { const c = nodeSpawn(process.execPath, [SCRIPT], { stdio: ["pipe", "pipe", "pipe"] }); kids.push(c); return c; } });
+  drivers.push(driver);
+  const first = driver.start("agent:main", spec()).then(() => "started", (e) => e as WordError);
+  await waitFor(() => write.calls === 1);
+  await driver.stop("agent:main", "start failed"); // what the hub does when the start times out
+  await driver.start("agent:main", spec()); // the retry
+  write.release();
+  const outcome = await first;
+  assert.ok(outcome instanceof WordError, "the old start was refused");
+  assert.equal(kids.length, 1, "only the retry spawned a process");
+  assert.equal(driver.status("agent:main").state, "running");
+  assert.ok(kids[0]!.exitCode === null && kids[0]!.signalCode === null, "and that one is alive");
+  await driver.stop("agent:main", "done");
+});

@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_FAILURES, RETRY_STEPS_MS, START_TIMEOUT_MS, TROUBLE_NOTICE_AT } from "../../../src/edges/agents/manager";
+import { MAX_FAILURES, RETRY_STEPS_MS, START_TIMEOUT_MS, STABLE_RUN_MS, TROUBLE_NOTICE_AT } from "../../../src/edges/agents/manager";
 import { fixture, OWNER, settle, waitFor } from "./helpers";
 
 const M = "agent:main";
@@ -39,7 +39,8 @@ async function pass(f: ReturnType<typeof fixture>): Promise<number> {
 
 test("a start that fails is not tried again at once: it waits 2 s, then 5 s, then 15 s; the owner's words wait in the inbox and arrive when it is up", async () => {
   const f = failing(3);
-  await f.agents.startAll(); // returns after the first try; it does not hold the kernel's boot for the rest
+  await f.agents.startAll();
+  await settle();
   assert.equal(starts(f), 1);
   assert.deepEqual(waits(f), [STEPS[0]]);
   assert.equal(f.agents.manager.stateOf(M), "starting");
@@ -73,6 +74,7 @@ test("the primary agent is never given up on: it keeps trying on the steps, the 
   const failures = MAX_FAILURES + 3;
   const f = failing(failures);
   await f.agents.startAll();
+  await settle();
   const waited: number[] = [];
   for (let i = 1; i < failures; i++) {
     assert.equal(starts(f), i);
@@ -91,6 +93,9 @@ test("the primary agent is never given up on: it keeps trying on the steps, the 
 
   await pass(f); // the start works now
   assert.equal(f.agents.manager.stateOf(M), "idle");
+  assert.deepEqual(notices(f), [trouble[0]], "it is up, but not yet known to stay up: not told it is back");
+  assert.deepEqual(waits(f), [STABLE_RUN_MS]);
+  assert.ok(f.fire(STABLE_RUN_MS));
   assert.deepEqual(waits(f), []);
   assert.deepEqual(notices(f), [trouble[0], "Ash 恢复了。"]);
   // dying again later says nothing more: the owner has been told it is back
@@ -128,6 +133,7 @@ test("an agent that is not the primary one is given up on after MAX_FAILURES, ha
 test("a restart by hand ends the wait: the new try is made at once and the old timer is dropped", async () => {
   const f = failing(2);
   await f.agents.startAll();
+  await settle();
   assert.deepEqual(waits(f), [2000]);
   await f.call(M, "say", { text: "还在吗" }, OWNER);
   f.driver().startFailures = 0;
@@ -153,6 +159,7 @@ test("a restart by hand ends the wait: the new try is made at once and the old t
 test("the host saying the network is back ends the wait; going offline does not; a stop for good drops it", async () => {
   const f = failing(2);
   await f.agents.startAll();
+  await settle();
   f.registry.add(f.agents.service);
   assert.deepEqual(waits(f), [2000]);
   await f.service("env.changed", { what: "power", saver: true });
@@ -170,8 +177,9 @@ test("the host saying the network is back ends the wait; going offline does not;
 
   const g = failing(5);
   await g.agents.startAll();
+  await settle();
   assert.deepEqual(waits(g), [2000]);
-  await g.agents.manager.stopAgent(M, "owner", true);
+  await g.agents.manager.stopAgent(M, "owner");
   assert.deepEqual(waits(g), []);
   assert.ok(!reachable(g));
   assert.equal(g.agents.manager.stateOf(M), "stopped");
@@ -204,7 +212,11 @@ test("a process that dies: the first time it is started again at once, and the n
   assert.equal(starts(f), 6);
   assert.ok(reachable(f));
   assert.equal(f.agents.manager.stateOf(M), "idle");
-  assert.deepEqual(notices(f), [], "a process that was up and died says nothing");
+  // dying right away again and again is trouble whether the start failed or the process ran a moment: told once, at TROUBLE_NOTICE_AT
+  assert.equal(notices(f).length, 1);
+  assert.match(notices(f)[0]!, /Ash 暂时起不来/);
+  assert.ok(f.fire(STABLE_RUN_MS));
+  assert.equal(notices(f).at(-1), "Ash 恢复了。");
 
   // another agent is given up on after MAX_FAILURES crashes in a row
   await f.service("declare", decl(B));
@@ -229,6 +241,8 @@ test("a start that hangs counts as failed after START_TIMEOUT_MS and is tried ag
   f.driver().startGate = null;
   assert.ok(f.fire(START_TIMEOUT_MS));
   await starting;
+  await waitFor(() => f.driver().of("stop").length === 1);
+  await settle();
   assert.equal(f.driver().of("stop").length, 1, "the hung process is stopped");
   assert.deepEqual(waits(f), [2000]);
   assert.ok(reachable(f));

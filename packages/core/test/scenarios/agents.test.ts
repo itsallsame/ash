@@ -185,6 +185,24 @@ test("S172: the hub has just restarted and the main agent's runtime is still com
   await eventually(() => owner!.messages.find((m) => m.from === MAIN && m.to === OWNER && textOf(m) === "听到了：重启后的第一句"), "the answer");
 });
 
+test("the host hears lifecycle.ready while the main agent's runtime is still coming up: the kernel's start does not wait for the agents", async (t) => {
+  const s = await startScenario(t);
+  const ready = s.host.callsOf("lifecycle.ready").length;
+  const up = deferred();
+  s.driver.holdStarts(up.promise);
+  const starts = s.driver.starts.length;
+  await s.restart(); // returns when the hub has started; the runtime has not answered
+  assert.equal(s.host.callsOf("lifecycle.ready").length, ready + 1, "ready was reported");
+  await eventually(() => s.driver.starts.length > starts, "the main agent's start was begun");
+  const owner = await s.human({ name: "early" });
+  const list = async () => (dataOf(await owner.call("service:agents", "list")) as { agents: { id: string; state: string; available: boolean; reachable: boolean }[] }).agents.find((a) => a.id === MAIN)!;
+  const early = await list();
+  assert.deepEqual([early.state, early.available, early.reachable], ["starting", false, true]);
+  up.resolve();
+  s.driver.holdStarts(null);
+  await eventually(async () => (await list()).state === "idle", "the main agent to come up");
+});
+
 test("S168: DSH is killed (kill -9) again and again, a few seconds apart; each time the hub starts it anew and the owner's next words are answered", async (t) => {
   const s = await startScenario(t);
   s.driver.script((turn) => { for (const m of turn.messages) if (m.from === OWNER) turn.say(`听到了：${m.text}`); });

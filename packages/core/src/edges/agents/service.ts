@@ -78,9 +78,7 @@ export function createAgentsService(manager: AgentManager): Member {
   async function remove(id: string): Promise<WordResult> {
     const run = manager.run(id);
     if (run.spec.decl.primary) throw new WordError("conflict", "the primary agent cannot be removed; hand primary to another agent first");
-    await manager.stopAgent(id, "removed");
-    manager.inbox.drop(id);
-    runs.remove(id);
+    await manager.forget(id, "removed");
     return data({ removed: true });
   }
 
@@ -187,7 +185,7 @@ export function createAgentsService(manager: AgentManager): Member {
       case "start": manager.run(body.agent); manager.runs.setDesired(body.agent, "on"); await manager.startAgent(body.agent, "启动"); return data(info(manager.run(body.agent)));
       case "stop":
         if (manager.run(body.agent).spec.decl.primary && !isOwner(ctx)) throw new WordError("forbidden", "only the owner can stop the primary agent");
-        await manager.stopAgent(manager.run(body.agent).id, "stopped", true); return data(info(manager.run(body.agent)));
+        await manager.stopAgent(manager.run(body.agent).id, "stopped"); return data(info(manager.run(body.agent)));
       case "restart": manager.run(body.agent); await manager.restartAgent(body.agent); return data(info(manager.run(body.agent)));
       case "remove": return remove(body.agent);
       case "primary.set":

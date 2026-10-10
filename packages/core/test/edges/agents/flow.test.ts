@@ -233,11 +233,13 @@ test("a start that fails is tried again later; a failure of the first one does n
   await f.agents.stopAll();
   const g = fixture({ from: f });
   await g.agents.startAll();
+  await settle();
   assert.equal(g.agents.manager.stateOf(M), "idle");
   const h = fixture({ from: f });
   h.agents.manager.driver("dsh");
   (h.drivers[0] as FakeDriver).startFailures = 3;
   await h.agents.startAll();
+  await settle();
   assert.equal(h.drivers[0]!.of("start").length, 1, "one try, then it waits");
   assert.equal(h.agents.manager.stateOf(M), "starting");
   assert.ok(h.registry.members.has(M));
@@ -248,6 +250,7 @@ test("a start that fails is tried again later; a failure of the first one does n
   i.agents.manager.driver("dsh");
   (i.drivers[0] as FakeDriver).startFailures = 2;
   await i.agents.startAll();
+  await settle();
   assert.ok(i.fire(2000));
   await settle();
   assert.ok(i.fire(5000));
