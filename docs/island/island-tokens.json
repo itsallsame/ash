@@ -74,6 +74,6 @@
       "ask": "listening", "approval": "focused", "in_app": "listening",
       "result": "success", "incomplete": "thinking", "stopped": "default", "stale": "default"
     },
-    "source": "packages/core/ui/avatars/*.webp"
+    "source": "packages/web/avatars/*.webp"
   }
 }

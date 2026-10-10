@@ -32,7 +32,7 @@ Android WebView 从 APK 加载静态界面，通过原生桥访问 Core；远程
 |---|---|
 | `packages/sdk` | `ash-api/2` 类型、word 目录与客户端 |
 | `packages/core` | 世界层、成员、后台流程、边缘 API 和界面 |
-| `packages/dsh-binding` | DSH 会话、工具、上下文与审批绑定 |
+| `packages/web` | 网页界面（Core 当静态文件发，Android 打包进 APK） |
 | `packages/ash-skills` | 人格模板、首次见面与其他技能 |
 | `packages/android-compat` | Android 上运行原样 DSH 的适配 |
 | `payload/` | DSH、运行时和 Core 的锁定输入与组装 |

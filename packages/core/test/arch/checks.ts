@@ -65,8 +65,8 @@ export function checkTree(tree: Tree, terms: string[] = []): Finding[] {
     });
   }
 
-  const ui = names.filter(f => /^packages\/core\/ui\/js\/.*\.js$/.test(f));
-  if (!ui.length) add("AR2", "packages/core/ui/js/", "UI JavaScript sources missing");
+  const ui = names.filter(f => /^packages\/web\/js\/.*\.js$/.test(f));
+  if (!ui.length) add("AR2", "packages/web/js/", "UI JavaScript sources missing");
   for (const file of ui) {
     const sf = source(file, tree[file]);
     walk(sf, n => {

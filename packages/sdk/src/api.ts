@@ -6,9 +6,8 @@
 //   control plane    ash → runtime   lifecycle, delivery, cancel, loop gate, context, tools, approval
 //   system services  runtime → ash   inbox, members/devices, calls, timers, notify, workspace, grants
 //
-// Inside one process (ash core hosting DSH) both directions are direct calls: ash holds the
-// runtime's root context, the runtime gets `ctx.ash` (see packages/dsh-binding). HTTP (below)
-// only exists at the edges: the UI, the Android host, remote devices, out-of-process runtimes.
+// The agent runtime (DSH in its container) reaches ash through the tool server and the control plane at the
+// edges. HTTP (below) serves the UI, the Android host, remote devices and out-of-process runtimes.
 //
 // The contract is designed around the strongest runtime (DSH). A runtime declares which
 // control capabilities it actually supports (`RuntimeCapabilities`); ash never assumes more.
@@ -129,7 +128,7 @@ export type AgentStatus = "starting" | "idle" | "running" | "stopped" | "error";
 export interface AgentInfo {
   id: string; // member id, e.g. "agent:main"
   name: string;
-  runtime: string; // "dsh" | "echo" | …
+  runtime: string; // "container" | "echo" | …
   workspace: string;
   status: AgentStatus;
   capabilities: RuntimeCapabilities;
