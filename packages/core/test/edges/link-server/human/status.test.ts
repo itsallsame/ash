@@ -35,6 +35,19 @@ test("a turn on the front lane makes status frames: thinking, the tools as steps
   assert.equal(new Set(revisions).size, revisions.length);
 });
 
+test("a turn that completes without saying anything to the owner ends with an empty reply and a plain end line", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const island = await Channel.open(hub, { surfaces: ["chat", "status"] });
+  hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] });
+  hub.mini.announce("agent.tool", { turn: "t1", name: "pending.redeem", phase: "start", summary: "提交已批准的操作" });
+  hub.mini.announce("agent.tool", { turn: "t1", name: "pending.redeem", phase: "end", summary: "提交已批准的操作", ok: true });
+  hub.mini.announce("turn.ended", { turn: "t1", lane: "front", outcome: "completed" });
+  await eventually(() => last(island).state === "done", "done");
+  assert.equal(last(island).reply, "", "nothing was said to the owner");
+  assert.equal(last(island).outcome, "completed");
+  assert.equal(last(island).text, "本轮已结束", "not 本轮回复: there is no reply to show");
+});
+
 test("a turn on another lane is not shown; an open question makes the frame wait for the owner and goes away when answered", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const island = await Channel.open(hub, { surfaces: ["chat", "status"] }); island.follow();

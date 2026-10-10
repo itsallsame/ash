@@ -12,6 +12,14 @@ object IslandRules {
     /** [kind] is the frame's kind; [waitingOnOwner] is a card waiting for an answer that has not been given yet. */
     fun opensCard(kind: String, waitingOnOwner: Boolean): Boolean = waitingOnOwner || kind == "in_app"
 
+    /**
+     * Whether a card the island opened by itself goes back to the pill: nothing needs the owner any more (the question or
+     * approval was answered, withdrawn or expired) and no answer is still on its way. A card the owner opened is theirs to close.
+     * [kind] is the frame's kind; [answerSending] is an answer sent and not yet taken up.
+     */
+    fun closesWhenAnswered(openedByItself: Boolean, formIsCard: Boolean, kind: String, waitingOnOwner: Boolean, answerSending: Boolean, editing: Boolean): Boolean =
+        openedByItself && formIsCard && !opensCard(kind, waitingOnOwner) && !answerSending && !editing
+
     /** Frames that report an outcome and need nothing from the owner: their mark settles by itself. */
     fun settles(kind: String): Boolean = kind in SETTLING
 
