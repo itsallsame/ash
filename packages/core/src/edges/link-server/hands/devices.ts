@@ -28,6 +28,11 @@ export interface PairingGateway {
   reject(requestId: string): Promise<void>;
   revoke(handId: string): Promise<void>;
   setWebUi(handId: string, allow: boolean): Promise<void>;
+  /**
+   * The relay only knows `expose_capability` (it keeps the tunnel from reaching a device that may not be reached). It is held
+   * while the device may lend capabilities, serve as a body or run local agents, and not otherwise.
+   */
+  setExpose?(handId: string, allow: boolean): Promise<void>;
 }
 
 /** A new device asked to pair with a code (the relay tells the kernel). */
@@ -189,7 +194,10 @@ export class Devices implements Member {
     if (hand.kind === "browser" && (access.lend || access.local_agents || access.tier === "full")) throw new WordError("forbidden", "a browser cannot lend capabilities, run local agents or have full tier");
     this.d.hands.setAccess(hand.id, access);
     if (access.web_ui !== undefined && access.web_ui !== hand.web_ui && hand.paired_by === "gateway") await this.d.gateway?.setWebUi(hand.id, access.web_ui);
+    const exposed = hand.lend || hand.local_agents || this.d.bodies.isBound(hand.id);
     if (input.body !== undefined && input.body !== this.d.bodies.isBound(hand.id)) await this.bindBody(hand.id, input.body);
+    const exposing = (access.lend ?? hand.lend) || (access.local_agents ?? hand.local_agents) || this.d.bodies.isBound(hand.id);
+    if (exposing !== exposed && hand.paired_by === "gateway") await this.d.gateway?.setExpose?.(hand.id, exposing);
     // A connection is judged once, at the handshake: when a permission changes the connection ends and the hand is judged again when it returns.
     if (hand.paired_by === "gateway" && PERMISSIONS.some((key) => access[key] !== undefined && access[key] !== hand[key])) this.d.hands.disconnect(hand.id, "permissions changed");
     return this.info(this.hand(deviceId(hand.id)));
@@ -253,9 +261,11 @@ export class Devices implements Member {
     this.requested(pair.pair_id);
     const request = pair.request!;
     const browser = pair.kind === "browser";
-    if (browser && (input.lend || input.local_agents || input.tier === "full")) throw new WordError("forbidden", "a browser cannot lend capabilities, run local agents or have full tier");
+    if (browser && (input.lend || input.local_agents || input.body || input.tier === "full")) throw new WordError("forbidden", "a browser cannot lend capabilities, run local agents or have full tier");
     const access = { tier: input.tier ?? "ask", lend: !browser && input.lend !== false, local_agents: !browser && input.local_agents === true, web_ui: browser || input.web_ui === true };
-    const permissions: RelayPermission[] = [...(access.lend ? ["expose_capability" as const] : []), ...(access.web_ui ? ["chat" as const, "web_ui" as const] : [])];
+    // The relay has one permission for everything that is not the web page: any of the three non-web ones needs a tunnel to the device.
+    const exposed = access.lend || access.local_agents || input.body === true;
+    const permissions: RelayPermission[] = [...(exposed ? ["expose_capability" as const] : []), ...(access.web_ui ? ["chat" as const, "web_ui" as const] : [])];
     // Registered first: the device connects the moment the relay lets it, and must already be known.
     this.d.hands.register({ id: request.hand_id, name: (input.name ?? pair.name).trim(), kind: browser ? "browser" : "computer", public_key: request.public_key, paired_by: "gateway", ...access });
     await this.gateway().approve(request.request_id, permissions);

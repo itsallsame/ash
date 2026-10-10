@@ -1,0 +1,182 @@
+import assert from "node:assert/strict";
+import { createHash, generateKeyPairSync, sign as signBytes } from "node:crypto";
+import test from "node:test";
+import { eventually } from "../../core/test/fixtures/wait";
+import { Relay, RelayError, type BrowserOpen, type RelayDevice, type RelayOptions, type RelayPairRequest } from "../src/gateway";
+import { FakeGateway } from "./fixtures/fake-gateway";
+
+const b64u = (b: Uint8Array) => Buffer.from(b).toString("base64url");
+
+/** An owner whose key is held here; the relay only ever sees signatures. */
+function newOwner() {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const spki = publicKey.export({ type: "spki", format: "der" });
+  return {
+    id: b64u(createHash("sha256").update(spki).digest()).slice(0, 22),
+    publicKey: b64u(spki),
+    sign: async (data: Uint8Array) => b64u(signBytes("sha256", Buffer.from(data), { key: privateKey, dsaEncoding: "der" })),
+  };
+}
+
+async function setup(t: test.TestContext, o: { secret?: string | null; claimed?: boolean } = {}, relay: Partial<RelayOptions> = {}) {
+  const owner = newOwner();
+  const gw = await FakeGateway.start({ secret: o.secret, ...(o.claimed ? { claimedBy: { id: owner.id, key: owner.publicKey } } : {}) });
+  const devices: RelayDevice[][] = [];
+  const requests: RelayPairRequest[] = [];
+  const browsers: BrowserOpen[] = [];
+  const connection: boolean[] = [];
+  let onBrowser: (open: BrowserOpen) => void = (open) => browsers.push(open);
+  const made = new Relay({
+    url: gw.url, owner, claimSecret: () => gw.secret, backoff: { initialMs: 10, maxMs: 50 }, timeoutMs: 5000,
+    handlers: { devices: (d) => devices.push(d), pairRequest: (r) => requests.push(r), browser: (open) => onBrowser(open), connection: (c) => connection.push(c) },
+    ...relay,
+  });
+  t.after(async () => { made.stop(); await gw.stop(); });
+  return { owner, gw, relay: made, devices, requests, browsers, connection, onBrowser: (fn: (open: BrowserOpen) => void) => { onBrowser = fn; } };
+}
+
+test("an unclaimed relay is claimed with the secret, signed by the owner's key, and then connected", async (t) => {
+  const { gw, relay, owner, connection } = await setup(t);
+  await relay.ensureClaimed();
+  assert.equal(gw.ownerId, owner.id);
+  assert.equal(relay.claimed, true);
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+  assert.deepEqual(connection, [true]);
+  assert.equal(gw.ownerConnections, 1);
+});
+
+test("what cannot be fixed by trying again is a problem the owner has to see, not a retry", async (t) => {
+  const none = await setup(t, { secret: "right" }, { claimSecret: () => null });
+  await assert.rejects(none.relay.ensureClaimed(), (e: RelayError) => e.problem === "missing_secret");
+
+  const wrong = await setup(t, { secret: "right" }, { claimSecret: () => "wrong" });
+  await assert.rejects(wrong.relay.ensureClaimed(), (e: RelayError) => e.problem === "bad_secret");
+
+  const other = await setup(t);
+  const stranger = await FakeGateway.start({ claimedBy: { id: "someone-else-entirely-1", key: "x" } });
+  t.after(() => stranger.stop());
+  const relay = new Relay({ url: stranger.url, owner: other.owner, backoff: { initialMs: 10, maxMs: 20 } });
+  relay.start();
+  await eventually(() => relay.problem, "the problem");
+  assert.equal(relay.problem, "claimed_by_other");
+  assert.equal(relay.connected, false);
+  relay.stop();
+
+  const gone = new Relay({ url: "http://127.0.0.1:1", owner: other.owner, backoff: { initialMs: 10, maxMs: 20 }, timeoutMs: 500 });
+  await assert.rejects(gone.ensureClaimed(), (e: RelayError) => e.problem === "unreachable");
+});
+
+test("the device list and its permissions arrive after connecting and whenever a device comes online", async (t) => {
+  const { gw, relay, devices } = await setup(t, { claimed: true });
+  gw.setDevice("mac1", { name: "Mac", permissions: ["expose_capability"], online: false });
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+  assert.deepEqual(relay.devices().map((d) => [d.id, d.online, d.permissions]), [["mac1", false, ["expose_capability"]]]);
+
+  const before = devices.length;
+  gw.setDevice("mac1", { online: true });
+  await eventually(() => devices.length > before && devices.at(-1)!.find((d) => d.id === "mac1")!.online, "the presence read");
+  assert.deepEqual(relay.devices()[0]!.permissions, ["expose_capability"]);
+});
+
+test("a /link tunnel to a device carries text both ways; the relay's refusals arrive as a close", async (t) => {
+  const { gw, relay } = await setup(t, { claimed: true });
+  gw.setDevice("mac1", { permissions: ["expose_capability"], online: true });
+  gw.setDevice("web1", { permissions: ["web_ui"], online: true });
+  gw.onDeviceStream = (_id, endpoint) => endpoint.onMessage((text) => endpoint.send(`echo ${text}`));
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+
+  const socket = relay.openLink("mac1");
+  const heard: string[] = [];
+  socket.on("message", (data: string) => heard.push(data));
+  socket.send("hello");
+  await eventually(() => heard.length === 1, "the echo");
+  assert.deepEqual(heard, ["echo hello"]);
+
+  const closes: [number, string][] = [];
+  const refused = relay.openLink("web1");
+  refused.on("close", (code: number, reason: string) => closes.push([code, reason]));
+  await eventually(() => closes.length > 0, "the refusal");
+  assert.equal(closes[0]![0], 4404, "a device with only web permissions cannot be reached");
+
+  // one stream per device: opening again replaces the first
+  const first: number[] = [];
+  socket.on("close", (code: number) => first.push(code));
+  relay.openLink("mac1");
+  await eventually(() => first.length > 0, "the replacement");
+  assert.equal(first[0], 4409);
+});
+
+test("a browser stream is handed over with its path; nothing is answered until the caller decides", async (t) => {
+  const { gw, relay, onBrowser, browsers } = await setup(t, { claimed: true });
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+
+  onBrowser((open) => {
+    if (open.path !== "/link") return open.reject(4404, "path_not_allowed");
+    const socket = open.accept();
+    socket.on("message", (text: string) => socket.send(`you said ${text}`));
+  });
+  const good = gw.openBrowser("browser1", "/link");
+  await eventually(() => good.opened, "the open to be acknowledged");
+  good.send("hi");
+  await eventually(() => good.received.length > 0, "the answer");
+  assert.deepEqual(good.received, ["you said hi"]);
+
+  const bad = gw.openBrowser("browser1", "/api/send");
+  await eventually(() => bad.closedWith, "the refusal");
+  assert.equal(bad.closedWith!.code, 4404);
+  assert.equal(bad.opened, false);
+  assert.equal(browsers.length, 0);
+});
+
+test("a browser stream nobody handles is refused, and a web page request is answered rather than left hanging", async (t) => {
+  const { gw, relay } = await setup(t, { claimed: true }, { handlers: {} });
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+  const stream = gw.openBrowser("browser1", "/link");
+  await eventually(() => stream.closedWith, "the refusal");
+  assert.equal(stream.closedWith!.code, 4404);
+  const answer = await gw.httpRequest("browser1");
+  assert.equal(answer.op, "http.error");
+});
+
+test("pairing: a ticket is registered by its hash, a request arrives, approval and permission changes are signed with the next grant version", async (t) => {
+  const { gw, relay, requests } = await setup(t, { claimed: true });
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+
+  const { ticket, origin } = await relay.ticket();
+  assert.equal(origin, gw.url);
+  assert.deepEqual(gw.tickets, [createHash("sha256").update(ticket).digest("base64url")]);
+
+  gw.pairRequest({ request_id: "req1", client_id: "mac1", name: "Mac", pubkey: "PUB" });
+  await eventually(() => requests.length > 0, "the request");
+  assert.equal(requests[0]!.client_id, "mac1");
+
+  await relay.approve("req1", ["expose_capability"]);
+  assert.deepEqual(gw.devices.get("mac1")!.permissions, ["expose_capability"]);
+  assert.equal(gw.grantVersion, 1);
+  await assert.rejects(relay.approve("nope", []), /unknown pairing request/);
+
+  await relay.setPermissions("mac1", (cur) => [...cur, "web_ui", "chat"]);
+  assert.deepEqual(gw.devices.get("mac1")!.permissions, ["expose_capability", "web_ui", "chat"]);
+  assert.equal(gw.grantVersion, 2);
+
+  await relay.revoke("mac1");
+  assert.equal(gw.devices.get("mac1")!.revoked, true);
+  assert.equal(relay.devices().find((d) => d.id === "mac1")!.revoked, true);
+});
+
+test("a dropped connection is made again by itself, and stop ends it", async (t) => {
+  const { gw, relay, connection } = await setup(t, { claimed: true });
+  relay.start();
+  assert.ok(await relay.waitConnected(5000));
+  gw.owner!.terminate();
+  await eventually(() => gw.ownerConnections === 2 && relay.connected, "the new connection");
+  assert.deepEqual(connection, [true, false, true]);
+  relay.stop();
+  await eventually(() => !relay.connected, "stopping");
+});
