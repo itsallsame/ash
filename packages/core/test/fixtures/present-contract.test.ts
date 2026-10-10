@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { FakeHost } from "./fake-host";
-import type { HostPresentationV2 } from "../../../sdk/src/host";
+import type { HostPresentationV2 } from "../../../sdk/src/legacy/host";
 
 test("fake host records a routed approval and rejects missing reply target", async () => {
   const host = new FakeHost();

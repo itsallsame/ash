@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { eventually } from "../fixtures/wait";
 import type { Message } from "../../../sdk/src/api";
-import type { HostPresentationV2 } from "../../../sdk/src/host";
+import type { HostPresentationV2 } from "../../../sdk/src/legacy/host";
 import { PostMember, isQuiet, quietEnd } from "../../src/members/post-delivery";
 import { EdgeRouter, ScreenRegistry, type EdgeCaller } from "../../src/server";
 import { OwnerMember } from "../../src/members/owner";

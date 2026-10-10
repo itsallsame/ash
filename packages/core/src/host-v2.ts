@@ -1,6 +1,6 @@
 import type { CallResult } from "../../sdk/src/api";
-import type { HostManifestV2 } from "../../sdk/src/host";
-import { hostPresentationErrors, type HostPresentationV2 } from "../../sdk/src/host";
+import type { HostManifestV2 } from "../../sdk/src/legacy/host";
+import { hostPresentationErrors, type HostPresentationV2 } from "../../sdk/src/legacy/host";
 import { DeviceMember } from "./members/device";
 import { isWordEffect } from "../../sdk/src/words";
 import type { Signer } from "./gateway/link";
