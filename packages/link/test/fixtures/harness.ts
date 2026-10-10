@@ -18,8 +18,7 @@ export interface Harness {
 }
 
 /**
- * A kernel as the core will wire it: the token is checked in `authenticate`, the hand id is the hand's name, and a new
- * connection of a hand that has a device or agent channel closes its older one with 4009.
+ * A kernel as the core will wire it: the token is checked in `authenticate` and the hand id is the hand's name.
  */
 export async function startKernel(over: Partial<LinkServerOptions> = {}, handlers: (session: LinkSession) => SessionHandlers = () => ({})): Promise<Harness> {
   const sessions: LinkSession[] = [];
@@ -35,8 +34,6 @@ export async function startKernel(over: Partial<LinkServerOptions> = {}, handler
       return { ok: true, hand_id: hello.hand.name, channels };
     },
     onSession: (session) => {
-      const carries = (s: LinkSession) => Boolean(s.channels.device || s.channels.agent);
-      if (carries(session)) for (const old of link.sessions()) if (old !== session && old.handId === session.handId && carries(old)) old.close(CLOSE_CODES.superseded, "replaced");
       sessions.push(session);
       return handlers(session);
     },

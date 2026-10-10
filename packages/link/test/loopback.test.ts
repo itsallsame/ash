@@ -122,6 +122,56 @@ test("a second connection of the same hand replaces the first with 4009; the fir
   } finally { first.stop(); second.stop(); await kernel.stop(); }
 });
 
+test("a newer connection with a device or agent channel replaces the older one that has one (4009)", async () => {
+  const kernel = await startKernel();
+  const device = nodeHand(kernel, "laptop", { channels: { device: {} } });
+  const agent = nodeHand(kernel, "laptop", { channels: { agent: { runtimes: [] } } });
+  const humanOnly = nodeHand(kernel, "laptop", { channels: { human: {} } });
+  try {
+    device.start();
+    await device.ready();
+    humanOnly.start();
+    await humanOnly.ready();
+    assert.equal(device.state, "ready"); // a human-only connection replaces nothing
+    agent.start();
+    await agent.ready();
+    await eventually(() => device.stoppedBy === 4009, "device connection told 4009");
+    assert.equal(humanOnly.state, "ready");
+    assert.equal(agent.state, "ready");
+  } finally { device.stop(); agent.stop(); humanOnly.stop(); await kernel.stop(); }
+});
+
+test("two connections of the same hand that only carry human live side by side", async () => {
+  const kernel = await startKernel();
+  const tabs = [nodeHand(kernel, "browser", { channels: { human: {} } }), nodeHand(kernel, "browser", { channels: { human: {} } })];
+  try {
+    for (const tab of tabs) { tab.start(); await tab.ready(); }
+    assert.equal(kernel.link.sessions().length, 2);
+    assert.ok(tabs.every((tab) => tab.state === "ready"));
+  } finally { for (const tab of tabs) tab.stop(); await kernel.stop(); }
+});
+
+test("queued events are not sent again after a welcome that refused the device channel", async () => {
+  const kernel = await startKernel({
+    authenticate: () => ({ ok: true, hand_id: "h", channels: { device: { accepted: false, reason: "no expose_capability" } } }),
+  });
+  const queue = new MemoryEventQueue();
+  await queue.add({ id: "e_old", word: "sense.battery", body: {}, at: 1 });
+  const outgoing: string[] = [];
+  const spying: Connector = (url, headers, events) => {
+    const socket = nodeConnector(url, headers, events);
+    return { send: (data) => { outgoing.push(data); socket.send(data); }, close: (code, reason) => socket.close(code, reason) };
+  };
+  const hand = nodeHand(kernel, "laptop", { eventQueue: queue, connector: spying });
+  try {
+    hand.start();
+    await hand.ready();
+    for (let i = 0; i < 5; i++) await Promise.resolve(); // the resend, if there were one, starts right after the welcome
+    assert.equal(outgoing.some((data) => data.includes('"t":"event"')), false);
+    assert.equal(queue.pending().length, 1);
+  } finally { hand.stop(); await kernel.stop(); }
+});
+
 test("only /link is taken; other upgrade paths are left to other listeners", async () => {
   const kernel = await startKernel();
   const other = deferred<string>();
@@ -261,7 +311,7 @@ test("manifest: bad capabilities are rejected one by one, the handler's verdict 
   } finally { hand.stop(); await kernel.stop(); }
 });
 
-test("events: acked ones leave the queue; unacked ones are sent again with the same id after a reconnect and handled once", async () => {
+test("events: acked ones leave the queue; unacked ones are sent again with the same id after a reconnect", async () => {
   const clock = new FakeClock();
   const handled: string[] = [];
   const kernel = await startKernel({}, () => ({ event: (frame) => { handled.push(frame.id); } }));
@@ -283,7 +333,7 @@ test("events: acked ones leave the queue; unacked ones are sent again with the s
     await eventually(() => hand.state === "waiting", "waiting to reconnect");
     clock.advance(30_000);
     await eventually(() => queue.pending().length === 0, "resent event acked");
-    assert.deepEqual(handled, [id]);
+    assert.deepEqual(handled, [id, id]); // the same id both times: de-duplicating is the caller's job
     assert.equal(hand.state, "ready");
   } finally { hand.stop(); await kernel.stop(); }
 });
@@ -306,24 +356,6 @@ test("an event whose handler failed is not acked, and is handled when it comes a
     await eventually(() => queue.pending().length === 0, "second attempt acked");
     assert.equal(attempts, 2);
   } finally { hand.stop(); await kernel.stop(); }
-});
-
-test("the same event id sent twice on one connection is handled once and acked twice", async () => {
-  const handled: string[] = [];
-  const kernel = await startKernel({}, () => ({ event: (frame) => { handled.push(frame.id); } }));
-  try {
-    const ws = new WebSocket(kernel.url, { headers: { authorization: `Bearer ${TOKEN}` } });
-    const acks: string[] = [];
-    ws.on("message", (data) => {
-      const frame = JSON.parse(data.toString()) as Frame;
-      if (frame.t === "challenge") ws.send(JSON.stringify({ t: "hello", protocol: "ash-link/1", hand: { kind: "computer", name: "raw", version: "1", platform: "x" }, channels: { device: {} } }));
-      if (frame.t === "welcome") for (let i = 0; i < 2; i++) ws.send(JSON.stringify({ t: "event", ch: "device", id: "e_same", word: "sense.battery", body: {}, at: 1 }));
-      if (frame.t === "event.ack") acks.push(frame.id);
-    });
-    await eventually(() => acks.length === 2, "two acks");
-    assert.deepEqual(handled, ["e_same"]);
-    ws.close();
-  } finally { await kernel.stop(); }
 });
 
 test("a 3 MB stream arrives whole in both directions", async () => {

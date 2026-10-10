@@ -42,7 +42,7 @@ export interface ManifestVerdict { accepted?: boolean; rejected?: { name: string
 export interface SessionHandlers {
   /** A `manifest` arrived. The server acks with the result; [check] has done the per-capability shape check. */
   manifest?(frame: ManifestFrame, check: ManifestCheck): Promise<ManifestVerdict | void> | ManifestVerdict | void;
-  /** An `event` arrived for the first time (a resend of an id already handled never gets here). The ack follows when this returns; if it throws there is no ack and the hand resends after reconnecting. */
+  /** An `event` arrived. The ack follows when this returns; if it throws there is no ack and the hand resends after reconnecting. A resend arrives again with the same id, so de-duplicating on it is the caller's job. */
   event?(frame: EventFrame): Promise<void> | void;
   /** Frames of the human channel, except the stream ones: send, sync, sync.close, presence, present.result. */
   human?(frame: SendFrame | SyncFrame | SyncCloseFrame | PresenceFrame | PresentResultFrame): void;
@@ -56,19 +56,9 @@ export interface LinkServerOptions {
   kernel: { id: string; version: string };
   /** Checks token and signature. The server knows neither where tokens nor public keys are kept. */
   authenticate(hello: HelloFrame, ctx: AuthContext): Promise<AuthResult> | AuthResult;
-  /**
-   * The hand is in: the welcome is sent right after this returns. Take the session's handlers here. This is also the
-   * place to close an older session of the same hand (`old.close(4009)`); the server does not decide that.
-   */
+  /** The hand is in: the welcome is sent right after this returns. Take the session's handlers here. */
   onSession(session: LinkSession): SessionHandlers | void;
   clock?: Clock;
-  heartbeatMs?: number;
-  silenceMs?: number;
-  /** How long a connection may stay without sending `hello`. */
-  helloTimeoutMs?: number;
-  maxStreamBytes?: number;
-  /** How many event ids per hand are remembered for de-duplication. */
-  seenEvents?: number;
   log?(message: string, error?: unknown): void;
 }
 
@@ -116,23 +106,18 @@ export interface LinkServer {
 }
 
 const LINK_PATH = "/link";
+/** How long a new connection may stay without sending `hello`. */
+const HELLO_TIMEOUT_MS = 10_000;
+const carriesExecutor = (session: LinkSession): boolean =>
+  [session.channels.device, session.channels.agent].some((grant) => grant !== undefined && "accepted" in grant && grant.accepted);
 const rejectionOf = (reason: string) => ({ accepted: false as const, reason });
 
 export function createLinkServer(options: LinkServerOptions): LinkServer {
   const clock = options.clock ?? systemClock;
-  const heartbeatMs = options.heartbeatMs ?? LIMITS.heartbeatMs;
   const live = new Map<string, LinkSession>();
   const conns = new Set<FrameConn>();
-  /** Per hand: event id -> the handling of it. A hand that reconnects resends what it never saw acked, so this outlives sessions. */
-  const events = new Map<string, Map<string, Promise<void>>>();
   const unsubscribe: (() => void)[] = [];
   const log = options.log ?? (() => {});
-
-  function remember(handId: string): Map<string, Promise<void>> {
-    let seen = events.get(handId);
-    if (!seen) events.set(handId, (seen = new Map()));
-    return seen;
-  }
 
   function accept(socket: LinkSocket, ctx: { headers?: IncomingHttpHeaders; meta?: unknown } = {}): void {
     const nonce = randomBytes(32).toString("base64url");
@@ -144,7 +129,6 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
       socket: { send: (data) => socket.send(data), close: (code, reason) => socket.close(code, reason), terminate: () => socket.terminate?.() },
       clock,
       role: "kernel",
-      silenceMs: options.silenceMs,
       onFrame: (frame) => {
         if (phase === "hello" && frame.t === "hello") void authenticate(frame);
         else if (phase !== "ready" || !session) conn.close(CLOSE_CODES.badFrame, `unexpected ${frame.t} before the handshake finished`);
@@ -171,7 +155,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     socket.on("message", (data: unknown, isBinary?: boolean) => conn.receive(data, isBinary));
     socket.on("close", (code: number, reason: unknown) => conn.remoteClosed(code, String(reason ?? "")));
 
-    helloTimer = clock.setTimer(() => { if (phase === "hello") conn.close(CLOSE_CODES.unauthenticated, "no hello"); }, options.helloTimeoutMs ?? 10_000);
+    helloTimer = clock.setTimer(() => { if (phase === "hello") conn.close(CLOSE_CODES.unauthenticated, "no hello"); }, HELLO_TIMEOUT_MS);
     conn.send({ t: "challenge", nonce, kernel: { id: options.kernel.id, version: options.kernel.version, protocol: LINK_PROTOCOL } });
 
     async function authenticate(hello: HelloFrame): Promise<void> {
@@ -197,8 +181,10 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
           channels[name] = grant?.accepted ? { accepted: true } : rejectionOf(grant?.reason ?? "not allowed");
         }
       }
-      const created = new Session({ id: newId("s_"), handId: verdict.hand_id, hello, channels, conn, clock, maxStreamBytes: options.maxStreamBytes, seen: remember(verdict.hand_id), seenLimit: options.seenEvents ?? 10_000, log });
+      const created = new Session({ id: newId("s_"), handId: verdict.hand_id, hello, channels, conn, clock, log });
       session = created;
+      // One executor per hand (SPEC-03 §2.2.2): a connection carrying device or agent takes the place of the older one that does.
+      if (carriesExecutor(created)) for (const old of live.values()) if (old.handId === created.handId && carriesExecutor(old)) old.close(CLOSE_CODES.superseded, "replaced by a newer connection");
       live.set(created.id, created);
       try {
         created.use(options.onSession(created) ?? {});
@@ -208,8 +194,8 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
       }
       if (conn.closed) return;
       phase = "ready";
-      conn.send({ t: "welcome", hand_id: created.handId, session: created.id, heartbeat_ms: heartbeatMs, channels });
-      conn.startHeartbeat(heartbeatMs);
+      conn.send({ t: "welcome", hand_id: created.handId, session: created.id, heartbeat_ms: LIMITS.heartbeatMs, channels });
+      conn.startHeartbeat(LIMITS.heartbeatMs);
     }
   }
 
@@ -247,7 +233,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
 
 interface SessionInit {
   id: string; handId: string; hello: HelloFrame; channels: WelcomeFrame["channels"]; conn: FrameConn; clock: Clock;
-  maxStreamBytes?: number; seen: Map<string, Promise<void>>; seenLimit: number; log(message: string, error?: unknown): void;
+  log(message: string, error?: unknown): void;
 }
 
 class Session implements LinkSession {
@@ -265,7 +251,6 @@ class Session implements LinkSession {
     this.streams = new StreamReceiver({
       send: (frame) => this.send(frame),
       accepts: (ch) => this.open(ch),
-      maxBytes: i.maxStreamBytes,
       onStream: (stream) => this.handlers.stream?.(stream),
       onBroken: (sid, code, message) => i.log(`stream ${sid} broken: ${code} ${message}`),
     });
@@ -372,17 +357,9 @@ class Session implements LinkSession {
   }
 
   private async onEvent(frame: EventFrame): Promise<void> {
-    const seen = this.i.seen;
-    let handling = seen.get(frame.id);
-    if (!handling) {
-      handling = (async () => { await this.handlers.event?.(frame); })();
-      seen.set(frame.id, handling);
-      while (seen.size > this.i.seenLimit) seen.delete(seen.keys().next().value as string);
-    }
     try {
-      await handling;
+      await this.handlers.event?.(frame);
     } catch (error) {
-      seen.delete(frame.id);
       this.i.log(`event ${frame.id} failed; not acked`, error);
       return;
     }

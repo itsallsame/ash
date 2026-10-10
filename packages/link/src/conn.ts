@@ -8,7 +8,6 @@ export interface ConnOptions {
   clock: Clock;
   /** Which end this is. A frame that only the same end may send is a protocol error. */
   role: "kernel" | "hand";
-  silenceMs?: number;
   /** A valid frame, except ping and pong, which the connection answers itself. */
   onFrame(frame: Frame): void;
   /**
@@ -100,6 +99,6 @@ export class FrameConn {
     this.silence = this.o.clock.setTimer(() => {
       this.close(CLOSE_CODES.normal, "no frame within the silence limit");
       this.o.socket.terminate?.();
-    }, this.o.silenceMs ?? LIMITS.silenceMs);
+    }, LIMITS.silenceMs);
   }
 }

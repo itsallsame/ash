@@ -84,8 +84,6 @@ export interface HandOptions {
   eventQueue?: EventQueue;
   clock?: Clock;
   random?: () => number;
-  silenceMs?: number;
-  maxStreamBytes?: number;
 }
 
 type State = "idle" | "connecting" | "ready" | "waiting" | "stopped";
@@ -124,7 +122,6 @@ export class HandClient {
     this.streams = new StreamReceiver({
       send: (frame) => void this.conn?.send(frame),
       accepts: (ch) => this.channelOpen(ch),
-      maxBytes: o.maxStreamBytes,
       onStream: (stream) => o.handlers?.stream?.(stream),
       onBroken: (sid, code, message) => this.log(`stream ${sid} broken: ${code} ${message}`),
     });
@@ -281,7 +278,7 @@ export class HandClient {
       return this.scheduleRetry();
     }
     conn = new FrameConn({
-      socket, clock: this.clock, role: "hand", silenceMs: this.o.silenceMs, onClosed,
+      socket, clock: this.clock, role: "hand", onClosed,
       onFrame: (frame) => {
         if (phase === "challenge" && frame.t === "challenge") {
           phase = "signing";
@@ -317,8 +314,10 @@ export class HandClient {
     this.stateValue = "ready";
     this.failures = 0;
     conn.startHeartbeat(welcome.heartbeat_ms);
-    if (this.manifest && this.channelOpen("device")) this.sendManifest();
-    void this.resendEvents(conn);
+    if (this.channelOpen("device")) {
+      this.sendManifest();
+      void this.resendEvents(conn);
+    }
     this.o.handlers?.welcome?.(welcome);
     const waiters = this.readyWaiters;
     this.readyWaiters = [];
