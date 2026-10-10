@@ -22,10 +22,12 @@ test.after(() => rmSync(work, { recursive: true, force: true }));
 interface Run { code: number | null; out: string; err: string }
 
 /** Runs the bundled tool. The hub lives in this process, so the child must not block it: spawn, never execSync. */
-function owner(s: Scenario, args: string[], o: { stdin?: string; token?: string; state?: string; withToken?: boolean } = {}): Promise<Run> {
+function owner(s: Scenario, args: string[], o: { stdin?: string; token?: string; state?: string; withToken?: boolean; bare?: boolean } = {}): Promise<Run> {
   const tokenFile = join(work, `token-${Math.random().toString(36).slice(2)}`);
   writeFileSync(tokenFile, `${o.token ?? s.token()}\n`, { mode: 0o600 });
-  const base = ["--url", s.linkUrl(), "--state", o.state ?? join(work, "state"), ...(o.withToken === false ? [] : ["--token-file", tokenFile])];
+  const base = o.bare
+    ? ["--state", o.state ?? join(work, "state")]
+    : ["--url", s.linkUrl(), "--state", o.state ?? join(work, "state"), ...(o.withToken === false ? [] : ["--token-file", tokenFile])];
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [bundle, ...base, ...args], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "" } });
     let out = "", err = "";
@@ -102,6 +104,30 @@ test("the token is never an argument: without a file or stdin the tool does not 
   assert.equal(asArgument.code, 64, "there is no --token option");
   const stdin = await owner(s, ["--token-stdin", "call", "service:admin", "status"], { withToken: false, stdin: `${s.token()}\n` });
   assert.equal(stdin.code, 0, stdin.err + stdin.out);
+});
+
+test("--link-file gives the port and the token at once, as a debug build of the hand app writes them", async (t: TestContext) => {
+  const s = await startScenario(t);
+  const port = Number(new URL(s.linkUrl()).port);
+  const linkFile = join(work, `link-${Math.random().toString(36).slice(2)}.json`);
+  writeFileSync(linkFile, JSON.stringify({ port, token: s.token(), at: Date.now() }) + "\n", { mode: 0o600 });
+  const ok = await owner(s, ["--link-file", linkFile, "call", "service:admin", "status"], { bare: true });
+  assert.equal(ok.code, 0, ok.err + ok.out);
+  // An explicit --port (an adb forward on another local port) wins over the file's port; the token still comes from the file.
+  const forwarded = await owner(s, ["--link-file", linkFile, "--port", String(port), "call", "service:admin", "status"], { bare: true });
+  assert.equal(forwarded.code, 0, forwarded.err + forwarded.out);
+  // A stale token in the file (the hub restarted) is refused like any wrong token.
+  const stale = join(work, `stale-${Math.random().toString(36).slice(2)}.json`);
+  writeFileSync(stale, JSON.stringify({ port, token: "an-old-token", at: 1 }), { mode: 0o600 });
+  const refused = await owner(s, ["--link-file", stale, "say", "hi"], { bare: true });
+  assert.equal(refused.code, 1, refused.out);
+  assert.match(refused.out, /4001/);
+  // A file without a usable port and token is a usage error.
+  const bad = join(work, `bad-${Math.random().toString(36).slice(2)}.json`);
+  writeFileSync(bad, JSON.stringify({ port: 0, token: "" }));
+  const usage = await owner(s, ["--link-file", bad, "say", "hi"], { bare: true });
+  assert.equal(usage.code, 64);
+  assert.match(usage.err, /link-file/);
 });
 
 test("watch prints what arrives while it listens; answer picks an option on a card", async (t: TestContext) => {

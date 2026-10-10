@@ -31,6 +31,7 @@ const USAGE = `owner.mjs: the owner of an Ash hub, from a command line.
 Connection (the hub's local link, SPEC-03 §2.2):
   --port N | --url ws://127.0.0.1:N/link     where the hub listens (env ASH_OWNER_PORT)
   --token-file PATH | --token-stdin           the hub's local token (env ASH_OWNER_TOKEN_FILE); never an argument
+  --link-file PATH                            a debug build's files/debug/local-link.json ({port, token}), instead of --port and --token-file (env ASH_OWNER_LINK_FILE)
   --state DIR                                 where this client keeps its identity key (default ~/.ash-owner)
   --name NAME                                 how the hub lists this channel (default "owner-cli")
 Options:
@@ -52,7 +53,7 @@ interface Options {
   flags: Map<string, string | true>;
   rest: string[];
 }
-const VALUE_FLAGS = new Set(["port", "url", "token-file", "state", "name", "timeout", "settle", "history", "surfaces", "key-file", "label", "to"]);
+const VALUE_FLAGS = new Set(["port", "url", "token-file", "link-file", "state", "name", "timeout", "settle", "history", "surfaces", "key-file", "label", "to"]);
 const BOOL_FLAGS = new Set(["json", "token-stdin", "help", "all"]);
 
 class UsageError extends Error {}
@@ -154,6 +155,19 @@ async function stdinOnce(): Promise<string> {
   return readStdin();
 }
 
+/** `--link-file`: the `{port, token}` a debug build of the hand app writes (`files/debug/local-link.json`). --port, --url and the token options win over it. */
+function linkFile(o: Options): { port?: number; token?: string } | null {
+  const file = (o.flags.get("link-file") as string | undefined) ?? process.env.ASH_OWNER_LINK_FILE;
+  if (!file) return null;
+  let j: unknown;
+  try { j = JSON.parse(readFileSync(resolve(file), "utf8")); } catch (e) { throw new UsageError(`--link-file ${file}: ${(e as Error).message}`); }
+  const r = (j && typeof j === "object" ? j : {}) as { port?: unknown; token?: unknown };
+  const port = typeof r.port === "number" && Number.isInteger(r.port) && r.port >= 1 && r.port <= 65535 ? r.port : undefined;
+  const token = typeof r.token === "string" && r.token.trim() ? r.token.trim() : undefined;
+  if (port === undefined || token === undefined) throw new UsageError(`--link-file ${file}: it has no usable "port" and "token"`);
+  return { port, token };
+}
+
 async function localToken(o: Options): Promise<string> {
   const file = (o.flags.get("token-file") as string | undefined) ?? process.env.ASH_OWNER_TOKEN_FILE;
   if (o.flags.has("token-stdin")) {
@@ -161,7 +175,11 @@ async function localToken(o: Options): Promise<string> {
     if (!first) throw new UsageError("--token-stdin: nothing came in");
     return first;
   }
-  if (!file) throw new UsageError("the hub's local token is needed: --token-file PATH (or --token-stdin)");
+  if (!file) {
+    const link = linkFile(o);
+    if (link?.token) return link.token;
+    throw new UsageError("the hub's local token is needed: --token-file PATH (or --token-stdin, or --link-file PATH)");
+  }
   const token = readFileSync(resolve(file), "utf8").trim();
   if (!token) throw new UsageError(`${file} is empty`);
   return token;
@@ -171,7 +189,11 @@ function linkUrl(o: Options): string {
   const url = o.flags.get("url") as string | undefined;
   if (url) return url;
   const port = (o.flags.get("port") as string | undefined) ?? process.env.ASH_OWNER_PORT;
-  if (!port || !/^\d{1,5}$/.test(port)) throw new UsageError("where the hub listens is needed: --port N (or --url ws://127.0.0.1:N/link)");
+  if (!port) {
+    const link = linkFile(o);
+    if (link?.port) return `ws://127.0.0.1:${link.port}/link`;
+  }
+  if (!port || !/^\d{1,5}$/.test(port)) throw new UsageError("where the hub listens is needed: --port N (or --url ws://127.0.0.1:N/link, or --link-file PATH)");
   return `ws://127.0.0.1:${port}/link`;
 }
 

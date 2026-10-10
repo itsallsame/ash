@@ -56,6 +56,10 @@ object Link {
         private val identity = HandIdentity(KeystoreKeyBackend())
         private val refresher = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "ash-link-manifest").apply { isDaemon = true } }
         private val calls = DeviceCalls(ctx)
+        private val debugLink = DebugLocalLink(
+            DebugLocalLink.enabledFor(BuildConfig.DEBUG, ctx.applicationInfo.flags),
+            DebugLocalLink.dirIn(ctx.filesDir),
+        )
 
         /** The chat page's way to the human channel of this connection (SPEC-05 §4.1). */
         val chat = ChatBridge(ChatBridge.LinkUplink { client }, HomeLauncher(ctx)) { Log.w(TAG, it) }
@@ -88,6 +92,9 @@ object Link {
             TaskStatus.refresh()
         }
 
+        // A new process holds no token yet: whatever an earlier process left in the debug file is stale.
+        init { debugLink.clear() }
+
         init { refresher.scheduleWithFixedDelay({ runCatching { refresh() } }, 60, 60, TimeUnit.SECONDS) }
 
         /** The kernel host handed over a port and a token (again): connect now. The token stays in memory, never in a log. */
@@ -96,9 +103,13 @@ object Link {
             require(token.isNotEmpty()) { "empty token" }
             Log.i(TAG, "kernel host attached (kernel $kernelVersion)")
             endpoint = Endpoint(port, token)
+            debugLink.write(port, token).onFailure { Log.w(TAG, "debug link file not written: ${it.javaClass.simpleName}") }
             refresh()
             client.reconnectNow()
         }
+
+        /** The kernel host let go of the hand (unbound): the details it gave are no longer good, so the debug file goes too. */
+        fun detached() { debugLink.clear() }
 
         fun refreshSoon() { runCatching { refresher.execute { runCatching { refresh() } } } }
 
