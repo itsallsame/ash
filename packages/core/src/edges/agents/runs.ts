@@ -13,7 +13,7 @@ import { AGENT_ID } from "../../../../sdk/src/ids";
 import type { Ledger } from "../../kernel/ledger";
 
 export interface LaneDecl {
-  /** Who files into this lane: member ids, `wake`, `timer`, `event`, or `*`. */
+  /** Who files into this lane: member ids, `wake`, `event`, or `*`. */
   from?: string[];
   /** `<lane>:turn.ended` or `<lane>:tool` of this agent's other lanes. */
   on?: string[];
@@ -47,7 +47,7 @@ export interface AgentDecl {
 export const DEFAULT_RUNTIME = "dsh";
 export const DEFAULT_LANES: Readonly<Record<string, LaneDecl>> = Object.freeze({
   front: { from: ["person:owner"] },
-  back: { from: ["wake", "timer", "event"] },
+  back: { from: ["wake", "event"] },
 });
 export const lanesOf = (decl: AgentDecl): Record<string, LaneDecl> => decl.lanes && Object.keys(decl.lanes).length ? decl.lanes : { ...DEFAULT_LANES };
 

@@ -48,7 +48,8 @@ export async function reconcileTimers(router: Sender, from: string, prefix: stri
   const listed = await ask(router, from, "service:clock", "list");
   if (!listed.ok) return messageOf(listed);
   const have = new Map<string, string>();
-  for (const timer of dataOf<{ timers?: { id: string; label?: string }[] }>(listed)?.timers ?? []) if (timer.label?.startsWith(prefix)) have.set(timer.label, timer.id);
+  // Only the timers this member set itself: another member cannot take a label of ours (or crowd it out) by naming one like it.
+  for (const timer of dataOf<{ timers?: { id: string; label?: string; created_by?: string }[] }>(listed)?.timers ?? []) if (timer.created_by === from && timer.label?.startsWith(prefix)) have.set(timer.label, timer.id);
   for (const [label, id] of have) if (!want.has(label)) await ask(router, from, "service:clock", "cancel", { id });
   let problem: string | null = null;
   for (const [label, item] of want) {
