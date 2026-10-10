@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
+import android.graphics.Typeface
 import android.view.Gravity
 import android.webkit.MimeTypeMap
 import android.webkit.CookieManager
@@ -22,8 +23,13 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import ai.ash.R
+import ai.ash.apps.Ash
+import ai.ash.apps.AppsPane
 import ai.ash.BuildConfig
 import ai.ash.host.HandRuntime
 import ai.ash.host.KernelGate
@@ -39,12 +45,20 @@ import java.io.ByteArrayInputStream
 import java.util.concurrent.Executors
 
 /**
- * Opening the app opens Ash: the packaged UI in a WebView. The page has no connection of its own: the frames it sends and
+ * Opening the app opens Ash: two tabs. 「对话」 is the packaged UI in a WebView. 「应用」 is the owner's apps ([AppsPane]); an app
+ * opens in a task of its own in the isolated process, never in here. The tab bar is native (the web page, which browsers and
+ * the desktop client share too, knows nothing of it). [HomeRoute] decides which tab an intent asks for. The page has no connection of its own: the frames it sends and
  * receives on the human channel are handed to and from the app's one connection by [ai.ash.human.ChatBridge], unchanged
  * (SPEC-05 §4.1). Native code only does what a page cannot: saving a file, clearing the browser's logins, the camera.
  */
 class HomeActivity : Activity() {
     private lateinit var web: WebView
+    private lateinit var content: FrameLayout
+    private lateinit var tabBar: LinearLayout
+    private val tabButtons = mutableMapOf<HomeTab, TextView>()
+    private var appsPane: AppsPane? = null
+    private var tab = HomeTab.CHAT
+    private var resumed = false
     private val ui = Handler(Looper.getMainLooper())
     private val chat get() = Link.get(this).chat
     /** Frames from the page, one at a time and in order, off the main thread (checking a big one takes a moment). */
@@ -153,8 +167,21 @@ class HomeActivity : Activity() {
 
         // Edge to edge (targetSdk 35): a WebView ignores its own padding, so the frame around it keeps clear of the bars and
         // the keyboard, and the page is laid out in what is left (its composer then sits on top of the keyboard).
-        setContentView(ai.ash.apps.Ui.inset(this, web).apply { setBackgroundColor(if (night) 0xFF141415.toInt() else 0xFFF7F7F5.toInt()) })
+        // The tab bar sits under the content inside the same padding (the bars and the keyboard), and gives way to the keyboard.
+        content = FrameLayout(this).apply { addView(web, FrameLayout.LayoutParams(-1, -1)) }
+        tabBar = buildTabBar()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(if (night) 0xFF141415.toInt() else 0xFFF7F7F5.toInt())
+            addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(tabBar, LinearLayout.LayoutParams(-1, ai.ash.apps.Ui.dp(this@HomeActivity, 52)))
+        }
+        ai.ash.apps.Ui.insets(root) { keyboardUp -> tabBar.visibility = if (HomeRoute.tabBarVisible(keyboardUp)) View.VISIBLE else View.GONE }
+        setContentView(root)
         focusInput = intent?.getBooleanExtra(EXTRA_FOCUS_INPUT, false) == true
+        // A recreate (dark mode) keeps the tab; otherwise the intent says.
+        val saved = HomeTab.of(savedInstanceState?.getString(STATE_TAB))
+        showTab(saved ?: HomeRoute.tabFor(intent?.getStringExtra(HomeRoute.EXTRA_TAB), focusInput, fromLauncher(intent), HomeTab.CHAT))
         web.loadUrl(UI_ASSET_URL)
         val firstStart = OnboardingActivity.showOnce(this)
         // After an upgrade the phone may have put Ash's auto-start back off: look again once the link to the kernel is up.
@@ -167,10 +194,60 @@ class HomeActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.getBooleanExtra(EXTRA_FOCUS_INPUT, false)) {
+        val focus = intent.getBooleanExtra(EXTRA_FOCUS_INPUT, false)
+        if (!::content.isInitialized) return
+        showTab(HomeRoute.tabFor(intent.getStringExtra(HomeRoute.EXTRA_TAB), focus, fromLauncher(intent), tab))
+        if (focus) {
             focusInput = true
             if (ai.ash.host.AppState.homePageLive) focusComposer()
         }
+    }
+
+    private fun fromLauncher(i: Intent?) = HomeRoute.isLauncher(i?.action, i?.categories)
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_TAB, tab.key)
+    }
+
+    private fun buildTabBar(): LinearLayout {
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(ai.ash.apps.Ui.bar(this@HomeActivity)) }
+        for (t in HomeTab.values()) {
+            val button = TextView(this).apply {
+                text = t.label; textSize = 15f; gravity = Gravity.CENTER
+                isClickable = true
+                setOnClickListener { showTab(t) }
+            }
+            tabButtons[t] = button
+            bar.addView(button, LinearLayout.LayoutParams(0, -1, 1f))
+        }
+        return bar
+    }
+
+    /** Brings [next] to the front: the chat page or the apps list (made the first time it is wanted). */
+    private fun showTab(next: HomeTab) {
+        tab = next
+        if (next == HomeTab.APPS && appsPane == null) {
+            appsPane = AppsPane(this, Ash(this, null, inProcess = true)) { showTab(HomeTab.CHAT) }
+                .also { content.addView(it.view, FrameLayout.LayoutParams(-1, -1)) }
+        }
+        web.visibility = if (next == HomeTab.CHAT) View.VISIBLE else View.GONE
+        appsPane?.view?.visibility = if (next == HomeTab.APPS) View.VISIBLE else View.GONE
+        for ((t, b) in tabButtons) {
+            val on = t == next
+            b.setTextColor(if (on) ai.ash.apps.Ui.ACCENT else ai.ash.apps.Ui.muted(this))
+            b.typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        }
+        if (next == HomeTab.APPS && resumed) appsPane?.refresh()
+        syncFront()
+    }
+
+    /** What the rest of Ash goes by to know the owner is looking at the chat: not when the apps tab is in front. */
+    private fun syncFront() {
+        val front = HomeRoute.chatInFront(resumed, tab)
+        if (ai.ash.host.AppState.homeVisible == front) return
+        ai.ash.host.AppState.homeVisible = front
+        if (resumed) Link.get(this).presence.tell()
     }
 
     private fun focusComposer() {
@@ -187,9 +264,11 @@ class HomeActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        ai.ash.host.AppState.homeVisible = true
+        resumed = true
+        ai.ash.host.AppState.homeVisible = HomeRoute.chatInFront(true, tab)
         HandRuntime.appOpened(this)
         Link.get(this).presence.tell()
+        if (tab == HomeTab.APPS) appsPane?.refresh()
         // The kernel package: not installed, the guide's first step offers to install it (once); not running, it is started from here (in front, the app may).
         when (KernelGate.action(KernelLauncher.state(this), 0)) {
             KernelGate.Action.INSTALL -> OnboardingActivity.offerKernel(this)
@@ -199,6 +278,7 @@ class HomeActivity : Activity() {
     }
 
     override fun onPause() {
+        resumed = false
         ai.ash.host.AppState.homeVisible = false
         HandRuntime.appLeft()
         Link.get(this).presence.tell()
@@ -358,6 +438,7 @@ class HomeActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (tab == HomeTab.APPS) { showTab(HomeTab.CHAT); return }
         web.evaluateJavascript("(() => { const f = document.querySelector('.files-view[open]'); if (!f) return false; f.close(); return true; })()") { closed ->
             if (closed != "true") { if (web.canGoBack()) web.goBack() else moveTaskToBack(true) }
         }
@@ -367,6 +448,7 @@ class HomeActivity : Activity() {
         ai.ash.host.AppState.homePageLive = false
         ui.removeCallbacksAndMessages(null)
         chat.detach()
+        appsPane?.close()
         bridgeWork.shutdown()
         answerFiles(null)
         web.destroy()
@@ -379,6 +461,7 @@ class HomeActivity : Activity() {
     companion object {
         /** Open with the message box focused (the home-screen widget's "跟 Ash 说"). */
         const val EXTRA_FOCUS_INPUT = "ai.ash.extra.FOCUS_INPUT"
+        private const val STATE_TAB = "ai.ash.state.TAB"
         private const val UI_ASSET_ORIGIN = "https://appassets.androidplatform.net"
         private const val UI_ASSET_URL = "$UI_ASSET_ORIGIN/assets/ash-ui/index.html"
         private const val REQ_FILES = 7101

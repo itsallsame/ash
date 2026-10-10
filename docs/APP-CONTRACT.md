@@ -8,7 +8,7 @@
 
 - **必须有给 Agent 用的工具，读和写都要有**：应用的数据怎么看、怎么改，都要有对应的工具（§3）。只有页面、没有工具的应用不能安装；有页面却只有只读工具，`apps.validate` 会提醒。页面也只通过这些工具读写数据（`app.call`），不要把主人的数据只存在页面里（`localStorage`）。
 - **写清 `role`**：一句话说它管什么、什么时候该用它（§1）。
-- **对人**：应用的页面是 `ui://` HTML 资源（[MCP Apps](https://github.com/modelcontextprotocol/ext-apps) 规范），由独立的壳 App「Ash 应用」在隔离的 WebView 里画出来。应用还可以在 `app.json` 里写桌面卡片和入口卡片，但这一版的中枢还没有接上它们（§10）。
+- **对人**：应用的页面是 `ui://` HTML 资源（[MCP Apps](https://github.com/modelcontextprotocol/ext-apps) 规范），由 Ash 里的「应用」页签在隔离的 WebView（独立进程）里画出来。应用还可以在 `app.json` 里写桌面卡片和入口卡片，但这一版的中枢还没有接上它们（§10）。
 - **对 Ash**：应用要用 Ash 的东西（例如手机的健康数据），只能用主人在安装时批准过的范围（grants）。
 
 本版只定义**容器里的应用**：应用是 Ash 容器里的一个文件夹 `/root/apps/<id>/`，服务是一个说 MCP 的 stdio 进程。手机原生 App 和电脑上的应用是以后的版本。

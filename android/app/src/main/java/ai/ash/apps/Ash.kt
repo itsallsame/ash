@@ -1,7 +1,10 @@
 package ai.ash.apps
 
+import ai.ash.host.apps.AppsBridge
 import ai.ash.host.apps.AppsBridgeService
+import ai.ash.human.HumanSend
 import ai.ash.ui.HomeActivity
+import ai.ash.ui.HomeRoute
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -10,6 +13,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.DeadObjectException
 import android.os.IBinder
+import android.os.Process
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.os.TransactionTooLargeException
@@ -59,8 +63,10 @@ class AshUnavailable(message: String) : Exception(message)
  * the owner's apps and, for the page it belongs to, calls the app's tools. [app] is that page's app (null: the list screen).
  * Every call blocks: never on the main thread. [close] when the screen goes.
  */
-class Ash(ctx: Context, private val app: String?) {
+class Ash(ctx: Context, private val app: String?, private val inProcess: Boolean = false) {
     private val ctx = ctx.applicationContext
+    /** [inProcess]: the screen is in Ash's own process (the list in the apps tab), so it asks the bridge's policy directly instead of binding to it. */
+    private val direct by lazy { AppsBridge(app, Process.myUid(), { Process.myUid() }) { request -> HumanSend.send(this.ctx, request) } }
     private val lock = Object()
     private var bridge: IAppsBridge? = null
     private var bound = false
@@ -110,6 +116,7 @@ class Ash(ctx: Context, private val app: String?) {
     fun call(to: String, word: String, body: JSONObject): JSONObject {
         val text = body.toString()
         if (text.length > MAX_BODY) return Replies.error("too_large", "请求太大")
+        if (inProcess) return runCatching { JSONObject(direct.call(to, word, text)) }.getOrElse { Replies.error("internal", "出了点问题") }
         repeat(2) {
             val b = connect() ?: return Replies.error("offline", OFFLINE)
             if (!b.asBinder().isBinderAlive) { reset(); return@repeat } // not sent: bind again
@@ -180,6 +187,11 @@ class Ash(ctx: Context, private val app: String?) {
         /** Ash's own screen: where the owner approves an app. */
         fun open(ctx: Context) {
             ctx.startActivity(Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+
+        /** Ash with its 「应用」 tab in front: the list of all the owner's apps. */
+        fun openApps(ctx: Context) {
+            ctx.startActivity(HomeRoute.appsIntent(ctx))
         }
     }
 }

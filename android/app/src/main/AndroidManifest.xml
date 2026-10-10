@@ -82,7 +82,7 @@
 
         <meta-data android:name="moe.shizuku.client.V3_SUPPORT" android:value="true" />
 
-        <!-- The ash UI (served by ash core) in a WebView. fullUser: follow the system rotation lock. -->
+        <!-- The ash UI: the chat (served by ash core, in a WebView) and the 「应用」 tab (the owner's apps; each opens in AppActivity's own task). The only launcher icon. fullUser: follow the system rotation lock. -->
         <activity
             android:name=".ui.HomeActivity"
             android:exported="true"
@@ -255,19 +255,6 @@
 
         <!-- The apps shell's way to Ash: its pages run in the ":app" process, which has no connection to the kernel. Only this app's own processes can bind it. -->
         <service android:name=".host.apps.AppsBridgeService" android:exported="false" />
-
-        <!-- The apps shell 「Ash 应用」: the owner's apps, from Ash. -->
-        <activity
-            android:name=".apps.MainActivity"
-            android:exported="true"
-            android:label="Ash 应用"
-            android:taskAffinity="ai.ash.apps"
-            android:theme="@style/AppsShell">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
 
         <!-- ash-app://open?app=<id> (links, home-screen icons): checks the id, then opens that app's own task. -->
         <activity
