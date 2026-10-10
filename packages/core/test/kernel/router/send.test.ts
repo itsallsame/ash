@@ -296,7 +296,7 @@ test("a failing listener does not fail the sender", async () => {
 });
 
 // ---- restart -------------------------------------------------------------------------------------------------------
-test("recover: dispatched requests become interrupted and their agent is told, nothing is replayed; waiting_owner is left", async () => {
+test("recover: dispatched requests become interrupted, nothing is replayed and nobody is messaged (the tool surface tells the agent); waiting_owner is left", async () => {
   const w = world();
   const t = fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 5000 })], () => new Promise(() => {}));
   w.registry.add(t);
@@ -312,17 +312,15 @@ test("recover: dispatched requests become interrupted and their agent is told, n
   const request = open.find((r) => r.state === "dispatched")!;
   assert.equal(w.ledger.request(request.id)?.state, "interrupted");
   assert.equal(t.calls.length, 0, "not replayed");
-  assert.equal(w.main.inbox.length, 1);
-  assert.match((w.main.inbox[0]!.body as any).text, /结果不确定/);
-  assert.equal(w.main.inbox[0]!.reply_to, request.id);
+  assert.equal(w.main.inbox.length, 0, "the router tells the agent nothing: the tool surface wakes it with the request_id");
   const response = w.ledger.page({ limit: 50 }).find((m) => m.kind === "response" && m.reply_to === request.id)!;
   assert.equal((response.body as any).error.code, "result_unknown");
   w.router.recover();
   await flush();
-  assert.equal(w.main.inbox.length, 1, "a second call finds nothing to do");
+  assert.equal(w.main.inbox.length, 0, "a second call finds nothing to do");
 });
 
-test("recover: a requester that is not an agent is not messaged", async () => {
+test("recover: a requester that is not an agent is not messaged either", async () => {
   const w = world();
   w.registry.add(fake("service:t", [word("service:t", "w", { effect: "write", timeout_ms: 5000 })], () => new Promise(() => {})));
   w.ledger.append({ from: "service:clock", to: "service:t", kind: "request", word: "w", body: {} }, { request: { state: "dispatched", deadline: 9e12 } });
@@ -345,7 +343,7 @@ test("recover: a request this process is handling now is not one the last proces
   await flush();
   assert.equal(w.ledger.request(old.id)?.state, "interrupted", "the leftover one is interrupted");
   assert.equal(w.ledger.request(mine.id)?.state, "dispatched", "the one in progress here is left alone");
-  assert.equal(w.main.inbox.length, 1, "and only the leftover one's requester is told");
+  assert.equal(w.main.inbox.length, 0, "and nobody is messaged");
   finish();
   assert.ok((await live).ok);
   assert.equal(w.ledger.request(mine.id)?.state, "done");

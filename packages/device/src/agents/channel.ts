@@ -88,7 +88,7 @@ export class AgentChannel {
   /** The connection is gone. */
   closed(): void {
     this.open = false;
-    for (const call of [...this.pending.values()]) call.settle(new Error("Ash communication unavailable: the connection to Ash was lost"));
+    for (const call of [...this.pending.values()]) call.settle(new Error("Ash communication unavailable: the connection to Ash was lost; whether the call was done is not known. Check before doing it again."));
     const anyone = [...this.drivers.values()].some((d) => d.list().some((a) => a.state === "running" || a.state === "starting"));
     clearTimeout(this.grace);
     if (anyone && !this.closedFlag) {

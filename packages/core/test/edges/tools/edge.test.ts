@@ -448,10 +448,10 @@ test("a resource part is named, not carried", async () => {
 
 test("createToolsEdge needs nothing from the router but send, and the table is created once", async () => {
   const { ledger } = openLedger();
-  const twice = [1, 2].map(() => createToolsEdge({ router: fakeRouter(), registry: { list: () => [], describe: () => null }, ledger, agentPolicy: () => ({}), currentTurn: () => null }));
+  const twice = [1, 2].map(() => createToolsEdge({ router: fakeRouter(), registry: { list: () => [], describe: () => null }, ledger, agentPolicy: () => ({}), currentTurn: () => null, turnActive: () => false }));
   assert.equal(twice.length, 2);
   const cols = (ledger.db().prepare("PRAGMA table_info(agent_jobs)").all() as { name: string }[]).map((c) => c.name);
-  assert.deepEqual(cols, ["id", "agent", "turn", "member", "word", "label", "at", "state", "outcome", "settled_at"]);
+  assert.deepEqual(cols, ["id", "agent", "turn", "member", "word", "label", "at", "state", "outcome", "settled_at", "taken", "woken"]);
 });
 
 test("a sync tool that does not answer within the longest wait gives a receipt too, so no tool call outlives the runtime's 60 s", async () => {
