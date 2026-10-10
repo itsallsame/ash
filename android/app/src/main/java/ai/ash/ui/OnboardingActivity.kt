@@ -284,7 +284,7 @@ class OnboardingActivity : Activity() {
         private const val START_GAP_MS = 20_000L
 
         /** The entries of [Permissions] that stand for items outside `config.status` (the keep-alive switches, the recovery grant). */
-        private val EXTRA_KEYS = mapOf("autostart" to "autostart", "recents_lock" to "lock", "screen_recovery" to "screen_recovery")
+        private val EXTRA_KEYS = mapOf("autostart" to "autostart", "kernel_autostart" to "kernel_autostart", "recents_lock" to "lock", "screen_recovery" to "screen_recovery")
 
         /** Items without an entry in [Permissions]: their name and what they give. */
         private val OWN = mapOf(

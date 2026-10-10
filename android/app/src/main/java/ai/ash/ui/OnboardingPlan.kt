@@ -21,6 +21,9 @@ object OnboardingPlan {
      */
     fun rowText(mark: String, name: String, why: String) = if (why.isEmpty()) "$mark $name" else "$mark $name\n$why"
 
+    /** The switches of the kernel package itself. */
+    private val KERNEL_SWITCHES = setOf("kernel_battery_optimization", "kernel_autostart")
+
     private const val GRANTED = "granted"
     private const val UNSUPPORTED = "unsupported"
 
@@ -41,9 +44,9 @@ object OnboardingPlan {
         else -> OnboardingStep.PERMISSIONS
     }
 
-    /** The rows that belong to [step] now: the kernel's battery exemption cannot be set while the kernel is not installed. */
+    /** The rows that belong to [step] now: the kernel's battery exemption and auto-start cannot be set while the kernel is not installed. */
     fun rows(step: OnboardingStep, kernel: KernelState, rows: List<Row>): List<Row> =
-        rows.filter { stepOf(it.item) == step && !(it.item == "kernel_battery_optimization" && kernel == KernelState.NOT_INSTALLED) }
+        rows.filter { stepOf(it.item) == step && !(it.item in KERNEL_SWITCHES && kernel == KernelState.NOT_INSTALLED) }
 
     private fun done(row: Row) = row.state == GRANTED || row.state == UNSUPPORTED
 

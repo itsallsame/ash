@@ -37,6 +37,20 @@
             android:exported="true"
             android:permission="ai.ash.permission.KERNEL" />
 
+        <!--
+          No-screen entry that starts the service, for phones whose associated-start guard (MIUI, ColorOS) rejects another
+          package starting a service but lets an activity start through. Signature permission: only the hand app can start it;
+          it reads nothing from the intent. Not in recents, no launcher icon.
+        -->
+        <activity
+            android:name=".StartActivity"
+            android:exported="true"
+            android:permission="ai.ash.permission.KERNEL"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
         <!-- Boot completed, and this package replaced by an update. -->
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

@@ -227,7 +227,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
     return sess;
   }
 
-  /** The declaration's model and effort go onto a new session; after that the session keeps its own. */
+  /** The declaration's model and effort go onto a new session. After `model.set` the choice is only remembered once the next model request writes its `request/header`; if the process restarts before that, the session goes back to this default. */
   async function applyRuntime(agent: string, p: Proc, sess: Session): Promise<void> {
     const { model, effort } = p.spec.runtime;
     const wanted: Record<string, unknown> = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
