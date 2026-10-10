@@ -35,12 +35,20 @@ export interface Registry {
 // router (§1.4): the one way a word reaches a member, in seven fixed steps.
 // ---------------------------------------------------------------------------------------------------------------------
 
+export interface SendOptions {
+  signal?: AbortSignal;
+  /** The request's message id when the caller needs it before the reply (the human edge answers send at once). */
+  id?: string;
+  /** Approval metadata from an agent's tool call. */
+  approval?: { ttl_minutes?: number; purpose?: string };
+}
+
 export interface Router {
   /**
    * `id` is the request's message id (the router always sets it, recorded or not; fakes may leave it out); `ref` is the id of the response message when
    * the ledger recorded it (a large result is an attachment of that message).
    */
-  send(msg: Outgoing, caller: Caller, opts?: { signal?: AbortSignal }): Promise<Reply & { id?: string; ref?: string }>;
+  send(msg: Outgoing, caller: Caller, opts?: SendOptions): Promise<Reply & { id?: string; ref?: string }>;
   /** Read-only: the human edge's sync and the activity page. */
   subscribe(filter: { to?: string; from?: string; involving?: string; word?: string }, cb: (m: Message) => void): () => void;
   /** Once at start: unfinished dispatched requests become interrupted (`result_unknown`), never replayed. */

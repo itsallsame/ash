@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "1ce31d673f15443ebfb9389d899ac936929da18ae1c8cbecd357688b30e7471b",
+ "hash": "a4c5aa445dae9b1e125eded6d99b72516069181cd3ae2c89f7cec55447caf2f2",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8743,10 +8743,10 @@
       }
      },
      "bindings": {
-      "type": "array"
+      "type": "object"
      },
      "previews": {
-      "type": "array"
+      "type": "object"
      }
     },
     "required": [
@@ -13005,6 +13005,48 @@
    ],
    "label": {
     "doing": "在打开页面"
+   }
+  },
+  {
+   "member": "person:owner",
+   "word": "widget.preview",
+   "kind": "request",
+   "direction": "in",
+   "description": "Ask a channel that shows widgets to draw a card and return the picture (an image part), for service:widgets.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "card": {
+      "type": "string",
+      "minLength": 1
+     },
+     "size": {
+      "type": "string",
+      "enum": [
+       "2x2",
+       "4x2",
+       "4x4"
+      ]
+     }
+    },
+    "required": [
+     "card"
+    ],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": true
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在画卡片预览"
    }
   },
   {

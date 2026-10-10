@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `1ce31d673f15443e`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `a4c5aa445dae9b1e`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -27,7 +27,7 @@
 - [`service:blobs`](#serviceblobs) (2)
 - [`service:host`](#servicehost) (6)
 - [`service:bodies`](#servicebodies) (4)
-- [`person:owner`](#personowner) (6)
+- [`person:owner`](#personowner) (7)
 - [`agent:*`](#agent) (8)
 - [`app:*`](#app) (1)
 - [`device:*`](#device) (75)
@@ -328,6 +328,7 @@
 | `show` | agent, app | act / none | - | card* | 在给你看卡片 | Show the owner a file, image, link, a permission page to switch on, or choices. Showing choices does not itself authorize anything. A permission card only names an Android setting the owner must switch on; calling a capability asks the owner by itself. |
 | `ask` | agent | act / none | timeout 604800s | title*, detail, human_kind, allow_custom, options, expires_at, source | 在问你 | A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options, while a confirmation without options gets yes and no from the owner's side. detail, source and expires_at are optional: the gate fills them for an approval, the tools fill expires_at from approval_ttl_minutes, and the owner's side ends the question at expires_at (at most seven days). The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards. |
 | `open` | agent, app | act / none | - | target*, id, mode, client | 在打开页面 | Open or suggest a page on one of the owner's channels: settings, the activity of a turn, a file (id says which). `client` picks the channel; leave it out for the one the owner is on. Check `opened`: a suggestion may be declined. |
+| `widget.preview` | kernel | read / none | - | card*, size | 在画卡片预览 | Ask a channel that shows widgets to draw a card and return the picture (an image part), for service:widgets. |
 | `widget.state` | kernel | read / none | event out | - | 在更新桌面卡片 | The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list. |
 
 ## `agent:*`

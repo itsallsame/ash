@@ -158,6 +158,7 @@
 * service:widgets/widget.bind  kernel  event-in
 * service:widgets/widget.rendered  kernel  event-in
 * service:widgets/widget.action  kernel  event-out
+* person:owner/widget.preview  kernel
 * person:owner/widget.state  kernel  event-out
 * service:widgets/widget.problem  kernel  event-out
   service:pulse/pulse.get  owner,agent,app

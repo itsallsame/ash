@@ -558,7 +558,7 @@ const widgetCardInfo = obj({ id: widgetCardId, title: nonempty, size: widgetSize
 const placedWidget = obj({ id: widgetId, type: choice("ash", "card") }, ["id", "type"]);
 /** The whole widget state, the same shape as the person:owner/widget.state event: cards (with their parsed a2ui), placed widgets, bindings, revision, preview requests. */
 const widgetListResult = obj({ revision: nonnegativeSafe, cards: array({ ...widgetCardInfo, additionalProperties: true }), widgets: array(obj({ id: widgetId, type: choice("ash", "card"), card: { anyOf: [widgetCardId, { type: "null" }] } }, ["id", "type", "card"])),
-  bindings: { type: "array" }, previews: { type: "array" } }, ["cards", "widgets"]);
+  bindings: { type: "object" }, previews: { type: "object" } }, ["cards", "widgets"]);
 const previewTheme = choice("dark", "light");
 const previewSide: JsonSchema = { type: "integer", minimum: 1, maximum: 1200 };
 const previewDp = obj({ width: num, height: num }, ["width", "height"]);
@@ -626,6 +626,8 @@ add("service:widgets", "widget.action", "event", obj({ card: widgetCardId, actio
   context: obj({}, [], true) }, ["card", "action", "owner"]), undefined,
   { direction: "out", label: "在转达小组件上的点击", description: "The owner tapped, toggled or chose something on a home-screen card. owner is the card's creator, who decides what it means; component is the element, item the list item's key, checked / value the new state. " +
     "On an app's card (owner app:<id>) the tap goes to the app's own action tool, which changes the app's data; otherwise the tap itself does nothing else." });
+add("person:owner", "widget.preview", "request", obj({ card: nonempty, size: choice("2x2", "4x2", "4x4") }, ["card"]), obj({}, [], true),
+  { callers: KERNEL, effect: "read", label: "在画卡片预览", description: "Ask a channel that shows widgets to draw a card and return the picture (an image part), for service:widgets." });
 add("person:owner", "widget.state", "event", obj({}, [], true), undefined,
   { callers: KERNEL, direction: "out", label: "在更新桌面卡片", description: "The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list." });
 add("service:widgets", "widget.problem", "event", obj({ card: widgetCardId, owner: id, title: str, problem: nonempty }, ["card", "owner", "problem"]), undefined,
