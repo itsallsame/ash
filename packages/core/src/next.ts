@@ -77,6 +77,8 @@ export interface HubOptions {
    * Absent: `ash-gateway.mjs` next to the hub's own program. If the file is not there, deploy answers `unavailable`.
    */
   relayBundle?: string;
+  /** The local port the relay setup's sign-in returns to (default 8976; 0 = any free port, for tests). */
+  relaySetupPort?: number;
   /** The clock of everything that waits for a time (timers, approval expiry, pulse). Absent: the system clock. */
   now?: () => number;
 }
@@ -179,6 +181,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const relayBundle = relayBundleFile(opts.relayBundle ?? fileURLToPath(new URL(RELAY_BUNDLE_FILE, import.meta.url)));
   const linkControl = createLinkControl({
     db: ledger.db(), router, link, hands, vault, now, log, bundle: relayBundle.read, bundleMissing: relayBundle.missing,
+    ...(opts.relaySetupPort === undefined ? {} : { callbackPort: opts.relaySetupPort }),
     identity: { key: () => host.identityKey(), sign: (data) => host.identitySign(data) },
   });
   const devices = new Devices({ hands, router, bodies, gateway: linkControl.pairing, now });

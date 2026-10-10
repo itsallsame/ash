@@ -12,12 +12,7 @@ test("HUB-MODULES §4, SPEC-03 §9.5.2: a relay setup the agent started tells th
   const state: { started?: ToolResult } = {};
   s.driver.script(byOwnerText({
     "帮我搭中转站": async (turn) => {
-      // The sign-in's return address is a fixed local port (8976): when another hub on this machine (another run of the
-      // scenarios, say) holds it, the answer is `unavailable` and the agent just tries again a moment later.
-      state.started = await eventually(async () => {
-        const started = await turn.call("service:link", "gateway.setup.start", { provider: "cloudflare" });
-        return started.isError && errorCode(started) === "unavailable" ? null : started;
-      }, "the sign-in's return port being free");
+      state.started = await turn.call("service:link", "gateway.setup.start", { provider: "cloudflare" });
     },
   }));
   const owner = await s.human();
@@ -84,7 +79,7 @@ test("SPEC-03 §9.5.4, SPEC-00 §6.9: an agent starts a pairing and never sees t
 });
 
 // The ledger's copy of `pair_code` masks `code` but keeps `url`, and the real relay's `url` is `<origin>/p/<code>`.
-test("SPEC-03 §9.5.4, SPEC-00 §6.9: the ledger has no code anywhere", { todo: "module: pair_code's url carries the code and is not masked in the ledger" }, async (t) => {
+test("SPEC-03 §9.5.4, SPEC-00 §6.9: the ledger has no code anywhere", async (t) => {
   const { owner, secret } = await pairing(t);
 
   const notOwnQuery = (m: { to: string | null; word: string }): boolean => !(m.to === "service:history" && m.word === "query");

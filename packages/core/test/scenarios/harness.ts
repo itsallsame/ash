@@ -702,7 +702,7 @@ export class Scenario {
     const relayBundle = join(this.dataDir, "ash-gateway.mjs");
     writeFileSync(relayBundle, "export default {};\n");
     this.hubValue = await startHub({
-      dataDir: this.dataDir, relayBundle, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
+      dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
       ...(this.options.llm ? { llm: this.options.llm } : {}),
       ...(this.options.fakeNow ? { now: this.clock.now } : {}),
     });
