@@ -75,6 +75,8 @@ interface Lane {
   reloadPending: boolean;
   compactPending: boolean;
   quotaNoticed: boolean;
+  /** service:reflex looked at the screen before the turn on this lane, so it is asked to put things back when the turn ends. */
+  screenPlanned: boolean;
   routing: Set<string>;
 }
 interface Live {
@@ -335,13 +337,18 @@ export class AgentManager {
       if (!(await this.quotaAllows(live, lane))) return;
       if (lane.busy || live.stopping) return;
       await this.inject(live, lane);
+      const screen = await this.screenPlan(live, lane, rows);
+      if (lane.busy || live.stopping) return;
       this.inbox.mark(rows.map((r) => r.id), "sent");
       try {
+        lane.screenPlanned = screen.asked; // before the send: a turn can end before it returns
+        if (screen.text) await live.driver.inject(live.id, lane.key, { text: screen.text }).catch((error) => this.log(`agents: screen text for ${live.id}/${lane.key}: ${errorText(error)}`));
         // The lane turns busy when the driver reports `turn.started`, not here: on a remote driver that report
         // (or even `turn.ended`) can arrive before this call returns.
         await live.driver.send(live.id, lane.key, rows.map(toDriverMessage));
         sent = true;
       } catch (error) {
+        lane.screenPlanned = false;
         this.inbox.mark(rows.map((r) => r.id), "pending");
         if (!(error instanceof WordError && error.code === "conflict")) throw error; // conflict: the driver is in a turn already
       }
@@ -393,6 +400,32 @@ export class AgentManager {
       this.tellOwner(data.reason || `${live.id} 今天的额度用完了${data.limit ? `（${data.used ?? "?"}/${data.limit}）` : ""}，先不开新的一轮；你的消息我留着。`);
     }
     return false;
+  }
+
+  /**
+   * Before a turn the owner started: ask `service:reflex` where the turn's phone-screen work belongs. `text` is what it
+   * wants put into the session ahead of the turn; `asked` says reflex answered, so it is also asked to put things back
+   * when the turn ends. Offline, refused or failing: nothing, and the turn goes on as if nobody had asked.
+   */
+  private async screenPlan(live: Live, lane: Lane, rows: InboxRow[]): Promise<{ text: string | null; asked: boolean }> {
+    const ids = rows.filter((r) => r.from === OWNER_ID).map((r) => r.id);
+    const nothing = { text: null, asked: false };
+    if (!ids.length) return nothing;
+    try {
+      const reply = await this.deps.router.send({ to: "service:reflex", kind: "request", word: "screen.plan", body: { agent: live.id, lane: lane.key, ids } }, SERVICE_CALLER);
+      if (!reply.ok) return nothing;
+      const data = reply.result?.data as { mode?: string; inject?: unknown } | undefined;
+      return { text: data?.mode !== "none" && typeof data?.inject === "string" && data.inject ? data.inject : null, asked: true };
+    } catch (error) {
+      this.log(`agents: screen.plan ${live.id}/${lane.key}: ${errorText(error)}`);
+      return nothing;
+    }
+  }
+
+  /** The turn is over: reflex puts the screen back if it looked at it before. */
+  private async screenReconcile(live: Live, ev: { turn: string; key: string; outcome: string }): Promise<void> {
+    const reply = await this.deps.router.send({ to: "service:reflex", kind: "request", word: "screen.reconcile", body: { turn: ev.turn, agent: live.id, lane: ev.key, outcome: ev.outcome } }, SERVICE_CALLER);
+    if (!reply.ok && reply.error.code !== "offline") this.log(`agents: screen.reconcile ${ev.turn}: ${reply.error.code}`);
   }
 
   /** Put the dynamic modules whose content changed into the lane's session (all of them every REINJECT_EVERY turns). */
@@ -477,6 +510,7 @@ export class AgentManager {
       else waiter.reject(new WordError(ev.outcome === "cancelled" ? "cancelled" : "failed", ev.error ?? `the turn ended: ${ev.outcome}`));
     }
     this.emit(live.id, "turn.ended", { turn: ev.turn, lane: ev.key, outcome: ev.outcome, ...(ev.error ? { error: ev.error } : {}) }, ev.turn);
+    if (lane.screenPlanned) { lane.screenPlanned = false; this.bg(this.screenReconcile(live, ev), "screen reconcile"); }
     // A turn that another lane's `on` started does not start further lanes: that would loop.
     if (!(rows.length && rows.every((r) => r.word === "lane"))) this.trigger(live, ev.key, `${ev.key}:turn.ended`, `Lane ${ev.key} finished a turn (${ev.outcome}). Its turn id is ${ev.turn}; service:history/turn shows what happened in it.`, ev.turn);
     if (lane.reloadPending) { lane.reloadPending = false; this.bg(this.reloadLane(live, lane), "reload"); }
@@ -658,7 +692,7 @@ export class AgentManager {
   }
 }
 
-const newLane = (key: string): Lane => ({ key, busy: false, sending: false, injected: new Map(), turnsSince: 0, reloadPending: false, compactPending: false, quotaNoticed: false, routing: new Set() });
+const newLane = (key: string): Lane => ({ key, busy: false, sending: false, injected: new Map(), turnsSince: 0, reloadPending: false, compactPending: false, quotaNoticed: false, screenPlanned: false, routing: new Set() });
 
 export const staticHash = (modules: PromptModule[]): string =>
   createHash("sha256").update(modules.map((m) => `${m.id}:${m.version}`).join("|")).digest("hex").slice(0, 12);
