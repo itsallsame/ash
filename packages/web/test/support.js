@@ -99,6 +99,7 @@ export async function nativeBridgeFor(kernel) {
   };
   return {
     bridge, sent,
+    linked: () => lastLink !== null,
     close: () => { lastLink = { type: "link", open: false }; onLink(lastLink); pair.hand.close(1000, "test"); },
   };
 }

@@ -175,15 +175,29 @@ export class NativePort extends BasePort {
     this.syncs = new Map();
     this.incoming = new Map();
     this.epoch = 0;
+    this.started = false;
+    this.early = null;
     bridge.onFrame((frame) => this.receive(frame));
-    bridge.onLink((message) => this.linked(message));
+    // A state told while the page is still being built (it came before the port was ready) waits for `start`: whoever reacts
+    // to the port going online may need the rest of the page.
+    bridge.onLink((message) => { if (this.started) this.linked(message); else this.early = message; });
   }
 
-  start() { if (this.state !== "online") this.set("connecting"); }
-  stop() { this.drop(); this.set("offline"); }
-  reconnect() { /* the native layer keeps the connection and says when it changes */ }
+  start() {
+    this.started = true;
+    if (this.state !== "online") this.set("connecting");
+    if (this.early) { const message = this.early; this.early = null; this.linked(message); }
+    // The native layer pushes every change, but a page that came late (a slow phone) or missed the first one asks once.
+    this.bridge.requestLink?.();
+  }
+  stop() { this.drop(); this.lastLinkKey = null; this.set("offline"); }
+  reconnect() { this.bridge.requestLink?.(); /* the native layer keeps the connection and says when it changes */ }
 
   linked(message) {
+    // The same state told twice (pushed and asked for) is one state.
+    const key = JSON.stringify([message.open === true, message.client ?? null, message.local === true]);
+    if (key === this.lastLinkKey) return;
+    this.lastLinkKey = key;
     if (message.open === true && typeof message.client === "string") {
       this.epoch++;
       this.set("online", { client: message.client, local: message.local === true, session: `${message.client}#${this.epoch}` });

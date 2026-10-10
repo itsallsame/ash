@@ -173,6 +173,17 @@ test("in the app the same page code runs over frames passed through AshNative", 
   net.stop(); kernel.close();
 });
 
+test("in the app the channel opened before the page was built: the state told first still shows online", async () => {
+  const kernel = startKernel();
+  const native = await nativeBridgeFor(kernel);
+  await until(() => native.linked(), 2000, "the channel opened before any page listened");
+  const { net, events } = netFor(kernel, { bridge: native.bridge, connector: undefined });
+  net.start();
+  await until(() => net.status === "online" && events.ready === 1, 2000, "online though the state came first");
+  assert.equal(net.status, "online");
+  net.stop(); kernel.close();
+});
+
 test("an error frame for a send is the send's failure; a channel that closes mid-send is result_unknown", async () => {
   const kernel = startKernel();
   const native = await nativeBridgeFor(kernel);
