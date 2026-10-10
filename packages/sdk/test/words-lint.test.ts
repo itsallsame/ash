@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { standardContracts } from "../src/namespaces";
-import { SERVICE_NAMES, WORD_CONTRACTS, wordContract, wordsOf } from "../src/words";
+import Ajv2020 from "ajv/dist/2020";
+import { DELEGATION_RULE, SERVICE_NAMES, WORD_CONTRACTS, wordContract, wordsOf } from "../src/words";
 import {
-  CALLER_KINDS, DEFAULT_CALLERS, EFFECTS, LINT_RULES, RESERVED_INPUT_NAMES, RISKS, effectRiskProblem, lintWord, lintWords, secret, sensitive, wordEffect,
+  CALLER_KINDS, DEFAULT_CALLERS, EFFECTS, LINT_RULES, RESERVED_INPUT_NAMES, RISKS, effectRiskProblem, lintWord, lintWords, mayCall, secret, sensitive, wordEffect,
   type LintRule, type WordContract,
 } from "../src/word";
 
@@ -51,7 +52,9 @@ test("the services of SPEC-02 §4.1 are all there, and the removed ones are not"
   has("service:cost", "usage.get", "balance.get", "quota.check");
   has("service:persona", "get", "propose");
   has("service:directory", "list", "describe");
-  has("service:apps", "surface", "icon", "apps.install", "apps.validate");
+  has("service:apps", "apps.surface", "apps.icon", "apps.install", "apps.validate");
+  assert.equal(wordContract("service:apps", "surface"), undefined);
+  assert.equal(wordContract("service:apps", "icon"), undefined);
   has("service:llm", "complete");
   has("service:admin", "pause", "resume", "settings.get", "settings.set", "model.set", "plugins.list", "plugins.op", "status", "logs");
   has("person:owner", "say", "react", "show", "ask", "open");
@@ -144,12 +147,10 @@ const VIOLATIONS: Record<LintRule, [string, WordContract][]> = {
   "input-schema": [["missing", bad({ input_schema: undefined })], ["not an object schema", bad({ input_schema: { type: "string" } })], ["does not compile", bad({ input_schema: { type: "object", properties: { a: { type: "nope" } } } })]],
   "result-schema": [["not a schema", bad({ result_schema: "x" })], ["does not compile", bad({ result_schema: { type: "bogus" } })]],
   "effect-risk": [["read with risk", bad({ effect: "read", risk: "outward" })], ["execute without structure", bad({ effect: "execute", risk: "none" })], ["old effect value", bad({ effect: "send" })], ["old effect structure", bad({ effect: "structure" })], ["unknown risk", bad({ risk: "high" })]],
-  "kind-direction": [["a request that goes out", bad({ direction: "out" })], ["unknown kind", bad({ kind: "response" })], ["no direction", bad({ direction: undefined })]],
   "event-shape": [["event with an effect", bad({ effect: "act" }, EVENT)], ["event with risk", bad({ effect: "read", risk: "outward" }, EVENT)], ["event with foreground", bad({ foreground: true }, EVENT)]],
   "callers": [["missing", bad({ callers: undefined })], ["empty", bad({ callers: [] })], ["unknown caller", bad({ callers: ["owner", "robot"] })], ["repeated", bad({ callers: ["owner", "owner"] })], ["the old audience field is not callers", bad({ callers: "all" })]],
   "local-only": [["without owner", bad({ local_only: true, callers: ["agent"] })], ["false is not a value", bad({ local_only: false })]],
   "record": [["on a request", bad({ record: true })], ["false is not a value", bad({ record: false }, EVENT)]],
-  "flags": [["per_call_risk on a read", bad({ effect: "read", per_call_risk: true })], ["per_call_risk on risk none", bad({ per_call_risk: true })], ["foreground not a boolean", bad({ foreground: "yes" })]],
   "timeout": [["zero", bad({ timeout_ms: 0 })], ["fraction", bad({ timeout_ms: 1.5 })], ["string", bad({ timeout_ms: "5" })]],
   "reserved-name": RESERVED_INPUT_NAMES.map((name): [string, WordContract] => [name, bad({ input_schema: { type: "object", properties: { [name]: { type: "string" } } } })]),
   "secret": [["secret on a result", bad({ result_schema: { type: "object", properties: { key: secret({ type: "string" }) } } })], ["secret that is not true", bad({ input_schema: { type: "object", properties: { key: { type: "string", "x-ash-secret": "yes" } } } })]],
@@ -190,4 +191,87 @@ test("a word defined twice is rejected, and so is a nested reserved name only wh
 test("the lint also covers a hand-written contract with the old fields", () => {
   const old = { ...GOOD, audience: "owner", label: "看提醒" } as unknown as WordContract;
   assert.ok(lintWord(old).some((issue) => issue.rule === "label"));
+});
+
+// ---- decisions of the review -------------------------------------------------------------------------------------------
+
+test("the kernel passes the first layer for every word; ['kernel'] is for the kernel alone", () => {
+  assert.equal(mayCall(["owner"], "kernel"), true);
+  assert.equal(mayCall(["agent", "app"], "kernel"), true);
+  assert.equal(mayCall(["kernel"], "kernel"), true);
+  for (const who of ["owner", "agent", "app"] as const) {
+    assert.equal(mayCall(["kernel"], who), false, who);
+    assert.equal(mayCall(["owner"], who), who === "owner", who);
+    assert.equal(mayCall([...DEFAULT_CALLERS], who), true, who);
+  }
+  // so every word that is for the kernel alone says exactly ["kernel"]
+  for (const word of ALL.filter((item) => item.callers.includes("kernel") && item.callers.length === 1)) {
+    for (const who of ["owner", "agent", "app"] as const) assert.equal(mayCall(word.callers, who), false, `${word.member}/${word.word}`);
+  }
+});
+
+test("pause is the owner's from this machine (or the kernel's reflex), like resume", () => {
+  const pause = wordContract("service:admin", "pause")!;
+  const resume = wordContract("service:admin", "resume")!;
+  assert.deepEqual(pause.callers, ["owner", "kernel"]);
+  assert.equal(pause.local_only, true);
+  assert.equal(resume.local_only, true);
+  assert.equal(mayCall(pause.callers, "agent"), false);
+});
+
+test("pulse has no guidance field any more", () => {
+  for (const word of wordsOf("service:pulse")) {
+    assert.ok(!/guidance/i.test(JSON.stringify(word)), word.word);
+  }
+  assert.ok(!JSON.stringify(wordContract("service:pulse", "pulse.set")!.input_schema).includes("guidance"));
+  assert.ok(!(wordContract("service:pulse", "pulse.get")!.result_schema!.required as string[]).includes("guidance"));
+  assert.ok(!JSON.stringify(wordsOf("service:pulse")).includes("review"));
+});
+
+test("person:owner/ask: only title is required, a question needs options, human_ask and human_confirm are its aliases", () => {
+  const ask = wordContract("person:owner", "ask")!;
+  const validate = new Ajv2020({ strict: true, allowUnionTypes: true }).compile(ask.input_schema);
+  assert.deepEqual(ask.input_schema.required, ["title"]);
+  assert.ok(validate({ title: "Send it?", options: [{ id: "yes", label: "Yes" }] }));
+  assert.ok(validate({ title: "Sure?", human_kind: "confirmation" }));
+  assert.ok(!validate({ title: "Which one?" }), "a question has options");
+  assert.ok(!validate({ title: "Which one?", human_kind: "question" }));
+  assert.ok(!validate({ options: [{ id: "a", label: "A" }] }), "no title");
+  assert.ok(validate({ title: "t", detail: "d", options: [{ id: "a", label: "A" }], expires_at: 1, source: { word: "w", to: "device:x", body_preview: "b" } }));
+  assert.match(ask.description, /human_ask and human_confirm/);
+  assert.deepEqual(ask.callers, ["agent"]);
+  const say = new Ajv2020({ strict: true, allowUnionTypes: true }).compile(wordContract("person:owner", "say")!.input_schema);
+  assert.ok(say({ text: "hi" }) && say({ text: "hi", kind: "heads_up" }) && !say({ text: "hi", kind: "other" }) && !say({ kind: "reply" }));
+});
+
+test("an option reply is both fields or neither, in the schema", () => {
+  const say = new Ajv2020({ strict: true, allowUnionTypes: true }).compile(wordContract("agent:main", "say")!.input_schema);
+  assert.ok(say({ text: "a" }) && say({ text: "a", in_reply_to: "m1", option_id: "yes" }));
+  assert.ok(!say({ text: "a", in_reply_to: "m1" }) && !say({ text: "a", option_id: "yes" }));
+});
+
+test("declare, update and spawn share one delegation rule", () => {
+  assert.match(DELEGATION_RULE, /subset/);
+  assert.match(DELEGATION_RULE, /forbidden/);
+  for (const word of ["declare", "update", "spawn"]) {
+    const contract = wordContract("service:agents", word)!;
+    assert.ok(contract.description.includes(DELEGATION_RULE), word);
+    assert.equal(contract.risk, "none", word);
+  }
+  assert.deepEqual([wordContract("service:agents", "declare")!.effect, wordContract("service:agents", "update")!.effect], ["write", "write"]);
+});
+
+test("the host events and the usage event take the shapes their producers have", () => {
+  const ajv = new Ajv2020({ strict: true, allowUnionTypes: true });
+  for (const member of ["service:link", "service:agents"]) {
+    const check = ajv.compile(wordContract(member, "env.changed")!.input_schema);
+    assert.ok(check({ what: "network", network: { proxy: null }, online: true }));
+    assert.ok(check({ what: "network", network: { proxy: { http: "http://h:1", no_proxy: "x" } }, online: false }));
+    assert.ok(check({ what: "power", saver: true }));
+    assert.ok(!check({ what: "power" }) && !check({ what: "network", online: true }) && !check({ what: "other" }));
+  }
+  const usage = ajv.compile(wordContract("service:cost", "usage.recorded")!.input_schema);
+  assert.ok(usage({ caller: "service:gate", provider: "deepseek", model: "m", input_tokens: 1, output_tokens: 2, ok: true, at: 5 }));
+  assert.ok(usage({ caller: "agent:x", provider: "openrouter", model: "m", input_tokens: 1, output_tokens: 2, cost: 0.01, ok: false, at: 5 }));
+  assert.ok(!usage({ caller: "a", provider: "other", model: "m", input_tokens: 1, output_tokens: 2, ok: true, at: 5 }) && !usage({ caller: "a", provider: "deepseek", model: "m", ok: true, at: 5 }));
 });

@@ -8,7 +8,7 @@
  * CapabilityPolicy.kt and the computer's workspace.ts (old effect `send` is `act`, old `structure` is `write`).
  * Results describe the structured part of a call result (`data`); images and files travel in the result's content.
  */
-import type { CallerKind, Effect, JsonSchema, Risk, WordContract } from "./word";
+import { DEFAULT_CALLERS, type CallerKind, type Effect, type JsonSchema, type Risk, type WordContract } from "./word";
 
 /** A JSON Schema (2020-12) document; the shared `JsonSchema` type of word.ts. */
 export type SchemaObject = JsonSchema;
@@ -31,7 +31,7 @@ export interface StandardAction {
   errors: readonly string[];
   /** The risk is assessed per call by the hand (SPEC-01 §6.3). */
   per_call_risk?: boolean;
-  /** Who may call; default owner, agent, app. */
+  /** Who may call; default `DEFAULT_CALLERS`. */
   callers?: CallerKind[];
 }
 
@@ -645,7 +645,7 @@ export function standardContract(item: StandardAction): WordContract {
     member: standardMember(item.name), word: item.name, kind: "request", direction: "in", description: item.description,
     input_schema: item.input_schema, result_schema: item.result_schema, effect: item.effect, risk: item.risk,
     ...(item.per_call_risk ? { per_call_risk: true } : {}), ...(item.foreground ? { foreground: true } : {}),
-    callers: item.callers ? [...item.callers] : ["owner", "agent", "app"], label: { doing: item.label },
+    callers: [...(item.callers ?? DEFAULT_CALLERS)], label: { doing: item.label },
   };
 }
 export const standardContracts = (): WordContract[] => STANDARD_ACTIONS.map(standardContract);

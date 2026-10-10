@@ -56,10 +56,19 @@ export function wordEffect(spec: { effect?: unknown; risk?: unknown }): Effect {
 // the contract
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Who may call a word (SPEC-01 §5.2). `kernel` is the hub's own services; it says who may call, not that there is no risk. */
+/**
+ * Who may call a word (SPEC-01 §5.2), the first layer of authorization.
+ *
+ * `kernel` is the hub's own code (services, edges). The rule (`mayCall`): the kernel passes this layer for every word;
+ * a word whose callers are exactly `["kernel"]` is for the kernel alone, and owner, agent and app are refused.
+ * Writing `kernel` next to other kinds changes nothing (it is there to show the hub itself uses the word).
+ * Passing this layer says who may call, not that the call has no risk: effect, risk and the gate still apply.
+ */
 export type CallerKind = "owner" | "agent" | "app" | "kernel";
 export const CALLER_KINDS: readonly CallerKind[] = Object.freeze(["owner", "agent", "app", "kernel"]);
 export const DEFAULT_CALLERS: readonly CallerKind[] = Object.freeze(["owner", "agent", "app"]);
+/** The first layer of authorization: may this kind of caller call a word with these `callers`? The kernel always may. */
+export const mayCall = (callers: readonly CallerKind[], who: CallerKind): boolean => who === "kernel" || callers.includes(who);
 
 /** Names of the call envelope (SPEC-02 §3.3). No word's input may use them. */
 export const RESERVED_INPUT_NAMES: readonly string[] = Object.freeze(["approval_ttl_minutes", "purpose", "wait"]);
@@ -126,8 +135,8 @@ export interface Member {
 // ---------------------------------------------------------------------------------------------------------------------
 
 export const LINT_RULES = [
-  "member", "word-name", "description", "label", "input-schema", "result-schema", "effect-risk", "kind-direction",
-  "event-shape", "callers", "local-only", "record", "flags", "timeout", "reserved-name", "secret", "sensitive",
+  "member", "word-name", "description", "label", "input-schema", "result-schema", "effect-risk",
+  "event-shape", "callers", "local-only", "record", "timeout", "reserved-name", "secret", "sensitive",
 ] as const;
 export type LintRule = (typeof LINT_RULES)[number];
 export interface LintIssue { member: string; word: string; rule: LintRule; message: string }
@@ -197,9 +206,6 @@ export function lintWord(contract: WordContract): LintIssue[] {
   const effectRisk = effectRiskProblem(c.effect, c.risk);
   if (effectRisk) add("effect-risk", effectRisk);
 
-  if (c.kind !== "request" && c.kind !== "event") add("kind-direction", "kind must be request or event");
-  else if (c.direction !== "in" && c.direction !== "out") add("kind-direction", "direction must be in or out");
-  else if (c.kind === "request" && c.direction !== "in") add("kind-direction", "a request is always direction in");
   if (c.kind === "event" && (c.effect !== "read" || c.risk !== "none")) add("event-shape", "an event changes nothing by itself: effect read, risk none");
   if (c.kind === "event" && (c.foreground || c.per_call_risk)) add("event-shape", "an event has no foreground or per_call_risk");
 
@@ -232,8 +238,6 @@ export function lintWord(contract: WordContract): LintIssue[] {
   }
   if (c.local_only !== undefined && (c.local_only !== true || !Array.isArray(c.callers) || !c.callers.includes("owner"))) add("local-only", "local_only is true, and only for a word the owner can call");
   if (c.record !== undefined && (c.record !== true || c.kind !== "event")) add("record", "record is true, and only for events");
-  if (c.foreground !== undefined && c.foreground !== true && c.foreground !== false) add("flags", "foreground must be a boolean");
-  if (c.per_call_risk !== undefined && (typeof c.per_call_risk !== "boolean" || (c.per_call_risk && (c.effect === "read" || c.risk === "none")))) add("flags", "per_call_risk is a boolean, and only for a word that is not read and not risk none");
   if (c.timeout_ms !== undefined && (!Number.isInteger(c.timeout_ms) || c.timeout_ms <= 0)) add("timeout", "timeout_ms must be a positive integer");
   return issues;
 }

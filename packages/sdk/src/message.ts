@@ -64,15 +64,10 @@ export function errorBody(code: ErrorCode, message: string, extra: { detail?: un
 }
 
 /**
- * Old code -> new code. Data for the tasks that move the old call sites (router, tool surface, app bridge, hands);
- * the new code never produces an old code.
+ * Old code -> new code, for the codes that changed. A code that is also a new code is not listed (use `fromLegacyErrorCode`).
+ * Data for the tasks that move the old call sites (router, tool surface, app bridge, hands); the new code never produces an old code.
  */
 export const LEGACY_ERROR_CODES: Readonly<Record<string, ErrorCode>> = Object.freeze({
-  // the earlier message codes that stay as they are
-  bad_request: "bad_request", not_found: "not_found", forbidden: "forbidden", denied: "denied", cancelled: "cancelled",
-  timeout: "timeout", offline: "offline", failed: "failed",
-  too_large: "too_large", result_unknown: "result_unknown", internal: "internal", unauthorized: "unauthorized",
-  conflict: "conflict", unavailable: "unavailable",
   // renamed (SPEC-02 §7)
   payload_invalid: "bad_request", bad_json: "bad_request", unreachable: "offline", vault_unavailable: "unavailable",
   capability_error: "failed", internal_error: "internal",
@@ -81,6 +76,11 @@ export const LEGACY_ERROR_CODES: Readonly<Record<string, ErrorCode>> = Object.fr
   unknown_process: "not_found", app_failed: "failed", busy: "unavailable",
   permission_denied: "forbidden", not_recording: "unavailable", source_unavailable: "unavailable", unsupported_schema: "unavailable",
 });
+
+/** The new code for an old one (or for a new one, unchanged); undefined for a code that is neither. */
+export function fromLegacyErrorCode(code: string): ErrorCode | undefined {
+  return Object.hasOwn(LEGACY_ERROR_CODES, code) ? LEGACY_ERROR_CODES[code] : isErrorCode(code) ? code : undefined;
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // message (SPEC-01 §3)
@@ -138,8 +138,8 @@ export interface Outgoing {
   thread?: string;
 }
 
-/** The body of a `response` message. */
-export type ResponseBody = { ok: true; result?: unknown } | { ok: false; error: ErrorBody };
+/** What `router.send` returns and the body of a `response` message (SPEC-01 §3): one shape. */
+export type Reply = { ok: true; result?: unknown } | { ok: false; error: ErrorBody };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // shared by the modules (HUB-MODULES §1.1, §1.4)
@@ -160,8 +160,6 @@ export interface Caller {
   turn?: string;
 }
 
-/** What `router.send` returns. */
-export type Reply = { ok: true; result?: unknown } | { ok: false; error: { code: ErrorCode; message: string; recovery_hint?: string } };
 
 /** What a member's `handle` is given. */
 export interface HandleContext {

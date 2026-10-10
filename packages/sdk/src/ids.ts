@@ -80,60 +80,18 @@ export const bodyId = (hand: string): string => `body:${hand}`;
 // hand_id
 // ---------------------------------------------------------------------------------------------------------------------
 
-// SHA-256 written out here so that ids work the same in Node, the browser and the tests, synchronously. The constants
-// are the first 32 bits of the fractional parts of the square and cube roots of the first primes (FIPS 180-4).
-const primes: number[] = [];
-for (let n = 2; primes.length < 64; n++) if (primes.every((p) => n % p !== 0)) primes.push(n);
-const frac32 = (x: number): number => Math.floor((x - Math.floor(x)) * 2 ** 32) >>> 0;
-const H0 = primes.slice(0, 8).map((p) => frac32(Math.sqrt(p)));
-const K = primes.map((p) => frac32(Math.cbrt(p)));
-
-export function sha256(data: Uint8Array): Uint8Array {
-  const h = Uint32Array.from(H0);
-  const length = data.length;
-  const padded = new Uint8Array(((length + 9 + 63) >> 6) << 6);
-  padded.set(data);
-  padded[length] = 0x80;
-  const view = new DataView(padded.buffer);
-  view.setUint32(padded.length - 8, Math.floor(length / 0x20000000), false);
-  view.setUint32(padded.length - 4, (length << 3) >>> 0, false);
-  const w = new Uint32Array(64);
-  const rotr = (x: number, n: number): number => (x >>> n) | (x << (32 - n));
-  for (let block = 0; block < padded.length; block += 64) {
-    for (let i = 0; i < 16; i++) w[i] = view.getUint32(block + i * 4, false);
-    for (let i = 16; i < 64; i++) {
-      const s0 = rotr(w[i - 15]!, 7) ^ rotr(w[i - 15]!, 18) ^ (w[i - 15]! >>> 3);
-      const s1 = rotr(w[i - 2]!, 17) ^ rotr(w[i - 2]!, 19) ^ (w[i - 2]! >>> 10);
-      w[i] = (w[i - 16]! + s0 + w[i - 7]! + s1) >>> 0;
-    }
-    let [a, b, c, d, e, f, g, hh] = h as unknown as number[];
-    for (let i = 0; i < 64; i++) {
-      const t1 = (hh! + (rotr(e!, 6) ^ rotr(e!, 11) ^ rotr(e!, 25)) + ((e! & f!) ^ (~e! & g!)) + K[i]! + w[i]!) >>> 0;
-      const t2 = ((rotr(a!, 2) ^ rotr(a!, 13) ^ rotr(a!, 22)) + ((a! & b!) ^ (a! & c!) ^ (b! & c!))) >>> 0;
-      hh = g; g = f; f = e; e = (d! + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
-    }
-    const next = [a, b, c, d, e, f, g, hh];
-    for (let i = 0; i < 8; i++) h[i] = (h[i]! + next[i]!) >>> 0;
-  }
-  const out = new Uint8Array(32);
-  const outView = new DataView(out.buffer);
-  h.forEach((word, i) => outView.setUint32(i * 4, word, false));
-  return out;
-}
-
-const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+/** Unpadded base64url, the encoding of ids and tokens. */
 export function base64url(bytes: Uint8Array): string {
-  let out = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const n = (bytes[i]! << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
-    out += B64URL[(n >> 18) & 63]! + B64URL[(n >> 12) & 63]!;
-    if (i + 1 < bytes.length) out += B64URL[(n >> 6) & 63]!;
-    if (i + 2 < bytes.length) out += B64URL[n & 63]!;
-  }
-  return out;
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** The id of a hand: base64url(sha256(its identity public key, SPKI DER)), first 22 characters. */
-export function handId(spki: Uint8Array): string {
-  return base64url(sha256(spki)).slice(0, HAND_ID_LENGTH);
+/**
+ * The id of a hand: base64url(sha256(its identity public key, SPKI DER)), first 22 characters.
+ * Asynchronous because Web Crypto is (Node, browsers and Workers all have `crypto.subtle`).
+ */
+export async function handId(spki: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", spki as BufferSource);
+  return base64url(new Uint8Array(digest)).slice(0, HAND_ID_LENGTH);
 }

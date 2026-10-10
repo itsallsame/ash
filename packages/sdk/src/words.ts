@@ -8,7 +8,7 @@
  * own edges and services (the human module, the hands module, the agents module), never by an agent or an app.
  * An agent's name never appears here; `agent:*` stands for every declared agent.
  */
-import { AGENT_ID, AGENT_ID_PATTERN, BODY_ID_PATTERN, DEVICE_ID_PATTERN } from "./ids";
+import { AGENT_ID, AGENT_ID_PATTERN, APP_NAME_PATTERN, BODY_ID_PATTERN, CLIENT_ID_PATTERN, DEVICE_ID_PATTERN, HAND_ID_PATTERN } from "./ids";
 import { ACTIVITY_STATES } from "./namespaces";
 import {
   DEFAULT_CALLERS, secret, sensitive, wordEffect,
@@ -39,8 +39,13 @@ const attachmentInput = obj({ name: nonempty, mime_type: nonempty, data: nonempt
 const agentRef: JsonSchema = { type: "string", pattern: AGENT_ID_PATTERN };
 const deviceRef: JsonSchema = { type: "string", pattern: DEVICE_ID_PATTERN };
 const bodyRef: JsonSchema = { type: "string", pattern: BODY_ID_PATTERN };
-const handRef: JsonSchema = { type: "string", pattern: "^[A-Za-z0-9_-]{22}$" };
+const handRef: JsonSchema = { type: "string", pattern: HAND_ID_PATTERN };
 const ref: JsonSchema = { type: "string", minLength: 1, maxLength: 128 };
+/** What the host module sends when the device's environment changes (the host event env.changed of ash-host/1, minus its `event` name). */
+const ENV_CHANGED: JsonSchema = { type: "object", oneOf: [
+  obj({ what: { const: "network" }, network: obj({ proxy: nullable(obj({ http: str, https: str, no_proxy: str })) }, ["proxy"]), online: bool }, ["what", "network", "online"]),
+  obj({ what: { const: "power" }, saver: bool }, ["what", "saver"]),
+] };
 
 // ---- how a word is written --------------------------------------------------------------------------------------------
 const OWNER: CallerKind[] = ["owner"];
@@ -87,7 +92,7 @@ function add(member: string, word: string, kind: "request" | "event", input: Jso
 // ===================================================================================================================
 const adminOwnerOnly = { callers: OWNER, local_only: true } as const;
 add("service:admin", "pause", "request", obj({ by: id }), obj({ paused: { const: true } }, ["paused"]),
-  { effect: "write", label: "在暂停", description: "Durably pause all activity (agent turns, timers that would wake an agent). `by` may cite one owner message id; a trusted local reflex uses that after the owner said stop." });
+  { callers: ["owner", "kernel"], local_only: true, effect: "write", label: "在暂停", description: "Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine, or the hub's own reflex: `by` cites the one owner message that said stop." });
 add("service:admin", "resume", "request", obj({ confirmed: { const: true } }, ["confirmed"]), obj({ paused: { const: false } }, ["paused"]),
   { ...adminOwnerOnly, effect: "write", label: "在恢复", description: "Resume after a pause. Only the owner can, from a channel on this machine, after an explicit confirmation." });
 add("service:admin", "settings.get", "request", obj({ keys: strings }), free,
@@ -256,8 +261,8 @@ add("service:link", "disconnected", "event", obj({ ...linkEvent }, ["hand"]), un
   { record: true, label: "在记下设备断开", description: "A hand's connection closed, with the close code and reason. Goes into the ledger." });
 add("service:link", "handshake_failed", "event", obj({ ...linkEvent }, ["code"]), undefined,
   { label: "在记下握手失败", description: "A connection attempt failed the handshake (4001 identity, 4003 revoked, 4008 version, ...). Not recorded; service:link/diagnose reports the recent ones." });
-add("service:link", "env.changed", "event", obj({ network: str, proxy: str }), undefined,
-  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the proxy changed; the link layer reconnects the relay. Sent by the host module." });
+add("service:link", "env.changed", "event", ENV_CHANGED, undefined,
+  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); the link layer reconnects the relay. Sent by the host module; not recorded." });
 
 // ===================================================================================================================
 // service:bodies: the hub's bodies (file and shell)
@@ -287,19 +292,24 @@ export const CARD_SCHEMA: JsonSchema = { oneOf: [
   // An Android setting the owner switches on by hand; the hand app opens exactly that page.
   obj({ type: { const: "permission" }, permission: choice(...PHONE_PERMISSIONS), why: nonempty }, ["type", "permission", "why"]),
 ] };
-add("person:owner", "say", "request", obj({ text: nonempty, kind: choice("reply", "due", "offer", "heads_up"), facts: strings, dedupe_key: deliveryDedupeKey }, ["text", "kind"]), accepted,
-  { callers: TO_OWNER, effect: "act", label: "在回你消息", description: "Send the owner a short message; it is acknowledged when recorded and does not wait for a reply or replace ask. kind: reply, due (a reminder), offer or heads_up (unprompted; an opaque stable dedupe_key keeps a repeat from showing twice). facts are source message or fact ids." });
+add("person:owner", "say", "request", obj({ text: nonempty, kind: choice("reply", "due", "offer", "heads_up"), facts: strings, dedupe_key: deliveryDedupeKey }, ["text"]), accepted,
+  { callers: TO_OWNER, effect: "act", label: "在回你消息", description: "Send the owner a short message; it is acknowledged when recorded and does not wait for a reply or replace ask. kind (default reply): reply, due (a reminder), offer or heads_up (unprompted; an opaque stable dedupe_key keeps a repeat from showing twice). facts are source message or fact ids." });
 add("person:owner", "react", "request", obj({ message_id: id, emoji: nonempty }, ["message_id", "emoji"]), accepted,
   { callers: TO_OWNER, effect: "act", label: "在给消息加表情", description: "React to one existing message with an emoji; an unknown message id fails. Not for a new explanation: use say for that." });
 add("person:owner", "show", "request", obj({ card: CARD_SCHEMA }, ["card"]), accepted,
   { callers: TO_OWNER, effect: "act", label: "在给你看卡片", description: "Show the owner a file, image, link, a permission page to switch on, or choices. Showing choices does not itself authorize anything. A permission card only names an Android setting the owner must switch on; calling a capability asks the owner by itself." });
-add("person:owner", "ask", "request", obj({
-  title: nonempty, detail: str, human_kind: choice("question", "confirmation"), allow_custom: bool,
-  options: { type: "array", items: obj({ id: nonempty, label: nonempty }, ["id", "label"]), minItems: 1 }, expires_at: num,
-  source: obj({ word: nonempty, to: id, body_preview: str, body_full: str }, ["word", "to", "body_preview"]),
-}, ["title", "detail", "options", "expires_at", "source"]), obj({ choice: nonempty, text: str }, ["choice"]),
-  { callers: ["agent", "kernel"], effect: "act", timeout_ms: 600_000, label: "在问你", description: "A durable question to the owner, who must choose before something continues. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards." });
-add("person:owner", "open", "request", obj({ target: choice("activity", "upcoming", "approvals", "identity", "memory", "settings", "turn", "file"), id: str, mode: choice("perform", "suggest"), client: { type: "string", pattern: "^client:[A-Za-z0-9_-]{1,64}$" } }, ["target"]),
+add("person:owner", "ask", "request", {
+  ...obj({
+    title: nonempty, detail: str, human_kind: choice("question", "confirmation"), allow_custom: bool,
+    options: { type: "array", items: obj({ id: nonempty, label: nonempty }, ["id", "label"]), minItems: 1 }, expires_at: num,
+    source: obj({ word: nonempty, to: id, body_preview: str, body_full: str }, ["word", "to", "body_preview"]),
+  }, ["title"]),
+  // A question (the default kind) needs its options; a confirmation gets the usual yes / no from the tool.
+  if: { properties: { human_kind: { const: "confirmation" } }, required: ["human_kind"] },
+  else: { required: ["options"], properties: { options: { type: "array" } } },
+}, obj({ choice: nonempty, text: str }, ["choice"]),
+  { callers: ["agent"], effect: "act", timeout_ms: 600_000, label: "在问你", description: "A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options. detail, source and expires_at are optional: the gate fills them for an approval, and the expiry follows approval_ttl_minutes. The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards." });
+add("person:owner", "open", "request", obj({ target: choice("activity", "upcoming", "approvals", "identity", "memory", "settings", "turn", "file"), id: str, mode: choice("perform", "suggest"), client: { type: "string", pattern: CLIENT_ID_PATTERN } }, ["target"]),
   obj({ opened: bool }, ["opened"]),
   { callers: TO_OWNER, effect: "act", label: "在打开页面", description: "Open or suggest a page on one of the owner's channels: settings, the activity of a turn, a file (id says which). `client` picks the channel; leave it out for the one the owner is on. Check `opened`: a suggestion may be declined." });
 
@@ -308,7 +318,8 @@ add("person:owner", "open", "request", obj({ target: choice("activity", "upcomin
 // ===================================================================================================================
 add("agent:*", "say", "request", { type: "object", properties: {
     text: { type: "string" }, attachments: { type: "array", items: attachmentInput, minItems: 1 }, in_reply_to: id, option_id: id,
-  }, additionalProperties: false, anyOf: [{ required: ["text"], properties: { text: { type: "string", minLength: 1 } } }, { required: ["attachments"], properties: { attachments: { type: "array", minItems: 1 } } }] }, accepted,
+  }, additionalProperties: false, dependentRequired: { in_reply_to: ["option_id"], option_id: ["in_reply_to"] },
+  anyOf: [{ required: ["text"], properties: { text: { type: "string", minLength: 1 } } }, { required: ["attachments"], properties: { attachments: { type: "array", minItems: 1 } } }] }, accepted,
   { callers: OWNER, effect: "act", label: "在读你的消息", description: "The owner speaks to the agent, or answers an option card (in_reply_to and option_id together). Acknowledged at once and queued on the front lane; the agent's answer arrives later as a message." });
 add("agent:*", "tell", "request", obj({ text: nonempty, attachments: array(attachmentInput) }, ["text"]), accepted,
   { effect: "act", label: "在告诉帮手", description: "Tell the agent something. It joins the agent's back lane and the agent decides what to do with it; there is no direct answer to the sender." });
@@ -329,7 +340,7 @@ add("agent:*", "agent.tool", "event", obj({ turn: id, name: nonempty, phase: cho
 // service:agents: declarations, running agents, sessions
 // ===================================================================================================================
 const AGENT_RUNTIME = obj({ kind: nonempty, model: nonempty, effort: nonempty }, ["kind"]);
-const AGENT_NATIVE = obj({ on: { type: "string", pattern: "^body:(main|[A-Za-z0-9_-]{22})$" }, cwd: nonempty, env: { type: "object", additionalProperties: str } }, ["on"]);
+const AGENT_NATIVE = obj({ on: bodyRef, cwd: nonempty, env: { type: "object", additionalProperties: str } }, ["on"]);
 const AGENT_LANES: JsonSchema = { type: "object", additionalProperties: obj({ from: strings, on: strings, guide: str, speak: bool }) };
 const AGENT_MODULES: JsonSchema = array(choice("identity", "rules", "user", "skills", "environment", "lane"));
 const agentFields: Record<string, JsonSchema> = {
@@ -342,6 +353,8 @@ const agentInfo = obj({ id: agentRef, name: str, summary: str, state: choice("id
 const sessionKey = nonempty;
 const sessionTarget = { agent: agentRef, key: sessionKey };
 const sessionResult = obj({ key: sessionKey, handle: nullable(str) }, ["key"], true);
+/** One rule for every word that gives a new or changed agent its powers (declare, update, spawn); the check itself is one function in the router's authorization. */
+export const DELEGATION_RULE = "Delegation rule: when the caller is not the owner, the tools and words you give the agent must be a subset of the tools and words you have yourself; anything beyond that is refused with forbidden. This is not a question to the owner. Delegation goes at most three levels deep.";
 const session = (word: string, label: string, description: string, input: Record<string, JsonSchema>, required: string[], result: JsonSchema, effect: Effect = "act") =>
   add("service:agents", word, "request", obj(input, required), result, { effect, label, description });
 
@@ -362,9 +375,9 @@ add("service:agents", "tell", "request", obj({ agent: agentRef, text: nonempty }
 add("service:agents", "answer", "request", obj({ in_reply_to: id, text: nonempty }, ["in_reply_to", "text"]), accepted,
   { callers: ["agent"], effect: "act", label: "在回答", description: "An agent's words in a turn that answers a question or news delivered to it. Only the agent that was asked, in that turn." });
 add("service:agents", "declare", "request", obj({ id: agentRef, ...agentFields }, ["id", "name", "summary", "brief"]), agentInfo,
-  { effect: "write", label: "在新建帮手", description: "Declare a new agent: who it is, its role (brief), its tools and word policy, its lanes, which prompt modules it loads, and where it runs (native). It starts at once in its own session." });
+  { effect: "write", label: "在新建帮手", description: "Declare a new agent: who it is, its role (brief), its tools and word policy, its lanes, which prompt modules it loads, and where it runs (native). It starts at once in its own session. " + DELEGATION_RULE });
 add("service:agents", "update", "request", obj({ agent: agentRef, ...agentFields }, ["agent"]), agentInfo,
-  { effect: "write", label: "在调整帮手", description: "Change an agent's declaration; it applies from its next turn. `primary` can be handed to another agent only through primary.set." });
+  { effect: "write", label: "在调整帮手", description: "Change an agent's declaration; it applies from its next turn. `primary` can be handed to another agent only through primary.set. " + DELEGATION_RULE });
 add("service:agents", "start", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在启动帮手", description: "Let a stopped agent take turns again." });
 add("service:agents", "stop", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在停下帮手", description: "Stop an agent: its current turn is cancelled and it takes no new ones; messages wait for it." });
 add("service:agents", "restart", "request", obj({ agent: agentRef }, ["agent"]), agentInfo, { effect: "act", label: "在重启帮手", description: "Cancel an agent's current turn and restart its process; its sessions are resumed." });
@@ -375,7 +388,7 @@ add("service:agents", "primary.set", "request", obj({ agent: agentRef }, ["agent
 add("service:agents", "spawn", "request", obj({
   task: nonempty, template: nonempty, runtime: AGENT_RUNTIME, model: nonempty, native: AGENT_NATIVE, tools: strings, timeout: { type: "integer", minimum: 1, maximum: 86400 },
 }, ["task"]), obj({ answer: str, agent: agentRef }, [], true),
-  { effect: "act", timeout_ms: 600_000, label: "在派临时帮手", description: "Run one task on a temporary agent: declare it, hand it the task, collect the result and delete it, in one step. A quick result is returned, a slow one as a receipt. At most three levels of delegation; it can never do more than you can." });
+  { effect: "act", timeout_ms: 600_000, label: "在派临时帮手", description: "Run one task on a temporary agent: declare it, hand it the task, collect the result and delete it, in one step. A quick result is returned, a slow one as a receipt. It can never do more than you can. " + DELEGATION_RULE });
 session("session.get", "在看会话", "Which resumable session an agent holds for a lane (the opaque handle the driver gave), or null.", sessionTarget, ["agent", "key"], sessionResult, "read");
 session("session.set", "在指定会话", "Point a lane of an agent at a given session handle so the next turn resumes it; with no handle the lane starts fresh.", { ...sessionTarget, handle: nonempty }, ["agent", "key", "handle"], sessionResult, "write");
 session("session.new", "在开新会话", "Open a new session for a lane of an agent. The old one is kept in the agent's own history; the ledger still has everything that was said.", sessionTarget, ["agent", "key"], sessionResult);
@@ -391,8 +404,8 @@ add("service:agents", "configure", "request", obj({ agent: agentRef, key: sessio
   { effect: "write", label: "在配置帮手", description: "Set the runtime's own configuration for an agent (model, effort level, other options the runtime reports it supports), or read it when config is left out. The runtime keeps the truth; the hub stores no copy." });
 add("service:agents", "plugins", "request", obj({ agent: agentRef, key: sessionKey, op: choice("list", "enable", "disable"), name: nonempty }, ["agent", "op"]), free,
   { effect: "write", risk: "structure", label: "在调整帮手的插件", description: "List, enable or disable the plugins of one agent's runtime. Plugins change what the agent can do, so an agent asking for this is asked about by the owner." });
-add("service:agents", "env.changed", "event", obj({ network: str, proxy: str }), undefined,
-  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the proxy changed; the agents module restarts what needs it. Sent by the host module." });
+add("service:agents", "env.changed", "event", ENV_CHANGED, undefined,
+  { direction: "in", label: "在处理网络变化", description: "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); the agents module restarts what needs it. Sent by the host module; not recorded." });
 // ===================================================================================================================
 // service:clock: durable timers
 // ===================================================================================================================
@@ -434,11 +447,10 @@ add("service:cost", "balance.get", "request", empty, free,
 add("service:cost", "quota.check", "request", obj({ agent: agentRef }, ["agent"]), obj({ allowed: bool, reason: str, used: num, limit: num }, ["allowed"]),
   { callers: KERNEL, label: "在查额度", description: "Whether an agent may open another turn under its daily quota, by the latest usage numbers. A soft limit: the numbers are only as fresh as the last poll." });
 add("service:cost", "usage.recorded", "event", obj({
-  scope: choice("chat", "mind", "background", "title", "compaction", "review", "progress", "other"), caller: id, provider: str, model: str,
-  input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe, cache_read_tokens: nonnegativeSafe, cache_write_tokens: nonnegativeSafe,
-  cost_usd: nullable({ type: "number", minimum: 0 }), cost_source: nullable(str), ms: nonnegativeSafe, ok: bool, at: nonnegativeSafe,
-}, ["scope", "provider", "model", "input_tokens", "output_tokens"]), undefined,
-  { direction: "in", label: "在记下用量", description: "One model call as the caller measured it (the hub's small model, or a runtime's poll); cost_usd is null when no price is known, never zero. Not recorded: usage has its own table." });
+  caller: id, provider: choice("deepseek", "openrouter"), model: nonempty, input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe,
+  cost: { type: "number", minimum: 0 }, ok: bool, at: nonnegativeSafe,
+}, ["caller", "provider", "model", "input_tokens", "output_tokens", "ok", "at"]), undefined,
+  { direction: "in", label: "在记下用量", description: "One call of the hub's small model, as the llm edge reports it: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table." });
 
 // ===================================================================================================================
 // service:reflex: judgments the hub makes in small-model time
@@ -481,7 +493,7 @@ senseEvent("sense.location", senseBatch(obj({ ts: nonnegativeSafe, lat: { type: 
   accuracy_m: { type: "number", minimum: 0, maximum: 1_000_000 }, provider: senseText(32), is_mocked: bool }, ["ts", "lat", "lon", "accuracy_m", "provider"])),
   "在收位置", "A batch of location points from the hand; a batch_id makes a re-delivered batch idempotent. Archived only; not recorded in the ledger.");
 senseEvent("sense.activity", senseBatch(obj({ ts_start: nonnegativeSafe, ts_end: nonnegativeSafe, state: choice(...ACTIVITY_STATES) }, ["ts_start", "state"])),
-  "在收运动状态", "A batch of activity segments from the hand (an end can not be before its start). Archived only; not recorded in the ledger.");
+  "在收运动状态", "A batch of activity segments from the hand. Archived only; not recorded in the ledger.");
 senseEvent("sense.health", senseBatch(obj({ ts: nonnegativeSafe, metric: senseText(64), value: num, unit: senseText(32, 0), source: senseText(128) }, ["ts", "metric", "value", "unit", "source"])),
   "在收健康数据", "A batch of health readings from the hand. Archived only; not recorded in the ledger.");
 senseEvent("sense.geofence", obj({ name: senseText(64), transition: choice("enter", "exit"), ts: nonnegativeSafe }, ["name", "transition", "ts"]),
@@ -629,21 +641,21 @@ const pulseEntry = obj({ id: positiveSafe, ts: nonnegativeSafe, kind: nonempty }
 add("service:pulse", "pulse.get", "request", empty,
   obj({ active: bool, reason: str, enabled: bool, schedule: array(obj({}, [], true)), events: array(pulseEvent),
     budget: obj({ per_day: positiveSafe, today_count: nonnegativeSafe, left: nonnegativeSafe }, ["per_day", "today_count", "left"]),
-    next_wakes: array(nonnegativeSafe), history: array(pulseEntry), gaps: array(pulseEntry), guidance: obj({}, [], true) }, ["active", "enabled", "schedule", "events", "budget", "history", "guidance"], true),
-  { label: "在看主动更新的安排", effect: "read", description: "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, the events you watch, today's wake count against the daily budget, the next scheduled wakes, the latest history entries, gaps you noted, and the version info of your own guidance file PULSE.md." });
+    next_wakes: array(nonnegativeSafe), history: array(pulseEntry), gaps: array(pulseEntry) }, ["active", "enabled", "schedule", "events", "budget", "history"], true),
+  { label: "在看主动更新的安排", effect: "read", description: "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, the events you watch, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted." });
 add("service:pulse", "pulse.set", "request", obj({ schedule: { type: "array", items: pulseSlot, maxItems: 48 }, events: { type: "array", items: pulseEvent, maxItems: 12 },
-    guidance: { type: "string", minLength: 1, maxLength: 20000 }, reason: { type: "string", minLength: 1, maxLength: 500 } }, ["reason"]),
-  obj({ changed: strings, next_wakes: array(nonnegativeSafe), guidance_version: nonnegativeSafe }, ["changed"], true),
-  { label: "在改主动更新的安排", effect: "write", description: "Change your own pulse and say why (reason is required and is kept in the history). Any of: schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers), events (the events to watch, replaces the list: geofence_enter, geofence_exit, approval_waiting, app_event, calendar_soon, source_stalled, each with min_gap_min between two wakes of that kind, default 60), guidance (the full new text of PULSE.md in your home folder; the hub writes the file). Other fields are refused." });
+    reason: { type: "string", minLength: 1, maxLength: 500 } }, ["reason"]),
+  obj({ changed: strings, next_wakes: array(nonnegativeSafe) }, ["changed"], true),
+  { label: "在改主动更新的安排", effect: "write", description: "Change your own pulse and say why (reason is required and is kept in the history). Any of: schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers), events (the events to watch, replaces the list: geofence_enter, geofence_exit, approval_waiting, app_event, calendar_soon, source_stalled, each with min_gap_min between two wakes of that kind, default 60). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself." });
 add("service:pulse", "pulse.history", "request", obj({ limit: { type: "integer", minimum: 1, maximum: 100 }, before: positiveSafe }),
   obj({ entries: array(pulseEntry), next_before: positiveSafe }, ["entries"]),
-  { label: "在看主动更新的记录", effect: "read", description: "Page through your pulse history, newest first: wakes (why, when), what you did (pulse.note), the owner's feedback on your cards, changes to schedule or guidance with their reasons, skipped wakes and why. limit (default 20), before: an entry id from next_before to read older ones." });
+  { label: "在看主动更新的记录", effect: "read", description: "Page through your pulse history, newest first: wakes (why, when), what you did (pulse.note), the owner's feedback on your cards, changes to the schedule with their reasons, skipped wakes and why. limit (default 20), before: an entry id from next_before to read older ones." });
 add("service:pulse", "pulse.note", "request", obj({ did: nonempty, why: str, kind: pulseNoteKind, data_used: array(nonempty) }, ["did"]),
   obj({ recorded: bool, id: positiveSafe }, ["recorded", "id"]),
   { label: "在记下这次做了什么", effect: "write", description: "Record what you did on this wake and why (did, why, data_used: what you looked at). kind: pulse (default) for an ordinary wake, gap for something you wanted to know or do but could not get; gaps are collected so the missing source can be added. Nothing here ever reaches the owner." });
 add("service:pulse", "pulse.fire", "request", obj({ why: pulseWhy }),
   obj({ fired: bool, reason: str }, ["fired"]),
-  { label: "在试一次主动更新", effect: "write", description: "Wake yourself now as a pulse (why defaults to schedule) to try your guidance and cards; it does not use the daily budget. Needs the pulse to be active and switched on." });
+  { label: "在试一次主动更新", effect: "write", description: "Wake yourself now as a pulse (why defaults to schedule) to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on." });
 add("service:pulse", "pulse.switch", "request", obj({ enabled: bool }, ["enabled"]), obj({ enabled: bool }, ["enabled"]),
   { callers: OWNER, label: "在开关主动更新", effect: "write", description: "Owner only: switch the whole pulse on or off. Off keeps PULSE.md, history and feedback." });
 add("service:pulse", "pulse.due", "request", obj({ kind: choice("wake", "floor"), at: nonnegativeSafe }, ["kind", "at"]), accepted,
@@ -653,7 +665,7 @@ add("service:pulse", "pulse.due", "request", obj({ kind: choice("wake", "floor")
 // service:apps: independent apps (contract ash-app/1)
 // ===================================================================================================================
 // Independent apps (contract ash-app/1): discovery, install with the owner's approval of what an app needs, and grants.
-const appId: JsonSchema = { type: "string", pattern: "^[a-z][a-z0-9-]{0,47}$" };
+const appId: JsonSchema = { type: "string", pattern: APP_NAME_PATTERN };
 const appInfo = obj({ id: appId, name: str, version: str, summary: str, role: str, publisher: str, enabled: bool, granted: bool, running: bool,
   needs: array(obj({}, [], true)), surfaces: array(obj({}, [], true)), events: strings, tools: strings, error: str,
   cards: array(obj({ id: str, title: str, size: str, card: widgetCardId, problem: str }, ["id", "title", "size", "card"])) }, ["id", "name", "version", "enabled", "granted", "running"], true);
@@ -718,10 +730,10 @@ add("service:apps", "apps.validate", "request", obj({ id: appId, path: { type: "
     "(each surface's ui:// resource must be served as HTML). Give id (the folder /root/apps/<id>) or path (/root/apps/<folder>). " +
     "ok is true when nothing would stop it from installing and opening; warnings are worth fixing but do not block. Nothing is installed or changed." });
 
-add("service:apps", "surface", "request", obj({ id: appId, surface: { type: "string", pattern: "^[a-z][a-z0-9-]{0,31}$" } }, ["id", "surface"]),
+add("service:apps", "apps.surface", "request", obj({ id: appId, surface: { type: "string", pattern: "^[a-z][a-z0-9-]{0,31}$" } }, ["id", "surface"]),
   obj({ id: appId, surface: str, mime: nonempty, html: str }, ["id", "surface", "mime"]),
   { label: "在取应用页面", description: "The page resource of one of an app's surfaces (the ui:// resource its app.json lists), for a channel to show. Pages talk to the app through the bridge, not through this word." });
-add("service:apps", "icon", "request", obj({ id: appId }, ["id"]), obj({ id: appId, mime: nonempty, data: str }, ["id", "mime", "data"]),
+add("service:apps", "apps.icon", "request", obj({ id: appId }, ["id"]), obj({ id: appId, mime: nonempty, data: str }, ["id", "mime", "data"]),
   { label: "在取应用图标", description: "The icon file of an app (base64 in data), for a channel to show in its list of apps." });
 
 // ===================================================================================================================
@@ -742,19 +754,3 @@ export function wordContract(member: string, word: string): WordContract | undef
 export const wordsOf = (member: string): WordContract[] => WORD_CONTRACTS.filter((item) => item.member === contractMember(member));
 /** The services that have words, in the order they are written in this file. */
 export const SERVICE_NAMES: readonly string[] = Object.freeze([...new Set(WORD_CONTRACTS.map((item) => item.member).filter((member) => member.startsWith("service:")))]);
-
-/** Cross-field checks a phone sense body needs beyond its schema: an activity segment cannot end before it starts. */
-export function senseBodyErrors(word: string, body: Record<string, unknown>): string[] {
-  if (word !== "sense.activity" || !Array.isArray(body.items)) return [];
-  return (body.items as { ts_start?: unknown; ts_end?: unknown }[]).flatMap((item, index) =>
-    typeof item.ts_end === "number" && typeof item.ts_start === "number" && item.ts_end < item.ts_start ? [`items[${index}]: ends before it starts`] : []);
-}
-
-/** Static shape of an option card; whether the card is pending, expired or already answered belongs to the router transaction. */
-export function optionReplyErrors(body: { text?: unknown; in_reply_to?: unknown; option_id?: unknown }): string[] {
-  const hasReply = body.in_reply_to !== undefined;
-  const hasOption = body.option_id !== undefined;
-  if (hasReply !== hasOption) return ["in_reply_to and option_id must appear together"];
-  if (hasReply && (typeof body.in_reply_to !== "string" || !body.in_reply_to || typeof body.option_id !== "string" || !body.option_id)) return ["invalid option reply"];
-  return [];
-}

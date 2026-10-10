@@ -5,8 +5,10 @@
  * HOST_SPEC_SCHEMA (tools/gen-host-schema.mjs) and a test keeps the two in step.
  */
 
-/** Contract name. The version constant will move to versions.ts when that file lands. */
-export const HOST_CONTRACT = "ash-host/1" as const;
+import { HOST_CONTRACT } from "./versions";
+import type { ErrorCode } from "./message";
+
+export { HOST_CONTRACT };
 
 /** The three variables the host sets when it starts the kernel. */
 export const HOST_ENV = {
@@ -118,9 +120,7 @@ export const HOST_METHOD_CAPABILITY: { readonly [M in HostMethod]: HostCapabilit
 };
 
 /** Error codes of the host interface: the shared set (SPEC-02 section 7). */
-export type HostErrorCode =
-  | "bad_request" | "unauthorized" | "forbidden" | "not_found" | "denied" | "cancelled" | "timeout" | "offline"
-  | "result_unknown" | "conflict" | "too_large" | "unavailable" | "failed" | "internal";
+export type HostErrorCode = ErrorCode;
 
 export type HostResponse<R> = { ok: true; result: R } | { ok: false; error: { code: HostErrorCode; message: string } };
 

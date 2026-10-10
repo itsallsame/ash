@@ -6,8 +6,11 @@
  * that value. The implementation (server, clients) lives in `packages/link`.
  */
 import Ajv from "ajv/dist/2020.js";
+import { ERROR_CODES } from "./message";
+import { LINK_PROTOCOL } from "./versions";
+import { CALLER_KINDS, EFFECTS, RISKS } from "./word";
 
-export const LINK_PROTOCOL = "ash-link/1";
+export { LINK_PROTOCOL };
 
 /** Close codes (SPEC-03 §7). 1000 is a normal close; the 4xxx codes tell the hand what to do next. */
 export const CLOSE_CODES = {
@@ -86,8 +89,9 @@ const base64Pattern = "^[A-Za-z0-9+/]*={0,2}$";
 const base64 = string({ pattern: base64Pattern });
 /** The longest base64 text of one stream chunk. */
 const maxChunkBase64 = Math.ceil(LIMITS.streamChunkBytes / 3) * 4;
-const risk = oneOfValues("none", "outward", "structure");
-const errorBody = obj({ code: string({ minLength: 1 }), message: string() }, { detail: anything(), recovery_hint: string() });
+const risk = oneOfValues(...RISKS);
+const errorCode = oneOfValues(...ERROR_CODES);
+const errorBody = obj({ code: errorCode, message: string() }, { detail: anything(), recovery_hint: string() });
 
 const contentPart = union(
   obj({ type: lit("text"), text: string() }),
@@ -100,7 +104,7 @@ const capabilitySpec = obj(
     name: string({ pattern: dotted, maxLength: 128 }),
     description: string(),
     input_schema: record(),
-    effect: oneOfValues("read", "write", "act", "execute"),
+    effect: oneOfValues(...EFFECTS),
     risk,
   },
   {
@@ -108,7 +112,7 @@ const capabilitySpec = obj(
     result_schema: record(),
     per_call_risk: boolean(),
     foreground: boolean(),
-    callers: list(oneOfValues("owner", "agent", "app", "kernel"), { minItems: 1, uniqueItems: true }),
+    callers: list(oneOfValues(...CALLER_KINDS), { minItems: 1, uniqueItems: true }),
     timeout_ms: integer({ minimum: 1 }),
   },
 );
@@ -155,12 +159,12 @@ const welcome = obj({
 
 const ping = obj({ t: lit("ping"), at: integer({ minimum: 0 }) });
 const pong = obj({ t: lit("pong"), at: integer({ minimum: 0 }) });
-const errorFrame = obj({ t: lit("error"), code: string({ minLength: 1 }), message: string() }, { id });
+const errorFrame = obj({ t: lit("error"), code: errorCode, message: string() }, { id });
 const stream = union(
   obj({ t: lit("stream"), sid: id, op: lit("open"), ch: channelName }, { ref: id, mime: string({ minLength: 1 }), size: integer({ minimum: 0 }) }),
   obj({ t: lit("stream"), sid: id, op: lit("data"), seq: integer({ minimum: 0 }), b64: string({ pattern: base64Pattern, maxLength: maxChunkBase64 }) }),
   obj({ t: lit("stream"), sid: id, op: lit("end") }),
-  obj({ t: lit("stream"), sid: id, op: lit("error"), code: string({ minLength: 1 }), message: string() }),
+  obj({ t: lit("stream"), sid: id, op: lit("error"), code: errorCode, message: string() }),
 );
 
 // device channel

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { API_VERSION, APP_CONTRACT, ASH_SDK, HOST_CONTRACT, LINK_PROTOCOL, MCP_SERVER_NAME, MCP_SERVER_VERSION, WORD_CONTRACT_VERSION } from "../src/versions";
 import {
-  DEFAULT_RECOVERY_HINTS, ERROR_CODES, ERROR_MEANINGS, LEGACY_ERROR_CODES, errorBody, isErrorCode, type Caller, type HandleContext, type Message, type Reply,
+  DEFAULT_RECOVERY_HINTS, ERROR_CODES, ERROR_MEANINGS, LEGACY_ERROR_CODES, errorBody, fromLegacyErrorCode, isErrorCode, type Caller, type HandleContext, type Message, type Reply,
 } from "../src/message";
 
 test("the versions are the ones the spec names", () => {
@@ -37,7 +37,10 @@ test("every old error code maps to a new one, and the renames of SPEC-02 §7 hol
   const old = ["payload_invalid", "bad_json", "unreachable", "vault_unavailable", "capability_error", "internal_error", "unauthorized",
     "bad_request", "not_found", "forbidden", "denied", "cancelled", "timeout", "offline", "failed", "too_large", "result_unknown",
     "bad_args", "bad_path", "method_not_allowed", "unknown_capability", "unknown_process", "app_failed", "busy"];
-  for (const code of old) assert.ok(isErrorCode(LEGACY_ERROR_CODES[code]), `${code} is mapped`);
+  for (const code of old) assert.ok(isErrorCode(fromLegacyErrorCode(code)), `${code} is mapped`);
+  assert.equal(fromLegacyErrorCode("nonsense"), undefined);
+  for (const code of ERROR_CODES) assert.equal(fromLegacyErrorCode(code), code, `${code} stays`);
+  for (const code of Object.keys(LEGACY_ERROR_CODES)) assert.ok(!isErrorCode(code), `${code} is only listed because it changed`);
   for (const [from, to] of Object.entries(LEGACY_ERROR_CODES)) assert.ok(isErrorCode(to), `${from} -> ${to}`);
   assert.equal(LEGACY_ERROR_CODES.payload_invalid, "bad_request");
   assert.equal(LEGACY_ERROR_CODES.bad_json, "bad_request");
@@ -45,7 +48,6 @@ test("every old error code maps to a new one, and the renames of SPEC-02 §7 hol
   assert.equal(LEGACY_ERROR_CODES.vault_unavailable, "unavailable");
   assert.equal(LEGACY_ERROR_CODES.capability_error, "failed");
   assert.equal(LEGACY_ERROR_CODES.internal_error, "internal");
-  // the new codes do not map to themselves by accident of the table being open: none of the old names is a new code
   for (const gone of ["payload_invalid", "bad_json", "unreachable", "vault_unavailable", "capability_error", "internal_error"]) assert.ok(!(ERROR_CODES as readonly string[]).includes(gone));
 });
 

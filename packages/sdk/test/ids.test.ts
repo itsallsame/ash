@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import test from "node:test";
 import {
-  AGENT_ID_PATTERN, HAND_ID_LENGTH, MEMBER_KINDS, base64url, bodyId, deviceId, handId, idKind, idName, isAgentId, isAppId, isBodyId, isClientId, isDeviceId, isMemberId, sha256,
+  AGENT_ID_PATTERN, HAND_ID_LENGTH, MEMBER_KINDS, base64url, bodyId, deviceId, handId, idKind, idName, isAgentId, isAppId, isBodyId, isClientId, isDeviceId, isMemberId,
 } from "../src/ids";
 
 const HAND = "lAhFeu_Qcc7BJ8H5hTmTCG";
@@ -44,19 +44,19 @@ test("the agent id has one pattern and a client is not a member", () => {
   assert.equal(bodyId(HAND), `body:${HAND}`);
 });
 
-test("hand_id of a fixed key", () => {
+test("hand_id of a fixed key", async () => {
   // An Ed25519 SubjectPublicKeyInfo: the 12-byte header, then the key bytes 0..31.
   const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(Array.from({ length: 32 }, (_, i) => i))]);
-  assert.equal(handId(spki), HAND);
-  assert.equal(handId(spki).length, HAND_ID_LENGTH);
-  assert.equal(idKind(deviceId(handId(spki))), "device");
+  assert.equal(await handId(spki), HAND);
+  assert.equal((await handId(spki)).length, HAND_ID_LENGTH);
+  assert.equal(idKind(deviceId(await handId(spki))), "device");
+  // the same as the definition spelled with node:crypto
+  assert.equal(await handId(spki), createHash("sha256").update(spki).digest("base64url").slice(0, HAND_ID_LENGTH));
 });
 
-test("the built-in sha256 and base64url agree with node:crypto, around every block boundary", () => {
-  for (const length of [0, 1, 3, 54, 55, 56, 57, 63, 64, 65, 119, 120, 121, 128, 1000]) {
+test("base64url agrees with node, at every length around a group of three", () => {
+  for (const length of [0, 1, 2, 3, 4, 5, 31, 32, 33, 1000]) {
     const bytes = randomBytes(length);
-    assert.deepEqual(Buffer.from(sha256(bytes)), createHash("sha256").update(bytes).digest(), `sha256 of ${length} bytes`);
-    assert.equal(base64url(bytes), bytes.toString("base64url"), `base64url of ${length} bytes`);
+    assert.equal(base64url(bytes), bytes.toString("base64url"), `${length} bytes`);
   }
-  assert.equal(Buffer.from(sha256(new TextEncoder().encode("abc"))).toString("hex"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 });

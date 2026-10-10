@@ -1,7 +1,7 @@
 # Who may call each word (the `callers` of its contract), one line per word: member/word  callers  [flags].
 # Words that say nothing get the default (owner, agent, app); they are listed too so a review sees what a new word got.
 # `*` marks a line that is not the default. Change it on purpose: UPDATE_SNAPSHOT=1 node --import tsx --test packages/sdk/test/callers.test.ts
-  service:admin/pause  owner,agent,app
+* service:admin/pause  owner,kernel  local_only
 * service:admin/resume  owner  local_only
   service:admin/settings.get  owner,agent,app
   service:admin/settings.set  owner,agent,app
@@ -65,7 +65,7 @@
 * person:owner/say  agent,app,kernel
 * person:owner/react  agent,app,kernel
 * person:owner/show  agent,app,kernel
-* person:owner/ask  agent,kernel
+* person:owner/ask  agent
 * person:owner/open  agent,app,kernel
 * agent:*/say  owner
   agent:*/tell  owner,agent,app
@@ -180,8 +180,8 @@
   service:apps/apps.contract  owner,agent,app
   service:apps/apps.scaffold  owner,agent,app
   service:apps/apps.validate  owner,agent,app
-  service:apps/surface  owner,agent,app
-  service:apps/icon  owner,agent,app
+  service:apps/apps.surface  owner,agent,app
+  service:apps/apps.icon  owner,agent,app
   device:*/screen.read  owner,agent,app
   device:*/screen.see  owner,agent,app
   device:*/screen.screenshot  owner,agent,app
