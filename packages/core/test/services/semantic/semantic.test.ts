@@ -349,7 +349,7 @@ test("templates: fileTemplates reads <NAME>.template.md from a directory, and cr
     assert.deepEqual(fileTemplates(dir), { "SOUL.md": "# SOUL\n", "IDENTITY.md": "# IDENTITY\n", "PULSE.md": "# PULSE\n" });
     const send = async () => ({ ok: true as const, result: {} });
     const ledger = { db: () => { throw new Error("not used"); }, tx: () => { throw new Error("not used"); } } as never;
-    assert.throws(() => createSemantic({ ledger, router: { send } as never }), /templates/);
+    assert.throws(() => createSemantic({ ledger, router: { send } } as never), /templatesDir/);
     rmSync(join(dir, "PULSE.template.md"));
     assert.throws(() => createSemantic({ ledger, router: { send } as never, templatesDir: dir }), /PULSE/);
   } finally { rmSync(dir, { recursive: true, force: true }); }

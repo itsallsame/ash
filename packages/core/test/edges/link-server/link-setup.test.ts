@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CLOUDFLARE_REF, RelaySetup } from "../../../src/edges/link-server/control/setup";
 import { eventually } from "../../fixtures/wait";
-import { agent, listening, owner, startWorld, type World } from "./control-harness";
+import { agent, listening, owner, RELAY_METADATA, startWorld, type World } from "./control-harness";
 
 async function build(t: test.TestContext, o: { bundle?: boolean; loginMs?: number; expiresIn?: number } = {}) {
   const w = await startWorld(t, { gateway: false, fresh: true, cloudflare: o });
@@ -42,9 +42,9 @@ test("the whole way: sign-in card, PKCE return, deploy in the owner's account, c
   assert.equal(cf.uploads.length, 1);
   const upload = cf.uploads[0]!;
   assert.equal(upload.script, "my-relay");
-  assert.equal(upload.metadata.main_module, "worker.mjs");
-  assert.deepEqual(upload.metadata.bindings.map((b: any) => [b.type, b.name]), [["durable_object_namespace", "HUB"], ["secret_text", "BOOTSTRAP_SECRET"]]);
-  assert.deepEqual(upload.metadata.migrations, { new_tag: "v1", new_sqlite_classes: ["GatewayHub"] });
+  // the gateway's own metadata, plus the claim secret
+  assert.deepEqual({ ...upload.metadata, bindings: undefined }, { ...RELAY_METADATA, bindings: undefined });
+  assert.deepEqual(upload.metadata.bindings, [...RELAY_METADATA.bindings, { type: "secret_text", name: "BOOTSTRAP_SECRET", text: upload.metadata.bindings[2].text }]);
   assert.match(upload.source, /GatewayHub/);
   assert.deepEqual(cf.enabled, ["my-relay"]);
   assert.match(cf.subdomain!, /^ash-[0-9a-f]{8}$/, "the account had no workers.dev name, one was made");
@@ -67,7 +67,7 @@ test("the whole way: sign-in card, PKCE return, deploy in the owner's account, c
 
   // no credential anywhere
   const said = everythingSaid(w);
-  const secrets = [...cf.issued, w.gw.secret!, cf.uploads[0]!.metadata.bindings[1].text];
+  const secrets = [...cf.issued, w.gw.secret!, cf.uploads[0]!.metadata.bindings[2].text];
   for (const secret of secrets) assert.ok(!said.includes(secret) && !JSON.stringify([status, setup.status(started.setup_id)]).includes(secret), "no credential in messages or results");
   assert.ok(w.gw.secret && w.gw.secret.length > 20);
   assert.ok(!(w.hub.db.prepare("SELECT * FROM link_setups").all().map((r) => JSON.stringify(r)).join()).includes(cf.issued[0]!), "nor in the setup table");
@@ -193,6 +193,7 @@ test("an expired sign-in is renewed with the refresh token before deploying; a r
   assert.ok(cf.refreshes >= 1, "refreshed");
   assert.notEqual(JSON.parse(w.vault.use(CLOUDFLARE_REF)!).access_token, before);
   assert.equal(cf.uploads[0]!.metadata.migrations, undefined);
+  assert.deepEqual(cf.uploads[0]!.metadata.keep_bindings, RELAY_METADATA.keep_bindings, "a redeploy keeps what the gateway's metadata says it keeps");
 });
 
 test("a setup that was waiting when the hub stopped is ended and its initiator told", async (t) => {
