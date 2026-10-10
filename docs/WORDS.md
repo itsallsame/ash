@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `2ad15bc7a5b610cb`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `5e9317f5059a4626`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -248,7 +248,7 @@
 | `usage.get` | owner | read / none | - | days | 在看用量 | What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls. |
 | `balance.get` | owner | read / none | - | - | 在看余额 | The provider account balance for the configured API key; fails rather than reporting zero when it cannot be read. |
 | `quota.check` | kernel | read / none | - | agent* | 在查额度 | Whether an agent may open another turn under its daily quota, by the latest usage numbers. A soft limit: the numbers are only as fresh as the last poll. |
-| `usage.recorded` | kernel | read / none | event in | caller*, provider*, model*, input_tokens*, output_tokens*, cost, ok*, at* | 在记下用量 | One call of the hub's small model, as the llm edge reports it: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table. |
+| `usage.recorded` | kernel | read / none | event in | caller*, provider*, model*, input_tokens*, output_tokens*, cost, ok*, at* | 在记下用量 | One model call, as the llm edge reports it for the hub's small models or an agent driver reports it for an agent: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table. |
 
 ## `service:reflex`
 

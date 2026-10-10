@@ -447,10 +447,10 @@ add("service:cost", "balance.get", "request", empty, free,
 add("service:cost", "quota.check", "request", obj({ agent: agentRef }, ["agent"]), obj({ allowed: bool, reason: str, used: num, limit: num }, ["allowed"]),
   { callers: KERNEL, label: "在查额度", description: "Whether an agent may open another turn under its daily quota, by the latest usage numbers. A soft limit: the numbers are only as fresh as the last poll." });
 add("service:cost", "usage.recorded", "event", obj({
-  caller: id, provider: choice("deepseek", "openrouter"), model: nonempty, input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe,
+  caller: id, provider: nonempty, model: nonempty, input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe,
   cost: { type: "number", minimum: 0 }, ok: bool, at: nonnegativeSafe,
 }, ["caller", "provider", "model", "input_tokens", "output_tokens", "ok", "at"]), undefined,
-  { direction: "in", label: "在记下用量", description: "One call of the hub's small model, as the llm edge reports it: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table." });
+  { direction: "in", label: "在记下用量", description: "One model call, as the llm edge reports it for the hub's small models or an agent driver reports it for an agent: who called, which model, tokens in and out, the cost in US dollars when a price is known (the field is left out otherwise, never zero), whether it worked. Not recorded: usage has its own table." });
 
 // ===================================================================================================================
 // service:reflex: judgments the hub makes in small-model time
