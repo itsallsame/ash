@@ -173,7 +173,7 @@ export function fixture(opts: Options = {}) {
   const router = new FakeRouter();
   const registry = new FakeRegistry();
   const clock = prior?.clock ?? { t: 1_700_000_000_000 };
-  const timers = { everies: [] as { ms: number; fn: () => void }[], afters: [] as { ms: number; fn: () => void; cancelled: boolean }[] };
+  const timers = { everies: [] as { ms: number; fn: () => void }[], afters: [] as { ms: number; fn: () => void; cancelled: boolean; fired: boolean }[] };
   const drivers: FakeDriver[] = [];
   const secrets = { ...(opts.secrets ?? {}) };
   const files = { ...(opts.files ?? {}) };
@@ -200,10 +200,14 @@ export function fixture(opts: Options = {}) {
     ...(opts.network ? { network: opts.network } : {}), ...(opts.channels ? { channels: opts.channels } : {}), rules: () => "rules v1", now: () => clock.t, newId: () => `n${++ids}-${randomBytes(2).toString("hex")}`, log: (...a) => logs.push(a),
     timers: {
       every: (ms, fn) => { const e = { ms, fn }; timers.everies.push(e); return () => { timers.everies.splice(timers.everies.indexOf(e), 1); }; },
-      after: (ms, fn) => { const a = { ms, fn, cancelled: false }; timers.afters.push(a); return () => { a.cancelled = true; }; },
+      after: (ms, fn) => { const a = { ms, fn: () => { a.fired = true; fn(); }, cancelled: false, fired: false }; timers.afters.push(a); return () => { a.cancelled = true; }; },
     },
   });
   const driver = () => drivers[0]!;
+  /** The timers that have not fired and were not cancelled, of that length when one is given. */
+  const waiting = (ms?: number) => timers.afters.filter((a) => !a.cancelled && !a.fired && (ms === undefined || a.ms === ms));
+  /** Let the clock reach the oldest waiting timer of that length. False when there is none. */
+  const fire = (ms: number): boolean => { const a = waiting(ms)[0]; if (!a) return false; a.fn(); return true; };
   let n = 0;
   /** A message as the router would hand it to a member. */
   const message = (from: string, to: string, word: string, body: unknown, extra: Partial<Message> = {}): Message =>
@@ -215,6 +219,6 @@ export function fixture(opts: Options = {}) {
     return found.member.handle(msg, { signal: new AbortController().signal, caller: who, raw: body });
   };
   const service = (word: string, body: unknown, who: Caller = OWNER) => agents.service.handle(message(who.member, "service:agents", word, body), { signal: new AbortController().signal, caller: who, raw: body });
-  return { ledger, router, registry, clock, timers, drivers, driver, secrets, files, persona, skills, addTemplate, agents, logs, call, service, message,
+  return { ledger, router, registry, clock, timers, waiting, fire, drivers, driver, secrets, files, persona, skills, addTemplate, agents, logs, call, service, message,
     start: async () => { await agents.startAll(); registry.add(agents.service); await settle(); } };
 }

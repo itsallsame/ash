@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { STABLE_RUN_MS } from "../../../src/edges/agents/manager";
+import { MAX_FAILURES, STABLE_RUN_MS } from "../../../src/edges/agents/manager";
 import { fixture, OWNER, settle, waitFor, type FakeDriver } from "./helpers";
 
 const M = "agent:main";
@@ -107,14 +107,19 @@ test("an agent that is stopped for good is offline: off, removed, or given up on
   const g = fixture({ from: f });
   await g.start();
   assert.ok(!reachable(g));
-  // given up on after three quick crashes
+  // another agent is given up on after MAX_FAILURES quick crashes (the primary one never is: see retry.test.ts)
   const h = fixture();
   await h.start();
-  for (let i = 1; i <= 3; i++) { h.driver().die(M); if (i < 3) await waitFor(() => h.driver().of("start").length === i + 1); }
+  await h.service("declare", { id: "agent:b", name: "b", summary: "a helper agent", brief: "help" });
+  const live = () => h.driver().of("start").filter((c) => c[1] === "agent:b").length;
+  for (let i = 1; i <= MAX_FAILURES; i++) {
+    h.driver().die("agent:b");
+    if (i < MAX_FAILURES) { if (h.waiting().length) { h.waiting()[0]!.fn(); } await waitFor(() => live() === i + 1); }
+  }
   await settle();
-  assert.ok(!reachable(h));
-  assert.equal(h.agents.manager.reachable(M), false);
-  assert.equal(h.agents.manager.stateOf(M), "error");
+  assert.equal(h.registry.find("agent:b", "say"), null);
+  assert.equal(h.agents.manager.reachable("agent:b"), false);
+  assert.equal(h.agents.manager.stateOf("agent:b"), "error");
 });
 
 test("a stop that comes while the process is starting leaves no member, and the start is not tried again", async () => {
@@ -156,7 +161,7 @@ test("the failure count: a process that stayed up, or finished a round, starts t
   assert.ok(reachable(b));
   assert.equal(b.agents.manager.stateOf(M), "idle");
 
-  // a turn that failed does not count as a round done: two crashes, a failed turn, then the third crash gives up
+  // a turn that failed does not count as a round done: the count goes on, so the wait before the next start grows (2 s, then 5 s)
   const c = fixture();
   await c.start();
   c.driver().die(M);
@@ -164,26 +169,31 @@ test("the failure count: a process that stayed up, or finished a round, starts t
   await c.call(M, "wake", { reason: "r" }, { member: "service:pulse", via: "service", local: true });
   await waitFor(() => sends(c.driver(), "back").length === 1);
   c.driver().finish(M, "back", "error");
+  assert.ok(c.fire(5000)); // the usage pull a turn schedules (also 5 s)
   c.driver().die(M);
+  await settle();
+  assert.deepEqual(c.waiting().map((t) => t.ms), [2000]);
+  assert.ok(c.fire(2000));
   await waitFor(() => c.driver().of("start").length === 3);
   c.driver().die(M);
   await settle();
-  assert.equal(c.driver().of("start").length, 3);
-  assert.equal(c.agents.manager.stateOf(M), "error");
+  assert.deepEqual(c.waiting().map((t) => t.ms), [5000]);
 
-  // a completed round between crashes clears what came before: the same sequence with a good turn does not give up
+  // a completed round between crashes clears what came before: the next crash is the first one again, started at once
   const e = fixture();
   await e.start();
   e.driver().die(M);
   await waitFor(() => e.driver().of("start").length === 2);
   e.driver().die(M);
+  await settle();
+  assert.deepEqual(e.waiting().map((t) => t.ms), [2000], "the second crash in a row waits");
+  assert.ok(e.fire(2000));
   await waitFor(() => e.driver().of("start").length === 3);
   await e.call(M, "say", { text: "hi" }, OWNER);
   await waitFor(() => sends(e.driver(), "front").length === 1);
   e.driver().finish(M, "front");
   e.driver().die(M);
   await waitFor(() => e.driver().of("start").length === 4);
-  e.driver().die(M);
-  await waitFor(() => e.driver().of("start").length === 5);
+  assert.ok(!e.waiting(2000).length, "started at once, with no wait");
   assert.ok(reachable(e));
 });
