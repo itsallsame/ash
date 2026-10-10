@@ -47,17 +47,17 @@ export class RemoteDriver implements AgentDriver {
   async start(agent: string, spec: AgentStartSpec): Promise<void> {
     if (spec.runtime.kind !== this.kind) throw new WordError("bad_request", `this driver runs ${this.kind}, not ${spec.runtime.kind}`);
     const conn = await this.dir.computerFor(spec.native?.on, this.kind);
-    // What the hub knew of this agent before its computer went away (kept for ten minutes) is where `session.get` starts from.
-    const before = this.dir.entries.get(agent);
-    const entry: Entry = { agent, kind: this.kind, conn, spec, state: "starting", handles: new Map(before?.kind === this.kind && before.conn.handId === conn.handId ? before.handles : []), stopping: false, ended: false, turns: new Map() };
+    const entry: Entry = { agent, kind: this.kind, conn, spec, state: "starting", handles: new Map(), stopping: false, ended: false, turns: new Map() };
     this.dir.entries.set(agent, entry);
     // What the computer kept while the hub was away comes first, in order. Whatever it says of an earlier incarnation's end is of no use now.
     const held = conn.held.get(agent) ?? [];
     conn.held.delete(agent);
     for (const f of held) if (f.event !== "ended" && f.event !== "agent.status") this.dir.deliver(entry, f);
+    // The tool address and token are the hub's; the computer's runtimes reach Ash only through `outbound`.
+    const { tools: _tools, ...sent } = spec;
     let result: Frame;
     try {
-      result = await conn.request("agent.start", { agent, spec }, this.dir.startMs);
+      result = await conn.request("agent.start", { agent, spec: sent }, this.dir.startMs);
       if (entry.ended || conn.closed) throw new WordError("failed", entry.detail ?? `computer ${conn.name} lost ${agent} while it started`);
     } catch (error) {
       if (this.dir.entries.get(agent) === entry) this.dir.entries.delete(agent);

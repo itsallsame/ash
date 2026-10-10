@@ -21,8 +21,6 @@ export interface RemoteDrivers {
   factories: Record<string, AgentDriverFactory>;
   /** Mount with `linkServer.onChannel("agent", attach)`. */
   attach: ChannelAttach;
-  /** The computers connected now with the runtimes each offers (from `hello`). */
-  computers(): { hand: string; name: string; runtimes: string[] }[];
 }
 
 export function createRemoteDrivers(options: RemoteOptions): RemoteDrivers {
@@ -30,7 +28,6 @@ export function createRemoteDrivers(options: RemoteOptions): RemoteDrivers {
   return {
     factories: Object.fromEntries(dir.kinds.map((kind): [string, AgentDriverFactory] => [kind, (report) => new RemoteDriver(dir, kind, report)])),
     attach: dir.attach,
-    computers: () => [...dir.computers.values()].map((c) => ({ hand: c.handId, name: c.name, runtimes: [...c.runtimes.keys()] })),
   };
 }
 

@@ -149,7 +149,6 @@ async function world(t: test.TestContext, options: Partial<RemoteOptions> = {}) 
 test("start: the computer named by native.on is asked, its sessions are kept for session.get, info is what its hello said", async (t) => {
   const w = await world(t);
   const c = await w.computer();
-  assert.deepEqual(w.remote.computers().map((x) => [x.hand, x.name, x.runtimes]), [[c.id, "书房电脑", ["codex", "claude"]]]);
   assert.deepEqual(w.drivers.codex!.info.models, [{ id: "gpt-x", efforts: ["low", "high"] }]);
   assert.equal(w.drivers.codex!.info.abilities.inject_live, false);
   assert.deepEqual(Object.keys(w.drivers).sort(), ["claude", "codex", "workbuddy"]);
@@ -162,7 +161,7 @@ test("start: the computer named by native.on is asked, its sessions are kept for
   assert.equal("runtime" in start, false, "the runtime is in the spec only");
   assert.equal(start.spec.runtime.kind, "codex");
   assert.deepEqual(start.spec.lanes, ["front", "back"]);
-  assert.equal(start.spec.tools.token, "tok");
+  assert.equal("tools" in start.spec, false, "the hub's tool address and token do not leave the hub");
   assert.deepEqual(w.codex.status("agent:x"), { state: "running" });
   assert.equal(w.codex.session.get("agent:x", "front"), "resume-me");
   assert.equal(w.codex.session.get("agent:x", "back"), "h-agent:x-back");
@@ -332,7 +331,6 @@ test("disconnect: the agents on that computer are reported ended; the computer c
 
   w.events.length = 0;
   await c.connect();
-  assert.equal(w.remote.computers().length, 1);
   await w.codex.start("agent:x", spec(c.id, { sessions: { front: "h-agent:x-front" } }));
   const start = c.ops.filter((o) => o.op === "agent.start").at(-1)!;
   assert.equal(start.agent, "agent:x");
@@ -398,25 +396,23 @@ test("start fails when the computer is not there, was not allowed, or does not o
   const plain = new Computer(w.hub, await newIdentity());
   w.hub.hands.setAccess(plain.id, { local_agents: false });
   await plain.connect();
-  assert.equal(w.remote.computers().some((x) => x.hand === plain.id), false);
   await assert.rejects(w.codex.start("agent:y", spec(plain.id)), (e: WordError) => e.code === "unavailable");
 });
 
-test("a computer that was connected before is waited for, so a network blink does not use up the manager's tries", async (t) => {
+test("a computer that is not connected is waited for, so a blink or a hub restart does not use up the manager's tries", async (t) => {
   const w = await world(t, { reconnectWaitMs: 5000 });
   const c = await w.computer();
   c.drop();
-  await eventually(() => w.remote.computers().length === 0, "gone");
+  await new Promise((r) => setTimeout(r, 50));
   const starting = w.codex.start("agent:x", spec(c.id));
   await new Promise((r) => setTimeout(r, 50));
   await c.connect();
   await starting;
   assert.equal(w.codex.status("agent:x").state, "running");
-  // a hand the hub never saw is not waited for
+  // a computer that never comes is waited for, then start fails
   const never = new Computer(w.hub, await newIdentity());
-  const began = Date.now();
-  await assert.rejects(w.codex.start("agent:y", spec(never.id)), (e: WordError) => e.code === "unavailable");
-  assert.ok(Date.now() - began < 1000);
+  const quick = await world(t, { reconnectWaitMs: 100 });
+  await assert.rejects(quick.codex.start("agent:y", spec(never.id)), (e: WordError) => e.code === "unavailable" && /not connected/.test(e.message));
 });
 
 test("an operation the computer never answers times out; one cut by a disconnect is result_unknown", async (t) => {
@@ -446,7 +442,7 @@ test("through the agents module: declared on a computer, a message becomes a tur
   const start = c.ops.find((o) => o.op === "agent.start")!;
   assert.equal(start.agent, MAIN);
   assert.deepEqual(start.spec.lanes, ["front", "back"]);
-  assert.equal(start.spec.tools.token, `tok-${MAIN}`);
+  assert.equal("tools" in start.spec, false);
   assert.deepEqual(Object.keys(f.agents.manager.runs.get(MAIN)!.spec.sessions), ["front", "back"]);
   assert.equal(f.agents.manager.stateOf(MAIN), "idle");
 

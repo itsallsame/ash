@@ -8,11 +8,11 @@
  */
 import { WordError } from "../../../../../sdk/src/message";
 import type { Caller } from "../../../../../sdk/src/message";
-import type { AgentEvent, AgentEventName, AgentState, AgentStartSpec } from "../../../../../sdk/src/driver";
+import type { AgentEvent, AgentEventName, AgentState, AgentStartSpec, RuntimeInfo } from "../../../../../sdk/src/driver";
 import type { Router } from "../../../kernel/types";
 import type { ChannelAttach } from "../../link-server";
-import { allows } from "../policy";
-import { Computer, parseRuntimes, type Frame } from "./computer";
+import { glob } from "../../../kernel/router";
+import { Computer, type Frame } from "./computer";
 
 export interface Entry {
   agent: string;
@@ -40,9 +40,7 @@ export interface RemoteOptions {
   opMs?: number;
   /** How long `agent.start` may take (ms): the runtime has to open its sessions. */
   startMs?: number;
-  /** How long the hub keeps what it knew of an agent whose computer went away, for the computer's return (ms; the computer keeps the agent that long). */
-  retainMs?: number;
-  /** How long `start` waits for a computer that was connected before and is not now, so a network blink does not use up the manager's three tries (ms). */
+  /** How long `start` waits for a computer that is not connected, so a network blink or a hub restart does not use up the manager's three tries (ms). */
   reconnectWaitMs?: number;
   log?(message: string, error?: unknown): void;
 }
@@ -67,17 +65,14 @@ export class Directory {
   readonly opMs: number;
   readonly startMs: number;
   readonly kinds: string[];
-  private readonly seen = new Set<string>();
   private readonly arrivals = new Map<string, Set<() => void>>();
   private readonly reconnectWaitMs: number;
-  readonly retainMs: number;
   readonly log: (message: string, error?: unknown) => void;
 
   constructor(private readonly o: RemoteOptions) {
     this.opMs = o.opMs ?? 60_000;
     this.startMs = o.startMs ?? 120_000;
     this.reconnectWaitMs = o.reconnectWaitMs ?? 20_000;
-    this.retainMs = o.retainMs ?? 10 * 60_000;
     this.kinds = o.kinds ?? DEFAULT_KINDS;
     this.log = o.log ?? (() => {});
   }
@@ -86,9 +81,8 @@ export class Directory {
 
   readonly attach: ChannelAttach = (session, ctx) => {
     const raw = (session.hello.channels as { agent?: { runtimes?: unknown } }).agent;
-    const computer = new Computer(session, ctx.handId, session.hello.hand.name, parseRuntimes(raw?.runtimes));
+    const computer = new Computer(session, ctx.handId, session.hello.hand.name, (Array.isArray(raw?.runtimes) ? raw.runtimes : []) as RuntimeInfo[]);
     this.computers.set(ctx.handId, computer);
-    this.seen.add(ctx.handId);
     for (const arrived of this.arrivals.get(ctx.handId) ?? []) arrived();
     this.arrivals.delete(ctx.handId);
     return {
@@ -115,19 +109,15 @@ export class Directory {
       if (starting) { entry.state = "exited"; entry.detail = `computer ${computer.name} disconnected`; continue; } // `start` is waiting on this connection and fails with its pending operation
       this.ended(entry, `computer ${computer.name} disconnected`, "exited");
     }
-    // The computer keeps its agents for a while; so does the hub keep the handles it knew, for `session.get` and the return.
-    const gone = [...this.entries.values()].filter((e) => e.conn === computer);
-    const timer = setTimeout(() => { for (const e of gone) if (this.entries.get(e.agent) === e) this.entries.delete(e.agent); }, this.retainMs);
-    timer.unref();
   }
 
   // -- computers -------------------------------------------------------------------------------------------------------
 
-  /** The computer named by `native.on` and its connection now; one that was here before is waited for briefly. */
+  /** The computer named by `native.on` and its connection now; one that is not connected is waited for briefly. */
   async computerFor(on: string | undefined, kind: string): Promise<Computer> {
     const hand = handOf(on);
     let computer = this.computers.get(hand);
-    if (!computer && this.seen.has(hand) && this.reconnectWaitMs > 0) computer = await this.arrival(hand, this.reconnectWaitMs);
+    if (!computer && this.reconnectWaitMs > 0) computer = await this.arrival(hand, this.reconnectWaitMs);
     if (!computer) throw new WordError("unavailable", `computer ${hand} is not connected, so ${kind} cannot start on it`, { recovery_hint: "Start the Ash program on that computer, or point the agent's native.on at another one." });
     if (!computer.runtimes.has(kind)) throw new WordError("unavailable", `computer ${computer.name} does not offer ${kind} (not installed, not signed in, or not allowed to run local agents)`);
     return computer;
@@ -238,7 +228,7 @@ export class Directory {
     const spec = TOOLS[tool];
     if (!spec) return refuse("not_found", `${tool} is not an Ash tool offered to this agent`);
     // The agent's declared tool list is enforced here; the router then judges the call as the agent's own.
-    if (!allows(entry.spec.tools.allowed, tool)) return refuse("forbidden", `${entry.agent} may not use ${tool}`);
+    if (!entry.spec.tools.allowed.some((pattern) => glob(pattern, tool))) return refuse("forbidden", `${entry.agent} may not use ${tool}`);
     const args = f.args && typeof f.args === "object" && !Array.isArray(f.args) ? (f.args as Frame) : {};
     for (const field of spec.fields) if (typeof args[field] !== "string" || !args[field]) return refuse("bad_request", `${tool} needs ${field}`);
     const body = Object.fromEntries(spec.fields.map((field) => [field, args[field]]));

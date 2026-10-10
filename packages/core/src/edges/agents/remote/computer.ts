@@ -20,24 +20,7 @@ export const DEFAULT_ABILITIES: RuntimeAbilities = {
 };
 
 const isObject = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []);
 
-/** `hello.channels.agent.runtimes` (SPEC-08 §1.3), read defensively: whatever is not shaped like a runtime is left out. */
-export function parseRuntimes(raw: unknown): RuntimeInfo[] {
-  if (!Array.isArray(raw)) return [];
-  const out: RuntimeInfo[] = [];
-  for (const r of raw) {
-    if (!isObject(r) || typeof r.kind !== "string" || !r.kind) continue;
-    const models = Array.isArray(r.models)
-      ? r.models.filter((m): m is Record<string, any> => isObject(m) && typeof m.id === "string").map((m) => ({ id: m.id as string, ...(Array.isArray(m.efforts) ? { efforts: strings(m.efforts) } : {}) }))
-      : [];
-    out.push({ kind: r.kind, ...(typeof r.version === "string" ? { version: r.version } : {}), models, abilities: { ...DEFAULT_ABILITIES, ...(isObject(r.abilities) ? r.abilities : {}) } });
-  }
-  return out;
-}
-
-/** Operations that change nothing: when the connection drops under one, the answer is `offline`; for the rest it is `result_unknown`. */
-const READS = new Set(["agent.list", "config.get"]);
 
 /** A tool call of the computer's agent that the hub has not answered yet. */
 export interface Outbound { controller: AbortController; agent: string; key: unknown; turn: unknown; answer(body: Frame): void }
@@ -102,7 +85,7 @@ export class Computer {
     for (const [id, pending] of [...this.pending]) {
       this.pending.delete(id);
       clearTimeout(pending.timer);
-      const read = READS.has(pending.op);
+      const read = pending.op === "config.get";
       pending.reject(new WordError(read ? "offline" : "result_unknown", `the connection to computer ${this.name} ended during ${pending.op}`));
     }
     for (const call of this.outbounds) call.controller.abort();
