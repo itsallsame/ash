@@ -210,7 +210,10 @@ class LinkClient(private val o: LinkOptions) {
 
     // --- human channel ---
 
-    /** Sends a word as the person (SPEC-03 §5.1); completes with the `send.result` frame, fails with [LinkException] when there is no connection. */
+    /**
+     * Sends a word as the person (SPEC-03 §5.1); completes with the `send.result` frame, fails with [LinkException]: `closed` when
+     * it never went out (no connection), `lost` when it went out and the connection closed before the answer.
+     */
     fun send(request: JSONObject): CompletableFuture<JSONObject> {
         val future = CompletableFuture<JSONObject>()
         post {
@@ -219,7 +222,10 @@ class LinkClient(private val o: LinkOptions) {
             val id = newId("s_")
             requests[id] = future
             try {
-                c.send(JSONObject().put("t", "send").put("ch", "human").put("id", id).put("request", request))
+                if (!c.send(JSONObject().put("t", "send").put("ch", "human").put("id", id).put("request", request))) {
+                    requests.remove(id)
+                    future.completeExceptionally(LinkException("closed", "not connected")) // it never went out
+                }
             } catch (e: IllegalArgumentException) {
                 requests.remove(id)
                 future.completeExceptionally(LinkException("bad_request", e.message ?: "the request breaks the protocol"))
@@ -330,7 +336,8 @@ class LinkClient(private val o: LinkOptions) {
         abortAll()
         val requestsLeft = ArrayList(requests.values)
         requests.clear()
-        requestsLeft.forEach { it.completeExceptionally(LinkException("closed", "connection closed")) }
+        // Every request in the map went out: the kernel may have done it. (One that never went out fails at once as "closed".)
+        requestsLeft.forEach { it.completeExceptionally(LinkException("lost", "connection closed")) }
         syncs.clear()
         humanStreams.clear()
         val final = state == State.STOPPED || code in CloseCodes.NO_RECONNECT

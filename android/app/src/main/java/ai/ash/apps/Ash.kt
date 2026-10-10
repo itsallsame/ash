@@ -12,6 +12,7 @@ import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.os.TransactionTooLargeException
 import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
@@ -116,6 +117,9 @@ class Ash(ctx: Context, private val app: String?) {
                 val pipe = b.call(to, word, text) ?: return Replies.error("result_unknown", UNKNOWN)
                 val answer = ParcelFileDescriptor.AutoCloseInputStream(pipe).use { readUpTo(it, MAX_REPLY + 1) }
                 if (answer.size > MAX_REPLY) Replies.error("result_unknown", UNKNOWN) else JSONObject(String(answer, Charsets.UTF_8))
+            } catch (_: TransactionTooLargeException) {
+                // Thrown before the call is delivered (the request is capped, so this is a tight process buffer): certainly not done.
+                Replies.error("too_large", "太大了，传不过来")
             } catch (e: Exception) {
                 Log.w(TAG, "the bridge failed after the word went out: ${e.javaClass.simpleName}")
                 if (e is DeadObjectException) reset()

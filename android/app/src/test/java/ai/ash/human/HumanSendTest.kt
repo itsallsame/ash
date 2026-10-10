@@ -51,6 +51,18 @@ class HumanSendTest {
         catch (e: HumanSend.Refused) { assertEquals("bad_request", e.code); assertTrue(e.final) }
     }
 
+    @Test fun aConnectionLostAfterTheWordWentOutIsUnknownForAWaitedWordAndAnIoErrorForTheRest() {
+        for (wait in listOf(true, false)) {
+            val conn = link.connect(nth = if (wait) 0 else 1)
+            val answer = CompletableFuture.supplyAsync { runCatching { HumanSend.send(link.client, say(wait = wait)) }.exceptionOrNull() }
+            conn.awaitFrame("send")
+            conn.close(1000)
+            val error = answer.get(5, java.util.concurrent.TimeUnit.SECONDS)!!
+            if (wait) { error as HumanSend.Refused; assertEquals("result_unknown", error.code); assertFalse(error.final) }
+            else assertTrue(error is IOException && error !is HumanSend.Refused)
+        }
+    }
+
     @Test fun theResponseToAWaitedWordIsTheReplyItself() {
         val reply = JSONObject().put("ok", true).put("result", JSONObject().put("data", JSONObject().put("ended", true)))
         val sent = JSONObject().put("response", reply)

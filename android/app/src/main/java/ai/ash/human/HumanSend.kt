@@ -26,8 +26,9 @@ internal object HumanSend {
     /**
      * `{to, kind, word, body, reply_to?, client_id?, wait?}` as in SPEC-02 §8. Returns the `send.result` frame once the
      * kernel took the message; throws [Refused] when it did not (or, with `wait`, when its answer did not come in time:
-     * `result_unknown`, the word may have been done), or an [IOException] when there was no answer (no connection, or
-     * no acknowledgement in time). A retry with the same `client_id` is counted once.
+     * `result_unknown`, the word may have been done: it timed out, or the connection closed after it went out), or an
+     * [IOException] when there was no answer (no connection; with no `wait`, also a connection lost or no acknowledgement in
+     * time, which a retry with the same `client_id` settles, being counted once).
      */
     fun send(client: LinkClient, request: JSONObject): JSONObject {
         val waitsForResponse = request.optBoolean("wait")
@@ -35,9 +36,14 @@ internal object HumanSend {
             client.send(request).get(if (waitsForResponse) 70 else 15, TimeUnit.SECONDS)
         } catch (e: ExecutionException) {
             val cause = e.cause
-            throw if (cause is LinkException && cause.kind == "bad_request") Refused("bad_request", cause.message.orEmpty()) else IOException(cause?.message ?: "no connection")
+            throw when {
+                cause is LinkException && cause.kind == "bad_request" -> Refused("bad_request", cause.message.orEmpty())
+                // It went out and the connection closed before the answer: the word may have been done.
+                cause is LinkException && cause.kind == "lost" && waitsForResponse -> Refused("result_unknown", "the connection closed before the kernel answered")
+                else -> IOException(cause?.message ?: "no connection")
+            }
         } catch (_: TimeoutException) {
-            // The frame went out (a closed link fails the future at once), so the word may well have been done: not "offline".
+            // The frame went out (a closed link fails the future at once, as "closed"), so the word may well have been done: not "offline".
             throw if (waitsForResponse) Refused("result_unknown", "the kernel did not answer in time") else IOException("the kernel did not answer in time")
         }
         if (!frame.getBoolean("ok")) frame.getJSONObject("error").let { throw Refused(it.getString("code"), it.getString("message")) }
