@@ -303,7 +303,9 @@ export class Relay {
     if (op === "http.req") {
       const from = typeof frame.from === "string" ? frame.from : "";
       if (!this.o.handlers?.http) return fail("this relay tunnel does not serve web pages");
-      if (!from || !sid || sid.length > 128 || this.httpIn.has(sid) || this.httpIn.size >= MAX_HTTP_REQUESTS) return fail("too many requests");
+      // A repeated sid is answered without touching the request already running under it.
+      if (this.httpIn.has(sid)) return void conn.send({ t: "tun", op: "http.error", sid, message: "sid in use" });
+      if (!from || !sid || sid.length > 128 || this.httpIn.size >= MAX_HTTP_REQUESTS) return fail("too many requests");
       const headers = (Array.isArray(frame.headers) ? frame.headers : []).filter((h): h is [string, string] => Array.isArray(h) && typeof h[0] === "string" && typeof h[1] === "string");
       this.httpIn.set(sid, { req: { from, method: String(frame.method ?? "GET"), path: String(frame.path ?? "/"), headers }, chunks: [], size: 0, abort: new AbortController() });
       return;

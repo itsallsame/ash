@@ -65,6 +65,8 @@ export interface HubLinkServer {
   /**
    * Routes `path` and everything under it to [handler]; `/` takes what no other mount does. `/link` is not available.
    * Only a mount made with `relay: true` (the static web page) can be reached by a browser through the relay; `/mcp` is not.
+   * A relay mount sees relayed requests as coming from 127.0.0.1: it must not grant anything on that, nor put the local
+   * token in a page.
    */
   mount(path: string, handler: HttpHandler, opts?: { relay?: boolean }): void;
   /** A browser's HTTP request that came through the relay, served by the mount it would reach here; 404 for any mount that is not for the relay. */
