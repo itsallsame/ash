@@ -7,12 +7,12 @@ import { FAKE_TOKEN, FakeClock, FakeHost } from "../../fixtures/host";
 let current: FakeHost | undefined;
 afterEach(async () => { await current?.stop(); current = undefined; });
 
-async function setup(options: ConstructorParameters<typeof FakeHost>[0] = {}, clock?: FakeClock, heartbeatErrors?: unknown[]) {
+async function setup(options: ConstructorParameters<typeof FakeHost>[0] = {}, clock?: FakeClock, heartbeatErrors?: unknown[], timeoutMs?: number) {
   const host = current = await new FakeHost(options).start();
   const boot = loadHostBoot({ env: host.writeLaunch().env });
   assert.ok(boot.ok);
   const client = new HostClient({
-    endpoint: boot.boot.spec.endpoint, token: boot.boot.secrets.token, capabilities: boot.boot.spec.capabilities,
+    endpoint: boot.boot.spec.endpoint, token: boot.boot.secrets.token, capabilities: boot.boot.spec.capabilities, timeoutMs,
     setInterval: clock?.setInterval, onHeartbeatError: (error) => heartbeatErrors?.push(error),
   });
   return { host, client };
@@ -66,6 +66,19 @@ describe("host client", () => {
     const { host, client } = await setup();
     host.failures.set("identity.sign", "unavailable");
     await assert.rejects(client.identitySign("x"), (error: unknown) => error instanceof HostCallError && error.code === "unavailable");
+  });
+
+  it("turns a code outside the shared set into failed", async () => {
+    const { host, client } = await setup();
+    host.failures.set("identity.sign", "weird_code");
+    await assert.rejects(client.identitySign("x"), (error: unknown) => error instanceof HostCallError && error.code === "failed");
+  });
+
+  it("ends an unanswered call as result_unknown after the call timeout", async () => {
+    const { host, client } = await setup({}, undefined, undefined, 50);
+    host.hangs.add("wake.at");
+    await assert.rejects(client.wakeAt(1), (error: unknown) => error instanceof HostCallError && error.code === "result_unknown" && error.method === "wake.at");
+    assert.equal(host.callsOf("wake.at").length, 1, "it was sent");
   });
 
   it("reports an unreachable host as unavailable", async () => {
@@ -123,5 +136,24 @@ describe("host client", () => {
     host.failures.clear();
     clock.tick(60_000);
     await host.waitForCalls(2, "status.set");
+  });
+
+  it("keeps beating when the status callback itself throws", async () => {
+    const clock = new FakeClock();
+    const errors: unknown[] = [];
+    const { host, client } = await setup({}, clock, errors);
+    let broken = true;
+    client.startHeartbeat(() => {
+      if (broken) throw new Error("status callback broke");
+      return { text: "back", state: "running" };
+    });
+    clock.tick(60_000);
+    while (errors.length === 0) await new Promise((resolve) => setImmediate(resolve));
+    assert.match((errors[0] as Error).message, /status callback broke/);
+    assert.equal(host.callsOf("status.set").length, 0);
+    broken = false;
+    clock.tick(60_000);
+    await host.waitForCalls(1, "status.set");
+    assert.deepEqual(host.callsOf("status.set")[0].body, { text: "back", state: "running" });
   });
 });

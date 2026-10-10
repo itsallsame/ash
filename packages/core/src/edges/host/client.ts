@@ -4,6 +4,13 @@ import {
 } from "../../../../sdk/src/host";
 
 /** A call that the host answered with an error, or that did not get an answer. */
+const KNOWN_CODES: Record<HostErrorCode, true> = {
+  bad_request: true, unauthorized: true, forbidden: true, not_found: true, denied: true, cancelled: true, timeout: true,
+  offline: true, result_unknown: true, conflict: true, too_large: true, unavailable: true, failed: true, internal: true,
+};
+/** A code the host sent that is not one of the shared 14 becomes `failed`. */
+const knownCode = (code: unknown): HostErrorCode => (typeof code === "string" && Object.hasOwn(KNOWN_CODES, code) ? (code as HostErrorCode) : "failed");
+
 export class HostCallError extends Error {
   constructor(readonly code: HostErrorCode, message: string, readonly method: HostMethod, readonly status?: number) {
     super(`host ${method}: ${code}: ${message}`);
@@ -29,7 +36,6 @@ export interface HostClientOptions {
   token: string;
   /** From host.json; names this client does not know are ignored. */
   capabilities: readonly string[];
-  fetch?: typeof fetch;
   /** Per call; a call that times out ends as `result_unknown`. Default 15 s. */
   timeoutMs?: number;
   setInterval?: HostIntervalTimer;
@@ -41,14 +47,12 @@ export interface HostHeartbeatStatus { text: string; state: HostStatusState }
 
 export class HostClient {
   private readonly capabilities: ReadonlySet<string>;
-  private readonly doFetch: typeof fetch;
   private readonly timeoutMs: number;
   private readonly interval: HostIntervalTimer;
   private readonly base: string;
 
   constructor(private readonly options: HostClientOptions) {
     this.capabilities = new Set(options.capabilities);
-    this.doFetch = options.fetch ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.interval = options.setInterval ?? realInterval;
     this.base = options.endpoint.replace(/\/+$/, "");
@@ -75,11 +79,12 @@ export class HostClient {
 
   /** status.set every 60 s as the host's liveness signal; the first one goes out after one period. Returns the stopper. */
   startHeartbeat(status: () => HostHeartbeatStatus): () => void {
+    const report = (error: unknown) => {
+      (this.options.onHeartbeatError ?? ((e: unknown) => console.error(`[host] heartbeat failed: ${(e as Error).message}`)))(error);
+    };
     return this.interval(() => {
-      const { text, state } = status();
-      this.statusSet(text, state).catch((error: unknown) => {
-        (this.options.onHeartbeatError ?? ((e: unknown) => console.error(`[host] heartbeat failed: ${(e as Error).message}`)))(error);
-      });
+      // The status callback runs inside the promise chain: if it throws, this beat fails and is reported, the timer goes on.
+      Promise.resolve().then(status).then(({ text, state }) => this.statusSet(text, state)).catch(report);
     }, HOST_HEARTBEAT_MS);
   }
 
@@ -91,7 +96,7 @@ export class HostClient {
   private async call<M extends HostMethod>(method: M, req: HostMethods[M]["req"]): Promise<HostMethods[M]["res"]> {
     let response: Response;
     try {
-      response = await this.doFetch(`${this.base}/v1/${method}`, {
+      response = await fetch(`${this.base}/v1/${method}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${this.options.token}` },
         body: JSON.stringify(req),
@@ -104,7 +109,7 @@ export class HostClient {
     let body: HostResponse<HostMethods[M]["res"]> | undefined;
     try { body = (await response.json()) as typeof body; } catch { /* handled below */ }
     if (body && body.ok === true) return body.result;
-    if (body && body.ok === false && body.error) throw new HostCallError(body.error.code, body.error.message, method, response.status);
+    if (body && body.ok === false && body.error) throw new HostCallError(knownCode(body.error.code), body.error.message, method, response.status);
     if (response.status === 401) throw new HostCallError("unauthorized", "host refused the token", method, 401);
     throw new HostCallError("failed", `unreadable answer (HTTP ${response.status})`, method, response.status);
   }

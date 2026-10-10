@@ -42,6 +42,8 @@ export class FakeHost {
   readonly results = new Map<string, unknown>();
   /** Make a method fail with this error code instead of answering. */
   readonly failures = new Map<string, string>();
+  /** Methods that are received (and recorded) but never answered, to exercise client timeouts. */
+  readonly hangs = new Set<string>();
   endpoint = "";
   private server?: Server;
   private dir?: string;
@@ -67,6 +69,7 @@ export class FakeHost {
         if (req.headers.authorization !== `Bearer ${this.token}`) return fail(401, "unauthorized", "bad token");
         const capability = HOST_METHOD_CAPABILITY[method as HostMethod];
         if (req.method !== "POST" || !capability || !this.capabilities.includes(capability)) return fail(404, "not_found", `no ${method}`);
+        if (this.hangs.has(method)) return;
         const failure = this.failures.get(method);
         if (failure) return fail(500, failure, "scripted failure");
         json(200, { ok: true, result: this.results.has(method) ? this.results.get(method) : defaultResult(method as HostMethod, body) });
