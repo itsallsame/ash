@@ -97,6 +97,37 @@ test("S005-S009: a failed turn tells the owner and offers [retry]; picking it is
   assert.equal(attempts, 2);
 });
 
+test("S005 (kill -9): DSH is killed in the middle of the owner's turn and says nothing more; the turn still ends, the owner is told and offered [retry], and picking it runs the turn on the restarted process", async (t) => {
+  const s = await startScenario(t);
+  const hold = deferred();
+  let attempts = 0;
+  s.driver.script(async (turn) => {
+    if (!turn.messages.some(ownerMessage("一件很长的事"))) return;
+    attempts += 1;
+    if (attempts === 1) await turn.until(hold.promise); // never answers: the process is killed under it
+    else turn.say("这次做完了");
+  });
+  const owner = await s.human();
+
+  accepted(await owner.say("一件很长的事"));
+  const running = await s.driver.turn((r) => r.agent === MAIN && r.key === "front", "the long turn");
+  const starts = s.driver.starts.length;
+  s.driver.die(MAIN, "process exited (SIGKILL)");
+
+  await owner.seen(toOwner("say"), "a failure notice (say)");
+  const card = await owner.seen(toOwner("show"), "a card with a retry option");
+  await eventually(() => s.driver.starts.length > starts, "DSH started anew");
+  const ends = (await owner.ledger()).filter((m) => m.word === "turn.ended" && (bodyOf(m) as { turn?: string }).turn === running.turn);
+  assert.equal(ends.length, 1, "the cut turn ended once");
+  assert.equal((bodyOf(ends[0]!) as { outcome: string }).outcome, "error");
+
+  const retry = (bodyOf(card).card as { options: { id: string; text: string }[] }).options[0]!;
+  accepted(await owner.say("", { inReplyTo: card.id, optionId: retry.id }));
+  await owner.seen((m) => m.word === "say" && textOf(m) === "这次做完了", "the answer on the restarted process");
+  assert.equal(attempts, 2);
+  hold.resolve();
+});
+
 test("S016: an option card the agent shows; the owner's pick reaches the agent as a reply to that card", async (t) => {
   const s = await startScenario(t);
   s.driver.script(async (turn) => {

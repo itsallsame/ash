@@ -44,14 +44,51 @@ test("SPEC-08 §5.1: kill the DSH process -> the driver reports ended -> the mod
     await waitFor(() => f.registry.members.has("agent:main"), "the agent registered again");
     // the key is asked about again, and the new process (which remembers nothing) is given it again
     await waitFor(() => log().filter((l) => l.credentialSet).length === 2);
-    // what was cut off is not sent again; the agent is told, in the back lane
-    await waitFor(() => log().some((l) => l.prompt && /上一轮中断了/.test(l.text)), "the cut-off notice");
+    // what was cut off is not sent again by itself: the owner is offered a retry instead (an owner's turn that failed is not a wake for the agent)
     assert.equal(log().filter((l) => l.prompt && /DIE now/.test(l.text) && !/上一轮中断了/.test(l.text)).length, 1);
+    // the turn that was cut ended, once, as an error; the owner was told and offered a retry
+    await waitFor(() => f.router.to("person:owner", "show").length === 1, "the retry card");
+    const ends = f.router.events("turn.ended").map((e) => e.msg.body as { outcome: string });
+    assert.deepEqual(ends.map((e) => e.outcome), ["completed", "error"]);
+    assert.match(f.router.says()[1]!.text, /没做成/);
     // and the front lane takes a message again
     await f.call("agent:main", "say", { text: "still there?" });
-    await waitFor(() => f.router.says().length === 2);
-    assert.equal(f.router.says()[1]!.text, "echo: still there?");
+    await waitFor(() => f.router.says().length === 3);
+    assert.equal(f.router.says()[2]!.text, "echo: still there?");
     assert.ok(!JSON.stringify([f.router.sent, f.logs]).includes("sk-fake-int-key"));
+  } finally {
+    await f.agents.stopAll();
+    for (const p of procs) p.kill("SIGKILL");
+  }
+});
+
+test("T17h: kill -9 in the middle of a turn (no reply, stdout closes): the turn ends as an error once, and the retry card runs the same words on the new process", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agents-int-"));
+  dirs.push(dir);
+  const logFile = join(dir, "agent.log");
+  const procs: ReturnType<typeof spawn>[] = [];
+  const f = fixture({ drivers: { dsh: (report) => createDshDriver({
+    report, writeFile: async () => {},
+    spawn: () => { const p = spawn(process.execPath, [SCRIPT], { env: { ...process.env, FAKE_EXT: "1", FAKE_LOG: logFile, FAKE_KILLED: join(dir, "killed") }, stdio: ["pipe", "pipe", "pipe"] }); procs.push(p); return p; },
+  }) } });
+  await f.start();
+  await waitFor(() => f.agents.manager.stateOf("agent:main") === "idle");
+  const log = () => (existsSync(logFile) ? readFileSync(logFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []) as Record<string, any>[];
+  try {
+    await f.call("agent:main", "say", { text: "KILL9 a long task" });
+    await waitFor(() => f.router.to("person:owner", "show").length === 1, "the retry card");
+    const ends = f.router.events("turn.ended").map((e) => e.msg.body as { turn: string; outcome: string });
+    assert.deepEqual(ends.map((e) => e.outcome), ["error"]);
+    assert.match(f.router.says()[0]!.text, /没做成：负责思考的进程中途退出了/);
+    const card = (f.router.to("person:owner", "show")[0]!.msg.body as any).card;
+    await waitFor(() => f.agents.manager.stateOf("agent:main") === "idle", "the new process is up");
+    // the retry delivers the same words to the new process; there the word is quoted back by the cut-off notice only, so the fake answers it
+    await f.call("agent:main", "say", { in_reply_to: "card_1", option_id: card.options[0].id, text: "重试" });
+    await waitFor(() => f.router.says().length === 2, "the answer of the retry");
+    assert.equal(f.router.says()[1]!.text, "echo: KILL9 a long task");
+    assert.deepEqual(f.router.events("turn.ended").map((e) => (e.msg.body as { outcome: string }).outcome), ["error", "completed"]);
+    assert.equal(log().filter((l) => l.prompt && /KILL9/.test(l.text)).length, 2, "the same words, once on each process");
+    assert.equal(procs.length, 2);
   } finally {
     await f.agents.stopAll();
     for (const p of procs) p.kill("SIGKILL");

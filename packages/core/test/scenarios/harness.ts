@@ -200,7 +200,7 @@ class ToolLine {
   }
 }
 
-interface Running { abort: AbortController; record: TurnRecord }
+interface Running { abort: AbortController; record: TurnRecord; /** The process was killed: nothing more is said about this turn. */ killed?: boolean }
 
 /**
  * A fake agent runtime. It registers under `dsh` by default and under any other runtime kind a scenario names, keeps one
@@ -235,9 +235,12 @@ export class ScriptedDriver {
   script(fn: TurnScript): void { this.fallback = fn; }
   /** Makes every `start()` from now on wait for [until] (the runtime takes its time to come up); `null` lets starts through again. */
   holdStarts(until: Promise<void> | null): void { this.startGate = until; }
-  /** The runtime process of [agent] dies (kill -9): the hub hears `ended`, and its turns are gone with it. */
+  /**
+   * The runtime process of [agent] dies (kill -9): the hub hears `ended` and nothing else. Its running turns are gone with it
+   * and never report `turn.ended` (a real process killed in the middle of a prompt says nothing more): ending them is the hub's.
+   */
   die(agent: string, reason = "killed"): void {
-    for (const [slot, run] of [...this.running]) if (slot.startsWith(`${agent}/`)) { run.abort.abort(); this.running.delete(slot); }
+    for (const [slot, run] of [...this.running]) if (slot.startsWith(`${agent}/`)) { run.killed = true; run.abort.abort(); this.running.delete(slot); }
     for (const report of this.reporters) report({ event: "ended", agent, reason });
   }
   /** The script of one agent (`agent:main`). */
@@ -350,7 +353,8 @@ export class ScriptedDriver {
     const finished = deferred();
     const record: TurnRecord = { agent, key, turn, messages: batch, outcome: "running", said: [], steers: [], done: finished.promise };
     this.turns.push(record);
-    this.running.set(slot, { abort, record });
+    const running: Running = { abort, record };
+    this.running.set(slot, running);
     report({ event: "turn.started", agent, key, turn, ids: batch.map((m) => m.id) });
 
     const aborted = new Promise<undefined>((resolve) => abort.signal.addEventListener("abort", () => resolve(undefined), { once: true }));
@@ -380,8 +384,8 @@ export class ScriptedDriver {
       if (outcome === "error") record.error = error instanceof Error ? error.message : String(error);
     }
     record.outcome = outcome;
-    this.running.delete(slot);
-    report({ event: "turn.ended", agent, key, turn, outcome, ...(record.error ? { error: record.error } : {}) });
+    if (this.running.get(slot) === running) this.running.delete(slot);
+    if (!running.killed) report({ event: "turn.ended", agent, key, turn, outcome, ...(record.error ? { error: record.error } : {}) });
     finished.resolve();
     const next = this.queued.get(slot)?.shift();
     if (next) void this.run(report, agent, key, next);
