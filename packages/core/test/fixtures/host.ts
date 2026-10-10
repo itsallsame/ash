@@ -38,7 +38,7 @@ export class FakeHost {
   readonly stdin = new PassThrough();
   readonly token: string;
   readonly capabilities: string[];
-  /** Replace the result of a method (default: a plausible fixed answer). */
+  /** Replace the result of a method (default: a plausible fixed answer). A function is given the request body and answers with the result. */
   readonly results = new Map<string, unknown>();
   /** Make a method fail with this error code instead of answering. */
   readonly failures = new Map<string, string>();
@@ -58,7 +58,7 @@ export class FakeHost {
     this.server = createServer((req, res) => {
       let raw = "";
       req.on("data", (chunk) => { raw += chunk; });
-      req.on("end", () => {
+      req.on("end", () => void (async () => {
         const json = (status: number, value: unknown) => { res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value)); };
         const fail = (status: number, code: string, message: string) => json(status, { ok: false, error: { code, message } });
         const method = (req.url ?? "").replace(/^\/v1\//, "");
@@ -72,8 +72,10 @@ export class FakeHost {
         if (this.hangs.has(method)) return;
         const failure = this.failures.get(method);
         if (failure) return fail(500, failure, "scripted failure");
-        json(200, { ok: true, result: this.results.has(method) ? this.results.get(method) : defaultResult(method as HostMethod, body) });
-      });
+        const scripted = this.results.get(method);
+        const result = this.results.has(method) ? (typeof scripted === "function" ? await (scripted as (body: unknown) => unknown)(body) : scripted) : defaultResult(method as HostMethod, body);
+        json(200, { ok: true, result });
+      })());
     });
     this.server.listen(0, "127.0.0.1");
     await once(this.server, "listening");

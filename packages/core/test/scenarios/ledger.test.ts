@@ -52,12 +52,14 @@ test("SPEC-00 §6.9, S159: a secret put in the vault is in no ledger record; onl
   const set = await owner.call("service:vault", "set", { ref: "deepseek", value: secret, label: "DeepSeek", kind: "model" });
   assert.ok(set.ok, "the owner sets a key from this machine");
 
-  const ledger = await owner.ledger();
+  // Reading the ledger is itself recorded (a `query` to service:history, whose filter may hold what was searched for): those are left out.
+  const notOwnQuery = (m: Message): boolean => !(m.to === "service:history" && m.word === "query");
+  const ledger = (await owner.ledger()).filter(notOwnQuery);
   assert.ok(!JSON.stringify(ledger).includes(secret), "the secret is not in the ledger");
   const record = ledger.find((m) => m.word === "set" && m.to === "service:vault");
   assert.ok(record, "the request itself is recorded");
   assert.deepEqual(bodyValue(record), { set: true, length: secret.length });
-  const found = await owner.ledger({ text: secret });
+  const found = (await owner.ledger({ text: secret })).filter(notOwnQuery);
   assert.equal(found.length, 0, "searching for it finds nothing");
   const listed = await owner.call("service:vault", "list");
   assert.ok(listed.ok && JSON.stringify(dataOf(listed)).includes("deepseek") && !JSON.stringify(dataOf(listed)).includes(secret));

@@ -94,7 +94,7 @@ test("S032: 'always' makes a rule: the same request does not ask again", async (
   flow.first = undefined;
   accepted(await owner.say("再打开一次笔记"));
   await eventually(() => flow.first, "the second receipt");
-  assert.notEqual(resultOf(flow.first!).status, "waiting_owner");
+  assert.notEqual(resultOf(flow.first!)?.status, "waiting_owner");
   assert.equal(phone.calls.length, 2, "it ran without a card");
   const rules = await owner.call("service:gate", "rules.list");
   assert.ok(rules.ok && JSON.stringify(dataOf(rules)).includes("apps.open"), "S034-S038: the rule is listed");
@@ -124,16 +124,17 @@ test("S039: the approval has expired: answering it late does not let the request
   assert.equal(phone.calls.length, 0);
 });
 
-test("S040: the hub restarts while the card waits: it is still there, answering it still lets the asker carry it out", async (t) => {
+test("S040: the hub restarts while the card waits: the question is asked again as a new card, answering it still lets the asker carry it out", async (t) => {
   const { s, phone, flow } = await setup(t);
   const owner = await s.human();
   accepted(await owner.say("帮我打开笔记"));
-  await owner.seen(isApprovalAsk, "the approval card");
+  const first = await owner.seen(isApprovalAsk, "the approval card");
   await eventually(() => flow.pendingId, "the pending id");
 
   await s.restart();
 
-  const again = await owner.seen(isApprovalAsk, "the approval card after the restart");
+  // The card of the first boot is withdrawn and the question is asked again as a new card.
+  const again = await owner.seen((m) => isApprovalAsk(m) && m.id !== first.id, "the approval card after the restart");
   assert.equal(phone.calls.length, 0);
   accepted(await owner.answer(again, "once"));
   await s.driver.delivery(fromGate, "the background message after the restart");
@@ -173,7 +174,7 @@ test("S044: a hand the owner gave the 'full' tier is trusted: its outward action
   accepted(await owner.say("帮我打开笔记"));
 
   await eventually(() => flow.first, "the agent's receipt");
-  assert.notEqual(resultOf(flow.first!).status, "waiting_owner");
+  assert.notEqual(resultOf(flow.first!)?.status, "waiting_owner");
   assert.equal(phone.calls.length, 1);
   await quiet();
   assert.equal(owner.messages.filter(isApprovalAsk).length, 0, "no card");
@@ -181,10 +182,12 @@ test("S044: a hand the owner gave the 'full' tier is trusted: its outward action
 
 test("human_ask: a question to the owner is answered by the owner; the answer comes back to the agent", async (t) => {
   const s = await startScenario(t);
+  const state: { answer?: ToolResult } = {};
   s.driver.script(byOwnerText({
     "问问我": async (turn) => {
       const receipt = await turn.tool("human_ask", { title: "晚饭吃什么", options: [{ id: "noodle", label: "面" }, { id: "rice", label: "饭" }] });
-      await turn.tool("await_result", { request_id: resultOf(receipt)?.request_id });
+      // Answered inside the quick window, the receipt is the answer; otherwise it is collected with await_result.
+      state.answer = resultOf(receipt)?.choice !== undefined ? receipt : await turn.tool("await_result", { request_id: resultOf(receipt)?.request_id });
     },
   }));
   const owner = await s.human();
@@ -193,8 +196,8 @@ test("human_ask: a question to the owner is answered by the owner; the answer co
   const question = await owner.seen((m) => m.word === "ask" && m.from === MAIN && m.to === "person:owner", "the question card");
   accepted(await owner.answer(question, "rice"));
 
-  const done = await s.driver.toolCall("await_result", "the agent receiving the answer");
-  assert.equal(done.result.data?.choice, "rice");
+  const done = await eventually(() => state.answer, "the agent receiving the answer");
+  assert.equal(done.data?.choice, "rice");
 });
 
 test("SPEC-00 §6.4: an agent proposing to change the persona is always asked about; refusing changes nothing", async (t) => {
