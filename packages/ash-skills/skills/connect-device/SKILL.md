@@ -6,7 +6,7 @@ whenToUse: 主人要接一台电脑或浏览器、想让电脑上的 Agent 干�
 
 # 接设备
 
-**手机**在 Ash 本机，直接连，不用中转站和配对；手机显示 offline 就跳到最后一节。**电脑、网页、别处的服务器**要经**中转站**（主人自己 Cloudflare 账号里的一个小程序）连进来，再**配对**。下面的 `<编号>`（也就是各个词里的 `hand` 参数）是 `device_list` 里 `device:` 后面那一串。
+**手机**在 Ash 本机，直接连，不用中转站和配对；手机显示 offline 就看「连不上」那一节。**电脑、网页、别处的服务器**要经**中转站**（主人自己 Cloudflare 账号里的一个小程序）连进来，再**配对**。下面的 `<编号>` 是 `device_list` 里 `device:` 后面那一串。`service:link` 各词的 `hand` 参数只填这串编号，`device_*` 工具的 `device` 参数要填完整的 `device:<编号>`。
 
 ## 做法：每步先看现状，再动手
 
@@ -37,7 +37,7 @@ whenToUse: 主人要接一台电脑或浏览器、想让电脑上的 Agent 干�
 
 ## 好的样子
 
-主人：「把我书房的 Mac 接上，以后让 Codex 在上面写代码。」`device_list` 没有 Mac；`gateway.status` 说 `configured: false`。你说「你还没有中转站，我先帮你搭，需要你登录一下 Cloudflare」，`gateway.setup.start`，然后结束这一轮。收到 `connected` 的消息后 `device_pair_start {kind: "computer", name: "书房 Mac"}`，告诉他在 Mac 上打开推给他的地址、装好后在卡上勾「当作 body」和「跑本地 Agent」。收到 `connected`，`body:<编号>` 的 `body.info` 回得出系统和工作目录。再说「接好了」，并转到 `delegate-dev`。
+主人：「把我书房的 Mac 接上，以后让 Codex 在上面写代码。」`device_list` 没有 Mac；`gateway.status` 说 `configured: false`。你说「你还没有中转站，我先帮你搭，需要你登录一下 Cloudflare」，`gateway.setup.start`，然后结束这一轮。收到 `authorized` 的消息后调 `gateway.setup.deploy {setup_id}`（不会自动部署，会问主人），再等 `connected`。然后 `device_pair_start {kind: "computer", name: "书房 Mac"}`，告诉他在 Mac 上打开推给他的地址、装好后在卡上勾「当作 body」和「跑本地 Agent」。收到 `connected`，`body:<编号>` 的 `body.info` 回得出系统和工作目录。再说「接好了」，并转到 `delegate-dev`。
 
 ## 常见错误
 

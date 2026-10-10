@@ -12,6 +12,9 @@ import { BROWSER_EXTENSIONS } from "../../sdk/src/namespaces";
  *  - every word, `member/word` pair and tool name written in code spans, or in a `capability_call {member, word}`, is in
  *    packages/sdk/schema/words.json, TOOL_NAMES, or the browser extensions the contract lists.
  * A name that is not checked is one the contract cannot vouch for: app tools (`app:<id>`), tool arguments, event reasons.
+ * What this does not catch, and a reviewer has to read: a call written with quoted keys (`{"member": …, "word": …}`), and whether a
+ * word belongs to the member it is paired with in prose, or takes the arguments the text gives it (only `member/word` pairs and
+ * `capability_call {member: "…", word: "…"}` are matched).
  */
 const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const words = (JSON.parse(readFileSync(join(root, "packages/sdk/schema/words.json"), "utf8")) as { words: { member: string; word: string }[] }).words;
@@ -114,9 +117,9 @@ function check(file: string): Problem[] {
 
 /** Names the rules and skills use that the contract does not have, with who owns the fix. Empty when there are none. */
 const NOT_MINE: Record<string, string> = {
-  // first-meeting belongs to the semantic layer (T19) and is not changed here; the contract has no service:self.
-  "packages/ash-skills/skills/first-meeting/SKILL.md service:self/read": "T19",
-  "packages/ash-skills/skills/first-meeting/SKILL.md service:self/write": "T19",
+  // first-meeting is not changed by the task that wrote this test; the contract has no service:self. A later task fixes the skill.
+  "packages/ash-skills/skills/first-meeting/SKILL.md service:self/read": "a later task",
+  "packages/ash-skills/skills/first-meeting/SKILL.md service:self/write": "a later task",
 };
 
 test("every word and tool a rule or skill names is in words.json, TOOL_NAMES or the browser extensions", () => {
