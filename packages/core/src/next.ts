@@ -131,6 +131,8 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     onParked: (pending) => late.gateService!.issueCard(pending),
     onError: (where, error) => log(where, error),
     agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords,
+    mayTalkToOwner: (caller, word) => late.agents?.mayTalkToOwner(caller, word) ?? true,
+    mayAnswer: (caller, body) => late.agents?.mayAnswer(caller, body) ?? true,
     appGranted: (app, to, word) => late.apps!.runtime.granted(app, to, word),
   });
 

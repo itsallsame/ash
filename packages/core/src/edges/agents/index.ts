@@ -8,6 +8,7 @@ import { AgentManager, type AgentsDeps } from "./manager";
 import { createAgentsService } from "./service";
 import { SERVICE_CALLER } from "./modules";
 import type { AgentPolicy } from "../../kernel/router";
+import type { Caller } from "../../../../sdk/src/message";
 import type { Router } from "../../kernel/types";
 import type { Member } from "../../../../sdk/src/word";
 
@@ -22,6 +23,10 @@ export interface Agents {
   policyOf(id: string): AgentPolicy | null;
   /** The turn the agent is in now on that lane, or null. A lane never gets another lane's turn. */
   currentTurn(id: string, lane: string): string | null;
+  /** Router rule: a sub-agent speaks to the owner only in a turn where the owner addressed it directly (judged on the caller's own lane's turn). */
+  mayTalkToOwner(caller: Caller, word: string): boolean;
+  /** Router rule: `service:agents/answer` only from the turn that took the message. */
+  mayAnswer(caller: Caller, body: unknown): boolean;
   /** Put changed files and environment into a running agent now (e.g. after MEMORY.md was written). */
   refreshModules(agent: string, lane?: string): Promise<void>;
 }
@@ -35,6 +40,8 @@ export function createAgents(deps: AgentsDeps): Agents {
       const decl = manager.runs.get(id)?.spec.decl;
       return decl ? { tools: decl.tools ?? null, words: decl.words ?? null } : null;
     },
+    mayTalkToOwner: (caller, word) => manager.mayTalkToOwner(caller, word),
+    mayAnswer: (caller, body) => manager.mayAnswer(caller, body),
     currentTurn: (id, lane) => manager.liveOf(id)?.lanes.get(lane)?.turn ?? null };
 }
 

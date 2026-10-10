@@ -31,8 +31,7 @@ async function hub() {
   const router = createRouter({
     ledger, registry, gate, redact: createRedact(), store, now: Date.now, onParked: () => {}, onError: () => {},
     agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords,
-    // The rule the hook is for: an agent speaks to the owner only in a turn of the lane that is talking with the owner.
-    mayTalkToOwner: (who) => who.turn !== undefined && late.agents?.currentTurn(who.member, "front") === who.turn,
+    mayTalkToOwner: (who, word) => late.agents?.mayTalkToOwner(who, word) ?? true, mayAnswer: (who, body) => late.agents?.mayAnswer(who, body) ?? true,
   });
   const tools = createToolsEdge({
     router, registry, ledger, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, currentTurn: (id, lane) => late.agents?.currentTurn(id, lane) ?? null,
@@ -102,25 +101,31 @@ test("front and back in a turn at once: each lane's tool calls are recorded in i
   assert.deepEqual(turnsOf(h.ledger, M, "list"), [back, front, back]);
 });
 
-test("a back-lane call cannot use the front lane's turn to speak to the owner, nor be a call at all while the back lane has no turn", async () => {
+test("a sub-agent's back lane cannot use the front lane's turn to speak to the owner, nor have a turn at all while it has none", async () => {
   const h = await hub();
+  const sub = "agent:helper";
+  // made by an agent (depth 1), so the rule for sub-agents applies; its lanes are the usual front and back
+  const made = await h.router.send({ to: "service:agents", kind: "request", word: "declare", body: { id: sub, name: "helper", summary: "helps", brief: "help", runtime: { kind: "dsh" } } }, { member: M, via: "agent", local: true, turn: "t-made" });
+  assert.equal(made.ok, true);
+  await h.router.send({ to: "service:agents", kind: "request", word: "start", body: { agent: sub } }, OWNER);
+  await settle();
   const d = h.drivers[0]!;
-  await h.router.send({ to: M, kind: "request", word: "say", body: { text: "hello" } }, OWNER);
-  await waitFor(() => d.running.has(`${M}/front`), "the front turn");
-  const front = d.running.get(`${M}/front`)!.turn;
-  const onFront = await h.client(h.issued[M]!.front!), onBack = await h.client(h.issued[M]!.back!);
+  await h.router.send({ to: sub, kind: "request", word: "say", body: { text: "hello" } }, OWNER);
+  await waitFor(() => d.running.has(`${sub}/front`), "the front turn");
+  const front = d.running.get(`${sub}/front`)!.turn;
+  const onFront = await h.client(h.issued[sub]!.front!), onBack = await h.client(h.issued[sub]!.back!);
 
   // front is in a turn, back is not: the back token gets no turn at all (it is not lent the front's)
   const idle = await call(onBack, "human_say", { text: "psst" });
   assert.equal(idle.isError, true);
-  assert.equal(idle.data.error.code, "forbidden");
   assert.match(idle.data.error.message, /no turn is running/);
   assert.deepEqual(h.owner.said, [], "nothing reached the owner");
 
-  // both lanes in a turn: back has a turn of its own, and that one may not speak to the owner
-  h.agents.manager.enqueue(M, { id: "w1", from: "service:clock", word: "wake", text: "Wake · pulse", attachments: [], at: Date.now() }, "back");
-  await waitFor(() => d.running.has(`${M}/back`), "the back turn");
-  const back = d.running.get(`${M}/back`)!.turn;
+  // both lanes in a turn: back has a turn of its own, in which the owner did not address it
+  h.agents.manager.enqueue(sub, { id: "w1", from: "service:clock", word: "wake", text: "Wake · pulse", attachments: [], at: Date.now() }, "back");
+  await waitFor(() => d.running.has(`${sub}/back`), "the back turn");
+  const back = d.running.get(`${sub}/back`)!.turn;
+  assert.notEqual(front, back);
   const refused = await call(onBack, "human_say", { text: "psst" });
   assert.equal(refused.isError, true);
   assert.equal(refused.data.error.code, "forbidden");
@@ -128,18 +133,24 @@ test("a back-lane call cannot use the front lane's turn to speak to the owner, n
   assert.deepEqual(h.owner.said, []);
 
   const said = await call(onFront, "human_say", { text: "hi there" });
-  assert.equal(said.isError, false);
+  assert.equal(said.isError, false, said.text);
   const heard = h.owner.said as Message[];
-  assert.deepEqual(heard.map((m) => [m.from, (m.body as any).text, m.turn]), [[M, "hi there", front]]);
-  assert.notEqual(front, back);
+  assert.deepEqual(heard.map((m) => [m.from, (m.body as any).text, m.turn]), [[sub, "hi there", front]]);
+
+  // the primary agent is not held to this: its back lane (a pulse that has something to say) may speak
+  await h.router.send({ to: M, kind: "request", word: "say", body: { text: "hello" } }, OWNER);
+  h.agents.manager.enqueue(M, { id: "w2", from: "service:clock", word: "wake", text: "Wake · pulse", attachments: [], at: Date.now() }, "back");
+  await waitFor(() => d.running.has(`${M}/back`), "the primary's back turn");
+  const mainBack = await h.client(h.issued[M]!.back!);
+  assert.equal((await call(mainBack, "human_say", { text: "proactive" })).isError, false);
 
   // when the front turn ends, the front token has no turn either
-  d.finish(M, "front");
-  await waitFor(() => h.agents.currentTurn(M, "front") === null);
-  const after = await call(onFront, "human_say", { text: "late" });
-  assert.equal(after.isError, true);
-  assert.match(after.data.error.message, /no turn is running/);
-  assert.equal(h.agents.currentTurn(M, "back"), back, "the back turn goes on");
+  d.finish(sub, "front");
+  await waitFor(() => h.agents.currentTurn(sub, "front") === null);
+  const late = await call(onFront, "human_say", { text: "late" });
+  assert.equal(late.isError, true);
+  assert.match(late.data.error.message, /no turn is running/);
+  assert.equal(h.agents.currentTurn(sub, "back"), back, "the back turn goes on");
 });
 
 test("tokens: a restart of the agent's process gives new ones for every lane and the old ones stop; the lane is only what the token was issued for", async () => {
