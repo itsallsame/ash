@@ -1,0 +1,36 @@
+{
+  "t": "manifest",
+  "ch": "device",
+  "rev": 1,
+  "capabilities": {
+    "name": "screen.tap",
+    "description": "Tap a point on the screen",
+    "label": "tapping the screen",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "effect": "act",
+    "risk": "outward",
+    "per_call_risk": false,
+    "foreground": true,
+    "callers": [
+      "owner",
+      "agent",
+      "app"
+    ],
+    "timeout_ms": 30000
+  },
+  "events": []
+}

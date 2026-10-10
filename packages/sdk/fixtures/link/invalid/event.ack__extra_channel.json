@@ -1,0 +1,5 @@
+{
+  "t": "event.ack",
+  "id": "e1",
+  "ch": "device"
+}

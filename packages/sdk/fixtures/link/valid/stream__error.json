@@ -1,0 +1,7 @@
+{
+  "t": "stream",
+  "sid": "st1",
+  "op": "error",
+  "code": "failed",
+  "message": "disk full"
+}

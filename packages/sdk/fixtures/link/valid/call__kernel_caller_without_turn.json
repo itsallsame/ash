@@ -1,0 +1,12 @@
+{
+  "t": "call",
+  "ch": "device",
+  "id": "c2",
+  "capability": "decision.prompt",
+  "args": {},
+  "caller": {
+    "member": "service:gate",
+    "label": "gate"
+  },
+  "deadline": 1760000030000
+}

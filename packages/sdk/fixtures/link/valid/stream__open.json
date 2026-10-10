@@ -1,0 +1,9 @@
+{
+  "t": "stream",
+  "sid": "st1",
+  "op": "open",
+  "ch": "device",
+  "ref": "c1",
+  "mime": "image/png",
+  "size": 3145728
+}

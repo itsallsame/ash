@@ -1,0 +1,16 @@
+{
+  "t": "call",
+  "ch": "device",
+  "id": "c1",
+  "capability": "screen.tap",
+  "args": {
+    "x": 1,
+    "y": 2
+  },
+  "caller": {
+    "member": "agent:main",
+    "turn": "t_9",
+    "label": "main agent"
+  },
+  "deadline": 1760000030000
+}

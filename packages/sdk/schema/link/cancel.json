@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 cancel frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "cancel"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "t",
+    "id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

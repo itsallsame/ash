@@ -1,0 +1,10 @@
+{
+  "t": "send.result",
+  "id": "s1",
+  "ok": false,
+  "error": {
+    "code": "forbidden",
+    "message": "not allowed",
+    "recovery_hint": "ask the owner"
+  }
+}

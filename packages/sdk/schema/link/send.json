@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 send frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "send"
+    },
+    "ch": {
+      "const": "human"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "request",
+            "response",
+            "event"
+          ]
+        },
+        "word": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "type": "object",
+          "properties": {}
+        },
+        "reply_to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wait": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "to",
+        "kind",
+        "word",
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "t",
+    "ch",
+    "id",
+    "request"
+  ],
+  "additionalProperties": false
+}

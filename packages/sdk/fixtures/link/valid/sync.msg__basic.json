@@ -1,0 +1,8 @@
+{
+  "t": "sync.msg",
+  "sid": "y1",
+  "message": {
+    "id": "m2",
+    "seq": 2
+  }
+}

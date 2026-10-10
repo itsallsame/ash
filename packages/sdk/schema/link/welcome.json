@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 welcome frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "welcome"
+    },
+    "hand_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session": {
+      "type": "string",
+      "minLength": 1
+    },
+    "heartbeat_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "channels": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "accepted": {
+                  "const": true
+                }
+              },
+              "required": [
+                "accepted"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "accepted": {
+                  "const": false
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "accepted",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "human": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "client": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "local": {
+                  "type": "boolean"
+                },
+                "accepted": {
+                  "const": true
+                }
+              },
+              "required": [
+                "client",
+                "local"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "accepted": {
+                  "const": false
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "accepted",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "agent": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "accepted": {
+                  "const": true
+                }
+              },
+              "required": [
+                "accepted"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "accepted": {
+                  "const": false
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "accepted",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "t",
+    "hand_id",
+    "session",
+    "heartbeat_ms",
+    "channels"
+  ],
+  "additionalProperties": false
+}

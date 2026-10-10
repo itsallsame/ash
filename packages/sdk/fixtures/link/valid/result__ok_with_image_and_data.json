@@ -1,0 +1,21 @@
+{
+  "t": "result",
+  "id": "c1",
+  "ok": true,
+  "content": [
+    {
+      "type": "image",
+      "mime": "image/png",
+      "b64": "aGVsbG8="
+    },
+    {
+      "type": "resource",
+      "stream": "st1",
+      "mime": "image/png",
+      "size": 3145728
+    }
+  ],
+  "data": {
+    "width": 10
+  }
+}
