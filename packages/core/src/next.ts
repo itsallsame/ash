@@ -6,7 +6,7 @@
  * Order: host boot, ledger, vault, kernel (registry, redact, gate, router), services, edges, then everybody into the
  * registry, then start (the port first, because the agents are given the tool address on it).
  */
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,7 @@ import { WordError, type Caller } from "../../sdk/src/message";
 import { createAgents, bodyFileWriter, fileTemplates } from "./edges/agents";
 import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
 import { createRemoteDrivers } from "./edges/agents/remote";
-import { createApps, installBuiltinOrgans } from "./edges/apps";
+import { createApps, installBuiltinOrgans, installContractDoc } from "./edges/apps";
 import { createLocalBody, mainBodyKind } from "./edges/body/local";
 import { createHostService, HostClient, loadHostBoot } from "./edges/host";
 import { createLlm } from "./edges/llm";
@@ -30,6 +30,8 @@ import { HandRegistry } from "./edges/link-server/hands/registry";
 import { createHuman, summaryRequest } from "./edges/link-server/human";
 import { staticWeb } from "./edges/link-server/web";
 import { createToolsEdge, TOOL_NAMES, toolWords } from "./edges/tools";
+import { APP_CONTRACT_DOC } from "./prompts/app-contract.generated";
+import { AGENT_RULES, MAIN_RULES } from "./prompts/rules.generated";
 import { createGate, GateStore } from "./kernel/gate";
 import { Ledger } from "./kernel/ledger";
 import { createRedact } from "./kernel/redact";
@@ -55,8 +57,8 @@ export type {
 } from "../../sdk/src/driver";
 
 export interface HubOptions {
-  /** The hub's state directory (ledger, blobs, vault file). The caller owns it; starting again on the same one is a restart. */
-  dataDir: string;
+  /** The hub's state directory (ledger, blobs, vault file). The caller owns it; starting again on the same one is a restart. Absent: the host's `dirs.state`. */
+  dataDir?: string;
   /** The one port the hub opens on 127.0.0.1. 0 or absent: any free port. */
   port?: number;
   /** The environment the host started the hub with (SPEC-07: `ASH_HOST_SPEC`, `ASH_VAULT_SEAL_KEY`, `ASH_HOST_TOKEN`). Absent: `process.env`. The hub reads host.json itself. */
@@ -85,7 +87,9 @@ export interface Hub {
 
 const log = (...args: unknown[]): void => console.error("[hub]", ...args.map((a) => (a instanceof Error ? a.message : a)));
 const service = (member: string): Caller => ({ member, via: "service", local: true });
-const SKILLS = fileURLToPath(new URL("../../ash-skills/", import.meta.url));
+/** `packages/ash-skills` next to the sources; `<payload>/ash-skills` next to the bundle (`<payload>/ash/ash-core.mjs`, payload/assemble.mjs). */
+const SKILLS = [new URL("../ash-skills/", import.meta.url), new URL("../../ash-skills/", import.meta.url)]
+  .map((url) => fileURLToPath(url)).find((dir) => existsSync(join(dir, "agents", "main.json"))) ?? fileURLToPath(new URL("../../ash-skills/", import.meta.url));
 const PERSONA = ["SOUL", "IDENTITY", "PULSE"] as const;
 
 function hubVersion(): string {
@@ -103,10 +107,11 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const host = new HostClient({ endpoint: spec.endpoint, token: secrets.token, capabilities: spec.capabilities });
 
   // 2. ledger  3. vault (the host boot has already refused a start without the seal key: nothing is stored unsealed)
-  mkdirSync(opts.dataDir, { recursive: true });
-  const ledger = Ledger.open(join(opts.dataDir, "ash.db"));
+  const dataDir = opts.dataDir ?? spec.dirs.state;
+  mkdirSync(dataDir, { recursive: true });
+  const ledger = Ledger.open(join(dataDir, "ash.db"));
   let vault: Vault;
-  try { vault = openVault({ file: join(opts.dataDir, "vault.json"), sealKey: secrets.sealKey, now }); } catch (error) { ledger.close(); throw error; }
+  try { vault = openVault({ file: join(dataDir, "vault.json"), sealKey: secrets.sealKey, now }); } catch (error) { ledger.close(); throw error; }
 
   // 4. kernel. The gate needs the hands and the main body, the router needs the agents and the apps: they come later.
   const late: { hands?: HandRegistry; body?: ReturnType<typeof createLocalBody>; gateService?: ReturnType<typeof createGateService>; apps?: ReturnType<typeof createApps>; agents?: ReturnType<typeof createAgents> } = {};
@@ -141,7 +146,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     contractOf: (member, word) => registry.find(member, word)?.contract ?? null, onError: (where, error) => log(where, error),
   });
   const clock = createClockService({ ledger, router, now });
-  const senses = createSensesService({ dataDir: opts.dataDir, now });
+  const senses = createSensesService({ dataDir, now });
   const cost = createCostService({ ledger, now });
   const reflex = createReflexService({ ledger, router, registry, jev: createJev({ post: (req) => llm.post("service:reflex", req) }) });
   const history = createHistoryService({ ledger });
@@ -189,11 +194,13 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
     templates: fileTemplates(join(SKILLS, "agents")),
+    rules: (decl) => (decl.primary ? MAIN_RULES : AGENT_RULES),
     tools: (agent, allowed) => ({ mcp_url: `${url}/mcp`, token: tools.issueToken(agent), allowed: allowed ?? [...TOOL_NAMES] }),
   });
   const launcher = body.appLauncher();
+  if (launcher) installContractDoc(launcher.root, APP_CONTRACT_DOC);
   const apps = late.apps = createApps({
-    router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log,
+    router, registry, ledger, primaryAgent: () => agents.primary() ?? "", launcher, clock: { now }, log, contract: { doc: APP_CONTRACT_DOC },
     ...(launcher ? { builtinApps: installBuiltinOrgans(join(SKILLS, "organs"), launcher.root) } : {}),
   });
   const human = createHuman({

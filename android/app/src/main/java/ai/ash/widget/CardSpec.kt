@@ -67,7 +67,7 @@ data class CSize(val width: Float, val height: Float, val root: CNode)
 data class CardRender(val root: CNode, val sizes: List<CSize>, val accent: Tint?)
 
 /**
- * The phone's half of the card format (the core's half is packages/core/src/members/widgets-card.ts): the components
+ * The phone's half of the card format (the core's half is packages/core/src/services/widgets/card.ts): the components
  * the core resolved, the colours and icons they name, and Android's nesting budget counted the same way.
  */
 object CardSpec {

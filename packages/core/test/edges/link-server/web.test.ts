@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AVATARS, UI_HTML } from "../../../src/ui";
+import { AVATARS, UI_HTML } from "../../../src/edges/link-server/ui.generated";
 import { startHub } from "./harness";
 
 test("the web client: the page, its manifest, icon and faces are served at /, and nothing else is, to GET only", async (t) => {

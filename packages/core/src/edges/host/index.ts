@@ -4,3 +4,4 @@ export {
 } from "./client";
 export { parseHostEvent, readHostEvents, type HostEventParse, type HostEventReader } from "./events";
 export { createHostService, HOST_ID, type HostService, type HostServiceDeps } from "./service";
+export { protectProcessMemory } from "./harden";

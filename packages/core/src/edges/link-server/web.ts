@@ -3,7 +3,7 @@
  * talks to the hub only over `/link`; nothing here is data. Mount it at `/` with `relay: true`, so a browser can also get
  * it through the relay.
  */
-import { AVATARS, ICON_SVG, UI_HTML, WEB_MANIFEST } from "../../ui";
+import { AVATARS, ICON_SVG, UI_HTML, WEB_MANIFEST } from "./ui.generated";
 import type { HttpHandler } from "./index";
 
 const FACE = /^\/avatars\/([a-z]+)\.webp$/;

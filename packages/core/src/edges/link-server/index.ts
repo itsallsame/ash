@@ -15,7 +15,6 @@ import {
   createLinkServer as createLink, type AuthContext, type AuthResult, type LinkServer, type LinkSession, type SessionHandlers,
 } from "../../../../link/src/server";
 import type { LinkSocket } from "../../../../link/src/socket";
-import type { HostClient } from "../host";
 import { bearerIs, signatureHolds, spkiBytes } from "./auth";
 import type { HandConnection, HandRegistry } from "./hands/registry";
 
@@ -27,7 +26,7 @@ export type ChannelContext = HandConnection;
 export type ChannelAttach = (session: LinkSession, ctx: ChannelContext) => SessionHandlers | void;
 
 export interface LinkServerOptions {
-  hostClient: Pick<HostClient, "handsHandoff">;
+  hostClient: { handsHandoff(port: number, token: string): Promise<unknown> };
   hands: HandRegistry;
   kernel?: { id: string; version: string };
   /** 0 or absent: any free port. */
