@@ -230,7 +230,7 @@ test("the agent is deleted: no wake, one line in the log; stopped: the wake is t
   await startTurn(stopped);
   const id = await slowReceipt(await rig2.client());
   await endTurn(stopped);
-  await stopped.agents.manager.stopAgent(MAIN, "test");
+  await stopped.agents.manager.stopAgent(MAIN, "test", true);
   stopped.slow[0]!.resolve({ data: { n: 4 } });
   await tick();
   assert.equal(stopped.logs.filter((l) => String(l[0]).includes("could not wake")).length, 1, JSON.stringify(stopped.logs));
@@ -396,7 +396,7 @@ test("the sweeps at start leave an agent that is not running alone: no attempt, 
   await startTurn(s);
   const second = await slowReceipt(await first.client());
   await endTurn(s);
-  await s.agents.manager.stopAgent(MAIN, "test");
+  await s.agents.manager.stopAgent(MAIN, "test", true);
   s.slow[1]!.resolve({ data: { n: 3 } });
   await tick();
   const logged = s.logs.length;

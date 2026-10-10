@@ -229,7 +229,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     if (table.claimWake(id)) wakeAgent(table.get(id)!);
   }
 
-  /** The sweeps at start leave the wakes of agents that are not running to their own start (`catchUp`): no attempt, no log line. */
+  /** The sweeps at start wake the agents that are members of the registry (running, or still starting: the words wait in their inbox); an agent that is not one (off, given up on) is left to its own start (`catchUp`): no attempt, no log line. */
   function sweep(ids: string[]): void {
     for (const id of ids) { const row = table.get(id); if (row && registry.describe(row.agent)) wakeIfDue(id); }
   }

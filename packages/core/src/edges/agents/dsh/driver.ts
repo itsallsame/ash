@@ -78,6 +78,8 @@ const dirOf = (cwd: string) => cwd.replace(/\/+$/, "");
 export function createDshDriver(deps: DshDriverDeps): AgentDriver {
   const procs = new Map<string, Proc>();
   const bySession = new Map<string, { agent: string; sess: Session }>();
+  /** The start in flight for each agent. A stop (or a start over) takes it away: the boot that finds it gone does not go on. */
+  const starting = new Map<string, object>();
   const log = deps.log ?? (() => {});
   const report = deps.report;
 
@@ -260,9 +262,18 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
 
   // -- process -----------------------------------------------------------------------------------------------------
 
+  const cancelled = (agent: string) => new WordError("cancelled", `${agent} was stopped while it started`);
+
   async function boot(agent: string, spec: AgentStartSpec): Promise<void> {
+    const ticket = {};
+    starting.set(agent, ticket);
+    try { await run(agent, spec, ticket); } finally { if (starting.get(agent) === ticket) starting.delete(agent); }
+  }
+
+  async function run(agent: string, spec: AgentStartSpec, ticket: object): Promise<void> {
     const cwd = spec.native?.cwd ?? `/root/agents/${agent.slice("agent:".length)}`;
     if (spec.modules.static.length) await deps.writeFile(`${dirOf(cwd)}/${BASELINE_FILE}`, spec.modules.static.map((m) => m.content).join("\n\n---\n\n") + "\n");
+    if (starting.get(agent) !== ticket) throw cancelled(agent); // stopped while the file was being written: no process
     const child: DriverProcess = deps.spawn(deps.argv ?? DEFAULT_ARGV, { ...(spec.native?.env ? { env: spec.native.env } : {}), cwd });
     const client = new AcpClient(child, log);
     const p: Proc = { client, spec, cwd, sessions: new Map(), status: { state: "starting" }, stopping: false };
@@ -276,6 +287,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
     try {
       await client.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ash", version: "4" } });
       for (const key of spec.lanes) await open(agent, p, key, spec.sessions[key]);
+      if (starting.get(agent) !== ticket) throw cancelled(agent);
     } catch (error) {
       p.stopping = true;
       p.status = { state: "failed", detail: errorText(error) };
@@ -286,6 +298,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
   }
 
   async function halt(agent: string): Promise<void> {
+    starting.delete(agent); // a start still in flight is void: it stops where it is, or its process is the one closed below
     const p = procs.get(agent);
     if (!p) return;
     p.stopping = true;

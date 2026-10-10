@@ -78,9 +78,7 @@ export function createAgentsService(manager: AgentManager): Member {
   async function remove(id: string): Promise<WordResult> {
     const run = manager.run(id);
     if (run.spec.decl.primary) throw new WordError("conflict", "the primary agent cannot be removed; hand primary to another agent first");
-    await manager.stopAgent(id, "removed");
-    manager.inbox.drop(id);
-    runs.remove(id);
+    await manager.forget(id, "removed");
     return data({ removed: true });
   }
 

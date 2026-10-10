@@ -71,7 +71,7 @@ export const USAGE_DEBOUNCE_MS = 5000;
 export const SPAWN_TIMEOUT_S = 600;
 /** How long after the last `typing` the owner is taken to be still typing (ms). */
 export const TYPING_MS = 5000;
-/** A process that ran at least this long before it died does not count against the three tries. */
+/** A process that stayed up this long is stable (as is one that finished a round): the failure count clears, and a primary agent that was in trouble is told it is back. */
 export const STABLE_RUN_MS = 60_000;
 /**
  * How many failures in a row (a start that failed, or a process that died too soon after its start, with no round finished in
@@ -87,7 +87,7 @@ export const MAX_FAILURES = 5;
  */
 export const RETRY_STEPS_MS = [2000, 5000, 15_000, 60_000, 300_000];
 export const retryDelay = (failures: number): number => RETRY_STEPS_MS[Math.min(Math.max(failures, 1), RETRY_STEPS_MS.length) - 1]!;
-/** The owner hears that the primary agent cannot start after this many failures in a row (about 20 s of trying), not at the first one. */
+/** The owner hears that the primary agent cannot start after this many failures in a row, starts that failed and processes that died too soon alike (about 20 s of trying), not at the first one. */
 export const TROUBLE_NOTICE_AT = 4;
 /** A start that has not finished by then counts as failed (the runtime hung). Under the host's own five minutes for a core to say it is ready. */
 export const START_TIMEOUT_MS = 180_000;
@@ -115,18 +115,49 @@ interface Lane {
   screenPlanned: boolean;
   routing: Set<string>;
 }
+/** The process of one start attempt, and the lanes it holds. A new attempt makes a new one; the old one is never used again. */
 interface Live {
   id: string;
   driver: AgentDriver;
-  state: "starting" | "running" | "failed";
   lanes: Map<string, Lane>;
   startedAt: number;
-  /** Crashes in a row so far, this process's start included (see MAX_FAILURES). A completed turn clears it. */
-  failures: number;
-  stopping: boolean;
+  /** The process ended while the attempt was still going (after the driver's start, before the attempt took it as up). */
+  ended?: string;
 }
-/** An agent whose next start try is waiting for its time (see RETRY_STEPS_MS); the member stays in the registry meanwhile. */
-interface Retry { why: string; failures: number; cancel(): void }
+/**
+ * Where an agent is. `stopped` (nothing runs; the agent is off, was given up on, or the next step is not taken yet) ->
+ * `starting` (an attempt is in flight) -> `running`; an attempt that fails or a process that dies too soon goes through
+ * `stopping` (the process is stopped) to `backoff` (waiting for the next try) and then `starting` again. `stopping` is also
+ * what a restart or a stop passes through. Whether the agent should run at all is `desired` (in `Runs`): the one intent;
+ * `reconcile` is the one place that reads intent and phase together and decides the next step.
+ *
+ * `gen` numbers the attempts: whatever voids the attempt in flight (stop, restart, timeout, a failure, a changed intent) adds
+ * one, and every step that was waiting on something checks that it is still the current number before it lands.
+ */
+type Phase = "stopped" | "starting" | "running" | "backoff" | "stopping";
+interface Slot {
+  id: string;
+  phase: Phase;
+  gen: number;
+  /** The attempt's process: from `starting` to `running`, else none. */
+  live?: Live;
+  /** Failures in a row so far: a start that failed, or a process that died too soon after its start (see MAX_FAILURES). A completed turn clears it. */
+  failures: number;
+  /** The primary agent's owner was told it cannot start, and has not been told it is back. */
+  troubled: boolean;
+  /** Given up on (not the primary agent): not a member, until it is started by hand. */
+  gaveUp: boolean;
+  /** Names the reason in the notice an interrupted turn leaves. */
+  why: string;
+  /** The proxy the attempt began with. */
+  proxy: string;
+  /** Ends the wait of `backoff`. */
+  cancelWait?: () => void;
+  /** Ends the timer that says a troubled agent is stable. */
+  cancelStable?: () => void;
+  /** While `stopping`: settles when the process is stopped. */
+  stopped?: Promise<void>;
+}
 interface Waiter { id: string; agent: string; from: string; since: number; resolve(answer: string): void; reject(error: WordError): void }
 
 export const agentCaller = (agent: string, turn?: string): Caller => ({ member: agent, via: "agent", local: true, ...(turn ? { turn } : {}) });
@@ -137,14 +168,11 @@ export class AgentManager {
   readonly runs: Runs;
   readonly inbox: Inbox;
   readonly modules: Modules;
-  private readonly live = new Map<string, Live>();
+  private readonly slots = new Map<string, Slot>();
   private readonly drivers = new Map<string, AgentDriver>();
   private readonly waiters = new Map<string, Waiter>();
   private readonly outputs = new Map<string, string[]>();
   private readonly typingUntil = new Map<string, number>();
-  private readonly retries = new Map<string, Retry>();
-  /** Primary agents the owner was told cannot start: the one notice, and the one that tells it is back. */
-  private readonly troubled = new Set<string>();
   private paused = false;
   private proxy: string;
   private readonly stoppers: (() => void)[] = [];
@@ -173,23 +201,26 @@ export class AgentManager {
   // start and stop of the module
   // ----------------------------------------------------------------------------------------------------------------
 
+  /** Does not wait for the agents: their processes come up on their own time, and what the owner says meanwhile waits in the inbox. */
   async startAll(): Promise<void> {
     this.runs.seed(this.deps.templates);
     this.inbox.prune(this.now() - 7 * 86_400_000);
-    // From here on the declared agents are members: what the owner says while their processes start waits in the inbox.
-    for (const run of this.runs.list()) if (run.desired === "on") this.ensureMember(run.id);
+    // From here on the declared agents are members. A kind with no driver here is not: nothing would ever start it.
+    const on = this.runs.list().filter((run) => run.desired === "on" && this.deps.drivers[run.spec.decl.runtime.kind]);
+    for (const run of on) this.ensureMember(run.id);
     await this.refreshPaused();
     this.stoppers.push(this.timers.every(USAGE_POLL_MS, () => this.bg(this.pollUsage(), "usage poll")));
-    await Promise.allSettled(this.runs.list().filter((run) => run.desired === "on").map((run) => this.startAgent(run.id, "内核重启")));
+    for (const run of on) this.bg(this.startAgent(run.id, "内核重启"), `start ${run.id}`);
   }
 
   async stopAll(): Promise<void> {
     for (const stop of this.stoppers.splice(0)) stop();
     for (const stop of this.usageDue.values()) stop();
     this.usageDue.clear();
-    for (const retry of this.retries.values()) retry.cancel();
-    this.retries.clear();
-    await Promise.allSettled([...this.live.keys()].map((id) => this.stopAgent(id, "hub stopping")));
+    await Promise.allSettled([...this.slots.values()].map(async (slot) => {
+      await this.halt(slot, "hub stopping");
+      this.deps.registry.remove(slot.id);
+    }));
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -217,83 +248,221 @@ export class AgentManager {
     if (!run) throw new WordError("not_found", `no such agent: ${id}`);
     return run;
   }
-  liveOf(id: string): Live | undefined { return this.live.get(id); }
+  private slot(id: string): Slot {
+    let slot = this.slots.get(id);
+    if (!slot) this.slots.set(id, slot = { id, phase: "stopped", gen: 0, failures: 0, troubled: false, gaveUp: false, why: "内核重启", proxy: this.proxy });
+    return slot;
+  }
+  /** The process of the attempt in flight or running, with its lanes. */
+  liveOf(id: string): Live | undefined { return this.slots.get(id)?.live; }
+  /** This process is the agent's current one and is up. A step that waited on something asks this before it goes on. */
+  private isUp(live: Live): boolean {
+    const slot = this.slots.get(live.id);
+    return slot?.live === live && slot.phase === "running";
+  }
+  private upOf(id: string): Live | undefined {
+    const slot = this.slots.get(id);
+    return slot?.phase === "running" ? slot.live : undefined;
+  }
+  private ups(): Live[] { return [...this.slots.values()].flatMap((s) => (s.phase === "running" && s.live ? [s.live] : [])); }
   running(id: string): Live {
     this.run(id);
-    const live = this.live.get(id);
-    if (!live || live.state !== "running") throw new WordError("offline", `${id} is not running`);
+    const live = this.upOf(id);
+    if (!live) throw new WordError("offline", `${id} is not running`);
     return live;
   }
   stateOf(id: string): "idle" | "working" | "starting" | "stopped" | "error" {
-    const live = this.live.get(id);
-    if (!live) return this.retries.has(id) ? "starting" : "stopped";
-    if (live.state === "failed") return "error";
-    if (live.state === "starting") return "starting";
-    return [...live.lanes.values()].some((l) => l.busy) ? "working" : "idle";
+    const slot = this.slots.get(id);
+    if (!slot) return "stopped";
+    if (slot.gaveUp) return "error";
+    if (slot.phase === "running") return [...slot.live!.lanes.values()].some((l) => l.busy) ? "working" : "idle";
+    // starting, waiting for the next try, or stopping to start again: all of it is "on its way" while the intent is on
+    return slot.phase !== "stopped" && this.runs.get(id)?.desired === "on" ? "starting" : "stopped";
   }
-  /**
-   * Whether the agent takes messages: it is a member of the registry, and the inbox keeps what comes while its process starts
-   * or is started again. Different from `available` (the process is up and can run a turn). False for an agent that is
-   * off, was removed, or was given up on.
-   */
-  reachable(id: string): boolean { const state = this.live.get(id)?.state; return state === "starting" || state === "running" || this.retries.has(id); }
+  /** Whether the agent takes messages: it is a member of the registry, and the inbox keeps what comes while its process starts or is started again. Different from `available` (the process is up and can run a turn). */
+  reachable(id: string): boolean { return this.deps.registry.get(id) !== null; }
   /** A member of the registry while the agent is meant to be on, process or not. */
   private ensureMember(id: string): void {
     if (!this.deps.registry.get(id)) this.deps.registry.add(this.memberFor(id));
   }
 
+  // -- the state machine --------------------------------------------------------------------------------------------
+
   /**
-   * Start an agent. A start that fails is tried again later, by RETRY_STEPS_MS, while the member stays in the registry and the
-   * inbox takes messages; this returns once the first try is over, not when a later one succeeds. The primary agent is never
-   * given up on; any other is after MAX_FAILURES in a row. A start asked for while a try is waiting does not wait for it.
-   * `failures`: the failures in a row so far. `why` names the reason in the notice an interrupted turn leaves.
+   * The one place that reads the intent (`desired`) and the phase together. An agent that should run and is stopped starts;
+   * one that should not is stopped; one that is on its way (starting, running, waiting for its next try) is left alone; one that
+   * is stopping is looked at again when the process is gone. Resolves when the first attempt it started is over.
    */
-  async startAgent(id: string, why = "内核重启", failures = 0): Promise<void> {
-    const existing = this.live.get(id);
-    if (existing && existing.state !== "failed") return;
-    this.dropRetry(id);
+  private async reconcile(slot: Slot, why: string): Promise<void> {
+    const want = this.runs.get(slot.id)?.desired === "on" && !slot.gaveUp;
+    if (!want) { if (slot.phase !== "stopped") await this.halt(slot, why); return; }
+    if (slot.phase === "stopping") { await slot.stopped; return this.reconcile(slot, why); }
+    if (slot.phase === "stopped") await this.attempt(slot);
+  }
+
+  /**
+   * Start an agent by hand (or at boot, or when it is declared). A start that fails is tried again later, by RETRY_STEPS_MS,
+   * while the member stays in the registry and the inbox takes messages; this returns once the first try is over, not when a
+   * later one succeeds. A start asked for while a try is waiting does not wait for it. `why` names the reason in the notice an
+   * interrupted turn leaves.
+   */
+  async startAgent(id: string, why = "内核重启"): Promise<void> {
+    const run = this.run(id);
+    this.driver(run.spec.decl.runtime.kind); // no driver for the kind: refused here, before anything changes
+    const slot = this.slot(id);
+    slot.why = why;
+    slot.gaveUp = false;
+    if (slot.phase === "starting" || slot.phase === "running") return;
+    if (slot.phase === "backoff") await this.halt(slot, "start now");
+    slot.failures = 0;
+    await this.reconcile(slot, why);
+  }
+
+  /** `keepWaiters`: the new process answers those who ask and wait, not the old one's end (a planned restart). The member stays meanwhile. */
+  async restartAgent(id: string, why = "重启", keepWaiters = false): Promise<void> {
+    await this.stopAgent(id, "restart", false, keepWaiters);
+    this.runs.setDesired(id, "on");
+    await this.startAgent(id, why);
+  }
+
+  /** Stop an agent. `off`: for good (the intent turns off and the member leaves the registry); else it is a step of a restart and the member stays. */
+  async stopAgent(id: string, reason: string, off = false, keepWaiters = false): Promise<void> {
+    const slot = this.slots.get(id);
+    if (off) { this.runs.setDesired(id, "off"); this.deps.registry.remove(id); if (slot) slot.troubled = false; }
+    if (!keepWaiters) this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
+    if (slot) await this.halt(slot, reason);
+  }
+
+  /** Remove an agent altogether: stop it, drop its inbox and its declaration. */
+  async forget(id: string, reason: string): Promise<void> {
+    await this.stopAgent(id, reason, true).catch(() => {});
+    this.slots.delete(id);
+    this.inbox.drop(id);
+    this.runs.remove(id);
+  }
+
+  /**
+   * Void whatever is in flight for the agent (add one to `gen`), end its timers and stop its process; settles when it is gone.
+   * `dead`: the process ended by itself, there is nothing to stop. A halt that comes while another is stopping voids that one's
+   * continuation too and waits for the same process.
+   */
+  private halt(slot: Slot, reason: string, dead = false): Promise<void> {
+    slot.gen++;
+    this.endWait(slot);
+    this.endStable(slot);
+    if (slot.phase === "stopping") return slot.stopped!;
+    const live = slot.live;
+    slot.live = undefined;
+    this.deps.revokeTools?.(slot.id);
+    if (!live) { slot.phase = "stopped"; return Promise.resolve(); }
+    slot.phase = "stopping";
+    const gone = dead ? Promise.resolve() : live.driver.stop(slot.id, reason).catch((error) => this.log(`agents: stopping ${slot.id}: ${errorText(error)}`));
+    return slot.stopped = gone.then(() => { slot.phase = "stopped"; slot.stopped = undefined; });
+  }
+  private endWait(slot: Slot): void { slot.cancelWait?.(); slot.cancelWait = undefined; }
+  private endStable(slot: Slot): void { slot.cancelStable?.(); slot.cancelStable = undefined; }
+
+  /**
+   * One start attempt: a new number, a new process record, the member in the registry from now on (the router files what comes
+   * in the inbox; the drain at the end delivers it). Resolves when the attempt is over: up, or failed (and waiting for the
+   * next one; a temporary worker's tries follow each other at once and are all inside this).
+   */
+  private async attempt(slot: Slot): Promise<void> {
+    const id = slot.id;
+    const gen = ++slot.gen;
     const run = this.run(id);
     const decl = run.spec.decl;
     const lanes = lanesOf(decl);
-    const live: Live = { id, driver: this.driver(decl.runtime.kind), state: "starting", lanes: new Map(), startedAt: this.now(), failures, stopping: false };
+    const live: Live = { id, driver: this.driver(decl.runtime.kind), lanes: new Map(), startedAt: this.now() };
     for (const key of Object.keys(lanes)) live.lanes.set(key, newLane(key));
-    this.live.set(id, live);
-    // A member from the moment it is meant to run, not from the moment its process answers: the router files what comes in the
-    // inbox, and the drain at the end of this start delivers it. Only a stop or a give-up takes the member out.
+    Object.assign(slot, { phase: "starting", live, proxy: this.proxy });
     this.ensureMember(id);
+    const current = () => slot.gen === gen;
     let statics: PromptModule[] = [];
     try {
       statics = await this.modules.static(decl);
-      await this.within(START_TIMEOUT_MS, `${id} did not finish starting`, live.driver.start(id, {
-        runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, Object.keys(lanes), decl.tools),
-        modules: { static: statics }, lanes: Object.keys(lanes), sessions: run.spec.sessions,
-      }));
+      if (!current()) return; // voided while the files were read: no process exists yet
+      await this.within(START_TIMEOUT_MS, `${id} did not finish starting`, (async () => {
+        await live.driver.start(id, {
+          runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, Object.keys(lanes), decl.tools),
+          modules: { static: statics }, lanes: Object.keys(lanes), sessions: run.spec.sessions,
+        });
+        if (current()) await this.syncCredentials(live);
+      })());
     } catch (error) {
-      if (live.stopping) return; // stopped while it was starting: stopAgent has done the rest
-      if (this.live.get(id) === live) this.live.delete(id);
-      await live.driver.stop(id, "start failed").catch(() => {});
-      if (live.stopping || this.live.has(id)) return; // stopped or started over while the driver was stopping
-      const reason = errorText(error);
-      this.log(`agents: ${id} did not start: ${reason}`);
-      const n = failures + 1;
-      if (decl.ephemeral) return n >= EPHEMERAL_TRIES ? this.giveUp(id, reason, live, n) : this.startAgent(id, why, n);
-      if (!decl.primary && n >= MAX_FAILURES) return this.giveUp(id, reason, live, n);
-      if (decl.primary && n >= TROUBLE_NOTICE_AT && !this.troubled.has(id)) {
-        this.troubled.add(id);
-        this.tellOwner(`Ash 暂时起不来（${reason}），正在后台一直重试。你说的话我先收着，起来后再处理。`);
-      }
-      return this.retryAfter(id, why, n, retryDelay(n));
+      if (!current()) return; // voided while it started: the one that voided it has stopped the process
+      return this.failed(slot, errorText(error), false);
     }
-    if (live.stopping || this.live.get(id) !== live) return; // stopped while it was starting (stopAgent has stopped the driver)
-    live.state = "running";
+    if (!current()) return;
+    if (live.ended) return this.failed(slot, live.ended, true);
+    slot.phase = "running";
     live.startedAt = this.now();
     const hash = staticHash(statics);
     this.runs.patch(id, (spec) => { for (const key of Object.keys(lanes)) if (!spec.sessions[key] || !spec.static_hash[key]) spec.static_hash[key] ??= hash; });
     this.deps.started?.(id);
-    if (this.troubled.delete(id)) this.tellOwner("Ash 恢复了。");
-    this.interruptedNotice(id, why);
-    await this.syncCredentials(live);
+    this.interruptedNotice(id, slot.why);
     for (const lane of live.lanes.values()) this.bg(this.drain(live, lane), `drain ${id}/${lane.key}`);
+    // Troubled: it is back once it has stayed up (or finished a round, which `finishTurn` takes).
+    if (slot.troubled) slot.cancelStable = this.timers.after(STABLE_RUN_MS, () => { if (current()) this.stable(slot); });
+    this.refreshProxy(slot);
+  }
+
+  /** A start that failed, or a process that died too soon: count it, stop what is left, and decide what comes next. */
+  private async failed(slot: Slot, reason: string, died: boolean, why?: string): Promise<void> {
+    const id = slot.id;
+    const decl = this.runs.get(id)?.spec.decl;
+    const n = ++slot.failures;
+    if (why) slot.why = why;
+    this.log(`agents: ${id} ${died ? "ended" : "did not start"}: ${reason}`);
+    const mine = slot.gen + 1; // what halt makes of it
+    await this.halt(slot, "start failed", died);
+    if (slot.gen !== mine || !decl || this.runs.get(id)?.desired !== "on") return; // stopped or started over meanwhile: not ours to go on
+    if (decl.ephemeral ? n >= EPHEMERAL_TRIES : !decl.primary && n >= MAX_FAILURES) return this.giveUp(slot, reason, n);
+    if (decl.primary && n >= TROUBLE_NOTICE_AT && !slot.troubled) {
+      slot.troubled = true;
+      this.tellOwner(`Ash 暂时起不来（${reason}），正在后台一直重试。你说的话我先收着，起来后再处理。`);
+    }
+    // The first quick crash is started again at once, and so is a temporary worker; the other ones wait on the steps.
+    return this.backoff(slot, decl.ephemeral || (died && n <= 1) ? 0 : retryDelay(died ? n - 1 : n));
+  }
+
+  /** The next attempt after `delay` ms (at once when 0). Until then the agent is a member and takes messages. */
+  private backoff(slot: Slot, delay: number): Promise<void> {
+    if (delay <= 0) return this.attempt(slot);
+    const gen = slot.gen;
+    slot.phase = "backoff";
+    slot.cancelWait = this.timers.after(delay, () => {
+      if (slot.gen !== gen) return;
+      slot.cancelWait = undefined;
+      slot.phase = "stopped"; // the wait is over: the intent decides whether another try is made
+      this.bg(this.reconcile(slot, slot.why), `retry ${slot.id}`);
+    });
+    return Promise.resolve();
+  }
+
+  /** Whatever waits for its next try tries now (the host says the network came back, or the like). The count of failures goes on. */
+  retryNow(): void {
+    for (const slot of [...this.slots.values()]) {
+      if (slot.phase !== "backoff") continue;
+      this.log(`agents: ${slot.id}: trying the start again now`);
+      this.endWait(slot);
+      slot.phase = "stopped";
+      this.bg(this.reconcile(slot, slot.why), `retry ${slot.id}`);
+    }
+  }
+
+  /** A round done, or a stay long enough: earlier failures no longer count, and a troubled agent is back. */
+  private stable(slot: Slot): void {
+    slot.failures = 0;
+    this.endStable(slot);
+    if (slot.troubled) { slot.troubled = false; this.tellOwner("Ash 恢复了。"); }
+  }
+
+  private giveUp(slot: Slot, reason: string, failures: number): void {
+    slot.gaveUp = true;
+    this.deps.registry.remove(slot.id);
+    this.rejectWaiters(slot.id, new WordError("failed", `${slot.id} could not be started: ${reason}`));
+    this.tellOwner(`${slot.id} 起不来了：连着失败了${failures}次（${reason}）。我先停下它，不再自动重试；你可以在设置里让它重启。`);
   }
 
   /** Reject `work` with a timeout error when it takes longer than `ms`; the work itself is not stopped here. */
@@ -303,76 +472,24 @@ export class AgentManager {
     return Promise.race([work, late]).finally(cancel);
   }
 
-  /** Try the start again after `delay` ms (at once when 0). Until then the agent is a member and takes messages; `failures` carries on from here. */
-  private retryAfter(id: string, why: string, failures: number, delay: number): void {
-    this.dropRetry(id);
-    const go = () => {
-      this.retries.delete(id);
-      if (this.runs.get(id)?.desired !== "on") return;
-      this.bg(this.startAgent(id, why, failures), `retry ${id}`);
-    };
-    if (delay <= 0) return go();
-    this.retries.set(id, { why, failures, cancel: this.timers.after(delay, go) });
-  }
-  private dropRetry(id: string): void { this.retries.get(id)?.cancel(); this.retries.delete(id); }
-
-  /** Whatever waits for its next try tries now (the host says the network came back, or the like). The count of failures goes on. */
-  retryNow(): void {
-    for (const [id, retry] of [...this.retries]) {
-      this.log(`agents: ${id}: trying the start again now`);
-      this.dropRetry(id);
-      this.bg(this.startAgent(id, retry.why, retry.failures), `retry ${id}`);
-    }
-  }
-
-  private giveUp(id: string, reason: string, live: Live, failures: number): void {
-    live.state = "failed";
-    live.stopping = true;
-    this.live.set(id, live);
-    this.dropRetry(id);
-    this.deps.revokeTools?.(id);
-    this.deps.registry.remove(id);
-    this.rejectWaiters(id, new WordError("failed", `${id} could not be started: ${reason}`));
-    this.tellOwner(`${id} 起不来了：连着失败了${failures}次（${reason}）。我先停下它，不再自动重试；你可以在设置里让它重启。`);
-  }
-
-  async stopAgent(id: string, reason: string, off = false, keepWaiters = false): Promise<void> {
-    const live = this.live.get(id);
-    if (off) { this.runs.setDesired(id, "off"); this.troubled.delete(id); }
-    this.dropRetry(id);
-    this.deps.revokeTools?.(id);
-    this.deps.registry.remove(id); // stopped for good (a restart puts it back at once): from now on the router answers offline
-    if (!live) return;
-    live.stopping = true;
-    if (!keepWaiters) this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
-    this.live.delete(id);
-    if (live.state !== "failed") await live.driver.stop(id, reason).catch((error) => this.log(`agents: stopping ${id}: ${errorText(error)}`));
-  }
-
   /**
    * The host's network changed. When the proxy is not the one the agents were started with, the agents that run on the main
    * body are restarted at once, the way a process that ended is: a turn it was in is told as cut off, what waits in the inbox
-   * goes to the new process, which answers those who asked and wait. Whoever asked in the turn that was cut is told result_unknown (as after a crash). Temporary workers, agents that are off, and
-   * agents on a computer are left as they are.
+   * goes to the new process, which answers those who asked and wait. Whoever asked in the turn that was cut is told result_unknown (as after a crash). An agent that is
+   * still starting is looked at when its start is over. Temporary workers, agents that are off, and agents on a computer are left as they are.
    */
   onNetwork(network: HostNetwork): void {
     const next = proxyKey(network);
     if (next === this.proxy) return;
     this.proxy = next;
-    const local = this.deps.localKinds ?? ["dsh"];
-    for (const live of [...this.live.values()]) {
-      const run = this.runs.get(live.id);
-      if (!run || run.desired !== "on" || run.spec.decl.ephemeral || !local.includes(run.spec.decl.runtime.kind) || live.state !== "running" || live.stopping) continue;
-      this.log(`agents: ${live.id}: the proxy changed, restarting its process`);
-      this.bg(this.restartAgent(live.id, "代理换了", true), `restart ${live.id} for the new proxy`);
-    }
+    for (const slot of this.slots.values()) this.refreshProxy(slot);
   }
-
-  /** `keepWaiters`: the new process answers those who ask and wait, not the old one's end (a planned restart). */
-  async restartAgent(id: string, why = "重启", keepWaiters = false): Promise<void> {
-    await this.stopAgent(id, "restart", false, keepWaiters);
-    this.runs.setDesired(id, "on");
-    await this.startAgent(id, why);
+  private refreshProxy(slot: Slot): void {
+    const run = this.runs.get(slot.id);
+    if (!run || slot.phase !== "running" || slot.proxy === this.proxy || run.desired !== "on" || run.spec.decl.ephemeral) return;
+    if (!(this.deps.localKinds ?? ["dsh"]).includes(run.spec.decl.runtime.kind)) return;
+    this.log(`agents: ${slot.id}: the proxy changed, restarting its process`);
+    this.bg(this.restartAgent(slot.id, "代理换了", true), `restart ${slot.id} for the new proxy`);
   }
 
   /** What was in flight when the agent went away is not sent again; the agent hears that it was cut off and decides. */
@@ -475,9 +592,9 @@ export class AgentManager {
     const decl = this.run(id).spec.decl;
     const key = lane ?? this.laneFor(decl, item.from, item.word, "request");
     const row = this.inbox.add({ ...item, agent: id, lane: key });
-    const live = this.live.get(id);
+    const live = this.upOf(id);
     const l = live?.lanes.get(key);
-    if (live && l && live.state === "running" && row.state === "pending" && !this.paused) {
+    if (live && l && row.state === "pending" && !this.paused) {
       if (l.busy) this.bg(this.busyRoute(live, l, row), `route ${row.id}`);
       else if (!l.sending) this.bg(this.drain(live, l), `drain ${id}/${key}`);
     }
@@ -486,7 +603,7 @@ export class AgentManager {
 
   /** The agent is idle on this lane: give it what is waiting (one batch). */
   async drain(live: Live, lane: Lane): Promise<void> {
-    if (live.state !== "running" || lane.busy || lane.sending || this.paused) return;
+    if (!this.isUp(live) || lane.busy || lane.sending || this.paused) return;
     const rows = this.inbox.pending(live.id, lane.key, BATCH);
     if (!rows.length) return;
     // The owner is still typing to this agent: a lane that takes their words waits until they have had time to finish.
@@ -502,10 +619,10 @@ export class AgentManager {
     let sent = false;
     try {
       if (!(await this.quotaAllows(live, lane))) return;
-      if (lane.busy || live.stopping) return;
+      if (lane.busy || !this.isUp(live)) return;
       await this.inject(live, lane);
       const screen = await this.screenPlan(live, lane, rows);
-      if (lane.busy || live.stopping) return;
+      if (lane.busy || !this.isUp(live)) return;
       this.inbox.mark(rows.map((r) => r.id), "sent");
       try {
         lane.screenPlanned = screen.asked; // before the send: a turn can end before it returns
@@ -541,6 +658,7 @@ export class AgentManager {
           action = "interrupt"; // admin is not there or refused: at least stop this turn
         }
       }
+      if (!this.isUp(live)) return; // the process was stopped or replaced while we were asking: the message waits in the inbox
       if (!lane.busy) { this.bg(this.drain(live, lane), "drain"); return; } // the turn ended while we were asking
       if (this.inbox.get(row.id)?.state !== "pending") return;
       if (action === "interrupt") {
@@ -622,7 +740,7 @@ export class AgentManager {
   }
 
   private handleEvent(ev: AgentEvent): void {
-    const live = this.live.get(ev.agent);
+    const live = this.liveOf(ev.agent);
     switch (ev.event) {
       case "handle.updated":
         if (this.runs.get(ev.agent)) this.runs.patch(ev.agent, (spec) => { spec.sessions[ev.key] = ev.handle; });
@@ -667,9 +785,9 @@ export class AgentManager {
   /** Put the failed batch of that turn (the retry card carries its turn in the option id) back in the inbox. False when there is none. */
   private retryFailed(id: string, lane: string, turn: string): boolean {
     if (!this.inbox.requeue(id, turn)) return false;
-    const live = this.live.get(id);
+    const live = this.upOf(id);
     const l = live?.lanes.get(lane);
-    if (live && l && live.state === "running" && !this.paused) this.bg(l.busy ? Promise.resolve() : this.drain(live, l), `retry ${id}/${lane}`);
+    if (live && l && !this.paused) this.bg(l.busy ? Promise.resolve() : this.drain(live, l), `retry ${id}/${lane}`);
     return true;
   }
 
@@ -679,7 +797,7 @@ export class AgentManager {
   }
 
   private finishTurn(live: Live, lane: Lane, ev: Extract<AgentEvent, { event: "turn.ended" }>): void {
-    if (ev.outcome === "completed") live.failures = 0; // a round done: earlier crashes no longer count
+    if (ev.outcome === "completed") this.stable(this.slot(live.id)); // a round done: earlier failures no longer count, and a troubled agent is back
     lane.busy = false;
     lane.turn = undefined;
     const rows = this.inbox.byTurn(ev.turn);
@@ -714,19 +832,16 @@ export class AgentManager {
     }
   }
 
+  /** The process ended by itself. The member stays: it is started again (at once the first time), and what the owner says in between goes to the inbox. */
   private onEnded(id: string, reason?: string): void {
-    const live = this.live.get(id);
-    if (!live || live.stopping || live.state !== "running") return;
-    this.live.delete(id);
-    this.deps.revokeTools?.(id);
-    // The member stays: the process is started again at once, and what the owner says in between goes to the inbox.
-    this.log(`agents: ${id} ended: ${reason ?? "?"}`);
-    // A process that stayed up for a while, or finished a round (`failures` is cleared then), has not been dying "in a row".
-    const failures = (this.now() - live.startedAt >= STABLE_RUN_MS ? 0 : live.failures) + 1;
-    const decl = this.runs.get(id)?.spec.decl;
-    if (!decl?.primary && failures >= (decl?.ephemeral ? EPHEMERAL_TRIES : MAX_FAILURES)) { this.giveUp(id, reason ?? "the process ended", live, failures); return; }
-    // The first quick crash is started again at once, and so is a temporary worker; the other ones wait, as a start that fails does.
-    this.retryAfter(id, "进程重启", failures, failures <= 1 || decl?.ephemeral ? 0 : retryDelay(failures - 1));
+    const slot = this.slots.get(id);
+    const live = slot?.live;
+    if (!slot || !live) return;
+    if (slot.phase === "starting") { live.ended = reason ?? "the process ended"; return; } // the attempt takes it from here
+    if (slot.phase !== "running") return;
+    // A process that stayed up for a while has not been dying "in a row".
+    if (this.now() - live.startedAt >= STABLE_RUN_MS) this.stable(slot);
+    this.bg(this.failed(slot, reason ?? "the process ended", true, "进程重启"), `restart ${id}`);
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -816,7 +931,7 @@ export class AgentManager {
   async onVaultChanged(ref: string, action: string): Promise<void> {
     // Only the keys a runtime may hold for itself; the vault keeps others (gateway, cloud) to itself.
     if (action !== "saved" || !(this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS).includes(ref)) return;
-    for (const live of this.live.values()) if (live.state === "running") await this.syncCredentials(live, [ref]);
+    for (const live of this.ups()) await this.syncCredentials(live, [ref]);
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -829,7 +944,7 @@ export class AgentManager {
     const paused = reply.ok && (reply.result?.data as { paused?: boolean } | undefined)?.paused === true;
     if (paused === this.paused) return;
     this.paused = paused;
-    for (const live of this.live.values()) for (const lane of live.lanes.values()) {
+    for (const live of this.ups()) for (const lane of live.lanes.values()) {
       if (paused) { if (lane.busy) this.bg(live.driver.interrupt(live.id, lane.key), "interrupt for pause"); }
       else this.bg(this.drain(live, lane), `drain ${live.id}/${lane.key}`);
     }
@@ -849,9 +964,9 @@ export class AgentManager {
   }
 
   private async pullUsage(only?: string): Promise<void> {
-    for (const live of [...this.live.values()]) {
+    for (const live of this.ups()) {
       if (only && live.id !== only) continue;
-      if (live.state !== "running" || !live.driver.usage) continue;
+      if (!this.isUp(live) || !live.driver.usage) continue;
       const since = this.run(live.id).spec.usage_since;
       let usage;
       try { usage = await live.driver.usage(live.id, since); } catch (error) { this.log(`agents: usage of ${live.id}: ${errorText(error)}`); continue; }
@@ -867,7 +982,7 @@ export class AgentManager {
       }
       this.runs.patch(live.id, (spec) => { spec.usage_since = cursor; });
     }
-    if (!only) for (const live of this.live.values()) for (const lane of live.lanes.values()) this.bg(this.drain(live, lane), "drain");
+    if (!only) for (const live of this.ups()) for (const lane of live.lanes.values()) this.bg(this.drain(live, lane), "drain");
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -880,8 +995,7 @@ export class AgentManager {
     let stop = () => {};
     try {
       await this.startAgent(decl.id);
-      const live = this.live.get(decl.id);
-      if (!live || live.state !== "running") throw new WordError("failed", "the temporary agent could not start");
+      if (!this.upOf(decl.id)) throw new WordError("failed", "the temporary agent could not start");
       const id = this.newId();
       const answer = this.expect(decl.id, id, from);
       const timeout = new Promise<never>((_, reject) => { stop = this.timers.after(timeoutS * 1000, () => reject(new WordError("timeout", "the temporary agent did not finish in time"))); });
@@ -889,9 +1003,7 @@ export class AgentManager {
       return await Promise.race([answer, timeout]);
     } finally {
       stop();
-      await this.stopAgent(decl.id, "done").catch(() => {});
-      this.inbox.drop(decl.id);
-      this.runs.remove(decl.id);
+      await this.forget(decl.id, "done");
     }
   }
 }

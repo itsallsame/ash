@@ -213,6 +213,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     ...remote.factories,
     ...opts.drivers,
   };
+  let provisioned = false;
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
     templatesDir: join(SKILLS, "agents"),
@@ -220,7 +221,10 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     channels: () => late.human?.channels() ?? [],
     tools: (agent, lanes, allowed) => ({ mcp_url: `${url}/mcp`, tokens: tools.issueTokens(agent, lanes), allowed: allowed ?? [...TOOL_NAMES] }),
     revokeTools: (agent) => tools.revoke(agent),
-    started: (agent) => tools.catchUp(agent),
+    started: (agent) => {
+      tools.catchUp(agent);
+      if (!provisioned && agent === late.agents?.primary()) { provisioned = true; body.provisionLater(); } // the main agent is up: now the container may spend its time on python3
+    },
     ...(spec.network ? { network: spec.network } : {}),
   });
   const launcher = body.appLauncher();
@@ -273,8 +277,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   try {
     const { port } = await link.start();
     url = `http://127.0.0.1:${port}`;
-    await agents.startAll();
-    body.provisionLater(); // the main agent is up: now the container may spend its time on python3
+    await agents.startAll(); // does not wait for the agents: they come up on their own time and take messages meanwhile
     router.recover();
     tools.recover();
     gateService.start();
