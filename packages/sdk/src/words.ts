@@ -717,19 +717,19 @@ const appSurface = obj({ id: surfaceId, title: { type: "string", minLength: 1, m
 add("service:apps", "apps.contract", "request", empty,
   obj({ contract: str, doc: str, doc_path: str, schema: obj({}, [], true), example: obj({ path: str, files: obj({}, [], true) }, ["path", "files"]) }, ["contract", "doc", "schema", "example"], true),
   { label: "在看应用契约", description: "The ash-app/1 contract for writing an app, in full (doc, markdown): app.json fields, how ash starts the server and talks to it, " +
-    "pages (ui:// resources), tools, needs, events, entry cards. Also the app.json JSON Schema and a small runnable example app (hello: one page, one tool) with its files. " +
+    "pages (ui:// resources), tools, needs, events, listens. Also the app.json JSON Schema and a small runnable example app (hello: a list with one page and four tools, the same skeleton apps.scaffold writes) with its files. " +
     "The same doc and example are in the container at doc_path and example.path." });
 add("service:apps", "apps.scaffold", "request", obj({ id: appId, name: { type: "string", minLength: 1, maxLength: 40 }, summary: { type: "string", minLength: 1, maxLength: 200 },
   role: { type: "string", minLength: 1, maxLength: 200 },
   surfaces: { type: "array", items: appSurface, minItems: 1, maxItems: 16 }, tools: { type: "array", items: appTool, minItems: 1, maxItems: 32 } }, ["id", "name"]),
   obj({ id: appId, path: str, files: strings, next: str }, ["id", "path", "files", "next"], true),
   { effect: "write", label: "在写应用骨架", description: "Write a new app's skeleton into /root/apps/<id>/ (app.json, a dependency-free server.mjs, one ui/<page>.html per surface, " +
-    "shared ui/app.css and ui/app.js, icon.png). It runs as it is: a small working list in data.json with tools <id>.list, <id>.add, <id>.done (mark done/undone), <id>.remove, " +
-    "a home-screen card (app.json cards: tool <id>.card draws it from the data, a tick on it calls <id>.card.tap) and a first page with the list and done/undone toggles. " +
+    "shared ui/app.css and ui/app.js, an empty data/ folder). It runs as it is: a small working list in data/data.json with tools <id>.list, <id>.add, <id>.done (mark done/undone), <id>.remove, " +
+    "and a first page with the list and done/undone toggles. " +
     "Change them to what the app is about; tools you name besides those answer with a placeholder until you write them in server.mjs. " +
     "role (default: summary) says what the app is for and when to use it; you and Ash see it in every conversation. " +
     "surfaces default to one page home: give the app tools that read and change its data, " +
-    "so you can do through them everything the owner does on its pages and its card. Refuses a folder that already has an app.json. " +
+    "so you can do through them everything the owner does on its pages. Refuses a folder that already has an app.json. " +
     "No approval is needed: it only writes files. Then edit, apps.validate, and apps.install (the owner approves what it needs)." });
 add("service:apps", "apps.validate", "request", obj({ id: appId, path: { type: "string", minLength: 1, maxLength: 300 } }),
   obj({ id: str, path: str, ok: bool, problems: array(appProblem), tools: strings, surfaces: strings }, ["path", "ok", "problems", "tools", "surfaces"], true),
@@ -739,8 +739,9 @@ add("service:apps", "apps.validate", "request", obj({ id: appId, path: { type: "
     "ok is true when nothing would stop it from installing and opening; warnings are worth fixing but do not block. Nothing is installed or changed." });
 
 add("service:apps", "apps.surface", "request", obj({ id: appId, surface: surfaceId }, ["id", "surface"]),
-  obj({ id: appId, surface: str, mime: nonempty, html: str }, ["id", "surface", "mime"]),
-  { label: "在取应用页面", description: "The page resource of one of an app's surfaces (the ui:// resource its app.json lists), for a channel to show. Pages talk to the app through the bridge, not through this word." });
+  obj({ id: appId, surface: str, mime: nonempty, html: str,
+    csp: obj({ connectDomains: strings, resourceDomains: strings }, ["connectDomains", "resourceDomains"]) }, ["id", "surface", "mime"]),
+  { label: "在取应用页面", description: "The page resource of one of an app's surfaces (the ui:// resource its app.json lists), for a channel to show; csp lists the domains the page declared it may connect to and load from. Pages talk to the app through the bridge, not through this word." });
 add("service:apps", "apps.icon", "request", obj({ id: appId }, ["id"]), obj({ id: appId, mime: nonempty, data: str }, ["id", "mime", "data"]),
   { label: "在取应用图标", description: "The icon file of an app (base64 in data), for a channel to show in its list of apps." });
 

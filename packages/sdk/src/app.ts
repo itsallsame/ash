@@ -69,6 +69,8 @@ export interface AppJson {
 const EVENT_NAME_PATTERN = "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9_-]+)+$";
 /** An event a `listens` entry names: an exact event (`sense.location`), or every event under a prefix (`sense.*`). */
 export const LISTEN_PATTERN = "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9_-]+)*\\.(?:[a-z0-9_-]+|\\*)$";
+/** Who an app may ask to use in `needs`: a service, an agent, one hand (its 22-character id) or any (`device:*`), another app. */
+export const NEED_MEMBER_PATTERN = `^(?:device:(?:\\*|[A-Za-z0-9_-]{22})|service:[a-z][a-z0-9_-]{0,31}|agent:[a-z][a-z0-9_-]{0,31}|app:[a-z][a-z0-9-]{0,47})$`;
 const why: JsonSchema = { type: "string", minLength: 1, maxLength: 200 };
 const needFlag = (flag: string): JsonSchema => ({
   type: "object", required: [flag, "why"], additionalProperties: false, properties: { [flag]: { const: true }, why },
@@ -163,7 +165,7 @@ export const APP_SCHEMA: JsonSchema = {
           {
             type: "object", required: ["member", "words", "why"], additionalProperties: false,
             properties: {
-              member: { type: "string", pattern: "^(?:device|app):[a-z0-9][a-z0-9_-]{0,47}$" },
+              member: { type: "string", pattern: NEED_MEMBER_PATTERN, description: "The member to use: a service (service:llm), an agent (agent:main), a hand (device:<hand_id>, or device:* for any), or another app (app:<id>)." },
               words: { type: "array", minItems: 1, maxItems: 32, items: { type: "string", pattern: TOOL_NAME_PATTERN } },
               why,
             },
