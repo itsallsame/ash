@@ -50,6 +50,35 @@ test("step 4: offline, no such word, bad input, and a member that refuses first"
   assert.ok((await call(w, "service:t", "w", { n: 1 })).ok);
 });
 
+test("the caller may choose the id of a request; an id already in use is a conflict", async () => {
+  const w = world();
+  const t = fake("service:t", [word("service:t", "w", { effect: "write" }), word("service:t", "quiet")], () => new Promise((resolve) => setTimeout(() => resolve({ data: {} }), 30)));
+  w.registry.add(t);
+  const first = call(w, "service:t", "w", {}, agent(), { id: "m_chosen" });
+  await flush();
+  assert.equal(failure(await call(w, "service:t", "w", {}, agent(), { id: "m_chosen" })).code, "conflict", "while it is still running");
+  const reply = await first;
+  assert.equal((reply as { id?: string }).id, "m_chosen");
+  assert.equal(t.calls[0]!.msg.id, "m_chosen");
+  assert.equal(w.ledger.get("m_chosen")?.word, "w", "and it is the id in the ledger");
+  assert.equal(failure(await call(w, "service:t", "w", {}, agent(), { id: "m_chosen" })).code, "conflict", "after it is recorded");
+  // not recorded: still used once while it runs, free after
+  assert.ok((await call(w, "service:t", "quiet", {}, service("clock"), { id: "m_quiet" })).ok);
+  assert.ok((await call(w, "service:t", "quiet", {}, service("clock"), { id: "m_quiet" })).ok, "an unrecorded request leaves nothing behind");
+  assert.equal(t.calls.length, 3);
+});
+
+test("step 4: the kind of the message must be the kind of the word", async () => {
+  const w = world();
+  w.registry.add(fake("service:t", [word("service:t", "w"), word("service:t", "ev", { kind: "event", callers: ["kernel"] })]));
+  const asEvent = await w.router.send({ to: null, kind: "event", word: "w", body: {} }, service("t"));
+  assert.equal(failure(asEvent).code, "bad_request");
+  assert.match(failure(asEvent).message, /request, not an event/);
+  const asRequest = await call(w, "service:t", "ev", {}, service("clock"));
+  assert.equal(failure(asRequest).code, "bad_request");
+  assert.match(failure(asRequest).message, /event, not a request/);
+});
+
 test("step 4: a precheck that refuses answers at once, asks nobody and leaves no record", async () => {
   const w = world();
   const cost = word(DEVICE, "message.send", { effect: "act", risk: "outward" });

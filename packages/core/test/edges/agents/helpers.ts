@@ -36,18 +36,20 @@ export class FakeRouter implements Router {
 
 export class FakeRegistry implements Registry {
   members = new Map<string, Member>();
-  listeners = new Set<(id: string, change: "added" | "removed") => void>();
-  add(m: Member) { this.members.set(m.id, m); for (const l of this.listeners) l(m.id, "added"); }
-  remove(id: string) { if (this.members.delete(id)) for (const l of this.listeners) l(id, "removed"); }
+  watchers = new Set<(id: string, change: "added" | "removed") => void>();
+  add(m: Member) { this.members.set(m.id, m); for (const l of this.watchers) l(m.id, "added"); }
+  remove(id: string) { if (this.members.delete(id)) for (const l of this.watchers) l(id, "removed"); }
   find(to: string, word: string) {
     const member = this.members.get(to);
     const contract = member?.words().find((w) => w.word === word);
     return member && contract ? { member, contract } : null;
   }
+  get(id: string) { return this.members.get(id) ?? null; }
+  listeners(): Member[] { return []; }
   findByWord() { return []; }
   list(filter?: { kind?: Member["kind"] }) { return [...this.members.values()].filter((m) => !filter?.kind || m.kind === filter.kind).map((m) => ({ id: m.id, kind: m.kind, name: m.name })); }
   describe(id: string) { const m = this.members.get(id); return m ? { info: { id, kind: m.kind, name: m.name }, words: m.words() } : null; }
-  onChange(cb: (id: string, change: "added" | "removed") => void) { this.listeners.add(cb); return () => this.listeners.delete(cb); }
+  onChange(cb: (id: string, change: "added" | "removed") => void) { this.watchers.add(cb); return () => this.watchers.delete(cb); }
 }
 
 /** A hand or app that is only there to be seen in the environment. */

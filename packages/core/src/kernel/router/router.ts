@@ -82,6 +82,8 @@ interface Located { member: Member | null; contract: WordContract | null; proble
 export class HubRouter implements Router {
   private readonly now: () => number;
   private readonly subscribers = new Set<{ filter: Parameters<Router["subscribe"]>[0]; cb: (m: Message) => void }>();
+  /** Ids of the requests being handled now, so an id a caller picked cannot be used twice, recorded or not. */
+  private readonly inflight = new Set<string>();
 
   constructor(private readonly deps: RouterDeps) {
     this.now = deps.now ?? Date.now;
@@ -152,14 +154,23 @@ export class HubRouter implements Router {
 
     // 2. stamp: the sender and the origin come from the caller, never from the message
     const raw = out.body === undefined ? {} : out.body;
+    // The caller may choose the id (the human edge needs it before the reply); an id that is in use is a conflict.
+    const id = resume ? resume.id : opts.id ?? newId();
+    if (!resume && opts.id !== undefined) {
+      if (typeof opts.id !== "string" || !opts.id) return fail(errorBody("bad_request", "the id must be a non-empty string"));
+      if (this.inflight.has(id) || this.deps.ledger.get(id) !== null) return fail(errorBody("conflict", `the id ${id} is already used`));
+    }
     const stamped: Message = {
-      seq: 0, id: resume ? resume.id : newId(), ts: resume ? resume.created_at : this.now(), from: caller.member, to: out.to, kind: out.kind, word: out.word, body: raw,
+      seq: 0, id, ts: resume ? resume.created_at : this.now(), from: caller.member, to: out.to, kind: out.kind, word: out.word, body: raw,
       ...(out.reply_to ? { reply_to: out.reply_to } : {}), ...(out.thread ? { thread: out.thread } : {}), ...(caller.turn ? { turn: caller.turn } : {}),
       ...(caller.origin ? { origin: caller.origin } : {}),
     };
-    const reply: SendReply = await this.proceed(stamped, raw, caller, opts, resume);
-    reply.id = stamped.id;
-    return reply;
+    this.inflight.add(id);
+    try {
+      const reply: SendReply = await this.proceed(stamped, raw, caller, opts, resume);
+      reply.id = stamped.id;
+      return reply;
+    } finally { this.inflight.delete(id); }
   }
 
   private async proceed(stamped: Message, raw: unknown, caller: Caller, opts: SendOptions, resume: PendingRecord | null): Promise<SendReply> {
