@@ -107,5 +107,7 @@ object ShizukuState {
         else -> "ash is not authorized in Shizuku (call shell.status with request_permission=true, or allow ash in the Shizuku app)"
     }
 
+    fun preV11(): Boolean = isPreV11()
+
     private fun isPreV11(): Boolean = try { Shizuku.isPreV11() } catch (e: Throwable) { false }
 }

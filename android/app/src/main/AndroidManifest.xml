@@ -67,6 +67,8 @@
     <queries>
         <!-- The kernel package: this app finds out whether it is installed and starts its service. -->
         <package android:name="ai.ash.kernel" />
+        <!-- Shizuku's manager: without this Android 11+ hides it, and "is Shizuku installed" is always no. -->
+        <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.google.android.apps.healthdata" />
         <package android:name="nodomain.freeyourgadget.gadgetbridge" />
     </queries>

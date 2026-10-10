@@ -22,7 +22,7 @@ sealed class Part {
 sealed class CallOutcome {
     class Ok(val content: List<Part>, val data: Any? = null) : CallOutcome()
     /** [code] is one of the unified error codes (SPEC-02 §7). */
-    class Err(val code: String, val message: String, val detail: Any? = null) : CallOutcome()
+    class Err(val code: String, val message: String, val detail: Any? = null, val recoveryHint: String? = null) : CallOutcome()
 }
 
 class CallRequest(val id: String, val capability: String, val args: JSONObject, val member: String, val label: String, val turn: String?, val deadline: Long)
@@ -578,9 +578,10 @@ class LinkClient(private val o: LinkOptions) {
         }
     }
 
-    private fun errorResult(id: String, code: String, message: String, detail: Any? = null): JSONObject {
+    private fun errorResult(id: String, code: String, message: String, detail: Any? = null, recoveryHint: String? = null): JSONObject {
         val error = JSONObject().put("code", code).put("message", message)
         if (detail != null) error.put("detail", detail)
+        if (!recoveryHint.isNullOrEmpty()) error.put("recovery_hint", recoveryHint)
         return JSONObject().put("t", "result").put("id", id).put("ok", false).put("error", error)
     }
 
@@ -624,7 +625,7 @@ class LinkClient(private val o: LinkOptions) {
         if (c.closed) return
         try {
             val frame = when (outcome) {
-                is CallOutcome.Err -> errorResult(id, outcome.code, outcome.message, outcome.detail)
+                is CallOutcome.Err -> errorResult(id, outcome.code, outcome.message, outcome.detail, outcome.recoveryHint)
                 is CallOutcome.Ok -> {
                     val content = JSONArray()
                     for (part in outcome.content) content.put(partFrame(c, id, part))
