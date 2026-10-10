@@ -186,6 +186,8 @@ export interface Caller {
   client?: string;
   /** Which turn of an agent. */
   turn?: string;
+  /** Where the owner's message came from, as the human edge knows it; the router stamps it on the message as is. */
+  origin?: HumanOrigin;
 }
 
 
