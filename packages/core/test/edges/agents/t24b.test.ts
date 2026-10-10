@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { failureCause } from "../../../src/edges/agents/failure";
+import { KEY_SYNC_TIMEOUT_MS } from "../../../src/edges/agents/manager";
 import { caller, fixture, settle, waitFor, type FakeDriver } from "./helpers";
 
 const M = "agent:main";
@@ -133,4 +134,88 @@ test("only the agent's own process going away is named as that: a tool's 'proces
   assert.notEqual(failureCause("tool bash failed: the build process exited with code 2"), away);
   assert.equal(failureCause("the build process exited with code 2"), "出了点意外的错误");
   assert.equal(failureCause("the helper's stdin failed to open"), "出了点意外的错误");
+});
+
+test("a runtime that never takes the key holds back only its own agent, and only until the key timeout", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-old" } });
+  await f.start();
+  const d = f.driver();
+  await f.service("declare", { id: "agent:r", name: "r", summary: "s", brief: "b", lanes: { front: { from: ["person:owner"] } } });
+  await settle();
+  const orig = d.credentialsSet.bind(d);
+  d.credentialsSet = async (agent: string, ref: string, value: string) => {
+    if (agent === "agent:r") { d.calls.push(["credentialsSet", agent, ref]); return new Promise<void>(() => {}); }
+    return orig(agent, ref, value);
+  };
+  f.secrets[KEY] = "sk-new";
+  const saved = f.service("vault.changed", { ref: KEY, action: "saved" }, vault);
+  await settle();
+  await f.call(M, "say", { text: "hi" });
+  await f.call("agent:r", "say", { text: "hello" });
+  await waitFor(() => sends(d, "front").some((c) => c[1] === M), "main is not held back by r");
+  await settle();
+  assert.ok(!d.of("send").some((c) => c[1] === "agent:r"), "r waits for its key");
+
+  assert.ok(f.fire(KEY_SYNC_TIMEOUT_MS), "the key timeout is armed");
+  await saved;
+  await waitFor(() => d.of("send").some((c) => c[1] === "agent:r"), "r goes on once the timeout let go");
+  assert.ok(f.logs.some((l) => /agent:r did not take the key/.test(String(l[0]))));
+});
+
+test("the owner pauses while a turn waits for the key: it does not open, and opens when the pause ends", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-old" } });
+  await f.start();
+  const d = f.driver();
+  const slow = gate();
+  d.credentialsGate = slow.promise;
+  let paused = false;
+  f.router.on("service:admin/status", () => ({ ok: true, result: { data: { paused } } }));
+  f.secrets[KEY] = "sk-new";
+  const saved = f.service("vault.changed", { ref: KEY, action: "saved" }, vault);
+  await settle();
+  await f.call(M, "say", { text: "hi" });
+  await settle();
+  paused = true;
+  await f.service("settings.changed", { keys: ["paused"] }, caller("service:admin", "service"));
+  slow.open();
+  await saved;
+  await settle();
+  assert.equal(d.of("send").length, 0, "paused: no turn opens");
+
+  paused = false;
+  await f.service("settings.changed", { keys: ["paused"] }, caller("service:admin", "service"));
+  await waitFor(() => d.of("send").length === 1, "the turn after the pause");
+});
+
+test("a key saved while the agent is still starting is written over the one the runtime already has", async () => {
+  const f = fixture({ secrets: { [KEY]: "sk-wrong" } });
+  f.agents.manager.driver("dsh");
+  const d = f.drivers[0]!;
+  d.credentials.set(KEY, "sk-wrong"); // the runtime kept it from before
+  const start = gate();
+  d.startGate = start.promise;
+  void f.agents.startAll();
+  await waitFor(() => d.of("start").length === 1);
+  f.secrets[KEY] = "sk-right";
+  await f.agents.manager.onVaultChanged(KEY, "saved"); // nothing is running yet to hand it to
+  start.open();
+  await waitFor(() => f.agents.manager.stateOf(M) === "idle");
+  assert.equal(d.credentials.get(KEY), "sk-right");
+});
+
+test("a lane that cannot be ended tells those who asked in its turn: result_unknown, not a wait for the router's timeout", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  const asked = (f.call(M, "ask", { text: "q" }, caller("agent:other")) as Promise<any>).then((v) => ({ v }), (e) => ({ e }));
+  await waitFor(() => sends(d, "back").length === 1);
+  const inbox = f.agents.manager.inbox;
+  const byTurn = inbox.byTurn.bind(inbox);
+  let failures = 1;
+  inbox.byTurn = (turn: string) => { if (failures-- > 0) throw new Error("ledger is unwell"); return byTurn(turn); }; // the first look fails, the one after it does not
+  d.die(M);
+  const r: any = await asked;
+  assert.equal(r.e?.code, "result_unknown");
+  assert.match(r.e.message, /went away in the middle/, "told by the cut itself, not later by the restart");
+  assert.ok(f.logs.some((l) => /ending the turn of agent:main\/back/.test(String(l[0]))));
 });

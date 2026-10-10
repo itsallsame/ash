@@ -91,6 +91,8 @@ export const retryDelay = (failures: number): number => RETRY_STEPS_MS[Math.min(
 export const TROUBLE_NOTICE_AT = 4;
 /** A start that has not finished by then counts as failed (the runtime hung). Under the host's own five minutes for a core to say it is ready. */
 export const START_TIMEOUT_MS = 180_000;
+/** A runtime that has not taken a key by then is let go of (the answer is lost, not the turns of every agent behind it). */
+export const KEY_SYNC_TIMEOUT_MS = 15_000;
 /** A temporary worker is tried this many times at once and is not waited for: its asker is waiting. */
 const EPHEMERAL_TRIES = 3;
 /** Dynamic modules are put in again after this many turns even if unchanged. */
@@ -174,8 +176,10 @@ export class AgentManager {
   private readonly outputs = new Map<string, string[]>();
   private readonly typingUntil = new Map<string, number>();
   private paused = false;
-  /** The keys being written into the runtimes now (settled when none is): no turn is opened before they are in. */
-  private keySync: Promise<void> = Promise.resolve();
+  /** Per agent: the keys being written into its runtime now (settled when none is); no turn of that agent opens before they are in. */
+  private readonly keySync = new Map<string, Promise<void>>();
+  /** How many keys the owner has saved so far: an agent that was starting meanwhile sees it change and writes them over. */
+  private keySaves = 0;
   /** The module is stopping: no attempt starts and no member comes back, whatever restart is still on its way. */
   private closing = false;
   private proxy: string;
@@ -381,11 +385,14 @@ export class AgentManager {
     const ended = died ? { outcome: "error" as const, error: `the agent process ended (${live.ended ?? reason})` } : { outcome: "interrupted" as const };
     for (const lane of live.lanes.values()) {
       if (!lane.busy || !lane.turn) continue;
+      const turn = lane.turn; // `finishTurn` clears it at once
       // One lane that cannot be ended must not keep the others, or the stop of the process, from happening.
-      try { this.finishTurn(live, lane, { event: "turn.ended", agent: live.id, key: lane.key, turn: lane.turn, ...ended }, reason); } catch (error) {
+      try { this.finishTurn(live, lane, { event: "turn.ended", agent: live.id, key: lane.key, turn, ...ended }, reason); } catch (error) {
         this.log(`agents: ending the turn of ${live.id}/${lane.key}: ${errorText(error)}`);
         lane.busy = false;
         lane.turn = undefined;
+        // Whoever asked in this turn is told it is not known whether it was done, not left to wait for the router's timeout.
+        try { for (const row of this.inbox.byTurn(turn)) this.rejectWaiter(row.id, new WordError("result_unknown", `${live.id} went away in the middle of the turn that took this question (${reason}); it is not known whether it was done`)); } catch (e) { this.log(`agents: telling the askers of ${turn}: ${errorText(e)}`); }
       }
     }
   }
@@ -413,12 +420,17 @@ export class AgentManager {
     try {
       statics = await this.modules.static(decl);
       if (!current()) return; // voided while the files were read: no process exists yet
+      const saved = this.keySaves; // keys saved from here on, while the process comes up, are written over
       await this.within(START_TIMEOUT_MS, `${id} did not finish starting`, (async () => {
         await live.driver.start(id, {
           runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, Object.keys(lanes), decl.tools),
           modules: { static: statics }, lanes: Object.keys(lanes), sessions: run.spec.sessions,
         });
-        if (current()) await this.syncCredentials(live);
+        if (!current()) return;
+        // A key saved while the process was coming up is missed by `onVaultChanged` (only running agents): write it over, not just the missing ones.
+        let seen = saved;
+        await this.syncCredentials(live);
+        while (current() && this.keySaves !== seen) { seen = this.keySaves; await this.syncCredentials(live, undefined, true); }
       })());
     } catch (error) {
       if (!current()) return; // voided while it started: the one that voided it has stopped the process
@@ -644,11 +656,11 @@ export class AgentManager {
     let sent = false;
     try {
       if (!(await this.quotaAllows(live, lane))) return;
-      await this.keySync; // a key the owner has just saved is written first, or this turn would meet the old one
-      if (lane.busy || !this.isUp(live)) return;
+      await this.keySync.get(live.id); // a key the owner has just saved is written first, or this turn would meet the old one
+      if (lane.busy || !this.isUp(live) || this.paused) return; // (the owner may have paused meanwhile)
       await this.inject(live, lane);
       const screen = await this.screenPlan(live, lane, rows);
-      if (lane.busy || !this.isUp(live)) return;
+      if (lane.busy || !this.isUp(live) || this.paused) return;
       this.inbox.mark(rows.map((r) => r.id), "sent");
       try {
         lane.screenPlanned = screen.asked; // before the send: a turn can end before it returns
@@ -977,9 +989,14 @@ export class AgentManager {
     if (action !== "saved" || !(this.deps.credentialRefs ?? DEFAULT_CREDENTIAL_REFS).includes(ref)) return;
     // Set before the first await: the owner's words or a wake that comes right after the save (from another service, in the
     // same breath) find the key being written and wait for it (see `drain`). Writes follow each other.
-    const work = this.keySync.then(async () => { for (const live of this.ups()) await this.syncCredentials(live, [ref], true); });
-    this.keySync = work.catch(() => {});
-    await work;
+    this.keySaves++;
+    const works = this.ups().map((live) => {
+      const work = (this.keySync.get(live.id) ?? Promise.resolve()).then(() =>
+        this.within(KEY_SYNC_TIMEOUT_MS, `${live.id} did not take the key`, this.syncCredentials(live, [ref], true)).catch((error) => this.log(`agents: credential ${ref} for ${live.id}: ${errorText(error)}`)));
+      this.keySync.set(live.id, work);
+      return work.finally(() => { if (this.keySync.get(live.id) === work) this.keySync.delete(live.id); });
+    });
+    await Promise.all(works);
   }
 
   // ----------------------------------------------------------------------------------------------------------------
