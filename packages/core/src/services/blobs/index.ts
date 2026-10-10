@@ -24,12 +24,6 @@ export interface BlobsOptions {
   openStream?: (bytes: Uint8Array, mime: string, ctx: HandleContext) => string | Promise<string>;
 }
 
-/** Ids of the messages whose body holds an attachment (oldest first). */
-export function referencingMessages(ledger: Pick<Ledger, "db">, hash: string): string[] {
-  return (ledger.db().prepare("SELECT message_id FROM message_blobs mb JOIN messages m ON m.id=mb.message_id WHERE mb.hash=? ORDER BY m.seq").all(hash) as { message_id: string }[])
-    .map((row) => row.message_id);
-}
-
 const isTextMime = (mime: string): boolean => {
   const base = mime.split(";")[0]!.trim().toLowerCase();
   return base.startsWith("text/") || base === "application/json" || base === "application/xml" || base === "application/javascript"

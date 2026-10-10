@@ -4,7 +4,8 @@ import { WordError, type HandleContext, type Message, type WordResult } from "..
 import { compileSchema } from "../../../../sdk/src/word";
 import { openLedger, say } from "../../kernel/ledger/helpers";
 import type { BlobRef } from "../../../src/kernel/ledger";
-import { createBlobsService, DEFAULT_READ_BYTES, referencingMessages } from "../../../src/services/blobs";
+import { referencingMessages } from "../../../src/kernel/ledger";
+import { createBlobsService, DEFAULT_READ_BYTES } from "../../../src/services/blobs";
 
 const ctx: HandleContext = { signal: new AbortController().signal, caller: { member: "agent:main", via: "agent", local: false }, raw: null };
 const request = (word: string, body: unknown): Message => ({ seq: 0, id: "m_req", ts: 0, from: "agent:main", to: "service:blobs", kind: "request", word, body });

@@ -11,11 +11,6 @@ export type Policy = readonly string[] | undefined;
 
 const regexOf = (pattern: string): RegExp => new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
 
-/** Does the policy allow this concrete name? An absent policy allows everything. */
-export function allows(policy: Policy, name: string): boolean {
-  return policy === undefined || policy.some((pattern) => regexOf(pattern).test(name));
-}
-
 /**
  * Is every entry of `child` covered by `parent`? A child pattern is covered when some parent pattern matches its text
  * (`device:*` covers `device:abc`, and also the pattern `device:ab*`). An absent child is unrestricted, so it is a subset

@@ -84,7 +84,8 @@ test("tools/list and calls follow the declaration's tools; the receipt tools are
   rig.policies.set(MAIN, { tools: ["timer_*", "capability_list"] });
   const tools = await rig.client();
   const names = (await tools.tools()).map((t) => t.name).sort();
-  assert.deepEqual(names, ["await_result", "cancel", "capability_list", "list_pending", "timer_cancel", "timer_list", "timer_set"]);
+  assert.deepEqual(names, ["await_result", "cancel", "capability_list", "human_pending", "human_pending_get", "human_pending_redeem", "human_pending_skip", "human_withdraw", "list_pending", "timer_cancel", "timer_list", "timer_set"],
+    "the receipt tools and the five tools of the agent's own pending requests are always there");
   const refused = await tools.call("human_say", { text: "x" });
   assert.equal(refused.data.error.code, "forbidden");
   assert.equal((await tools.call("no_such_tool")).data.error.code, "not_found");

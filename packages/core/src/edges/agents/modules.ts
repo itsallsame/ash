@@ -13,7 +13,8 @@ import type { ModuleId, PromptModule } from "../../../../sdk/src/driver";
 import type { Caller } from "../../../../sdk/src/message";
 import type { Registry, Router } from "../../kernel/types";
 import { lanesOf, type AgentDecl } from "./runs";
-import { allows, sees, MAX_DEPTH } from "./policy";
+import { agentMay } from "../../kernel/router";
+import { sees, MAX_DEPTH } from "./policy";
 
 /** A member that dropped out of the registry less than this ago is still in the environment. */
 export const ENV_GRACE_MS = 60_000;
@@ -133,11 +134,12 @@ export class Modules {
     for (const [id, g] of this.gone) if (now - g.at >= ENV_GRACE_MS) this.gone.delete(id);
     const members = new Map<string, Known>(this.known);
     for (const [id, g] of this.gone) if (!members.has(id)) members.set(id, g.member);
+    const may = (name: string) => agentMay({ words: decl.words }, name.slice(0, name.indexOf("/")), name.slice(name.indexOf("/") + 1), () => []);
     const visible = (kind: string) => [...members.values()].filter((m) => m.kind === kind && sees(decl.words, m.id)).sort((a, b) => a.id.localeCompare(b.id));
-    const namespaces = (m: Known) => [...new Set(m.words.filter((w) => allows(decl.words, `${m.id}/${w}`)).map((w) => w.split(".")[0]!))].sort();
+    const namespaces = (m: Known) => [...new Set(m.words.filter((w) => may(`${m.id}/${w}`)).map((w) => w.split(".")[0]!))].sort();
 
     const lines: string[] = [];
-    const canSpawn = decl.depth < MAX_DEPTH && allows(decl.words, "service:agents/spawn");
+    const canSpawn = decl.depth < MAX_DEPTH && may("service:agents/spawn");
     lines.push(`你：${decl.id}${decl.primary ? "（primary）" : ""} · 这一路：${lane} · 委托深度 ${decl.depth}/${MAX_DEPTH} · ${canSpawn ? "可以派子 agent" : "不能派子 agent"}`);
     const channels = this.deps.channels?.() ?? [];
     if (channels.length) lines.push(`主人在哪：${channels.join("；")}`);

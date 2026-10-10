@@ -53,6 +53,8 @@ export function fakeRegistry(): Registry & { members: Map<string, Member> } {
       const contract = member?.words().find((c) => c.word === word && speaks(member, c));
       return member && contract ? { member, contract } : null;
     },
+    get: (id) => members.get(id) ?? null,
+    listeners: () => [],
     findByWord: (word) => [...members.values()].filter((m) => m.words().some((c) => c.word === word)),
     list: (filter) => [...members.values()].filter((m) => !filter?.kind || m.kind === filter.kind).map(info),
     describe(id) { const m = members.get(id); return m ? { info: info(m), words: m.words().filter((c) => speaks(m, c)) } : null; },
