@@ -2,7 +2,7 @@
  * `service:pulse`: Ash's own home-screen card as the window through which it speaks first (SPEC-10 §3).
  *
  * The service only wakes the primary agent (`agent:<primary>/wake {lane: "back", reason: "pulse", context}`), keeps its
- * schedule, watch list, history and notes, and enforces the owner's switch, the day's budget and the precondition: nothing
+ * schedule, history and notes, and enforces the owner's switch, the day's budget and the precondition: nothing
  * exists while no "Ash 卡片" widget is placed. What to look at, whether to speak and what to show is the agent's own,
  * guided by PULSE.md in its home folder, which the agent edits itself (pulse.set has no guidance field).
  *
@@ -13,7 +13,7 @@
  * two other timers (`daily`, `reload`), which this member only passes on to `onDue`.
  *
  * Wakes for things that happen (a place entered, a ride, a calendar event) are the organ `app:sense-rules`'s to judge
- * (HUB-MODULES §7); the pulse listens to no sensor. Event wakes come back here when there are event sources for it.
+ * (HUB-MODULES §7); the pulse listens to no sensor.
  */
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import type { Member, WordContract } from "../../../../sdk/src/word";
