@@ -10,7 +10,8 @@
 //              shebangs replaced by the @PAYLOAD@ placeholder that the host fills in on extraction.
 //   dsh/       `npm install -g @deepseek-ai/dsh@<version>` for android-arm64, byte-for-byte as published,
 //              plus android-compat packages as siblings in dsh/lib/node_modules (never inside @deepseek-ai).
-//   ash/       ash core bundle.
+//   ash/       ash core bundle (ash-core.mjs) and next to it the relay program (ash-gateway.mjs, built by the gateway repository:
+//              `npm run build:bundle` there, then --gateway <dir> or ASH_GATEWAY_DIR; default node_modules/ash-gateway).
 //   ash-skills/  ash's own DSH skill-provider plugin and its instructions.
 //   bin/       small sh wrappers (Android has no /usr/bin/env).
 //   profile/   the host's DSH patch layer (cordis.patch.yml rows, e.g. the ptc worker launcher).
@@ -149,6 +150,7 @@ async function build() {
   } catch {
     throw new Error(`patchelf not found (${patchelf}); install it or set PATCHELF=…`);
   }
+  const relay = relayProgram(); // before anything is downloaded: a missing gateway build should not cost a whole assemble
   fs.mkdirSync(cache, { recursive: true });
   fs.rmSync(out, { recursive: true, force: true });
   const tree = path.join(out, "tree");
@@ -296,6 +298,8 @@ async function build() {
   if (!fs.existsSync(core)) throw new Error("build ash core first: npm run build:core");
   fs.mkdirSync(path.join(tree, "ash"), { recursive: true });
   fs.copyFileSync(core, path.join(tree, "ash/ash-core.mjs"));
+  // The relay program `gateway.setup.deploy` uploads; core looks for it next to its own file.
+  fs.copyFileSync(relay, path.join(tree, "ash/ash-gateway.mjs"));
   // Core marks itself non-dumpable with this library, so the agent container (same Linux user) cannot read its memory.
   fs.copyFileSync(buildNodump(), path.join(tree, "ash/libashnodump.so"));
 
@@ -339,6 +343,24 @@ async function build() {
   fs.copyFileSync(path.join(tree, "payload-index.json"), path.join(out, "payload-index.json"));
   const size = (fs.statSync(path.join(out, "payload.zip")).size / 1e6).toFixed(1);
   log(`done: ${out}/payload.zip (${size} MB), build ${index.build}, ${links.length} links, ${index.exec.length} executables`);
+}
+
+/**
+ * The gateway repository's build output, `dist/ash-gateway.mjs` (its `npm run build:bundle`), checked against the
+ * `dist/ash-gateway.mjs.sha256` written beside it. The gateway is not built here.
+ */
+function relayProgram() {
+  const dir = path.resolve(opt("--gateway", process.env.ASH_GATEWAY_DIR ?? path.join(ROOT, "node_modules/ash-gateway")));
+  const file = path.join(dir, "dist/ash-gateway.mjs");
+  const how = `build the gateway first: in ${dir} run \`npm run build:bundle\` (another checkout: --gateway <dir> or ASH_GATEWAY_DIR)`;
+  if (!fs.existsSync(file)) throw new Error(`the relay program ${file} does not exist; ${how}`);
+  const shaFile = `${file}.sha256`;
+  if (!fs.existsSync(shaFile)) throw new Error(`${shaFile} does not exist; ${how}`);
+  const expected = fs.readFileSync(shaFile, "utf8").trim().split(/\s+/)[0].toLowerCase();
+  const got = sha256(file);
+  if (expected !== got) throw new Error(`${file} has sha256 ${got}, its ${path.basename(shaFile)} says ${expected}; ${how}`);
+  log("relay program", file, got.slice(0, 12));
+  return file;
 }
 
 /** sha256 of every file under a directory, for the "DSH exactly as published" check (R12). */
