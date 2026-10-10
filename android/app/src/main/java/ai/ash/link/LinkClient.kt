@@ -187,7 +187,7 @@ class LinkClient(private val o: LinkOptions) {
     /**
      * Queues an event and sends it; until the kernel acks it, it is sent again after every reconnect, with the same id.
      * With [durable] false the event is only sent if the device channel is open right now, and dropped otherwise (for
-     * what must not outlive a revoked permission). Returns false when a non-durable event was dropped.
+     * what must not outlive a revoked permission). Returns false when a non-durable event was dropped; true means it was handed to the link.
      */
     fun emit(word: String, body: JSONObject, id: String = newId("e_"), at: Long = o.clock.now(), durable: Boolean = true): Boolean {
         val event = QueuedEvent(id, word, body, at)
@@ -196,9 +196,10 @@ class LinkClient(private val o: LinkOptions) {
             post { sendEvent(event) }
             return true
         }
-        val sent = CompletableFuture<Boolean>()
-        post { sent.complete(sendEvent(event, durable = false)) }
-        return sent.get()
+        // Not queued: sent now if the device channel is open, otherwise dropped. The caller does not wait for the loop thread.
+        if (state != State.READY || !deviceOpen()) return false
+        post { sendEvent(event, durable = false) }
+        return true
     }
 
     // --- human channel (used by the human channel of the app, T11b-2) ---
@@ -610,8 +611,8 @@ class LinkClient(private val o: LinkOptions) {
     private fun cancelCall(c: Conn, id: String) {
         val entry = running[id] ?: return
         entry.cancelled = true
-        // Answer now with `cancelled`, then do the best to stop the work; whatever the worker returns afterwards is dropped.
-        if (entry.claim()) c.send(errorResult(id, "cancelled", "the call was cancelled"))
+        // Best effort only: raise the flag and interrupt the worker. The worker answers: `cancelled` if the interrupt made
+        // the handler throw, the real result if the work finished anyway (an action that happened must not be reported as cancelled).
         entry.future?.cancel(true)
     }
 

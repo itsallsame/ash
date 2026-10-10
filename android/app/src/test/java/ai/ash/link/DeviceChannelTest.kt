@@ -127,12 +127,12 @@ class DeviceChannelTest {
         awaitTrue("c18 answered") { results(conn).any { it.getString("id") == "c18" && it.getBoolean("ok") } }
     }
 
-    @Test fun cancelStopsTheCallAndStillAnswersCancelledOnce() {
+    @Test fun cancelInterruptsTheHandlerAndTheWorkerAnswersCancelledOnce() {
         val running = CountDownLatch(1)
         val interrupted = CountDownLatch(1)
         link.handlers.onCall = { _, _ ->
             running.countDown()
-            try { Thread.sleep(10_000) } catch (_: InterruptedException) { interrupted.countDown() }
+            try { Thread.sleep(10_000) } catch (e: InterruptedException) { interrupted.countDown(); throw e }
             CallOutcome.Ok(listOf(Part.Text("too late")))
         }
         val conn = link.connect()
@@ -145,7 +145,28 @@ class DeviceChannelTest {
         assertEquals("cancelled", result.getJSONObject("error").getString("code"))
         assertTrue("the worker was interrupted", interrupted.await(5, TimeUnit.SECONDS))
         Thread.sleep(100)
-        assertEquals("what the handler returns afterwards is dropped", 1, results(conn).size)
+        assertEquals("answered once", 1, results(conn).size)
+    }
+
+    @Test fun aHandlerThatIgnoresTheInterruptAndFinishesGivesItsRealResult() {
+        val running = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        link.handlers.onCall = { _, _ ->
+            running.countDown()
+            while (true) { try { release.await(); break } catch (_: InterruptedException) { /* the action goes on */ } }
+            CallOutcome.Ok(listOf(Part.Text("tapped anyway")))
+        }
+        val conn = link.connect()
+        conn.call("c1")
+        assertTrue(running.await(5, TimeUnit.SECONDS))
+        conn.send(JSONObject().put("t", "cancel").put("id", "c1").put("reason", "cancelled"))
+        conn.send(JSONObject().put("t", "ping").put("at", 1))
+        conn.awaitFrame("pong")
+        assertTrue("no answer before the work is done", results(conn).isEmpty())
+        release.countDown()
+        val result = conn.awaitFrame("result")
+        assertTrue(result.getBoolean("ok"))
+        assertEquals("tapped anyway", result.getJSONArray("content").getJSONObject(0).getString("text"))
     }
 
     @Test fun aCooperativeHandlerSeesTheCancelFlag() {

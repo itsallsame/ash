@@ -119,11 +119,7 @@
         <service
             android:name=".link.HandService"
             android:exported="true"
-            android:permission="ai.ash.permission.HAND">
-            <intent-filter>
-                <action android:name="ai.ash.action.HAND" />
-            </intent-filter>
-        </service>
+            android:permission="ai.ash.permission.HAND" />
 
         <!-- Keeps ash core alive. -->
         <service

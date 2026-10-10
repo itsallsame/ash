@@ -136,6 +136,7 @@ internal object SchemaCheck {
         "minItems", "uniqueItems", "minLength", "maxLength", "minimum", "minProperties", "pattern",
         "oneOf", "anyOf", "not", "if", "then",
     )
+    private val TYPES = setOf("object", "array", "string", "boolean", "null", "integer", "number")
     private val patterns = HashMap<String, Regex>()
 
     fun load(text: String): JSONObject = JSONObject(text).also(::checkKeywords)
@@ -145,6 +146,9 @@ internal object SchemaCheck {
             if (key !in KNOWN) throw IllegalArgumentException("unsupported JSON Schema keyword: $key")
             val v = schema.get(key)
             when (key) {
+                "type" -> require(v is String && v in TYPES) { "unsupported JSON Schema type: $v" }
+                "pattern" -> require(v is String && v.startsWith("^") && v.endsWith("$")) { "a pattern must be anchored with ^ and $" }
+                "const" -> require(v is String || v is Boolean || v is Number) { "const must be a string, a boolean or a number" }
                 "properties" -> (v as JSONObject).let { p -> for (name in p.keys()) checkKeywords(p.getJSONObject(name)) }
                 "items", "not", "if", "then" -> checkKeywords(v as JSONObject)
                 "oneOf", "anyOf" -> (v as JSONArray).let { a -> for (i in 0 until a.length()) checkKeywords(a.getJSONObject(i)) }
