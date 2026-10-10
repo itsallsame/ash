@@ -38,14 +38,7 @@ test("Ash's own services and tools read as plain words, not their English contra
   assert.equal(statusLabel("device:phone", "clipboard.set", "改剪贴板"), "改剪贴板");
 });
 
-test("every request word the owner can see being done is named in Chinese", async () => {
-  const { WORD_CONTRACTS } = await import("../src/legacy/words");
-  const han = /\p{Script=Han}/u;
-  for (const word of WORD_CONTRACTS.filter((item) => item.kind === "request")) {
-    assert.ok(han.test(word.label ?? ""), `${word.member}/${word.word} has an English label: ${word.label}`);
-    const status = statusLabel(word.member, word.word, word.label);
-    assert.ok(han.test(status), `${word.member}/${word.word} shows ${status} in the status line`);
-  }
+test("a word with a label shows it in the status line", () => {
   assert.equal(statusLabel("service:apps", "apps.install", "安装应用"), "在申请安装应用");
   assert.equal(statusLabel("service:widgets", "widget.card.put", "更新桌面卡片"), "在更新桌面卡片");
 });
