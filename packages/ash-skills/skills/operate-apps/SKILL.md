@@ -17,7 +17,7 @@ whenToUse: 要往某个应用里记东西或查东西；应用打不开、工具
 
 ## 出了问题：先看，再改，再重启
 
-1. `apps.list` / `apps.describe`：`running` 是不是 `true`，`error` 写了什么，`cards[].problem` 有没有。
+1. `service:apps` 的 `apps.list` / `apps.describe`（手机上也有个同名的 `apps.list`，那是列手机上装的软件）：`running` 是不是 `true`，`error` 写了什么，`cards[].problem` 有没有。
 2. `apps.logs {id, lines?}`（默认 100 行，最多 400）：服务写到 stderr 的内容、协议错误、Ash 记的启动退出；`last_exit` 说上次怎么结束的（退出码或信号）。崩溃后 Ash 会自己按 1 秒、2 秒……最长 1 分钟的间隔重启，所以日志里常常是一串启动和退出。
 3. 改 `/root/apps/<id>/` 里的文件，然后 `apps.restart {id}`。它会先像 `apps.validate` 一样检查：不通过就不重启，旧的继续跑，问题在 `error.detail.problems`；改页面文件不用重启。
 4. 改了 `app.json` 的 `needs`：用 `apps.install {id}`，要主人重新批准。`needs` 没变的修改用 `apps.restart` 就够，不用打扰他。

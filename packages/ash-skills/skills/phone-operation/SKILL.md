@@ -1,10 +1,12 @@
 ---
 name: phone-operation
 description: 操作主人的手机屏幕和应用：真实前台还是虚拟屏、先看再点、卡住怎么办、登录验证码的边界、付款和下单被打断后不重复，以及哪些操作要主人批准。
-whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东西、点按钮、填内容、改设置；用到 screen.*、vscreen.*、apps.open、settings.*、intent.view、input.key 或 shell.run 之前。
+whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东西、点按钮、填内容、改设置；用到 screen.*、vscreen.*、apps.open、apps.open_url、settings.*、config.*、input.key 或 shell.run 之前。
 ---
 
 # 在手机上办事
+
+这里的词都在主人的手机上：`capability_call {member: "device:<手机的 id>", word, body}`。手机的 id 从每轮上下文里的设备列表拿（名字是手机、能力里有 `screen.*` 的那一只），不要写死。列表里没有它，或显示 offline，先读技能 `connect-device`。
 
 ## 先分清要哪种
 
@@ -12,7 +14,7 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 
 | 模式 | 意思 | 怎么做 |
 |---|---|---|
-| `foreground_handoff` | 主人要的是**把应用打开给他用**（「帮我打开闲鱼」「带我去设置」） | `apps.open` / `settings.open` / `intent.view` 在真实屏幕上打开，成功后就停，留在那个应用里；不要用虚拟屏冒充已打开，不要自己回 Ash 或回桌面 |
+| `foreground_handoff` | 主人要的是**把应用打开给他用**（「帮我打开闲鱼」「带我去设置」） | `apps.open` / `settings.open` / `apps.open_url`（链接或深度链接）在真实屏幕上打开，成功后就停，留在那个应用里；不要用虚拟屏冒充已打开，不要自己回 Ash 或回桌面 |
 | `virtual_task` | 主人要你在应用**里面办事**并拿结果（「在闲鱼查一下价格」），他留在 Ash 里 | `vscreen.create` → `vscreen.launch` → `vscreen.see` → 用 `vscreen.tap/swipe/key/type` 操作，做完 `vscreen.close` |
 | `foreground_task` | 要在真实屏幕办事，或需要主人自己登录、收验证码 | 用 `screen.*` 操作真实屏幕；需要他动手时把那一页留着并说明，最后一屏也留着 |
 | `no_preference` | 不需要屏幕 | 别无谓地开屏；以后要给主人打开应用仍然用真实屏幕 |
@@ -33,7 +35,8 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 - 被弹窗、键盘、广告挡住：`screen.global_action {action: "back"}` 关键盘或返回；`home`、`recents` 回桌面和切应用。同一个办法最多试 3 次，换思路。
 - 页面没反应：等一下再读；仍然不对，退回上一步重来，不要连点。
 - 密码、支付页面是安全屏，截图会失败：不是故障，请主人自己来。
-- 无障碍断了、`screen.*` 不可用：告诉主人需要在设置里把 Ash 屏幕助手的无障碍打开（`human_show` 的权限卡可以带他去），不要假装做了。
+- 无障碍断了、`screen.*` 不可用：先 `config.status` 看是哪一项没开。升级后被系统关掉的无障碍，可以 `config.accessibility.enable` 重新打开（结构性改动，会问主人）；开不了就 `config.permission.request {name: "accessibility"}` 打开系统设置页，请主人亲手打开，不要假装做了。
+- 其他权限（位置、通知、悬浮窗、Shizuku、使用情况访问……）同样：`config.status` 看，缺哪项就 `config.permission.request {name}`，授权由主人本人完成。应用总被系统杀掉，用 `config.keepalive.status` 看厂商的自启动和后台限制；`config.keepalive.fix` 会接管屏幕去点厂商设置，先告诉主人再用。
 - 还是做不成：停下，如实说停在了哪一步、屏幕上现在是什么，让主人决定。
 
 ## 登录、验证码、付款：边界
