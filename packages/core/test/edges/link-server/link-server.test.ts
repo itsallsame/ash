@@ -1,0 +1,172 @@
+import assert from "node:assert/strict";
+import { request } from "node:http";
+import test from "node:test";
+import type { LinkObservation } from "../../../src/edges/link-server";
+import { eventually } from "../../fixtures/wait";
+import { cap, connect, connected, connectViaRelay, newIdentity, startHub } from "./harness";
+
+const get = (port: number, path: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+  request({ host: "127.0.0.1", port, path }, (res) => {
+    let body = "";
+    res.on("data", (c) => (body += c));
+    res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+  }).on("error", reject).end();
+});
+
+test("start: one port on 127.0.0.1, a random token held in memory, and the host is told both", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  assert.deepEqual(hub.handoffs, [{ port: hub.port, token: hub.token }]);
+  assert.ok(hub.token.length >= 32);
+  const other = await startHub(); t.after(() => other.stop());
+  assert.notEqual(other.token, hub.token);
+  assert.equal((await get(hub.port, "/nothing")).status, 404);
+});
+
+test("mount: a path and what is under it, the fallback for the rest, and /link is not for sale", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  hub.server.mount("/mcp", (_req, res) => res.end("mcp"));
+  hub.server.mount("/", (req, res) => res.end(`web ${req.url}`));
+  assert.equal((await get(hub.port, "/mcp")).body, "mcp");
+  assert.equal((await get(hub.port, "/mcp/agent-x")).body, "mcp");
+  assert.equal((await get(hub.port, "/mcpx")).body, "web /mcpx");
+  assert.equal((await get(hub.port, "/index.html")).body, "web /index.html");
+  assert.throws(() => hub.server.mount("/link", () => {}));
+  assert.throws(() => hub.server.mount("/mcp", () => {}));
+});
+
+test("identity: a wrong or missing token and a wrong signature are 4001; nothing is registered for them", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const seen: LinkObservation[] = [];
+  hub.server.observe((o) => seen.push(o));
+  const stranger = await newIdentity();
+  const attempts = [
+    await connect(hub, { token: "wrong" }),
+    await connect(hub, { token: null }),
+    await connect(hub, { signWith: stranger }),
+  ];
+  for (const attempt of attempts) {
+    await eventually(() => attempt.closes.length > 0, "the refusal");
+    assert.equal(attempt.closes[0]!.code, 4001);
+    assert.equal(attempt.closes[0]!.willReconnect, true);
+  }
+  assert.equal(hub.hands.list().length, 0);
+  assert.equal(seen.filter((o) => o.kind === "handshake_failed" && o.code === 4001).length >= 3, true);
+});
+
+test("a hand seen for the first time on the local link is registered: paired_by local, tier ask, hand_id from its key", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const hand = await connected(hub, { kind: "computer", name: "书房电脑" });
+  const record = hub.hands.get(hand.identity.handId)!;
+  assert.deepEqual([record.name, record.kind, record.paired_by, record.tier, record.public_key, record.revoked_at], ["书房电脑", "computer", "local", "ask", hand.identity.publicKey, null]);
+  assert.equal(hand.client.welcome!.hand_id, hand.identity.handId);
+});
+
+test("one executor per hand: a second device connection replaces the first with 4009, and the first does not come back", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const identity = await newIdentity();
+  const first = await connected(hub, { identity, capabilities: [cap("location.get")] });
+  const second = await connected(hub, { identity, capabilities: [cap("clipboard.read")] });
+  await eventually(() => first.client.stoppedBy === 4009, "the first told 4009");
+  assert.equal(first.client.state, "stopped");
+  assert.equal(second.client.state, "ready");
+  // the old connection closing did not take the new one's member with it
+  assert.deepEqual(hub.registry.members.get(first.member)!.words().map((w) => w.word), ["clipboard.read"]);
+  assert.equal(hub.hands.online(identity.handId), true);
+});
+
+test("connections that carry only the human channel do not replace each other, and do not disturb the device connection", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const attached: string[] = [];
+  hub.server.onChannel("human", (session, ctx) => { attached.push(`${ctx.handId}:${ctx.local}`); return {}; });
+  const identity = await newIdentity();
+  const device = await connected(hub, { identity, capabilities: [cap("location.get")] });
+  const tab1 = await connect(hub, { identity, channels: { human: {} } });
+  const tab2 = await connect(hub, { identity, channels: { human: {} } });
+  await tab1.client.ready();
+  await tab2.client.ready();
+  assert.notEqual(tab1.client.welcome!.channels.human, tab2.client.welcome!.channels.human, "two clients");
+  assert.equal(device.client.state, "ready");
+  assert.equal(tab1.client.state, "ready");
+  assert.deepEqual(attached, [`${identity.handId}:true`, `${identity.handId}:true`]);
+});
+
+test("local channels: device and human are open (human with local=true); agent is not for the local link", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const hand = await connect(hub, { kind: "computer", channels: { device: {}, human: {}, agent: {} } });
+  const welcome = await hand.client.ready();
+  assert.deepEqual(welcome.channels.device, { accepted: true });
+  assert.deepEqual(welcome.channels.human && "local" in welcome.channels.human && welcome.channels.human.local, true);
+  assert.equal((welcome.channels.agent as { accepted: boolean }).accepted, false);
+});
+
+test("a channel's module gets its frames and the facts of the connection", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const got: unknown[] = [];
+  hub.server.onChannel("human", (session, ctx) => ({ human: (frame) => got.push([frame.t, ctx.local, ctx.transport, session.channels.human]) }));
+  const web = await connect(hub, { channels: { human: {} } });
+  await web.client.ready();
+  web.client.send({ to: "agent:main", kind: "request", word: "say", body: { text: "hi" } }).catch(() => {});
+  const client = (web.client.welcome!.channels.human as { client: string }).client;
+  await eventually(() => got.length === 1, "the send frame");
+  assert.deepEqual(got[0], ["send", true, "local", { client, local: true }]);
+  assert.throws(() => hub.server.onChannel("human", () => {}));
+});
+
+test("through the relay a hand gets exactly the channels the owner allowed it (SPEC-03 §2.2.1)", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const identity = await newIdentity();
+  const id = identity.handId;
+  const all = { device: {}, human: {}, agent: {} };
+  const reply = async (permissions: { lend: boolean; web_ui: boolean; local_agents: boolean }, kind: "computer" | "phone" = "computer") => {
+    hub.hands.register({ id, name: "远程电脑", kind, public_key: identity.publicKey, paired_by: "gateway", ...permissions });
+    const hand = connectViaRelay(hub, id, identity, { kind, channels: all });
+    const welcome = await hand.client.ready();
+    hand.client.stop();
+    const c = welcome.channels;
+    return { device: (c.device as { accepted: boolean }).accepted, human: Boolean(c.human && "client" in c.human && c.human.local === false), agent: (c.agent as { accepted: boolean }).accepted };
+  };
+  assert.deepEqual(await reply({ lend: true, web_ui: false, local_agents: false }), { device: true, human: false, agent: false });
+  assert.deepEqual(await reply({ lend: false, web_ui: true, local_agents: false }), { device: false, human: true, agent: false }, "web_ui opens human with local=false");
+  assert.deepEqual(await reply({ lend: false, web_ui: false, local_agents: true }), { device: false, human: false, agent: true });
+  assert.deepEqual(await reply({ lend: false, web_ui: false, local_agents: true }, "phone"), { device: false, human: false, agent: false }, "only a computer runs local agents");
+
+  hub.hands.setAccess(id, { web_ui: true });
+  const hand = connectViaRelay(hub, id, identity, { channels: { human: {} } });
+  const human = (await hand.client.ready()).channels.human;
+  assert.ok(human && "client" in human && human.local === false);
+});
+
+test("through the relay: an unknown device, a key that is not the device's, and a revoked device are refused", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const identity = await newIdentity();
+  const other = await newIdentity();
+
+  const unknown = connectViaRelay(hub, identity.handId, identity);
+  await eventually(() => unknown.closes.length > 0, "unknown refused");
+  assert.equal(unknown.closes[0]!.code, 4001);
+
+  hub.hands.register({ id: identity.handId, name: "r", kind: "computer", public_key: identity.publicKey, paired_by: "gateway", lend: true });
+  const wrongKey = connectViaRelay(hub, identity.handId, other);
+  await eventually(() => wrongKey.closes.length > 0, "wrong key refused");
+  assert.equal(wrongKey.closes[0]!.code, 4001);
+
+  hub.hands.revoke(identity.handId);
+  const revoked = connectViaRelay(hub, identity.handId, identity);
+  await eventually(() => revoked.closes.length > 0, "revoked refused");
+  assert.equal(revoked.closes[0]!.code, 4003);
+  assert.equal(revoked.client.stoppedBy, 4003);
+});
+
+test("observers hear connected and disconnected; the device channel reaches the hand registry", async (t) => {
+  const hub = await startHub(); t.after(() => hub.stop());
+  const seen: string[] = [];
+  hub.server.observe((o) => seen.push(o.kind === "handshake_failed" ? o.kind : `${o.kind} ${o.ctx.handId}`));
+  const hand = await connected(hub, { capabilities: [cap("location.get")] });
+  assert.deepEqual(seen, [`connected ${hand.identity.handId}`]);
+  assert.equal(hub.server.connections().length, 1);
+  hand.client.stop();
+  await eventually(() => seen.length === 2, "disconnected");
+  assert.equal(seen[1], `disconnected ${hand.identity.handId}`);
+  assert.equal(hub.server.connections().length, 0);
+  assert.ok(hub.hands.get(hand.identity.handId)!.last_seen);
+});
