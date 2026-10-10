@@ -1,0 +1,16 @@
+{
+  "contract": "ash-app/1",
+  "id": "fixture",
+  "name": "Fixture",
+  "version": "1.0.0",
+  "summary": "A minimal app for tests: notes, a few events, and a way to call the hub back.",
+  "role": "Test organ: keeps notes, hears sense events, reports fixture events.",
+  "publisher": "ash",
+  "server": { "command": "node", "args": ["server.mjs"] },
+  "surfaces": [{ "id": "home", "title": "Home", "resource": "ui://fixture/home" }],
+  "events": ["fixture.ping", "fixture.alert"],
+  "wake_events": ["fixture.alert"],
+  "listens": ["sense.*"],
+  "data_dir": "data",
+  "needs": [{ "member": "device:*", "words": ["location.get"], "why": "Read where the phone is, to test grants." }]
+}

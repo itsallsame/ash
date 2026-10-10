@@ -247,7 +247,8 @@
             "properties": {
               "member": {
                 "type": "string",
-                "pattern": "^(?:device|app):[a-z0-9][a-z0-9_-]{0,47}$"
+                "pattern": "^(?:device:(?:\\*|[A-Za-z0-9_-]{22})|service:[a-z][a-z0-9_-]{0,31}|agent:[a-z][a-z0-9_-]{0,31}|app:[a-z][a-z0-9-]{0,47})$",
+                "description": "The member to use: a service (service:llm), an agent (agent:main), a hand (device:<hand_id>, or device:* for any), or another app (app:<id>)."
               },
               "words": {
                 "type": "array",
