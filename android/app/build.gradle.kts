@@ -30,6 +30,10 @@ android {
         versionName = "0.4.0"
         buildConfigField("boolean", "ISOLATED_PROBE", "false")
         buildConfigField("long", "SENSE_RESCAN_MS", "21600000L")
+        // Where the guide downloads the kernel package from when it is not installed (https; empty = no download offered) and, if given, its SHA-256.
+        // Set with -PashKernelApkUrl=... and -PashKernelApkSha256=...
+        buildConfigField("String", "KERNEL_APK_URL", "\"${providers.gradleProperty("ashKernelApkUrl").getOrElse("")}\"")
+        buildConfigField("String", "KERNEL_APK_SHA256", "\"${providers.gradleProperty("ashKernelApkSha256").getOrElse("")}\"")
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 

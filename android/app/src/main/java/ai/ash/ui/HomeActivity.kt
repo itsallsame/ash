@@ -26,6 +26,7 @@ import android.widget.TextView
 import ai.ash.R
 import ai.ash.BuildConfig
 import ai.ash.host.HandRuntime
+import ai.ash.host.KernelGate
 import ai.ash.host.KernelLauncher
 import ai.ash.caps.config.Permissions
 import ai.ash.link.Link
@@ -151,10 +152,11 @@ class HomeActivity : Activity() {
         }
 
         setContentView(web)
+        ai.ash.apps.Ui.insets(web) // edge to edge (targetSdk 35): clear of the bars and the keyboard
         focusInput = intent?.getBooleanExtra(EXTRA_FOCUS_INPUT, false) == true
         web.loadUrl(UI_ASSET_URL)
         val firstStart = OnboardingActivity.showOnce(this)
-        // After an upgrade the phone may have put Ash's auto-start back off: look again once the helper has connected.
+        // After an upgrade the phone may have put Ash's auto-start back off: look again once the link to the kernel is up.
         ui.postDelayed({ if (!isFinishing && !isDestroyed) Permissions.recheckAfterUpgrade(this, firstStart) }, 5_000)
     }
 
@@ -187,8 +189,12 @@ class HomeActivity : Activity() {
         ai.ash.host.AppState.homeVisible = true
         HandRuntime.appOpened(this)
         Link.get(this).presence.tell()
-        // In front, the app may start the kernel service; do it when the kernel has not handed over a connection.
-        if (!KernelLauncher.connected(this)) KernelLauncher.start(this)
+        // The kernel package: not installed, the guide's first step offers to install it (once); not running, it is started from here (in front, the app may).
+        when (KernelGate.action(KernelLauncher.state(this), 0)) {
+            KernelGate.Action.INSTALL -> OnboardingActivity.offerKernel(this)
+            KernelGate.Action.START -> KernelLauncher.start(this)
+            else -> {}
+        }
     }
 
     override fun onPause() {

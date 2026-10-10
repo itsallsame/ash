@@ -3,6 +3,7 @@ package ai.ash.link
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The kernel host binds this service and calls [IHand.attach] with the port and token of the kernel's link server
@@ -18,5 +19,14 @@ class HandService : Service() {
         }
     }
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent?): IBinder { binds.incrementAndGet(); return binder }
+
+    override fun onUnbind(intent: Intent?): Boolean { binds.updateAndGet { (it - 1).coerceAtLeast(0) }; return false }
+
+    companion object {
+        private val binds = AtomicInteger(0)
+
+        /** The kernel host holds its binding now (what keeps this process alive; the guide waits for it). */
+        val bound: Boolean get() = binds.get() > 0
+    }
 }

@@ -122,7 +122,7 @@ internal class TaskStatusModel {
     }
     /**
      * What the island shows now (island v2): the task when there is one to show, otherwise the resident entry when the
-     * owner keeps it ([resident]: the setting is on and the screen helper draws it), otherwise nothing.
+     * owner keeps it ([resident]: the setting is on and the island draws it), otherwise nothing.
      */
     fun island(now: Long, resident: Boolean): Island = when {
         visible(now) -> Island.TASK

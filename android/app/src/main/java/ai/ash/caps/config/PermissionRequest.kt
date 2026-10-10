@@ -1,6 +1,7 @@
 package ai.ash.caps.config
 
 import ai.ash.caps.senses.SetupActivity
+import ai.ash.host.BackgroundLaunch
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -17,11 +18,14 @@ import android.provider.Settings
 object PermissionRequest {
     const val EXTRA_NAME = "name"
 
-    /** Starts the request for [name] (one of [ConfigStatus.NAMES]); false when the name is not one. */
+    /**
+     * Starts the request for [name] (one of [ConfigStatus.NAMES]); false when the name is not one. When Ash is in the
+     * background with no exemption to start a screen, the request waits behind a notice the owner taps ([BackgroundLaunch]).
+     */
     fun start(ctx: Context, name: String): Boolean {
         if (name !in ConfigStatus.NAMES) return false
-        ctx.startActivity(Intent(ctx, PermissionRequestActivity::class.java).putExtra(EXTRA_NAME, name)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
+        BackgroundLaunch.start(ctx, Intent(ctx, PermissionRequestActivity::class.java).putExtra(EXTRA_NAME, name).addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION),
+            "Ash 需要你授权", "点一下，继续给 Ash 开这项权限")
         return true
     }
 

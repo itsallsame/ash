@@ -98,7 +98,7 @@ class ConsoleActivity : Activity() {
         root.addView(notificationToggle)
         row("系统读取权限" to { openNotificationAccess() })
 
-        setContentView(ScrollView(this).apply { addView(root) })
+        setContentView(ScrollView(this).apply { addView(root) }.also { ai.ash.apps.Ui.insets(it) }) // edge to edge (targetSdk 35)
         refresh()
     }
 

@@ -26,7 +26,7 @@ object TaskCapsule {
 
     internal fun update(ctx: Context, frame: TaskFrame, elapsed: Long, stale: Boolean, interactive: Boolean, canStop: Boolean, notice: String?) {
         check(Looper.myLooper() == Looper.getMainLooper())
-        // The helper lays its own pending answers over the cards.
+        // The island lays its own pending answers over the cards.
         ScreenBridge.island(IslandPresentation.project(frame, elapsed, stale, interactive, canStop, notice, emptyMap(), System.currentTimeMillis()), AppState.homeVisible)
     }
     /** The resident entry: no task, only the way to talk to Ash. */

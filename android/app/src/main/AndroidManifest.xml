@@ -133,6 +133,15 @@
             </intent-filter>
         </service>
 
+        <!-- An upgrade makes the system switch off the accessibility service: Ash turns it back on, or asks the owner to (UpgradeRecovery). -->
+        <receiver android:name=".caps.config.PackageReplacedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <!-- The system installer's answer for the kernel package the guide installs. -->
+        <receiver android:name=".host.KernelInstallReceiver" android:exported="false" />
+
         <receiver android:name=".host.PresentActionReceiver" android:exported="false" />
         <receiver android:name=".host.TaskStopReceiver" android:exported="false" />
         <receiver android:name=".host.PresentExpiryReceiver" android:exported="false" />
@@ -163,7 +172,7 @@
         </activity>
 
         <!-- Brings Ash's task back as it was left (after the keep-alive switches), or opens Ash if it had no task. -->
-        <activity android:name=".host.screen.ReturnActivity" android:exported="false"
+        <activity android:name=".ui.ReturnActivity" android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
 
         <provider
@@ -197,20 +206,6 @@
             </intent-filter>
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_config" />
         </service>
-
-        <!-- Ash's own page to ask the system to let it run in the background. -->
-        <activity
-            android:name=".screen.KeepAliveActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-
-        <!-- A card in recent apps that the owner can lock. -->
-        <activity
-            android:name=".screen.LockCardActivity"
-            android:exported="false"
-            android:label="Ash"
-            android:taskAffinity="ai.ash.screen.lock" />
 
         <!-- config.permission.request: shows one permission prompt (or settings page) over whatever is in front. -->
         <activity

@@ -43,7 +43,7 @@ object TaskStatus {
         val ctx = app; app = null; lastNotification = null
         if (ctx != null) runCatching { ai.ash.widget.AshWidgetProvider.refresh(ctx, widgetView()) }
     } }
-    /** Show the current state again now (the screen helper connected, Ash's own screen came or went). */
+    /** Show the current state again now (the accessibility service connected, Ash's own screen came or went). */
     fun refresh() { main.post { render() } }
     fun accept(ctx: Context, body: JSONObject): Boolean {
         val frame = try { TaskFrame.parse(body) } catch (_: Exception) { return false }
