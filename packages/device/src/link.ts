@@ -215,8 +215,6 @@ export class GatewayLine {
         const conn = await bounded(this.gateway.connect(session), STEP_MS, "gateway connection", (late) => late.close());
         this.conn = conn; this.connected = true; this.lastError = ""; delay = 1000;
         conn.onUnmatched = (frame) => this.tunnelFrame(conn, frame);
-        // A newer gateway library may route `/link` tunnels itself; take them the same way.
-        conn.onStream((stream) => (stream.path === LINK_PATH ? this.take(stream) : stream.close(4404, "unsupported path")));
         let lastHeard = Date.now();
         let expired!: () => void;
         const silent = new Promise<void>((resolve) => { expired = resolve; });

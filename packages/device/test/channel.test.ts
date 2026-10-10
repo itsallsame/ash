@@ -104,15 +104,6 @@ test("a runtime this computer does not have is unavailable, and the agent is rep
   assert.equal((await other.call("agent.start", { agent: "agent:main", spec: spec("claude") })).error.code, "conflict");
 });
 
-test("agent.start may name the runtime next to the spec or inside it", async () => {
-  const { call, sessions } = channel();
-  const { runtime: _unused, ...bare } = spec();
-  const started = await call("agent.start", { agent: "agent:main", runtime: "claude", spec: bare });
-  assert.equal(started.ok, true);
-  assert.equal(sessions.length, 1);
-  assert.equal((await call("agent.start", { agent: "agent:x", spec: bare })).error.code, "unavailable");
-});
-
 test("agent.status follows start and stop; a runtime that dies is reported as ended and as failed", async () => {
   const { call, sent, sessions } = channel();
   await call("agent.start", { agent: "agent:main", spec: spec() });

@@ -173,11 +173,7 @@ export class AgentChannel {
       return { agents: this.list() };
     }
     const agent = text(f, "agent");
-    if (op === "agent.start") {
-      // SPEC-08 §1.4 writes `agent.start {agent, runtime, spec}` and the spec carries the runtime too: either names it.
-      const named = typeof f.runtime === "string" ? { kind: f.runtime } : f.runtime;
-      return this.start(agent, f.spec && typeof f.spec === "object" ? { ...f.spec, runtime: { ...named, ...f.spec.runtime } } : f.spec);
-    }
+    if (op === "agent.start") return this.start(agent, f.spec);
     const driver = this.driverOf(agent);
     switch (op) {
       case "agent.stop": {

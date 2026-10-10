@@ -50,7 +50,7 @@ The operation's fields are the driver method's arguments by name:
 
 | op | fields | result |
 |---|---|---|
-| `agent.start` | `spec` (`AgentStartSpec`; `runtime` may also stand beside it) | `{sessions:{<key>:<handle>}, attached}` |
+| `agent.start` | `spec` (`AgentStartSpec`) | `{sessions:{<key>:<handle>}, attached}` |
 | `agent.stop` | `reason` | `{}` |
 | `agent.list` | | `{agents:[{agent, runtime, state, detail?}]}` |
 | `session.get` | `key` | `{handle: string\|null}` |

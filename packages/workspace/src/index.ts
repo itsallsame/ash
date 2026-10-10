@@ -116,6 +116,9 @@ export class Workspace {
     } catch { return declared; }
   }
 
+  /** A command started by `workspace.bash` is still running. */
+  get busy(): boolean { return this.jobs.running > 0; }
+
   async close(): Promise<void> { await this.jobs.close(); }
 
   // --- paths ---

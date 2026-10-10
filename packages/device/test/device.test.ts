@@ -21,13 +21,13 @@ const codexOnly: DeviceDeps["detect"] = async () => [{ kind: "codex", installed:
 const nothing: DeviceDeps["detect"] = async () => [];
 
 interface Setup { kernel: Kernel; device: RunningDevice; id: string; dir: string; workdir: string; stateDir: string; tunnel: ReturnType<typeof openTunnel> }
-async function setup(t: { after(fn: () => unknown): void }, o: { detect?: DeviceDeps["detect"]; permissions?: Parameters<Kernel["pair"]>[1]; connect?: boolean; deps?: DeviceDeps } = {}): Promise<Setup> {
+async function setup(t: { after(fn: () => unknown): void }, o: { installRoot?: string; detect?: DeviceDeps["detect"]; permissions?: Parameters<Kernel["pair"]>[1]; connect?: boolean; deps?: DeviceDeps } = {}): Promise<Setup> {
   const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "ash-device-"));
   const stateDir = join(dir, "state"), workdir = join(dir, "work");
   const kernel = await startKernel();
   const identity = await loadIdentity(stateDir);
   kernel.pair({ id: identity.id, publicKey: identity.publicKey }, o.permissions);
-  const device = await startDevice({ gateway: "", name: "Test Mac", stateDir, workdir }, undefined, { relay: false, detect: o.detect ?? nothing, ego: null, kimiPorts: [0], ...o.deps });
+  const device = await startDevice({ gateway: "", name: "Test Mac", stateDir, workdir, installRoot: o.installRoot }, undefined, { relay: false, detect: o.detect ?? nothing, ego: null, kimiPorts: [0], ...o.deps });
   t.after(async () => { await device.close(); await kernel.stop(); });
   const tunnel = o.connect === false ? { cut() {} } : openTunnel(kernel, device, identity.id);
   return { kernel, device, id: identity.id, dir, workdir, stateDir, tunnel };
@@ -131,6 +131,20 @@ test("the program's own update is offered only by a copy the service installer p
   await plain.device.client.ready();
   await eventually(() => plain.kernel.registry.members.has(`device:${plain.id}`), "the hand registering");
   assert.equal(plain.kernel.registry.members.get(`device:${plain.id}`)!.words().some((w) => w.word === "x.ash.update"), false);
+});
+
+test("the update waits for a command left running in the background", async (t) => {
+  const s = await setup(t, { installRoot: "/nonexistent-ash-root", deps: { restart: () => {} } });
+  await s.device.client.ready();
+  await eventually(() => s.kernel.registry.members.has(`device:${s.id}`), "the hand registering");
+  await s.kernel.body("bind", { hand: s.id });
+  const updater = context({ caller: { member: "service:devices", via: "service", local: true } });
+  const update = () => s.kernel.registry.members.get(`device:${s.id}`)!.handle(request(`device:${s.id}`, "x.ash.update", { version: "0.2.1", sha256: "a".repeat(64) }, "service:devices"), updater);
+  const run = await s.kernel.call(`body:${s.id}`, "workspace.bash", { command: "sleep 30", yield_ms: 0 });
+  assert.equal(await errorCode(update()), "conflict");
+  await s.kernel.call(`body:${s.id}`, "workspace.signal", { process: (run.data as any).process, signal: "TERM" });
+  await s.kernel.call(`body:${s.id}`, "workspace.poll", { process: (run.data as any).process, yield_ms: 5000 });
+  assert.notEqual(await errorCode(update()), "conflict", "once the command has ended the update goes on to install");
 });
 
 test("a computer allowed only to run local agents gets the agent channel and no device channel", async (t) => {

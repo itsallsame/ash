@@ -70,7 +70,7 @@ export async function startDevice(config: DeviceConfig, pairCode?: string, depen
   let updating = false;
   const hand = createHand({
     workspace, ego, kimi,
-    busy: () => agents.busy || kimi.busy || !!ego?.running || updating,
+    busy: () => agents.busy || workspace.busy || kimi.busy || !!ego?.running || updating,
     update: config.installRoot && dependencies.restart
       ? async (version, sha256) => {
         updating = true;
