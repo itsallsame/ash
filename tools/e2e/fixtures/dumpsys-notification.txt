@@ -1,0 +1,33 @@
+Current Notification Manager state:
+  Notification List:
+  NotificationRecord(0x0fd9ed4: pkg=ai.ash.agent user=UserHandle{0} id=7 tag=reminder importance=3 key=0|ai.ash.agent|7|reminder|10234: Notification(channel=ash_reminders shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 category=null actions=0 vis=PRIVATE semFlags=0x0 semPriority=0 semMissedCount=0))
+    uid=10234 userId=0
+    opPkg=ai.ash.agent
+    icon=Icon(typ=RESOURCE pkg=ai.ash.agent id=0x7f080012)
+    flags=0x0
+    extras={
+      android.title=String (后台提醒)
+      android.reduced.images=Boolean (true)
+      android.text=String (后台提醒 bgremind-lq3k9zab)
+      android.showWhen=Boolean (true)
+    }
+    stats:
+  NotificationRecord(0x0a41b77: pkg=ai.ash.agent user=UserHandle{0} id=12 tag=null importance=4 key=0|ai.ash.agent|12|null|10234: Notification(channel=ash_ask shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x10 color=0x00000000 category=null actions=3 vis=PRIVATE))
+    uid=10234 userId=0
+    extras={
+      android.title=String (需要你确认：在改剪贴板)
+      android.text=String (agent:main 想对 device:abc 做「clipboard.set」（在改剪贴板）)
+    }
+    actions={
+      [0] "可以" -> PendingIntent{1a2b: PendingIntentRecord{3c4d ai.ash.agent broadcastIntent}}
+      [1] "以后都可以" -> PendingIntent{5e6f: PendingIntentRecord{7a8b ai.ash.agent broadcastIntent}}
+      [2] "不行" -> PendingIntent{9c0d: PendingIntentRecord{1e2f ai.ash.agent broadcastIntent}}
+    }
+  NotificationRecord(0x0bb91c2: pkg=com.android.shell user=UserHandle{0} id=0 tag=e2etag importance=3 key=0|com.android.shell|0|e2etag|2000: Notification(channel=miscellaneous shortcut=null))
+    uid=2000 userId=0
+    extras={
+      android.title=String (ash-e2e)
+      android.bigText=SpannableString (notice-lq3k9zab)
+      android.text=String (notice-lq3k9zab)
+    }
+  Zen Mode:

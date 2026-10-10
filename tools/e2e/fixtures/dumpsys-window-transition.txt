@@ -1,0 +1,2 @@
+  mCurrentFocus=null
+  mFocusedApp=Token{b3f02 ActivityRecord{c55e1 u0 ai.ash.agent/ai.ash.apps.MainActivity t97}}

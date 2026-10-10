@@ -1,0 +1,7 @@
+WINDOW MANAGER POLICY STATE (dumpsys window policy)
+    mDreamingLockscreen=false mDreamingSleepToken=null
+    isKeyguardShowing=false
+  mHasPermanentDpad=false
+  mCurrentFocus=Window{4f3c2a1 u0 com.android.settings/com.android.settings.Settings}
+  mFocusedApp=ActivityRecord{1a2b3c4 u0 com.android.settings/.Settings t52}
+  mInTouchMode=true
