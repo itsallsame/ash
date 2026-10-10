@@ -53,15 +53,3 @@ export const MAX_DEPTH = 3;
 export function sees(words: Policy, memberId: string): boolean {
   return words === undefined || words.some((pattern) => regexOf(pattern.split("/")[0]!).test(memberId));
 }
-
-/**
- * The tools an agent needs to redeem an approval receipt (`waiting_owner` -> the owner answers -> it redeems, skips or
- * withdraws in its own turn). A declaration that lists its tools gets them added, as far as the one declaring has them.
- */
-export const APPROVAL_TOOLS: readonly string[] = Object.freeze(["human_pending", "human_pending_get", "human_pending_redeem", "human_pending_skip", "human_withdraw"]);
-
-export function withApprovalTools<T extends { tools?: string[] }>(decl: T, power: CallerPower): T {
-  if (!decl.tools) return decl; // not restricted: it has them already
-  const missing = APPROVAL_TOOLS.filter((t) => !decl.tools!.includes(t) && (power.unrestricted || isSubset([t], power.tools)));
-  return missing.length ? { ...decl, tools: [...decl.tools, ...missing] } : decl;
-}

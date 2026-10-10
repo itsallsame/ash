@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { APPROVAL_TOOLS } from "../../../src/edges/agents/policy";
 import { caller, fixture, OWNER, settle, waitFor, type FakeDriver } from "./helpers";
 
 const M = "agent:main";
@@ -116,7 +115,7 @@ test("spawn: a temporary agent with one lane is declared, given the task by ask,
   const id = sends(d, "work")[0]![1] as string;
   assert.match(id, /^agent:w-[0-9a-f]{6}$/);
   const worker = f.agents.manager.run(id).spec.decl;
-  assert.deepEqual([worker.ephemeral, worker.depth, worker.brief, worker.tools, Object.keys(worker.lanes!)], [true, 1, "You research.", ["web", ...APPROVAL_TOOLS], ["work"]]);
+  assert.deepEqual([worker.ephemeral, worker.depth, worker.brief, worker.tools, Object.keys(worker.lanes!)], [true, 1, "You research.", ["web"], ["work"]]);
   assert.ok(f.registry.members.has(id));
   assert.match(((sends(d, "work")[0]![3]) as any)[0].text, /find the capital of France/);
   d.say(id, "work", "Paris");
@@ -152,7 +151,7 @@ test("spawn: too slow is a timeout and the worker is gone anyway; an unknown tem
   const inherit = f.service("spawn", { task: "inherit" }, caller("agent:a"));
   await waitFor(() => sends(d, "work").length === 2);
   const w = f.agents.manager.run(sends(d, "work")[1]![1] as string).spec.decl;
-  assert.deepEqual([w.tools, w.words, w.depth], [["read", ...APPROVAL_TOOLS], ["body:main/workspace.read"], 1]);
+  assert.deepEqual([w.tools, w.words, w.depth], [["read"], ["body:main/workspace.read"], 1]);
   d.finish(w.id, "work");
   await inherit;
 });
@@ -331,21 +330,6 @@ test("the primary agent can be stopped only by the owner", async () => {
   await f.service("stop", { agent: "agent:b" }, caller("agent:b")); // any other agent is fine
   await f.service("stop", { agent: M }, OWNER);
   assert.ok(!f.registry.members.has(M));
-});
-
-test("an agent with a tool list gets the tools that redeem an approval receipt, as far as the one declaring has them", async () => {
-  const f = fixture();
-  await f.start();
-  await f.service("declare", decl("agent:r1", { tools: ["read"] }));
-  assert.deepEqual(f.agents.manager.run("agent:r1").spec.decl.tools, ["read", ...APPROVAL_TOOLS]);
-  await f.service("declare", decl("agent:r2"));
-  assert.equal(f.agents.manager.run("agent:r2").spec.decl.tools, undefined); // not restricted: has them
-  await f.service("declare", decl("agent:narrow", { words: ["*"] }));
-  f.agents.manager.runs.patch("agent:narrow", (spec) => { spec.decl.tools = ["read", "human_pending_redeem"]; });
-  await f.service("declare", decl("agent:c", { tools: ["read"], words: ["x/y"] }), caller("agent:narrow"));
-  assert.deepEqual(f.agents.manager.run("agent:c").spec.decl.tools, ["read", "human_pending_redeem"]); // narrow has no more than that
-  await f.service("update", { agent: "agent:r1", tools: ["write"] });
-  assert.deepEqual(f.agents.manager.run("agent:r1").spec.decl.tools, ["write", ...APPROVAL_TOOLS]);
 });
 
 test("SPEC-08 §5.4: an agent calls the same session word the owner does, and the driver sees the same thing", async () => {

@@ -396,3 +396,25 @@ test("the lane turns busy when the driver says the turn started, not when send r
   await waitFor(() => sends(d).length === 2); // a send, not a followup behind a turn that is already over
   assert.equal(d.of("followup").length, 0);
 });
+
+test("a reflex pause that admin cannot carry out (offline or refused) falls back to interrupting the turn", async () => {
+  for (const admin of [undefined, () => ({ ok: false as const, error: { code: "forbidden" as const, message: "no" } })]) {
+    const f = fixture();
+    await f.start();
+    const d = f.driver();
+    if (admin) f.router.on("service:admin/pause", admin);
+    f.router.on("service:reflex/conversation.control", () => ({ ok: true, result: { data: { action: "pause" } } }));
+    await f.call(M, "say", { text: "first" });
+    await waitFor(() => sends(d).length === 1);
+    await f.call(M, "say", { text: "halt" });
+    await waitFor(() => d.of("interrupt").length === 1);
+    assert.equal(f.router.to("service:admin", "pause").length, 1);
+    assert.equal(d.of("followup").length, 0);
+  }
+});
+
+test("the member declares what it hears and what it emits: say, tell, ask, wake, typing, turn.started, turn.ended, agent.tool", async () => {
+  const f = fixture();
+  await f.start();
+  assert.deepEqual(f.registry.members.get(M)!.words().map((w) => w.word).sort(), ["agent.tool", "ask", "say", "tell", "turn.ended", "turn.started", "typing", "wake"]);
+});

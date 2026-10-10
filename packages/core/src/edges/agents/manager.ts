@@ -50,10 +50,11 @@ export interface AgentsDeps {
 
 export const DEFAULT_CREDENTIAL_REFS = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 export const USAGE_POLL_MS = 10 * 60_000;
-/** A process that ran at least this long before it died does not count against the three tries. */
-/** How long a worker may take when `spawn` names no limit (seconds), and how long the owner is taken to be still typing after the last `typing`. */
+/** How long a worker may take when `spawn` names no limit (seconds). */
 export const SPAWN_TIMEOUT_S = 600;
+/** How long after the last `typing` the owner is taken to be still typing (ms). */
 export const TYPING_MS = 5000;
+/** A process that ran at least this long before it died does not count against the three tries. */
 export const STABLE_RUN_MS = 60_000;
 export const MAX_FAILURES = 3;
 /** Dynamic modules are put in again after this many turns even if unchanged. */
@@ -253,7 +254,8 @@ export class AgentManager {
     const name = this.run(id).spec.decl.name;
     return {
       id, kind: "agent", name,
-      words: () => wordsOf(id).filter((w) => w.direction === "in"),
+      // What it hears (say, tell, ask, wake, typing) and what it emits (turn.started, turn.ended, agent.tool): the router lets a sender emit what its own words declare.
+      words: () => wordsOf(id),
       handle: (msg, ctx) => this.accept(id, msg, ctx.raw, ctx.signal),
     };
   }
@@ -328,6 +330,7 @@ export class AgentManager {
       return;
     }
     lane.sending = true;
+    let sent = false;
     try {
       if (!(await this.quotaAllows(live, lane))) return;
       if (lane.busy || live.stopping) return;
@@ -337,6 +340,7 @@ export class AgentManager {
         // The lane turns busy when the driver reports `turn.started`, not here: on a remote driver that report
         // (or even `turn.ended`) can arrive before this call returns.
         await live.driver.send(live.id, lane.key, rows.map(toDriverMessage));
+        sent = true;
       } catch (error) {
         this.inbox.mark(rows.map((r) => r.id), "pending");
         if (!(error instanceof WordError && error.code === "conflict")) throw error; // conflict: the driver is in a turn already
@@ -344,6 +348,7 @@ export class AgentManager {
     } finally { lane.sending = false; }
     // What arrived while the batch was being handed over now meets a busy lane.
     if (lane.busy) for (const row of this.inbox.pending(live.id, lane.key)) this.bg(this.busyRoute(live, lane, row), `route ${row.id}`);
+    else if (sent) this.bg(this.drain(live, lane), `drain ${live.id}/${lane.key}`); // the turn is over already: what came meanwhile goes next
   }
 
   /** A message came while the lane is in a turn: the owner's words go to the reflex judgement, the rest queue for the next turn. */
@@ -357,8 +362,9 @@ export class AgentManager {
         const chosen = reply.ok ? (reply.result?.data as { action?: string } | undefined)?.action : undefined;
         if (chosen === "interrupt" || chosen === "steer") action = chosen;
         if (chosen === "pause") { // the switch is the admin service's; the message waits, and the pause interrupts the turn
-          await this.deps.router.send({ to: "service:admin", kind: "request", word: "pause", body: { by: row.id } }, SERVICE_CALLER);
-          return;
+          const paused = await this.deps.router.send({ to: "service:admin", kind: "request", word: "pause", body: { by: row.id } }, SERVICE_CALLER);
+          if (paused.ok) return;
+          action = "interrupt"; // admin is not there or refused: at least stop this turn
         }
       }
       if (!lane.busy) { this.bg(this.drain(live, lane), "drain"); return; } // the turn ended while we were asking
