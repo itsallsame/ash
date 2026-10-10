@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `ec54292779c40250`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `3178020aa06491a8`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -264,7 +264,7 @@
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
 | `query` | owner, agent, app | read / none | - | kind*, from, to, limit | 在翻感知记录 | Archived sensor readings of one kind in a time range (Unix ms; default the last day), oldest first. Also what an organ uses to look back. |
-| `daily` | owner, agent, app | read / none | - | date | 在看每日统计 | The day's statistics from the archive (places, activity minutes, steps, health numbers) for a date (default yesterday). |
+| `daily` | owner, agent, app | read / none | - | date | 在看每日统计 | The day's statistics, computed from the archive when asked (places, activity minutes, steps, health numbers) for a date (default yesterday). steps is null when the day has no step readings; counts are the readings archived for the day (all 0 = nothing recorded). |
 | `now` | owner, agent, app | read / none | - | - | 在看最近读数 | The newest reading of each kind (location, activity, battery, ...) and how old each is. No phone call is made; it is what the archive holds. |
 | `sense.calendar` | kernel | read / none | event in | kind*, event* | 在收日程变化 | A calendar event is about to start or changed, from the hand. Archived only; not recorded in the ledger. |
 | `sense.battery` | kernel | read / none | event in | level* | 在收电量 | The battery level, from the hand. Archived only; not recorded in the ledger. |

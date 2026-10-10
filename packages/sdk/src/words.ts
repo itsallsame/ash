@@ -474,7 +474,7 @@ add("service:senses", "query", "request", obj({ kind: SENSE_KIND, from: nonnegat
   obj({ rows: array(free), truncated: bool }, ["rows"]),
   { label: "在翻感知记录", description: "Archived sensor readings of one kind in a time range (Unix ms; default the last day), oldest first. Also what an organ uses to look back." });
 add("service:senses", "daily", "request", obj({ date: { type: "string", pattern: DATE_PATTERN } }), free,
-  { label: "在看每日统计", description: "The day's statistics from the archive (places, activity minutes, steps, health numbers) for a date (default yesterday)." });
+  { label: "在看每日统计", description: "The day's statistics, computed from the archive when asked (places, activity minutes, steps, health numbers) for a date (default yesterday). steps is null when the day has no step readings; counts are the readings archived for the day (all 0 = nothing recorded)." });
 add("service:senses", "now", "request", empty, free,
   { label: "在看最近读数", description: "The newest reading of each kind (location, activity, battery, ...) and how old each is. No phone call is made; it is what the archive holds." });
 const calendarEvent = obj({ id, title: str, start: num, end: num, important: bool }, ["id", "title", "start", "end"]);

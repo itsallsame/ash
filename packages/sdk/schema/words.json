@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "ec54292779c402500e14cde927ed159e98b63ebf4f2313e4daba6333d6d881bd",
+ "hash": "3178020aa06491a8eacce09eef1889e417138593c297068da2a4a5596b91f02c",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -10974,7 +10974,7 @@
    "word": "daily",
    "kind": "request",
    "direction": "in",
-   "description": "The day's statistics from the archive (places, activity minutes, steps, health numbers) for a date (default yesterday).",
+   "description": "The day's statistics, computed from the archive when asked (places, activity minutes, steps, health numbers) for a date (default yesterday). steps is null when the day has no step readings; counts are the readings archived for the day (all 0 = nothing recorded).",
    "input_schema": {
     "type": "object",
     "properties": {
