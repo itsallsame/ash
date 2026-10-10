@@ -1,0 +1,269 @@
+# Who may call each word (the `callers` of its contract), one line per word: member/word  callers  [flags].
+# Words that say nothing get the default (owner, agent, app); they are listed too so a review sees what a new word got.
+# `*` marks a line that is not the default. Change it on purpose: UPDATE_SNAPSHOT=1 node --import tsx --test packages/sdk/test/callers.test.ts
+  service:admin/pause  owner,agent,app
+* service:admin/resume  owner  local_only
+  service:admin/settings.get  owner,agent,app
+  service:admin/settings.set  owner,agent,app
+  service:admin/model.set  owner,agent,app
+  service:admin/plugins.list  owner,agent,app
+  service:admin/plugins.op  owner,agent,app
+  service:admin/status  owner,agent,app
+* service:admin/logs  owner  local_only
+* service:admin/settings.changed  kernel  event-out
+  service:gate/rules.list  owner,agent,app
+* service:gate/rules.set  owner,agent
+* service:gate/rules.revoke  owner,agent
+* service:gate/mode.set  owner,agent
+  service:gate/audit  owner,agent,app
+  service:gate/history  owner,agent,app
+* service:gate/pending.list  agent
+* service:gate/pending.get  agent
+* service:gate/pending.redeem  agent
+* service:gate/pending.skip  agent
+* service:gate/pending.withdraw  agent
+  service:vault/list  owner,agent,app
+  service:vault/describe  owner,agent,app
+* service:vault/set  owner  local_only
+* service:vault/delete  owner  local_only
+* service:vault/vault.changed  kernel  event-out
+  service:devices/list  owner,agent,app
+  service:devices/describe  owner,agent,app
+  service:devices/pair_start  owner,agent,app
+  service:devices/pair_status  owner,agent,app
+  service:devices/pair_pending  owner,agent,app
+  service:devices/pair_approve  owner,agent,app
+  service:devices/pair_reject  owner,agent,app
+  service:devices/revoke  owner,agent,app
+* service:devices/restore  owner
+  service:devices/rename  owner,agent,app
+  service:devices/access_set  owner,agent,app
+  service:devices/update  owner,agent,app
+* service:devices/pair_code  owner  local_only
+* service:devices/pair.changed  kernel  event-out
+* service:devices/config.changed  kernel  event-in
+* service:link/list  owner,agent
+* service:link/describe  owner,agent
+* service:link/diagnose  owner,agent
+* service:link/disconnect  owner,agent
+* service:link/reconnect  owner,agent
+* service:link/refresh_manifest  owner,agent
+* service:link/gateway.status  owner,agent
+* service:link/gateway.setup.start  owner,agent
+* service:link/gateway.setup.status  owner,agent
+* service:link/gateway.setup.deploy  owner,agent
+* service:link/gateway.setup.cancel  owner,agent
+* service:link/gateway.use  owner,agent
+* service:link/connected  kernel  event-out
+* service:link/disconnected  kernel  event-out
+* service:link/handshake_failed  kernel  event-out
+* service:link/env.changed  kernel  event-in
+  service:bodies/list  owner,agent,app
+  service:bodies/describe  owner,agent,app
+  service:bodies/bind  owner,agent,app
+  service:bodies/unbind  owner,agent,app
+* person:owner/say  agent,app,kernel
+* person:owner/react  agent,app,kernel
+* person:owner/show  agent,app,kernel
+* person:owner/ask  agent,kernel
+* person:owner/open  agent,app,kernel
+* agent:*/say  owner
+  agent:*/tell  owner,agent,app
+  agent:*/ask  owner,agent,app
+* agent:*/wake  agent,app,kernel
+* agent:*/typing  kernel  event-in
+* agent:*/turn.started  kernel  event-out
+* agent:*/turn.ended  kernel  event-out
+* agent:*/agent.tool  kernel  event-out
+  service:agents/list  owner,agent,app
+  service:agents/runtimes  owner,agent,app
+* service:agents/threads  owner
+* service:agents/thread.stop  owner
+  service:agents/describe  owner,agent,app
+  service:agents/ask  owner,agent,app
+  service:agents/tell  owner,agent,app
+* service:agents/answer  agent
+  service:agents/declare  owner,agent,app
+  service:agents/update  owner,agent,app
+  service:agents/start  owner,agent,app
+  service:agents/stop  owner,agent,app
+  service:agents/restart  owner,agent,app
+  service:agents/remove  owner,agent,app
+* service:agents/primary.set  owner
+  service:agents/spawn  owner,agent,app
+  service:agents/session.get  owner,agent,app
+  service:agents/session.set  owner,agent,app
+  service:agents/session.new  owner,agent,app
+  service:agents/session.reload  owner,agent,app
+  service:agents/session.compact  owner,agent,app
+  service:agents/session.send  owner,agent,app
+  service:agents/session.followup  owner,agent,app
+  service:agents/session.steer  owner,agent,app
+  service:agents/session.inject  owner,agent,app
+  service:agents/session.interrupt  owner,agent,app
+  service:agents/session.restart  owner,agent,app
+  service:agents/configure  owner,agent,app
+  service:agents/plugins  owner,agent,app
+* service:agents/env.changed  kernel  event-in
+  service:clock/set  owner,agent,app
+  service:clock/cancel  owner,agent,app
+  service:clock/list  owner,agent,app
+* service:clock/wake.fired  kernel  event-in
+  service:llm/complete  owner,agent,app
+  service:persona/get  owner,agent,app
+* service:persona/propose  owner,agent
+* service:cost/usage.get  owner
+* service:cost/balance.get  owner
+* service:cost/quota.check  kernel
+* service:cost/usage.recorded  kernel  event-in
+* service:reflex/conversation.control  kernel
+* service:reflex/task.outcome  kernel
+* service:reflex/task.stop  owner
+* service:reflex/task.end  owner
+  service:senses/query  owner,agent,app
+  service:senses/daily  owner,agent,app
+  service:senses/now  owner,agent,app
+* service:senses/sense.calendar  kernel  event-in
+* service:senses/sense.battery  kernel  event-in
+* service:senses/sense.screen  kernel  event-in
+* service:senses/sense.notification  kernel  event-in
+* service:senses/sense.location  kernel  event-in
+* service:senses/sense.activity  kernel  event-in
+* service:senses/sense.health  kernel  event-in
+* service:senses/sense.geofence  kernel  event-in
+* service:senses/sense.source  kernel  event-in
+  service:directory/list  owner,agent,app
+  service:directory/describe  owner,agent,app
+  service:history/query  owner,agent,app
+  service:history/read  owner,agent,app
+  service:history/turn  owner,agent,app
+  service:history/activity  owner,agent,app
+  service:blobs/read  owner,agent,app
+  service:blobs/get  owner,agent,app
+* service:host/wake.at  kernel
+* service:host/wake.clear  kernel
+* service:host/power.hold  kernel
+* service:host/power.release  kernel
+* service:host/hands.handoff  kernel
+* service:host/update.install  owner
+* app:*/ash.on_event  kernel
+  service:widgets/widget.list  owner,agent,app
+  service:widgets/widget.card.put  owner,agent,app
+  service:widgets/widget.card.preview  owner,agent,app
+  service:widgets/widget.card.get  owner,agent,app
+  service:widgets/widget.card.validate  owner,agent,app
+  service:widgets/widget.card.remove  owner,agent,app
+* service:widgets/widget.tap  owner
+* service:widgets/widget.placed  kernel  event-in
+* service:widgets/widget.bind  kernel  event-in
+* service:widgets/widget.rendered  kernel  event-in
+* service:widgets/widget.action  kernel  event-out
+* service:widgets/widget.problem  kernel  event-out
+  service:pulse/pulse.get  owner,agent,app
+  service:pulse/pulse.set  owner,agent,app
+  service:pulse/pulse.history  owner,agent,app
+  service:pulse/pulse.note  owner,agent,app
+  service:pulse/pulse.fire  owner,agent,app
+* service:pulse/pulse.switch  owner
+* service:pulse/pulse.due  kernel
+  service:apps/apps.list  owner,agent,app
+  service:apps/apps.describe  owner,agent,app
+  service:apps/apps.install  owner,agent,app
+  service:apps/apps.enable  owner,agent,app
+  service:apps/apps.disable  owner,agent,app
+  service:apps/apps.revoke  owner,agent,app
+  service:apps/apps.refresh  owner,agent,app
+  service:apps/apps.restart  owner,agent,app
+  service:apps/apps.logs  owner,agent,app
+  service:apps/apps.reset  owner,agent,app
+  service:apps/apps.remove  owner,agent,app
+  service:apps/apps.contract  owner,agent,app
+  service:apps/apps.scaffold  owner,agent,app
+  service:apps/apps.validate  owner,agent,app
+  service:apps/surface  owner,agent,app
+  service:apps/icon  owner,agent,app
+  device:*/screen.read  owner,agent,app
+  device:*/screen.see  owner,agent,app
+  device:*/screen.screenshot  owner,agent,app
+  device:*/screen.touch_status  owner,agent,app
+  device:*/screen.tap  owner,agent,app
+  device:*/screen.type  owner,agent,app
+  device:*/screen.scroll  owner,agent,app
+  device:*/screen.swipe  owner,agent,app
+  device:*/screen.hold  owner,agent,app
+  device:*/screen.touch  owner,agent,app
+  device:*/screen.gesture  owner,agent,app
+  device:*/screen.global_action  owner,agent,app
+  device:*/input.key  owner,agent,app
+  device:*/vscreen.create  owner,agent,app
+  device:*/vscreen.close  owner,agent,app
+  device:*/vscreen.status  owner,agent,app
+  device:*/vscreen.see  owner,agent,app
+  device:*/vscreen.launch  owner,agent,app
+  device:*/vscreen.tap  owner,agent,app
+  device:*/vscreen.swipe  owner,agent,app
+  device:*/vscreen.key  owner,agent,app
+  device:*/vscreen.type  owner,agent,app
+  device:*/apps.list  owner,agent,app
+  device:*/apps.info  owner,agent,app
+  device:*/apps.usage  owner,agent,app
+  device:*/apps.open  owner,agent,app
+  device:*/apps.open_url  owner,agent,app
+  device:*/settings.get  owner,agent,app
+  device:*/settings.put  owner,agent,app
+  device:*/settings.open  owner,agent,app
+  device:*/clipboard.get  owner,agent,app
+  device:*/clipboard.set  owner,agent,app
+  device:*/device.status  owner,agent,app
+  device:*/shell.run  owner,agent,app
+  device:*/shell.status  owner,agent,app
+  body:*/workspace.ls  owner,agent,app
+  body:*/workspace.read  owner,agent,app
+  body:*/workspace.find  owner,agent,app
+  body:*/workspace.grep  owner,agent,app
+  body:*/workspace.write  owner,agent,app
+  body:*/workspace.edit  owner,agent,app
+  body:*/workspace.bash  owner,agent,app
+  body:*/workspace.poll  owner,agent,app
+  body:*/workspace.signal  owner,agent,app
+  body:*/body.info  owner,agent,app
+  device:*/browser.open  owner,agent,app
+  device:*/browser.read  owner,agent,app
+  device:*/browser.click  owner,agent,app
+  device:*/browser.type  owner,agent,app
+  device:*/browser.scroll  owner,agent,app
+  device:*/browser.back  owner,agent,app
+  device:*/browser.screenshot  owner,agent,app
+  device:*/browser.evaluate  owner,agent,app
+  device:*/browser.close  owner,agent,app
+  device:*/browser.spaces  owner,agent,app
+  device:*/calendar.search  owner,agent,app
+  device:*/calendar.list  owner,agent,app
+  device:*/calendar.create  owner,agent,app
+  device:*/media.list  owner,agent,app
+  device:*/media.albums  owner,agent,app
+  device:*/media.read  owner,agent,app
+  device:*/media.save  owner,agent,app
+  device:*/camera.capture  owner,agent,app
+  device:*/location.get  owner,agent,app
+  device:*/location.history  owner,agent,app
+  device:*/location.track  owner,agent,app
+  device:*/activity.current  owner,agent,app
+  device:*/activity.history  owner,agent,app
+  device:*/health.sources  owner,agent,app
+  device:*/health.read  owner,agent,app
+  device:*/health.summary  owner,agent,app
+  device:*/health.sync  owner,agent,app
+  device:*/sensors.steps  owner,agent,app
+  device:*/sense.status  owner,agent,app
+  device:*/sense.configure  owner,agent,app
+  device:*/sense.delete  owner,agent,app
+  device:*/config.status  owner,agent,app
+  device:*/config.permission.request  owner,agent,app
+  device:*/config.keepalive.status  owner,agent,app
+  device:*/config.keepalive.fix  owner,agent,app
+  device:*/config.accessibility.enable  owner,agent,app
+* device:*/decision.surface  kernel
+* device:*/decision.screen  kernel
+* device:*/decision.return  kernel
+* device:*/decision.virtual_close  kernel
