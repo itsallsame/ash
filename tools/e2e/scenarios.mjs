@@ -1539,7 +1539,9 @@ defineScenario({
     const turn = turnsGiven(ctx.lastLedger, a.id)[0];
     check((await ctx.owner.answer(got.value.id, got.value.retry)).ok, "the retry pick was refused");
     const pick = (await ctx.expect(base, (ms) => pickOf(ms, got.value.id), "the retry is not in the ledger")).value;
-    const next = await ctx.turnOf(base, pick.id, { ms: 240_000 });
+    // The retry runs the failed turn's own messages again: the new turn carries the original message's id.
+    const after = (t) => t.id !== turn?.id && t.startedSeq > pick.seq && (t.ids.includes(a.id) || t.ids.includes(pick.id));
+    const next = (await ctx.wait(base, (ms) => [...turnsIn(ms).values()].find((t) => after(t) && t.outcome), { ms: 240_000, every: 3000 }))?.value;
     check(next?.outcome === "completed", `the retried turn ended ${next?.outcome ?? "never"}`);
     return `turn ${turn?.id ?? "?"} (${turn?.outcome ?? "?"}) -> failure card ${got.value.id} -> retry -> turn ${next.id} completed`;
   },
