@@ -23,4 +23,25 @@ class IslandRulesTest {
         for (kind in listOf("ask", "approval", "in_app", "working", "thinking", "listening")) assertFalse(kind, IslandRules.settles(kind))
         assertEquals(30_000L, IslandRules.SETTLE_MS)
     }
+
+    @Test fun onlyAnOpenInputBoxIsTheOwnerTyping() {
+        assertEquals(IslandRules.Step.OWNER_TYPING, IslandRules.stepFor(editing = true, attached = true))
+        assertEquals(IslandRules.Step.OWNER_TYPING, IslandRules.stepFor(editing = true, attached = false))
+        assertEquals(IslandRules.Step.WAIT_FOR_FRAMES, IslandRules.stepFor(editing = false, attached = true))
+    }
+
+    @Test fun anIslandThatIsNotOnScreenHasNothingToMoveAside() {
+        assertEquals(IslandRules.Step.NOTHING_TO_MOVE, IslandRules.stepFor(editing = false, attached = false))
+    }
+
+    @Test fun aSlowMainThreadIsNotTheOwnerTyping() {
+        assertTrue(IslandRules.mayRunAfterWait(editing = false))
+        assertFalse(IslandRules.mayRunAfterWait(editing = true))
+    }
+
+    @Test fun ownerTypingIsAStateErrorOfItsOwnKind() {
+        val e: IllegalStateException = OwnerTypingException("owner_input_busy: x")
+        assertTrue(e is OwnerTypingException)
+        assertFalse(IllegalStateException("other") is OwnerTypingException)
+    }
 }
