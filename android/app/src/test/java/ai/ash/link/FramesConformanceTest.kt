@@ -112,8 +112,8 @@ class FramesConformanceTest {
 
     @Test fun anOversizedFrameIsRefusedBothWays() {
         val big = "x".repeat(LinkProtocol.FRAME_BYTES)
-        assertTrue(codec.decode("""{"t":"error","code":"c","message":"$big"}""") is Decoded.Bad)
-        val frame = JSONObject().put("t", "error").put("code", "c").put("message", big)
+        assertTrue(codec.decode("""{"t":"error","code":"failed","message":"$big"}""") is Decoded.Bad)
+        val frame = JSONObject().put("t", "error").put("code", "failed").put("message", big)
         try { codec.encode(frame); throw AssertionError("should not encode") } catch (_: FrameCodec.FrameTooLarge) {}
     }
 
