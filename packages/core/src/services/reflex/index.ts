@@ -5,6 +5,9 @@
  *                                                     steer, or followup. Keywords first, JEV when unclear. A judgement
  *                                                     that fails is followup: nothing is touched.
  *   task.outcome {turn}                               a label for how a finished turn ended, for the island and capsule
+ *   screen.plan {agent, lane, ids?}                   before a turn the owner started: real screen or virtual screen, and the text for that
+ *                                                     turn. Not judged = mode none. screen.reconcile {turn, agent, lane, outcome?}
+ *                                                     after it: close the virtual screen the turn opened
  *   task.stop {turn}, task.end {turn, pending_ids}    the owner stops or ends a task: sent on as session words
  *                                                     of service:agents, and only for the turn that is still running
  *
@@ -16,9 +19,10 @@ import { WordError, type Caller, type HandleContext, type Message, type Reply, t
 import type { Member, WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger, LedgerMessage } from "../../kernel/ledger";
-import type { Router } from "../../kernel/types";
+import type { Registry, Router } from "../../kernel/types";
 import { choiceAnswer, conversationQuestions, readConversation, taskOutcomeQuestions, TASK_OUTCOMES, type ConversationState, type Jev } from "./jev";
 import { judgeStopKeyword } from "./keywords";
+import { createScreenDecider } from "./screen";
 
 export { createJev, type Jev, type JevOptions, type JevPost, TASK_OUTCOMES, type TaskOutcome } from "./jev";
 export { judgeStopKeyword } from "./keywords";
@@ -35,6 +39,8 @@ export type ControlAction = "interrupt" | "pause" | "steer" | "followup";
 export interface ReflexOptions {
   ledger: Pick<Ledger, "get" | "page" | "db">;
   router: Pick<Router, "send">;
+  /** Where the phone's hand is found (screen.plan, screen.reconcile). Without it both do nothing. */
+  registry?: Pick<Registry, "findByWord">;
   /** The JEV judge. Without it only the keywords judge and everything unclear is followup. */
   jev?: Pick<Jev, "evaluate">;
   threshold?: number;
@@ -188,6 +194,8 @@ export function createReflexService(options: ReflexOptions): Member {
     return { data: { ended: info.running ? await interrupt(info) : true } };
   }
 
+  const screen = options.registry ? createScreenDecider({ ledger, router, registry: options.registry, ...(options.jev ? { jev: options.jev } : {}), threshold, self: SELF, log }) : null;
+
   return {
     id: REFLEX_ID,
     kind: "service",
@@ -200,6 +208,8 @@ export function createReflexService(options: ReflexOptions): Member {
         case "task.outcome": return outcome(body, ctx);
         case "task.stop": return stop(body);
         case "task.end": return end(body);
+        case "screen.plan": return screen ? screen.plan(body, ctx.signal) : { data: { mode: "none" } };
+        case "screen.reconcile": return screen ? screen.reconcile(body, ctx.signal) : { data: { acted: [] } };
         default: throw new WordError("not_found", `service:reflex has no word ${msg.word}`);
       }
     },
