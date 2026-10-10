@@ -79,7 +79,7 @@
     <application
         android:name=".AshApp"
         android:label="@string/app_name"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
