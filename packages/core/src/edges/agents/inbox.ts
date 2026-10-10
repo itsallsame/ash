@@ -82,13 +82,10 @@ export class Inbox {
   finish(turn: string, state: "done" | "interrupted" | "failed" = "done"): void {
     this.db.prepare("UPDATE agent_inbox SET state=? WHERE turn=? AND state='sent'").run(state, turn);
   }
-  /** The turn of the most recent failed batch on a lane, or null. */
-  latestFailed(agent: string, lane: string): string | null {
-    const r = this.db.prepare("SELECT turn FROM agent_inbox WHERE agent=? AND lane=? AND state='failed' ORDER BY seq DESC LIMIT 1").get(agent, lane) as { turn: string } | undefined;
-    return r?.turn ?? null;
+  /** A failed batch of this agent waits for delivery again, in its old order. False when there is no such batch (or it was retried already). */
+  requeue(agent: string, turn: string): boolean {
+    return Number(this.db.prepare("UPDATE agent_inbox SET state='pending', turn=NULL WHERE agent=? AND turn=? AND state='failed'").run(agent, turn).changes) > 0;
   }
-  /** A failed batch waits for delivery again, in its old order. */
-  requeue(turn: string): void { this.db.prepare("UPDATE agent_inbox SET state='pending', turn=NULL WHERE turn=? AND state='failed'").run(turn); }
   drop(agent: string): void { this.db.prepare("DELETE FROM agent_inbox WHERE agent=?").run(agent); }
   prune(before: number): void { this.db.prepare("DELETE FROM agent_inbox WHERE state IN ('done','interrupted','failed') AND at<?").run(before); }
 }

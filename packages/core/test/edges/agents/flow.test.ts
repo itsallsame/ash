@@ -450,9 +450,9 @@ test("a front turn that fails tells the owner in a sentence and offers a retry c
   const d = f.driver();
   await f.call(M, "say", { text: "do the thing" });
   await waitFor(() => sends(d, "front").length === 1);
-  const batch = f.agents.manager.inbox.byTurn(d.running.get(`${M}/front`)!.turn);
-  assert.equal(batch.length, 1);
-  d.report({ event: "turn.ended", agent: M, key: "front", turn: d.running.get(`${M}/front`)!.turn, outcome: "error", error: "401 invalid api key" });
+  const failedTurn = d.running.get(`${M}/front`)!.turn;
+  assert.equal(f.agents.manager.inbox.byTurn(failedTurn).length, 1);
+  d.report({ event: "turn.ended", agent: M, key: "front", turn: failedTurn, outcome: "error", error: "401 invalid api key" });
   d.running.delete(`${M}/front`);
   await waitFor(() => f.router.to("person:owner", "show").length === 1);
   const said = f.router.says();
@@ -460,21 +460,22 @@ test("a front turn that fails tells the owner in a sentence and offers a retry c
   assert.deepEqual(said[0]!.from, M);
   assert.match(said[0]!.text, /没做成：模型那边没认我的 Key/);
   assert.ok(!said[0]!.text.includes("401"), "no raw error text");
-  assert.deepEqual((f.router.to("person:owner", "show")[0]!.msg.body as any).card, { type: "options", prompt: "要我再试一次吗？", options: [{ id: "retry", text: "重试" }] });
+  assert.deepEqual((f.router.to("person:owner", "show")[0]!.msg.body as any).card, { type: "options", prompt: "要我再试一次吗？", options: [{ id: `retry:${failedTurn}`, text: "重试" }] });
   assert.equal(sends(d, "front").length, 1);
   // the owner chooses 重试: the same message goes again, the click is not a message of its own
-  await f.call(M, "say", { in_reply_to: "card_1", option_id: "retry", text: "重试" });
+  await f.call(M, "say", { in_reply_to: "card_1", option_id: `retry:${failedTurn}`, text: "重试" });
   await waitFor(() => sends(d, "front").length === 2);
   assert.deepEqual(texts(sends(d, "front")[1]!), ["do the thing"]);
   assert.equal(f.ledger.db().prepare("SELECT count(*) AS n FROM agent_inbox WHERE text LIKE '%重试%'").get()!.n, 0);
   // it fails again: a new notice, and another retry works; once nothing is left to retry the click is an ordinary reply
   d.finish(M, "front", "error");
   await waitFor(() => f.router.to("person:owner", "show").length === 2);
-  await f.call(M, "say", { in_reply_to: "card_2", option_id: "retry", text: "重试" });
+  const secondTurn = d.running.get(`${M}/front`)?.turn ?? f.router.to("person:owner", "show")[1]!.caller.turn!;
+  await f.call(M, "say", { in_reply_to: "card_2", option_id: `retry:${secondTurn}`, text: "重试" });
   await waitFor(() => sends(d, "front").length === 3);
   d.finish(M, "front");
   await settle();
-  await f.call(M, "say", { in_reply_to: "card_2", option_id: "retry", text: "重试" });
+  await f.call(M, "say", { in_reply_to: "card_2", option_id: `retry:${secondTurn}`, text: "重试" }); // already retried
   await waitFor(() => sends(d, "front").length === 4);
   assert.match(texts(sends(d, "front")[3]!)[0]!, /重试/);
 });
@@ -501,4 +502,38 @@ test("no failure notice for a back lane, a lane that does not speak, a cancelled
   d.finish("agent:r", "reflect", "error");
   await settle();
   assert.deepEqual(f.router.says(), []);
+});
+
+test("each retry card names its own batch: two batches that failed one after the other are retried one by one", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  const fail = async (text: string) => {
+    await f.call(M, "say", { text });
+    await waitFor(() => d.running.has(`${M}/front`));
+    const turn = d.running.get(`${M}/front`)!.turn;
+    d.finish(M, "front", "error");
+    await waitFor(() => f.router.to("person:owner", "show").length >= 1 && (f.router.to("person:owner", "show").at(-1)!.msg.body as any).card.options[0].id === `retry:${turn}`);
+    return turn;
+  };
+  const a = await fail("batch A");
+  const b = await fail("batch B");
+  assert.notEqual(a, b);
+  const cards = f.router.to("person:owner", "show").map((s) => (s.msg.body as any).card.options[0].id);
+  assert.deepEqual(cards, [`retry:${a}`, `retry:${b}`]);
+  const before = sends(d, "front").length;
+  await f.call(M, "say", { in_reply_to: "card_a", option_id: cards[0] });
+  await waitFor(() => sends(d, "front").length === before + 1);
+  assert.deepEqual(texts(sends(d, "front").at(-1)!), ["batch A"]); // A's card, A's batch
+  d.finish(M, "front");
+  await settle();
+  // a card for a turn that is not failed (or never was) is only an ordinary reply
+  await f.call(M, "say", { in_reply_to: "card_x", option_id: "retry:t_nothing", text: "重试" });
+  await waitFor(() => sends(d, "front").length === before + 2);
+  assert.deepEqual(texts(sends(d, "front").at(-1)!), ["[answers card_x, option retry:t_nothing] 重试"]);
+  d.finish(M, "front");
+  await settle();
+  await f.call(M, "say", { in_reply_to: "card_b", option_id: cards[1] });
+  await waitFor(() => sends(d, "front").length === before + 3);
+  assert.deepEqual(texts(sends(d, "front").at(-1)!), ["batch B"]);
 });

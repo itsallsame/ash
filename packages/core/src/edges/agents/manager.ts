@@ -275,7 +275,7 @@ export class AgentManager {
     const asOwner = from === OWNER_ID && word === "say";
     const category = word === "wake" ? "wake" : asOwner ? OWNER_ID : from === "service:clock" ? "timer" : kind === "event" ? "event" : "";
     const pick = (match: (f: string) => boolean) => Object.entries(lanes).find(([, l]) => l.from?.some(match))?.[0];
-    return pick((f) => f === "*" || f === category || (word !== "wake" && f === from && (from !== OWNER_ID || asOwner))) ?? (lanes.back ? "back" : pick((f) => f === "wake")) ?? Object.keys(lanes)[0]!;
+    return pick((f) => f === "*" || f === category || (word !== "wake" && from !== OWNER_ID && f === from)) ?? (lanes.back ? "back" : pick((f) => f === "wake")) ?? Object.keys(lanes)[0]!;
   }
 
   /** A request or event addressed to an agent. */
@@ -290,7 +290,8 @@ export class AgentManager {
     if (!words && attachments.length) words = "(attachments)";
     const lane = this.laneFor(decl, msg.from, msg.word, msg.kind, msg.word === "wake" ? text(body.lane) : undefined);
     // The owner chose 「重试」 on a failure card: the batch that failed is delivered again, and the click is not a message of its own.
-    if (msg.word === "say" && body.option_id === RETRY_OPTION && this.retryFailed(id, lane)) return { data: { accepted: true } };
+    const retry = msg.word === "say" && typeof body.option_id === "string" && body.option_id.startsWith(`${RETRY_OPTION}:`) ? body.option_id.slice(RETRY_OPTION.length + 1) : null;
+    if (retry && this.retryFailed(id, lane, retry)) return { data: { accepted: true } };
     const row = { id: msg.id, from: msg.from, word: msg.word, text: words, attachments, at: msg.ts, ...(msg.thread ? { thread: msg.thread } : {}), ...(msg.origin ? { origin: msg.origin } : {}) };
     if (msg.word !== "ask") {
       this.enqueue(id, row, lane);
@@ -499,14 +500,12 @@ export class AgentManager {
   private failureNotice(agent: string, turn: string, error?: string): void {
     const who = agentCaller(agent, turn);
     this.bg(this.deps.router.send({ to: OWNER_ID, kind: "request", word: "say", body: { text: failureText(error), kind: "reply" } }, who), "failure notice");
-    this.bg(this.deps.router.send({ to: OWNER_ID, kind: "request", word: "show", body: { card: { type: "options", prompt: "要我再试一次吗？", options: [{ id: RETRY_OPTION, text: "重试" }] } } }, who), "retry card");
+    this.bg(this.deps.router.send({ to: OWNER_ID, kind: "request", word: "show", body: { card: { type: "options", prompt: "要我再试一次吗？", options: [{ id: `${RETRY_OPTION}:${turn}`, text: "重试" }] } } }, who), "retry card");
   }
 
-  /** Put the latest failed batch of a lane back in the inbox. False when there is none. */
-  private retryFailed(id: string, lane: string): boolean {
-    const turn = this.inbox.latestFailed(id, lane);
-    if (!turn) return false;
-    this.inbox.requeue(turn);
+  /** Put the failed batch of that turn (the retry card carries its turn in the option id) back in the inbox. False when there is none. */
+  private retryFailed(id: string, lane: string, turn: string): boolean {
+    if (!this.inbox.requeue(id, turn)) return false;
     const live = this.live.get(id);
     const l = live?.lanes.get(lane);
     if (live && l && live.state === "running" && !this.paused) this.bg(l.busy ? Promise.resolve() : this.drain(live, l), `retry ${id}/${lane}`);
