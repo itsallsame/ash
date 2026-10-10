@@ -1,6 +1,5 @@
 package ai.ash.screen
 
-import ai.ash.BuildConfig
 import ai.ash.host.cap.CapResult
 import ai.ash.host.screen.ScreenBridge
 import ai.ash.screen.a11y.A11yService
