@@ -58,6 +58,7 @@ class HostSpecWriterTest {
         assertEquals("${dir}/files/container/main/proot/bin/proot", proot.getString("bin"))
         assertEquals("${dir}/files/container/main/proot/libexec/loader", proot.getString("loader"))
         assertEquals("/sdcard:/sdcard", proot.getJSONArray("storage_binds").getString(0))
+        assertEquals("/storage/emulated/0:/storage/emulated/0", proot.getJSONArray("storage_binds").getString(1))
         assertEquals("223.5.5.5", proot.getJSONArray("dns").getString(0))
         assertTrue(s.getJSONObject("network").isNull("proxy"))
         // update.install is not implemented, so the group is not declared.

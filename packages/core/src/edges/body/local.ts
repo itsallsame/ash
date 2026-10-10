@@ -5,17 +5,19 @@
  *   container through proot.
  * - `native`: no container; a directory on this machine and its shell (development machines, the fake host).
  */
-import { spawn as spawnProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn as spawnProcess, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { HostIsolation } from "../../../../sdk/src/host";
+import type { HostIsolation, HostNetwork } from "../../../../sdk/src/host";
 import { MAIN_BODY_ID } from "../../../../sdk/src/ids";
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import { standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member, Risk, WordContract } from "../../../../sdk/src/word";
 import { Workspace, type Executor, type StreamPublisher } from "../../../../workspace/src";
 import type { AppJson } from "../../../../sdk/src/app";
-import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot, type ProotConfig } from "./proot";
+import { proxyEnv } from "./network";
+import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot, type ProotConfig, type ProotSpawnOptions } from "./proot";
+import { startProvision } from "./provision";
 
 /** Where DSH and its patch file are inside the container; the agent runtime only says `dsh --patch <that file>`. */
 const PROOT_DSH = "/opt/dsh/node_modules/.bin/dsh";
@@ -62,6 +64,12 @@ export interface LocalBodyOptions {
   streams?: StreamPublisher;
   /** Extra environment for commands inside the container (proot only). */
   env?: Record<string, string>;
+  /** The host's network now (`spec.network`): its proxy goes into every program started in the container (proot only). */
+  network?: HostNetwork;
+  /** The hub's state directory: the one-time installation of python3 writes `container-provision.log` there. Absent: no installation. */
+  stateDir?: string;
+  /** Starts a command in the container (default `runInProot`): for tests. */
+  runProot?: (proot: ProotConfig, argv: string[], opts: ProotSpawnOptions) => ChildProcess;
   /** Runs a command instead of the default (proot, or the machine's own shell for native): for tests and unusual hosts. */
   exec?: Executor;
 }
@@ -86,6 +94,8 @@ export interface LocalBody extends Member {
   appLauncher(): BodyAppLauncher | null;
   /** The risk of one call (SPEC-01 §6.3): a write inside the work directory is none. For the gate's `assess`. */
   assess(msg: Pick<Message, "word" | "body">): Promise<Risk | null>;
+  /** The host's network changed: programs started from now on get the new proxy (those already running keep theirs). */
+  setNetwork(network: HostNetwork): void;
   /** Stops commands still running (kernel shutdown). */
   close(): Promise<void>;
 }
@@ -99,6 +109,16 @@ export const bodyWords = (id: string): WordContract[] =>
 
 export function createLocalBody(o: LocalBodyOptions): LocalBody {
   let workspace: Workspace | null = null;
+  let network: HostNetwork | null = o.network ?? null;
+  const runProot = o.runProot ?? runInProot;
+  const provisioning = { current: false };
+  let provisionTried = false;
+  // python3 is installed in the background the first time the container is used; never waited for, never retried in this run.
+  const provision = (proot: ProotConfig): void => {
+    if (provisionTried || !o.stateDir) return;
+    provisionTried = true;
+    startProvision(proot, o.stateDir, (argv) => runProot(proot, argv, { env: { ...proxyEnv(network), ...o.env } }), provisioning);
+  };
   // The container may not be installed yet when the kernel starts; the body appears when its files do.
   const open = (): Workspace => {
     if (workspace) return workspace;
@@ -112,9 +132,10 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     if (!existsSync(proot.rootfs)) throw new WordError("unavailable", "The main body is not installed yet");
     mkdirSync(join(proot.rootfs, PROOT_WORKDIR), { recursive: true });
     writeResolvConf(proot);
+    provision(proot);
     return workspace = new Workspace({
       root: proot.rootfs, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", streams: o.streams, mounts: prootMounts(proot),
-      exec: o.exec ?? ((command, place) => runInProot(proot, ["/bin/bash", "-c", command], { workdir: place.cwd, env: o.env, detached: true })),
+      exec: o.exec ?? ((command, place) => runProot(proot, ["/bin/bash", "-c", command], { workdir: place.cwd, env: { ...proxyEnv(network), ...o.env }, detached: true })),
       // Command output is kept in the container's own /var/tmp, where a file call can read it too.
       spillDir: join(proot.rootfs, "var", "tmp", "ash-workspace"),
     });
@@ -129,8 +150,9 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
       if (isolation.kind === "proot") {
         writeResolvConf(isolation.proot);
         const runtime = argv[0] === "dsh";
-        return runInProot(isolation.proot, runtime ? [PROOT_DSH, ...argv.slice(1)] : argv, {
-          ...(opts.cwd ? { workdir: opts.cwd } : {}), env: { ...(runtime ? PROOT_DSH_ENV : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
+        provision(isolation.proot);
+        return runProot(isolation.proot, runtime ? [PROOT_DSH, ...argv.slice(1)] : argv, {
+          ...(opts.cwd ? { workdir: opts.cwd } : {}), env: { ...proxyEnv(network), ...(runtime ? PROOT_DSH_ENV : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
         }) as ChildProcessWithoutNullStreams;
       }
       if (isolation.kind === "native") {
@@ -161,7 +183,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
         return {
           root: join(proot.rootfs, "root", "apps"), agentRoot: "/root/apps",
           spawn: (app, dir, env) => {
-            const run = prootCommand(proot, [app.server.command, ...(app.server.args ?? [])], { workdir: `/root/apps/${dir.split("/").pop()}`, env: { ...(app.server.env ?? {}), ...env } });
+            const run = prootCommand(proot, [app.server.command, ...(app.server.args ?? [])], { workdir: `/root/apps/${dir.split("/").pop()}`, env: { ...proxyEnv(network), ...(app.server.env ?? {}), ...env } });
             return { command: run.command, args: run.args, env: run.env };
           },
         };
@@ -174,6 +196,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     async assess(msg) {
       try { return await open().assess(msg.word, (msg.body ?? {}) as Record<string, unknown>); } catch { return null; }
     },
+    setNetwork(next) { network = next; },
     async close() { await workspace?.close(); },
   };
 }

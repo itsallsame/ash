@@ -2,7 +2,7 @@
  * The import rules of ASH-HUB §7.1 and §8.1, checked on the real tree (type-only imports count: the direction of the
  * dependency is the design, not the emitted code).
  *
- *   kernel    imports only itself and sdk; inside it: router -> registry, gate, redact, ledger; gate -> ledger; the rest alone
+ *   kernel    imports only itself and sdk (and Node's own modules, no npm package); inside it: router -> registry, gate, redact, ledger; gate -> ledger; the rest alone
  *   edges     import kernel, sdk, their own folder, and of the other packages only `link` and `workspace`; not each other
  *   services  import kernel, sdk and their own folder; no other package, not edges, not each other
  *   core      never imports `ash-gateway` (only `link` does)
@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { builtinModules } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import test from "node:test";
 
@@ -79,6 +80,17 @@ test("kernel imports only kernel and sdk, and inside it only in the direction of
   });
   assert.deepEqual(bad, []);
   assert.deepEqual(Object.keys(KERNEL_DIRECTION).sort(), readdirSync(KERNEL).filter((name) => !name.startsWith(".")).map((name) => name.replace(/\.ts$/, "")).sort(), "every kernel unit has a row");
+});
+
+test("kernel imports no package: of the non-relative specifiers only Node's own modules are allowed", () => {
+  const builtin = new Set(builtinModules.map((name) => name.replace(/^node:/, "")));
+  const bad: string[] = [];
+  for (const file of files(join(SRC, "kernel"))) for (const spec of specifiersOf(file)) {
+    if (spec.startsWith(".")) continue;
+    // `node:sqlite` and the like exist only under the `node:` scheme, so that prefix is enough.
+    if (!spec.startsWith("node:") && !builtin.has(spec)) bad.push(`${relative(SRC, file)} -> ${spec}`);
+  }
+  assert.deepEqual(bad, []);
 });
 
 test("edges import kernel, sdk, link, workspace and their own folder only", () => {

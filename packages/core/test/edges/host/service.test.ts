@@ -5,7 +5,7 @@ import { lintWords } from "../../../../sdk/src/word";
 import type { Message, Outgoing, Reply } from "../../../../sdk/src/message";
 import { createHostService } from "../../../src/edges/host";
 
-const setup = (offline: string[] = []) => {
+const setup = (offline: string[] = [], onNetwork?: (network: unknown, online: boolean) => void) => {
   const sent: { msg: Outgoing; from: string }[] = [];
   const calls: unknown[][] = [];
   const stops: unknown[][] = [];
@@ -25,7 +25,7 @@ const setup = (offline: string[] = []) => {
       return offline.includes(msg.to ?? "") ? { ok: false, error: { code: "offline", message: "off" } } : { ok: true };
     },
   };
-  const service = createHostService({ client, router, onStop: (deadline, reason) => { stops.push([deadline, reason]); }, log: (m) => logs.push(m) });
+  const service = createHostService({ client, router, onStop: (deadline, reason) => { stops.push([deadline, reason]); }, ...(onNetwork ? { onNetwork } : {}), log: (m) => logs.push(m) });
   return { service, sent, calls, stops, logs };
 };
 const msg = (word: string, body: unknown): Message => ({ seq: 1, id: "m1", ts: 1, from: "service:clock", to: "service:host", kind: "request", word, body });
@@ -60,4 +60,18 @@ test("host events become words sent as service:host; a missing service:link is n
   ]);
   assert.deepEqual(s.stops, [[1791234597000, "system_shutdown"]]);
   assert.equal(s.logs.length, 1, "only the bad line is logged");
+});
+
+test("env.changed/network also reaches onNetwork, with the proxy as the host gave it; power changes do not", async () => {
+  const seen: unknown[][] = [];
+  const s = setup([], (network, online) => seen.push([network, online]));
+  const input = new PassThrough();
+  const reader = s.service.listen(input);
+  input.write('{"event":"env.changed","what":"network","network":{"proxy":{"http":"http://10.0.2.2:7890","no_proxy":"a.b"}},"online":true}\n');
+  input.write('{"event":"env.changed","what":"power","saver":true}\n');
+  input.write('{"event":"env.changed","what":"network","network":{"proxy":null},"online":false}\n');
+  await settle();
+  reader.close();
+  assert.deepEqual(seen, [[{ proxy: { http: "http://10.0.2.2:7890", no_proxy: "a.b" } }, true], [{ proxy: null }, false]]);
+  assert.equal(s.sent.filter((x) => x.msg.to === "service:agents").length, 3, "the words still go out as before");
 });

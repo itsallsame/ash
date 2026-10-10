@@ -32,7 +32,7 @@ Android WebView 从 APK 加载静态界面，通过原生桥访问 Core；远程
 | `packages/web` | 网页界面（Core 当静态文件发，Android 打包进 APK） |
 | `packages/ash-skills` | 人格模板、首次见面与其他技能 |
 | `packages/android-compat` | Core 进程在 Android 上的运行时预加载（硬链接、flock 的兜底） |
-| `payload/` | DSH、运行时和 Core 的锁定输入与组装 |
+| `payload/` | 运行时和 Core（DSH 在容器里）的锁定输入与组装 |
 | `android/` | Android 宿主（Gradle/Kotlin） |
 | `tools/` | 构建、验证和回归脚本 |
 
@@ -45,6 +45,7 @@ npm ci
 npm run typecheck
 npm test
 npm run test:ui:e2e
+npm run build:container
 npm run build:payload
 cd android && ./gradlew :app:assembleDebug
 ```

@@ -3,14 +3,14 @@
  * (the kernel's standard input) turned into words.
  *
  *   wake.fired      -> an event to `service:clock`
- *   env.changed     -> an event to `service:agents` and to `service:link` (whichever is there)
+ *   env.changed     -> an event to `service:agents` and to `service:link` (whichever is there); a network change also to `onNetwork`
  *   lifecycle.stop  -> `onStop`, the shutdown the entry program handed over
  *
  * What the host does not offer is skipped, not imitated: its words answer `unavailable`.
  */
 import type { Readable } from "node:stream";
 import { WordError, type Caller, type Message, type WordResult } from "../../../../sdk/src/message";
-import type { HostEvent } from "../../../../sdk/src/host";
+import type { HostEvent, HostNetwork } from "../../../../sdk/src/host";
 import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Router } from "../../kernel/types";
@@ -25,6 +25,8 @@ export interface HostServiceDeps {
   router: Pick<Router, "send">;
   /** The host asked the kernel to stop before `deadline` (Unix ms). */
   onStop(deadline: number, reason: string): void | Promise<void>;
+  /** The host's network changed (`env.changed`/`network`): the proxy to use from now on, or null for none. */
+  onNetwork?(network: HostNetwork, online: boolean): void;
   log?(message: string, error?: unknown): void;
 }
 
@@ -72,6 +74,7 @@ export function createHostService(deps: HostServiceDeps): HostService {
         case "wake.fired": await pass("service:clock", "wake.fired", { at: event.at }); return;
         case "env.changed": {
           const { event: _name, ...rest } = event;
+          if (event.what === "network") deps.onNetwork?.(event.network, event.online);
           await Promise.all([pass("service:agents", "env.changed", rest), pass("service:link", "env.changed", rest)]);
           return;
         }
