@@ -48,7 +48,7 @@ data class SenseConfig(
             return runCatching { apply(SenseConfig(), JSONObject(text)) }.getOrDefault(SenseConfig())
         }
 
-        /** [current] changed by the keys present in [args] (sense.configure). Throws [SenseError] bad_args. */
+        /** [current] changed by the keys present in [args] (sense.configure). Throws [SenseError] bad_request. */
         fun apply(current: SenseConfig, args: JSONObject): SenseConfig {
             SenseArgs.only(args, KEYS)
             var next = current

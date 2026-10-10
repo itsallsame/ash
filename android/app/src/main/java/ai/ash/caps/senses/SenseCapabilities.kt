@@ -216,7 +216,7 @@ object SenseCapabilities {
             throw SenseError("forbidden", "location permission is not granted to Ash: the owner grants it on the senses setup page")
         val warnings = JSONArray()
         if (next.recording && !Senses.backgroundLocation(ctx)) warnings.put("background location is not allowed: no points while the phone is locked (set location to 「始终允许」)")
-        if (next.recording && !Senses.locationOn(ctx)) warnings.put("location_off: location is turned off; points start once it is on")
+        if (next.recording && !Senses.locationOn(ctx)) warnings.put("location is turned off; points start once it is on")
         if (next.recording && !Senses.activityRecognition(ctx)) warnings.put("physical activity is not granted: no steps, motion from location speed only")
         Senses.configure(ctx, next)?.let { warnings.put(it) }
         return CapResult.json(JSONObject().put("config", next.toJson()).apply { if (warnings.length() > 0) put("warnings", warnings) })

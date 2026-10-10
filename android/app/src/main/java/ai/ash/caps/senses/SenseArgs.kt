@@ -8,7 +8,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeParseException
 
-/** Tool arguments, checked before anything is read or changed. Every problem is a [SenseError] bad_args. */
+/** Tool arguments, checked before anything is read or changed. Every problem is a [SenseError] bad_request. */
 object SenseArgs {
     const val DAY_MS = 86_400_000L
     /** The longest range one call reads. */

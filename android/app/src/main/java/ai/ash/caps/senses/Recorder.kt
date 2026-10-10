@@ -44,7 +44,7 @@ object Recorder {
 
     /** Starts the service; null when started, else why not (the owner can then start it from a notification). */
     fun start(ctx: Context): String? {
-        if (!Senses.locationPermission(ctx) && !Senses.activityRecognition(ctx)) return "permission_denied: neither location nor physical activity is granted"
+        if (!Senses.locationPermission(ctx) && !Senses.activityRecognition(ctx)) return "neither location nor physical activity is granted"
         return try {
             ctx.startForegroundService(Intent(ctx, RecordingService::class.java))
             null
@@ -338,7 +338,7 @@ internal class Sampler(private val ctx: Context) {
             if (error == null) return outcome.getOrNull()!!.fix
             val next = state.mode(System.currentTimeMillis())
             if (mode == LocationPolicy.Mode.BACKGROUND && next == LocationPolicy.Mode.BACKGROUND_FALLBACK && running) { mode = next; continue }
-            Recorder.lastProblem = "${error.reason.ifEmpty { error.code }}: ${error.message}"
+            Recorder.lastProblem = "${error.code}: ${error.message}"
             Log.i("ash.senses", "no point: ${error.reason.ifEmpty { error.code }}")
             return null
         }

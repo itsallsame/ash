@@ -48,7 +48,7 @@ object LocationReader {
     fun fix(ctx: Context, accuracy: String, timeoutMs: Long, mode: Mode = Mode.ON_DEMAND, cancelled: () -> Boolean = { false }): Result {
         val started = System.currentTimeMillis()
         fun fail(code: String, message: String, asked: List<String> = emptyList(), reasons: Map<String, String> = emptyMap(), reason: String = ""): Nothing {
-            record(FixAttempt(started, mode.id, accuracy, asked, reasons, System.currentTimeMillis() - started, error = "${reason.ifEmpty { code }}: $message"))
+            record(FixAttempt(started, mode.id, accuracy, asked, reasons, System.currentTimeMillis() - started, error = "$code: $message"))
             throw SenseError(code, message, reason)
         }
         if (!Senses.locationPermission(ctx)) fail("forbidden", "location permission is not granted to Ash (open the senses setup page)")
