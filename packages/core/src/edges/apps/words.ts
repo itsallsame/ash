@@ -1,0 +1,78 @@
+// `service:apps`: the words of the app edge (SPEC-02 §4.1). Each word is a thin call into the runtime; the checks, the
+// install card and the grants are the runtime's. Who may call which word, and the approval of an agent's install or
+// enable, are the contracts' and the gate's business, not repeated here.
+import { APP_SCHEMA } from "../../../../sdk/src/app";
+import { errorBody, WordError, type HandleContext, type Message, type Reply, type WordResult } from "../../../../sdk/src/message";
+import { APP_CONTRACT } from "../../../../sdk/src/versions";
+import type { Member, WordContract } from "../../../../sdk/src/word";
+import { wordsOf } from "../../../../sdk/src/words";
+import { scaffoldFiles } from "./scaffold";
+import type { AppRuntime } from "./runtime";
+
+export const APPS_ID = "service:apps";
+
+const text = (body: Record<string, unknown>, key: string): string => (typeof body[key] === "string" ? (body[key] as string) : "");
+
+export function createAppsService(runtime: AppRuntime): Member {
+  async function run(msg: Message, ctx: HandleContext): Promise<WordResult> {
+    const body = msg.body && typeof msg.body === "object" && !Array.isArray(msg.body) ? msg.body as Record<string, unknown> : {};
+    const id = text(body, "id");
+    switch (msg.word) {
+      case "apps.list": return { data: { apps: runtime.list() } };
+      case "apps.refresh": await runtime.refresh(); return { data: { apps: runtime.list() } };
+      case "apps.describe": {
+        const info = runtime.info(id);
+        if (!info) throw new WordError("not_found", `no app ${id}`, { recovery_hint: "apps.list shows what exists." });
+        return { data: info };
+      }
+      case "apps.install": return { data: await runtime.install(id) };
+      case "apps.enable": return { data: await runtime.enable(id) };
+      case "apps.disable": return { data: await runtime.disable(id) };
+      case "apps.revoke": return { data: await runtime.revoke(id, typeof body.need === "string" ? body.need : undefined) };
+      case "apps.restart": return { data: await runtime.restart(id) };
+      case "apps.logs": return { data: runtime.logs(id, typeof body.lines === "number" ? body.lines : 100) };
+      case "apps.reset": return { data: await runtime.reset(id) };
+      case "apps.remove": return { data: await runtime.remove(id, body.keep_data === true) };
+      case "apps.validate": {
+        if (!id && typeof body.path !== "string") throw new WordError("bad_request", "要给 id（应用文件夹名）或 path");
+        return { data: await runtime.validate(id ? { id } : { path: String(body.path) }) };
+      }
+      case "apps.scaffold": {
+        const made = runtime.scaffold(body as Parameters<AppRuntime["scaffold"]>[0], ctx.caller.member);
+        return { data: made };
+      }
+      case "apps.contract": {
+        const { doc, docPath } = runtime.contract();
+        const example = scaffoldFiles({ id: "hello", name: "Hello", summary: "A small example app: a list with a page and four tools.", publisher: "ash" });
+        return { data: { contract: APP_CONTRACT, doc, doc_path: docPath, schema: APP_SCHEMA, example: { path: runtime.agentPath("_examples/hello"), files: example } } };
+      }
+      case "apps.surface": {
+        const surface = text(body, "surface");
+        const page = await runtime.surface(id, surface);
+        return { data: { id, surface, mime: page.mime, html: page.html } };
+      }
+      case "apps.icon": {
+        const icon = runtime.icon(id);
+        return { data: { id, mime: icon.mime, data: icon.data } };
+      }
+      default: throw new WordError("not_found", `${APPS_ID} has no word ${msg.word}`);
+    }
+  }
+
+  return {
+    id: APPS_ID,
+    kind: "service",
+    name: "apps",
+    words: (): WordContract[] => wordsOf(APPS_ID),
+    /** An app that would not install is refused before anyone is asked: static checks of the folder. */
+    precheck(msg: Message): Reply | null {
+      if (msg.word !== "apps.install") return null;
+      const body = msg.body && typeof msg.body === "object" ? msg.body as Record<string, unknown> : {};
+      const report = runtime.precheckInstall(text(body, "id"));
+      if (!report) return null;
+      const refusal = runtime.refusal(report);
+      return { ok: false, error: errorBody(refusal.code, refusal.message, { detail: refusal.detail, recovery_hint: refusal.recovery_hint }) };
+    },
+    handle: run,
+  };
+}
