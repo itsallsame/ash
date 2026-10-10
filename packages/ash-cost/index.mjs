@@ -12,9 +12,12 @@ export const name = "ash-cost";
 export const inject = ["llm"];
 
 const MAX_ERROR = 200;
+// The recent records stay readable through `since()`, so the ash driver can pull them on its own schedule.
+const MAX_KEPT = 5000;
 
 function createCollector() {
   const listeners = new Set();
+  const kept = []; // published records, oldest first, each stamped with the time it was recorded
   const scopes = new Map(); // DSH session id -> what ash uses that session for
   let ctx = null;
 
@@ -34,6 +37,8 @@ function createCollector() {
   }
 
   function publish(record) {
+    kept.push({ ...record, done: Date.now() });
+    if (kept.length > MAX_KEPT) kept.splice(0, kept.length - MAX_KEPT);
     for (const listener of [...listeners]) {
       try { listener(record); } catch { /* a reporting failure must never reach the model call */ }
     }
@@ -65,6 +70,15 @@ function createCollector() {
     tap,
     attach(context) { ctx = context; },
     /**
+     * Records that finished after `t` (a millisecond timestamp), oldest first. Each is the record `onUsage` listeners
+     * saw, plus `done`: when the call ended, so a puller can continue from the largest `done` it has seen. Only the
+     * most recent few thousand records are kept.
+     */
+    since(t) {
+      const from = Number.isFinite(t) ? t : 0;
+      return kept.filter((record) => record.done > from).map((record) => ({ ...record }));
+    },
+    /**
      * The account balance the provider reports for the configured API key. The key is resolved inside DSH and never
      * returned. Throws with a short reason when it cannot be read; a failure is never a zero balance.
      */
@@ -94,5 +108,7 @@ export const collector = createCollector();
 
 export function apply(ctx) {
   collector.attach(ctx);
+  // The sibling plugin that answers ash's `_ash/usage` reads it as ctx.get("ashCost"); DSH drops it when this plugin unloads.
+  ctx.provide("ashCost", collector);
   ctx.on("llm/stream", (options, next) => collector.tap(options, next()), { global: true });
 }

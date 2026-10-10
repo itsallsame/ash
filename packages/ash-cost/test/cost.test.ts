@@ -9,7 +9,7 @@ const drain = async (stream: AsyncIterable<unknown>) => { const out: unknown[] =
 
 test("the plugin passes every chunk through untouched and reports only calls that carried usage", async () => {
   let handler: ((options: object, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>) | undefined;
-  apply({ on: (_name: string, fn: typeof handler) => { handler = fn; }, get: () => undefined });
+  apply({ on: (_name: string, fn: typeof handler) => { handler = fn; }, provide() {}, get: () => undefined });
   const seen: any[] = [];
   const stop = collector.onUsage((record: object) => seen.push(record));
   collector.label("s-main", "chat");
@@ -33,7 +33,7 @@ test("balance asks the provider with the resolved key and returns only the balan
     res.end(JSON.stringify({ is_available: true, balance_infos: [{ currency: "USD", total_balance: "3.50", granted_balance: "0", topped_up_balance: "3.50" }] })); });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
-    apply({ on() {}, get: (name: string) => name === "credentials" ? { resolve: async () => ({ value: "sk-from-dsh" }) } : undefined });
+    apply({ on() {}, provide() {}, get: (name: string) => name === "credentials" ? { resolve: async () => ({ value: "sk-from-dsh" }) } : undefined });
     const answer = await collector.balance({ baseURL: `http://127.0.0.1:${(server.address() as { port: number }).port}/anthropic` });
     assert.equal(auth, "Bearer sk-from-dsh");
     assert.deepEqual(answer, { available: true, balances: [{ currency: "USD", total: "3.50", granted: "0", topped_up: "3.50" }] });
