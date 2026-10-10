@@ -53,19 +53,14 @@ export interface HumanDeps {
   timing?: Partial<{ presentMs: number; islandMs: number; recordMs: number; summaryDelayMs: number }>;
 }
 
-/** What the widgets service still uses directly. */
-export interface WidgetSurface {
-  /** The picture of a card as the home screen shows it, from the first channel that can draw one. (No word carries this yet.) */
-  preview(card: unknown, size: unknown): Promise<PresentResult>;
-}
-
 export interface HumanEdge {
   /** `person:owner`: add it to the registry. */
   member: Member;
+  /** `service:human`, who sends the events the edge sends on its own (`typing`, `widget.rendered`); the router only lets a sender send events its own words declare, so add it to the registry too. */
+  sender: Member;
   /** For `link.onChannel("human", …)`. */
   attach: ChannelAttach;
   clients(): ClientInfo[];
-  widgets: WidgetSurface;
   /** Brings a channel (default: the one the owner is on) to the front, e.g. after an authorization page. */
   focus(client?: string): Promise<PresentResult>;
   close(): void;
@@ -73,6 +68,7 @@ export interface HumanEdge {
 
 /** Who the human edge is when it speaks for itself (typing, widget.rendered): events the owner cannot send. */
 const SELF: Caller = { member: "service:human", via: "service", local: true };
+const SENDER_EVENTS = ["typing", "widget.rendered"];
 
 export function createHuman(deps: HumanDeps): HumanEdge {
   const now = deps.now ?? Date.now;
@@ -118,6 +114,12 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     }
   });
 
+  const sender: Member = {
+    id: SELF.member, kind: "service", name: "Human edge",
+    words: (): WordContract[] => [...wordsOf("agent:*"), ...wordsOf("service:widgets")].filter((w) => w.kind === "event" && SENDER_EVENTS.includes(w.word)),
+    async handle() {},
+  };
+
   // ---- the member -----------------------------------------------------------------------------------------------------
 
   const member: Member = {
@@ -127,6 +129,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     async handle(msg: Message, ctx: HandleContext): Promise<WordResult | void> {
       const body = (msg.body ?? {}) as Record<string, any>;
       switch (msg.word) {
+        case "widget.preview": return preview(body as { card: string; size?: string });
         case "widget.state": void pushWidgets(body, clients.withSurface("widget")); return;
         case "say":
           void notifier.say(msg).catch((error) => log("notification failed", error));
@@ -147,6 +150,18 @@ export function createHuman(deps: HumanDeps): HumanEdge {
       }
     },
   };
+
+  /** `widget.preview`: the first channel that shows widgets and can draw the card gives the picture. */
+  async function preview(body: { card: string; size?: string }): Promise<WordResult> {
+    let failure: WordError = new WordError("offline", "no channel that shows widgets is connected");
+    for (const c of clients.withSurface("widget")) {
+      const result = await presenter.send(c, { surface: "widget", op: "preview", body: { card: body.card, size: body.size ?? "2x2" } });
+      if (!result.ok) { failure = new WordError(result.error.code, result.error.message); continue; }
+      const image = result.data as { type?: unknown } | undefined;
+      return { data: result.data, ...(image?.type === "image" ? { content: [result.data as never] } : {}) };
+    }
+    throw failure;
+  }
 
   /** `open`: a page on the named channel, else the one the owner is on. The body is `{target}` when that is all there is, else `{target: {target, id?, mode?}}` (the frame's `target` is open-ended). */
   async function open(body: { target: string; id?: string; mode?: string; client?: string }): Promise<WordResult> {
@@ -230,19 +245,8 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     );
   }
 
-  const widgets: WidgetSurface = {
-    async preview(card, size) {
-      let last: PresentResult = { ok: false, error: { code: "offline", message: "no channel can draw a card" } };
-      for (const c of clients.withSurface("widget")) {
-        last = await presenter.send(c, { surface: "widget", op: "preview", body: { card, size } as never });
-        if (last.ok) return last;
-      }
-      return last;
-    },
-  };
-
   return {
-    member, attach, widgets,
+    member, sender, attach,
     clients: () => clients.info(),
     async focus(client) {
       const c = client ? clients.get(client) : clients.current();

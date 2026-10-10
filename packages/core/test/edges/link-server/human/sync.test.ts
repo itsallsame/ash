@@ -91,3 +91,15 @@ test("wait: true answers with the response; a refusal comes back as an error", a
   assert.ok(!refused.ok && refused.error.code === "offline");
   await quiet(50);
 });
+
+test("send is answered at once with the id the hub made, before a slow word has been handled", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  hub.mini.stub("agent:slow", ["say"], () => new Promise(() => {}));
+  const phone = await Channel.open(hub);
+
+  const sent = await phone.send({ to: "agent:slow", kind: "request", word: "say", body: { text: "慢" } });
+
+  assert.ok(sent.ok);
+  assert.equal(hub.ledger.get(sent.message.id)?.seq, sent.message.seq);
+  assert.match(hub.mini.sent.at(-1)!.msg.word, /say/);
+});

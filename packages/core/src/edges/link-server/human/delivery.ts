@@ -16,8 +16,8 @@ export const DEFAULT_DEDUPE_MINUTES = 60;
 export type DeliveryKind = "reply" | "due" | "offer" | "heads_up" | "ask";
 /** Offers and heads-ups only appear in the conversation: they never ring, so no rule below touches them. */
 export const rings = (kind: DeliveryKind) => kind !== "offer" && kind !== "heads_up";
-/** Quiet hours and repeats govern replies and questions (and the strong ring at a turn's end); a reminder that is due always rings. */
-const governed = (kind: DeliveryKind) => kind === "reply" || kind === "ask";
+/** Quiet hours and repeats govern plain replies only; a reminder that is due, a question or approval card and the strong ring at a turn's end still ring: the owner needs them in time. */
+const governed = (kind: DeliveryKind) => kind === "reply";
 
 export interface Rules { quiet: string | null; dedupeMs: number }
 
@@ -62,7 +62,7 @@ export class Delivery {
   /**
    * Whether a message may ring now. Order: offers and heads-ups never ring; a repeat of a reply is dropped (and counted
    * as seen even when the owner is looking); then "the owner is looking" means no ring; then quiet hours hold back
-   * replies and questions.
+   * plain replies.
    */
   decide(m: { kind: DeliveryKind; dedupe_key?: string }, at: number, watching: boolean, rules: Rules): Verdict {
     if (!rings(m.kind)) return "silent";

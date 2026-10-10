@@ -3,12 +3,14 @@
  * came from. A `send` with the same `client_id` and the same content is answered again with the first message
  * (`duplicate: true`), with other content it is a `conflict`.
  *
- * The router returns the id of the message it recorded; `seq` is read from the ledger.
+ * The id of the request is made here and given to the router (`SendOptions.id`); `send.result` goes out as soon as the
+ * router announces that message, or at once if the router refuses it, without waiting for the word to be handled
+ * (`wait: true` waits for that, and carries the response).
  *
  * The owner's answer to a question (`kind: "response"`, `reply_to` the ask) is not a request to anyone: it ends the
  * pending `person:owner/ask` here, and the router records it as that request's response.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { SendFrame } from "../../../../../sdk/src/link";
 import { errorBody, type ErrorBody, type Message, type Outgoing, type Reply } from "../../../../../sdk/src/message";
@@ -103,15 +105,20 @@ export class Inbound {
   private async deliver(c: LiveClient, req: Request): Promise<SendOutcome> {
     if (req.kind === "response") return this.answer(req);
     const out: Outgoing = { to: req.to, kind: req.kind, word: req.word, body: req.body, ...(req.reply_to ? { reply_to: req.reply_to } : {}) };
-    const sending: Promise<Reply & { id?: string }> = this.d.router.send(out, ownerCaller(c)).catch((error) => {
+    const id = `m_${randomBytes(9).toString("base64url")}`;
+    const seen = this.d.recorded.expect((m) => m.id === id);
+    const sending: Promise<Reply> = this.d.router.send(out, ownerCaller(c), { id }).catch((error) => {
       this.d.log(`send ${out.to}/${out.word} failed`, error);
       return { ok: false, error: errorBody("internal", "the hub failed while handling this request") } as Reply;
     });
+    const first = await Promise.race([seen.promise.then(() => null), sending]);
+    seen.cancel();
+    if (first && !first.ok) return fail(first.error);
+    const ref = { id, seq: this.d.ledger.get(id)?.seq ?? 0 };
+    if (req.wait !== true) return { ok: true, message: ref };
     const reply = await sending;
     if (!reply.ok) return fail(reply.error);
-    if (!reply.id) return fail(errorBody("internal", "the message was accepted but the router gave no id"));
-    const ref = { id: reply.id, seq: this.d.ledger.get(reply.id)?.seq ?? 0 };
-    return { ok: true, message: ref, ...(req.wait === true ? { response: { ok: true, ...(reply.result ? { result: reply.result } : {}) } as Record<string, unknown> } : {}) };
+    return { ok: true, message: ref, response: { ok: true, ...(reply.result ? { result: reply.result } : {}) } as Record<string, unknown> };
   }
 
   private async answer(req: Request): Promise<SendOutcome> {

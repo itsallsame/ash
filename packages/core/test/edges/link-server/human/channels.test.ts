@@ -105,7 +105,7 @@ test("each surface goes only to the channels that declared it", async (t) => {
   assert.deepEqual(all.map(surfaces), [["notification"], ["island", "status"], ["widget"], []]);
 });
 
-test("a card's present.result becomes widget.rendered for service:widgets; previews come from the first channel that can draw", async (t) => {
+test("a card's present.result becomes widget.rendered for service:widgets; a preview is asked of the first channel that can draw", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const rendered = [{ card: "todo", updated_at: 5, preview: { png: "AAAA", width: 10, height: 10, theme: "dark" } }, { card: "bad", updated_at: 6, problem: "too deep" }];
   const placed = [{ id: "12", type: "card" }];
@@ -119,10 +119,13 @@ test("a card's present.result becomes widget.rendered for service:widgets; previ
   assert.deepEqual(rendering()!.msg, { to: "service:widgets", kind: "event", word: "widget.rendered", body: { widgets: placed, rendered } });
   assert.equal(rendering()!.caller.via, "service");
 
-  const preview = await hub.human.widgets.preview({ id: "todo" }, "2x2");
-  assert.deepEqual(preview, { ok: true, data: { type: "image", data: "AAAA" } });
+  const KERNEL = { member: "service:widgets", via: "service" as const, local: true };
+  const preview = await hub.mini.send({ to: "person:owner", kind: "request", word: "widget.preview", body: { card: "todo" } }, KERNEL);
+  assert.deepEqual(preview, { ok: true, result: { data: { type: "image", data: "AAAA" }, content: [{ type: "image", data: "AAAA" }] } });
+  assert.deepEqual(cards.presented("widget", "preview")[0]!.body, { card: "todo", size: "2x2" });
+
   const empty = await startHumanHub(); t.after(() => empty.stop());
-  const offline = await empty.human.widgets.preview({}, "2x2");
+  const offline = await empty.mini.send({ to: "person:owner", kind: "request", word: "widget.preview", body: { card: "todo", size: "4x2" } }, KERNEL);
   assert.ok(!offline.ok && offline.error.code === "offline");
 });
 

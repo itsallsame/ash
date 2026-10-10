@@ -27,7 +27,7 @@ export class MiniRouter implements Router {
     this.members.set(id, {
       id, kind: id.startsWith("agent:") ? "agent" : "service", name: id,
       words: () => wordsOf(id).filter((w) => words.includes(w.word)),
-      async handle() { return { data: answer() }; },
+      async handle() { return { data: await answer() }; },
     });
   }
 
@@ -40,11 +40,13 @@ export class MiniRouter implements Router {
     this.publish({ seq: 0, id: `e_${randomBytes(4).toString("hex")}`, ts: Date.now(), from, to, kind: "event", word, body });
   }
 
-  async send(msg: Outgoing, caller: Caller): Promise<Reply & { id?: string }> {
+  async send(msg: Outgoing, caller: Caller, opts: { id?: string } = {}): Promise<Reply & { id?: string }> {
     this.sent.push({ msg, caller });
     const member = msg.to ? this.members.get(msg.to) : undefined;
     const contract = member?.words().find((w) => w.word === msg.word);
     if (msg.kind === "event") {
+      // The router lets an event through when the sender's own words declare it; the human edge's sender is held to that.
+      if (caller.member === "service:human" && !this.members.get(caller.member)?.words().some((w) => w.word === msg.word)) return { ok: false, error: errorBody("forbidden", `${caller.member} does not declare ${msg.word}`) };
       const event = { seq: 0, id: `e_${randomBytes(4).toString("hex")}`, ts: Date.now(), from: caller.member, to: msg.to, kind: "event" as const, word: msg.word, body: msg.body };
       this.publish(event);
       if (member) await member.handle(event, { signal: new AbortController().signal, caller, raw: msg.body });
@@ -54,7 +56,7 @@ export class MiniRouter implements Router {
     if (!contract) return { ok: false, error: errorBody("not_found", `${msg.to} has no word ${msg.word}`) };
     if (contract.local_only && caller.via === "human" && !caller.local) return { ok: false, error: errorBody("forbidden", "only from a channel on this machine") };
     const origin = caller.origin;
-    const stored = this.ledger.append({ from: caller.member, to: msg.to, kind: "request", word: msg.word, body: msg.body, ...(msg.reply_to ? { reply_to: msg.reply_to } : {}), ...(origin ? { origin } : {}), ...(caller.turn ? { turn: caller.turn } : {}) });
+    const stored = this.ledger.append({ ...(opts.id ? { id: opts.id } : {}), from: caller.member, to: msg.to, kind: "request", word: msg.word, body: msg.body, ...(msg.reply_to ? { reply_to: msg.reply_to } : {}), ...(origin ? { origin } : {}), ...(caller.turn ? { turn: caller.turn } : {}) });
     this.publish(stored);
     let reply: Reply;
     try {
@@ -97,6 +99,7 @@ export async function startHumanHub(over: Partial<HumanDeps> = {}): Promise<Huma
     ...over,
   });
   mini.members.set("person:owner", human.member);
+  mini.members.set("service:human", human.sender);
   mini.stub("agent:main", ["say", "wake"]);
   mini.stub("service:vault", ["set"]);
   mini.stub("service:widgets", ["widget.list"], () => widgetState.value);

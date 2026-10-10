@@ -110,7 +110,7 @@ export class Notifier {
     const id = this.quietReplies.get(turn);
     this.quietReplies.delete(turn);
     const clients = id ? this.shown.get(id) : undefined;
-    if (!id || !clients || this.delivery.quiet(this.d.now(), rulesOf(this.d.settings())) || await this.watching()) return;
+    if (!id || !clients || await this.watching()) return;
     for (const client of clients) {
       const c = this.d.clients.get(client);
       if (c) await this.d.presenter.send(c, { surface: "notification", op: "alert", body: { id } });

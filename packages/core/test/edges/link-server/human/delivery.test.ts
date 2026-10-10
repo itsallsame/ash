@@ -61,7 +61,7 @@ test("offers and heads-ups never ring, whatever the hour; they are only in the c
   await p.seen((m) => m.kind === "request" && (m.body as { kind?: string }).kind === "offer", "the offer in the conversation");
 });
 
-test("quiet hours hold back replies and questions, not a reminder that is due; they are read from the settings", async (t) => {
+test("quiet hours hold back plain replies, not a reminder that is due, a question or the strong ring; they are read from the settings", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const p = await phone(hub);
   hub.settings["delivery.quiet_hours"] = "22:00-07:00";
@@ -70,18 +70,18 @@ test("quiet hours hold back replies and questions, not a reminder that is due; t
   await tell(hub, { text: "夜里的回复" });
   void hub.mini.send({ to: "person:owner", kind: "request", word: "ask", body: { title: "夜里的问题", options: [{ id: "a", label: "A" }], expires_at: Date.now() + 60_000 } }, AGENT);
   await tell(hub, { kind: "due", text: "夜里的到点" });
-  await eventually(() => shown(p).length === 1, "only the reminder");
+  await eventually(() => shown(p).length === 2, "the question and the reminder");
   await quiet();
-  assert.deepEqual(shown(p), ["due:夜里的到点"]);
+  assert.deepEqual(shown(p).sort(), ["approval:", "due:夜里的到点"].sort());
 
   hub.clock.now = at(12);
   await tell(hub, { text: "白天的回复" });
-  await eventually(() => shown(p).length === 2, "by day the reply rings");
+  await eventually(() => shown(p).length === 3, "by day the reply rings");
 
   hub.settings["delivery.quiet_hours"] = "";
   hub.clock.now = at(23);
   await tell(hub, { text: "没有安静时段" });
-  await eventually(() => shown(p).length === 3, "no quiet hours, it rings at night");
+  await eventually(() => shown(p).length === 4, "no quiet hours, it rings at night");
 });
 
 test("the default quiet hours are 21:30 to 09:00, and the interval's ends are exact", async (t) => {
@@ -194,4 +194,27 @@ test("an approval card does not ring while the owner is looking at a channel, bu
   await p.seen((m) => m.kind === "request" && m.word === "ask", "the card in the conversation");
   await quiet();
   assert.deepEqual(shown(p), []);
+});
+
+test("the strong ring at a turn's end still rings in quiet hours", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const p = await phone(hub);
+  hub.settings["delivery.quiet_hours"] = "00:00-23:59";
+  hub.mini.announce("turn.started", { turn: "t9", lane: "front", ids: [] });
+  hub.clock.now = at(12);
+  // A reply inside a turn is a plain reply: held back in quiet hours, so there is nothing to raise.
+  await tell(hub, { text: "静音期间" }, { ...AGENT, turn: "t9" });
+  await quiet();
+  hub.mini.announce("turn.ended", { turn: "t9", lane: "front", outcome: "completed" });
+  await quiet();
+  assert.equal(p.presented("notification").length, 0);
+
+  // Once outside quiet hours the quiet reply is shown, and the turn's end raises it although quiet hours come back.
+  hub.settings["delivery.quiet_hours"] = "";
+  hub.mini.announce("turn.started", { turn: "t10", lane: "front", ids: [] });
+  await tell(hub, { text: "正常" }, { ...AGENT, turn: "t10" });
+  await eventually(() => p.presented("notification", "show").length === 1, "the quiet reply");
+  hub.settings["delivery.quiet_hours"] = "00:00-23:59";
+  hub.mini.announce("turn.ended", { turn: "t10", lane: "front", outcome: "completed" });
+  await p.present((f) => f.op === "alert", "the strong ring");
 });
