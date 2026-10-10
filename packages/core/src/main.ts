@@ -15,7 +15,7 @@ let hub: Awaited<ReturnType<typeof startHub>>;
 try {
   hub = await startHub({});
 } catch (error) {
-  log("cannot start:", error);
+  log(error); // startHub says why ("cannot start: ...")
   process.exit(typeof (error as { exitCode?: unknown }).exitCode === "number" ? (error as { exitCode: number }).exitCode : 1);
 }
 

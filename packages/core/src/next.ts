@@ -284,7 +284,9 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     await stop().catch(() => {});
     throw error;
   }
-  events = hostService.listen(opts.stdin ?? process.stdin);
+  const reader = events = hostService.listen(opts.stdin ?? process.stdin);
+  // The host's end of the pipe closed: the host is gone, and a kernel nobody supervises stops the way it would on lifecycle.stop.
+  void reader.done.then(() => { if (!stopping) { log("the host closed standard input: stopping"); return stop(); } }).catch((error) => log("stop failed", error));
 
   return { url, stop: () => stop(), closed: done };
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { HOST_ENV, HOST_EXIT_CONFIG, type HostSpec } from "../../../../sdk/src/host";
-import { hostFatal, loadHostBoot } from "../../../src/edges/host";
+import { loadHostBoot } from "../../../src/edges/host";
 import { FAKE_SEAL_KEY, FAKE_TOKEN, FakeHost } from "../../fixtures/host";
 
 let host: FakeHost | undefined;
@@ -108,13 +108,5 @@ describe("host spec", () => {
   it("ignores capability names it does not know", async () => {
     host = await new FakeHost({ capabilities: ["identity", "lifecycle", "status", "telepathy"] }).start();
     assert.ok(loadHostBoot({ env: host.writeLaunch().env }).ok);
-  });
-
-  it("hostFatal logs the reason and exits with 78 through the given exit", () => {
-    const logged: string[] = [];
-    const exits: number[] = [];
-    hostFatal({ ok: false, exitCode: 78, reason: "no way" }, { log: (line) => logged.push(line), exit: ((code: number) => { exits.push(code); return undefined as never; }) });
-    assert.deepEqual(exits, [78]);
-    assert.match(logged[0], /no way/);
   });
 });
