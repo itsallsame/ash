@@ -15,7 +15,7 @@ const clean = (): Record<string, string> => ({
   "packages/core/src/server.ts": 'switch (route) { case "POST /api/send": break; case "GET /api/stream": break; case "GET /api/describe": break; }',
   "packages/core/src/workers/extract.ts": 'export const extract = true;',
   "packages/core/src/flows/memory.ts": 'export const memory = true;',
-  "packages/core/ui/js/app.js": 'fetch("/api/describe"); new EventSource("/api/stream?after=0");',
+  "packages/web/js/app.js": 'fetch("/api/describe"); new EventSource("/api/stream?after=0");',
 });
 
 test("architecture fixture: clean tree has no findings", () => assert.deepEqual(checkTree(clean(), [syntheticTerm]), []));
@@ -31,7 +31,7 @@ test("AR1 permits standard library imports and helpers of one logical member", (
 
 for (const [rule, file, bad] of [
   ["AR1", "packages/core/src/members/main.ts", 'import "./other";'],
-  ["AR2", "packages/core/ui/js/app.js", 'fetch("/api/settings");'],
+  ["AR2", "packages/web/js/app.js", 'fetch("/api/settings");'],
   ["AR3", "packages/core/src/server.ts", 'switch (route) { case "POST /api/send": break; case "GET /api/stream": break; case "GET /api/describe": break; case "POST /api/call": break; }'],
   ["AR4", "packages/core/src/workers/extract.ts", 'import { writeFileSync } from "node:fs";'],
   ["AR12", "packages/core/src/world/router.ts", syntheticTerm],

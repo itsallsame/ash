@@ -7,10 +7,6 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAuthScopeKey } from "./auth-scope";
 import { protectProcessMemory } from "./harden";
-import { DshHost } from "../../dsh-binding/src/host";
-import { DshMindRunner } from "../../dsh-binding/src/mind";
-import { DshTurnRunner } from "../../dsh-binding/src/runtime";
-import { dshWorkerModel } from "../../dsh-binding/src/workers";
 import { ModelEgress } from "../../agent-container/src/egress";
 import { ContainerHost } from "../../agent-container/src/host";
 import { CONTAINER_PATH, DEFAULT_MODEL, inContainer, migrateModelChoice, prepareLaunch, provisionCommand, type ContainerConfig } from "../../agent-container/src/launch";
@@ -76,10 +72,9 @@ export interface Config {
   stateDir: string;
   workspaces?: Record<string, string>;
   /** The main agent (agent:main, with its runtime) and any other declared agents; the keeper is added by default in the container. */
-  agents?: (ConfiguredAgent & { runtime?: "echo" | "dsh" | "container" })[];
+  agents?: (ConfiguredAgent & { runtime?: "echo" | "container" })[];
   /** The agent runtime in its Linux container (runtime "container"); ash stays outside. */
   container?: ContainerConfig;
-  dsh?: { root: string; home?: string; skillsRoot?: string; costRoot?: string; vaultRoot?: string; env?: Record<string, string> };
   host?: HostConnection & { coreToken?: string };
   gateway?: { url: string };
   mcp?: Record<string, McpServerSpec>;
@@ -112,7 +107,6 @@ export interface Running {
   members: WorldMembers;
   edge: EdgeRouter;
   link: OwnerLink | null;
-  dsh: DshHost | null;
   container: ContainerHost | null;
   /** Every agent member, the main one first. */
   agents: () => ReturnType<typeof createAgentMember>[];
@@ -162,10 +156,10 @@ export async function startOwner(config: Config): Promise<Running> {
   const vaultSealRequired = process.env.ASH_VAULT_SEAL_REQUIRED === "1";
   delete process.env.ASH_VAULT_SEAL_REQUIRED;
   const vaultSealKey = sealText ? Buffer.from(sealText, "base64url") : undefined;
-  const mainEntry = (config.agents ?? []).find((item) => item.id === "agent:main") ?? { id: "agent:main", runtime: "dsh" as const };
-  const agents = [{ ...mainEntry, runtime: mainEntry.runtime ?? "dsh" }];
-  if (agents[0].runtime !== "echo" && agents[0].runtime !== "dsh" && agents[0].runtime !== "container") throw new Error("unsupported agent runtime");
-  // Declared agents run in the container next to the main one; the in-process runtimes host only the main agent.
+  const mainEntry = (config.agents ?? []).find((item) => item.id === "agent:main") ?? { id: "agent:main", runtime: "container" as const };
+  const agents = [{ ...mainEntry, runtime: mainEntry.runtime ?? "container" }];
+  if (agents[0].runtime !== "echo" && agents[0].runtime !== "container") throw new Error("unsupported agent runtime");
+  // Declared agents run in the container next to the main one; the echo runtime hosts only the main agent.
   const declarations = resolveAgents(config.agents, agents[0].runtime === "container");
   if (!config.stateDir) throw new Error("stateDir is required");
   if (agents[0].runtime === "container") {
@@ -182,9 +176,6 @@ export async function startOwner(config: Config): Promise<Running> {
       writeFileSync(moved, `${previous}\n`, { mode: 0o600 });
     }
     config = { ...config, workspaces: { ...(config.workspaces ?? {}), home } };
-  }
-  if (agents[0].runtime === "dsh" && (!config.dsh?.root || !config.workspaces?.home || !existsSync(join(config.dsh.root, "package.json")) || !existsSync(config.workspaces.home))) {
-    throw new Error("DSH runtime requires an installed root and existing home workspace; no database was opened");
   }
   const [host, portText] = (config.listen ?? "127.0.0.1:4700").split(":");
   const port = Number(portText);
@@ -204,7 +195,6 @@ export async function startOwner(config: Config): Promise<Running> {
   let admin: AdminMember | null = null;
   let post: PostMember | null = null;
   let reflex: ReflexMember | null = null;
-  let dsh: DshHost | null = null;
   let container: ContainerHost | null = null;
   let egress: ModelEgress | null = null;
   let agentTools: AgentMcpServer | null = null;
@@ -337,7 +327,6 @@ export async function startOwner(config: Config): Promise<Running> {
       mainBinding = agentTools.bind("agent:main", "main", () => null, agentPolicy(mainDeclaration));
       mindBinding = agentTools.bind("agent:main", "mind", () => null, agentPolicy(mainDeclaration, true));
     }
-    if (agents[0].runtime === "dsh") dsh = new DshHost({ root: config.dsh!.root, home: config.dsh!.home ?? join(config.stateDir, "dsh-home"), skillsRoot: config.dsh!.skillsRoot, costRoot: config.dsh!.costRoot, vaultRoot: config.dsh!.vaultRoot, env: config.dsh!.env });
     const keyMissing = () => !vaultStore.has("DEEPSEEK_API_KEY");
     // Given to the main agent every turn: devices, its apps (organs) with what changed in them lately, the owner's screens.
     const turnContext = () => [deviceSummary(members), apps?.context() ?? "", screensNow()].filter(Boolean).join("\n");
@@ -348,9 +337,8 @@ export async function startOwner(config: Config): Promise<Running> {
       }),
       mcp: () => ({ url: agentTools!.url, token: mainBinding!.token }), failuresSince: (at, sessionId) => egress!.failuresSince(at, sessionId), labelSession: (sessionId, scope) => egress!.label(sessionId, scope),
       devices: turnContext, onActive: (active) => { running.chat += active ? 1 : -1; } }) : null;
-    const runner = dsh ? new DshTurnRunner(dsh, join(config.stateDir, "attachments", "inbox"), config.workspaces!.home, world, turnContext)
-      : containerRunner ?? new EchoTurnRunner();
-    const mindRunner = dsh ? new DshMindRunner(dsh) : container ? new ContainerMindRunner({ host: container, binding: mindBinding!, router: world, keyMissing, stateDir: config.stateDir, log,
+    const runner = containerRunner ?? new EchoTurnRunner();
+    const mindRunner = container ? new ContainerMindRunner({ host: container, binding: mindBinding!, router: world, keyMissing, stateDir: config.stateDir, log,
       mcp: () => ({ url: agentTools!.url, token: mindBinding!.token }), failuresSince: (at, sessionId) => egress!.failuresSince(at, sessionId), labelSession: (sessionId, scope) => egress!.label(sessionId, scope), onActive: (active) => { running.mind += active ? 1 : -1; } }) : null;
     agent = createAgentMember({ ledger, router: world, stateDir: join(config.stateDir, "agent-main"), runner, name: agents[0].name,
       ...(hostLink ? { beforeTurn: async (turn: string) => {
@@ -526,12 +514,6 @@ export async function startOwner(config: Config): Promise<Running> {
         if (!reply?.ok) throw new Error("device management operation failed");
         return (reply.result ?? {}) as Record<string, unknown>;
       },
-      ...(dsh ? { modelGet: () => dsh!.agentOptions() ?? {}, modelSet: async (provider: string, model: string) => {
-        const selector = dsh!.ctx?.get("agentDefaultModel");
-        if (!selector) throw new Error("DSH model selection unavailable");
-        await selector.saveSelection({ provider, model });
-        return { provider, model, restart_required: true };
-      } } : {}),
       ...(container ? { modelGet: () => containerModel(), modelSet: async (provider: string, model: string) => {
         if (!catalogRates(provider, model) && provider !== "deepseek-official") throw new Error("unknown model");
         writeFileSync(modelFile, JSON.stringify({ provider, model }), { mode: 0o600 });
@@ -553,36 +535,6 @@ export async function startOwner(config: Config): Promise<Running> {
         const restart = result?.application === "restart-required";
         if (restart && !agent!.inbox.activeTurn()) await container!.restart();
         return { ...result, restart_required: restart && Boolean(agent!.inbox.activeTurn()) };
-      } } : {}),
-      ...(dsh ? { pluginsList: async () => {
-        const manager = dsh!.ctx?.get("pluginManager");
-        if (!manager) throw new Error("DSH plugin manager unavailable");
-        const [bundles, plugins] = await Promise.all([manager.listBundles(), manager.listPlugins()]);
-        return { bundles, plugins };
-      }, pluginsOp: async (body: Record<string, unknown>) => {
-        const manager = dsh!.ctx?.get("pluginManager");
-        if (!manager) throw new Error("DSH plugin manager unavailable");
-        const value = (field: string) => {
-          const item = body[field];
-          if (typeof item !== "string" || !item.trim()) throw new Error(`${field} required`);
-          return item.trim();
-        };
-        let result: Record<string, unknown>;
-        switch (body.op) {
-          case "enable":
-          case "disable": {
-            const name = value("name");
-            if (name === "@deepseek-ai/dsh-base") throw new Error("base bundle is required");
-            result = await manager.setBundleEnabled(name, body.op === "enable");
-            break;
-          }
-          case "plugin":
-            if (typeof body.enabled !== "boolean") throw new Error("enabled required");
-            result = await manager.setPluginEnabled(value("id"), body.enabled);
-            break;
-          default: throw new Error("unsupported plugin operation");
-        }
-        return { ...result, restart_required: result?.application === "restart-required" };
       } } : {}),
       currentAgentTurn: () => agent!.inbox.activeTurn()?.id ?? null,
       currentScreenBinding: (screen, principal) => edge.screens.currentBinding(screen, principal) });
@@ -646,26 +598,6 @@ export async function startOwner(config: Config): Promise<Running> {
         .then(() => { log("agent runtime ready", JSON.stringify(container!.timings)); provision(); })
         .catch((error) => { if (!container!.isClosed) log("agent runtime failed to start", error); });
     }
-    if (dsh) {
-      const { startedTurns, completedTurns } = ledger.agentTurnHistory("agent:main");
-      await dsh.boot();
-    registerWorkerMembers(members, dshWorkerModel(dsh, () => worldConfig.workers.model), ledger);
-      dsh.attachVault(async (ref) => vaultStore.get(ref));
-      const collector = dsh.cost();
-      if (collector) { cost = new CostMember({ ledger, router: world, collector, price: async (record) => {
-        const rates = await dsh!.modelRates(record.provider, record.model);
-        return rates ? estimateWorkerCost({ provider: record.provider, model: record.model, inputTokens: record.input, outputTokens: record.output,
-          cacheReadTokens: record.cacheRead, cacheWriteTokens: record.cacheWrite }, rates) : null;
-      } }); members.register(cost); }
-      if (!self) throw new Error("managed files unavailable");
-      (runner as DshTurnRunner).primeManagedSnapshot(await self.promptSnapshot());
-      await dsh.startMain({ members, router: world, workspace: config.workspaces!.home, managedRoot: config.workspaces!.home,
-        protectedRoots: [config.stateDir, config.dsh!.home ?? join(config.stateDir, "dsh-home")], adapter: runner as DshTurnRunner,
-        nativeMode: "audited", resume: { file: join(config.stateDir, "dsh-main-session.json"), startedTurns, completedTurns } });
-      await dsh.startMind({ members, router: world, workspace: config.workspaces!.home, managedRoot: config.workspaces!.home,
-        protectedRoots: [config.stateDir, config.dsh!.home ?? join(config.stateDir, "dsh-home")], nativeMode: "disabled", adapter: mindRunner as DshMindRunner });
-      mind = new AgentMind(mindRunner!, () => self!.promptSnapshot(), (message, outcome) => pulse?.wakeSettled(message, outcome));
-    }
     await reflex.runtime.recover();
     await world.recover();
     devices.start();
@@ -686,17 +618,17 @@ export async function startOwner(config: Config): Promise<Running> {
     link?.enable();
     // Apps start in the background: a slow or broken app never delays ash.
     void apps.start().catch((error) => log("apps failed to start", error));
-    return { url, tokens, ledger, world, members, edge, link, dsh, container, agents: () => [agent!, ...(agentSystem?.agents() ?? [])], async close() {
+    return { url, tokens, ledger, world, members, edge, link, container, agents: () => [agent!, ...(agentSystem?.agents() ?? [])], async close() {
       stopTour?.(); stopFirstMeeting?.(); senses?.close(); cost?.close();
       link?.stop(); await taskStatus?.close(); widgets?.close(); pulse?.close(); hostLink?.close();
       if (server) await new Promise<void>((resolve) => { server!.close(() => resolve()); server!.closeAllConnections(); });
-      await reflex?.close(); await post?.close(); await clock?.close(); work?.close(); await agent?.close(); await agentSystem?.close(); await mind?.close(); admin?.close(); await dsh?.close(); (provisioning as ChildProcess | null)?.kill(); await container?.close(); await agentTools?.close(); await apps?.close(); await egress?.close(); await self?.close(); world.dispose(); ledger.close();
+      await reflex?.close(); await post?.close(); await clock?.close(); work?.close(); await agent?.close(); await agentSystem?.close(); await mind?.close(); admin?.close(); (provisioning as ChildProcess | null)?.kill(); await container?.close(); await agentTools?.close(); await apps?.close(); await egress?.close(); await self?.close(); world.dispose(); ledger.close();
     } };
   } catch (error) {
     stopTour?.(); stopFirstMeeting?.(); senses?.close(); cost?.close();
     link?.stop(); await taskStatus?.close(); widgets?.close(); pulse?.close(); hostLink?.close();
     if (server) await new Promise<void>((resolve) => { server!.close(() => resolve()); server!.closeAllConnections(); });
-    await reflex?.close(); await post?.close(); await clock?.close(); work?.close(); await agent?.close(); await agentSystem?.close(); await mind?.close(); admin?.close(); await dsh?.close(); (provisioning as ChildProcess | null)?.kill(); await container?.close(); await agentTools?.close(); await apps?.close(); await egress?.close(); await self?.close(); ledger.close();
+    await reflex?.close(); await post?.close(); await clock?.close(); work?.close(); await agent?.close(); await agentSystem?.close(); await mind?.close(); admin?.close(); (provisioning as ChildProcess | null)?.kill(); await container?.close(); await agentTools?.close(); await apps?.close(); await egress?.close(); await self?.close(); ledger.close();
     throw error;
   }
 }
