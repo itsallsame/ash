@@ -13,7 +13,7 @@
  * `service:history` returns.
  */
 import { generateKeyPairSync, sign as signBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -683,8 +683,11 @@ export class Scenario {
     const launch = this.host.writeLaunch();
     this.stdin = new PassThrough();
     this.host.stdin.pipe(this.stdin);
+    // The packaged relay program, as a stand-in: a setup is refused without one.
+    const relayBundle = join(this.dataDir, "ash-gateway.mjs");
+    writeFileSync(relayBundle, "export default {};\n");
     this.hubValue = await startHub({
-      dataDir: this.dataDir, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
+      dataDir: this.dataDir, relayBundle, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
       ...(this.options.llm ? { llm: this.options.llm } : {}),
       ...(this.options.fakeNow ? { now: this.clock.now } : {}),
     });

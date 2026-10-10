@@ -5,6 +5,7 @@
  * router, body and persona are up, and `stopAll()` at shutdown. Drivers come in by runtime kind (`deps.drivers`).
  */
 import { AgentManager, type AgentsDeps } from "./manager";
+import { fileTemplates, type Templates } from "./runs";
 import { createAgentsService } from "./service";
 import { SERVICE_CALLER } from "./modules";
 import type { AgentPolicy } from "../../kernel/router";
@@ -26,8 +27,18 @@ export interface Agents {
   refreshModules(agent: string, lane?: string): Promise<void>;
 }
 
-export function createAgents(deps: AgentsDeps): Agents {
-  const manager = new AgentManager(deps);
+/** What `createAgents` takes: the module's dependencies, with the templates given as the directory they are files in. */
+export type AgentsOptions = Omit<AgentsDeps, "templates"> & {
+  /** `ash-skills/agents`: `<name>.json` templates, read here. */
+  templatesDir?: string;
+  /** Tests: templates already in memory, instead of `templatesDir`. */
+  templates?: Templates;
+};
+
+export function createAgents({ templatesDir, templates, ...rest }: AgentsOptions): Agents {
+  const source = templates ?? (templatesDir ? fileTemplates(templatesDir) : null);
+  if (!source) throw new Error("createAgents needs templatesDir");
+  const manager = new AgentManager({ ...rest, templates: source });
   const service = createAgentsService(manager);
   return { service, manager, startAll: () => manager.startAll(), stopAll: () => manager.stopAll(), primary: () => manager.runs.primary()?.id ?? null,
     refreshModules: (agent, lane) => manager.refreshModules(agent, lane),
@@ -50,4 +61,4 @@ export function bodyFileWriter(router: Router): (path: string, content: string) 
 }
 
 export { AgentManager, type AgentsDeps } from "./manager";
-export { fileTemplates, type AgentDecl, type LaneDecl, type Templates } from "./runs";
+export type { AgentDecl, LaneDecl, Templates } from "./runs";

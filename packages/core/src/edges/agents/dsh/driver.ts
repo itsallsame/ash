@@ -18,7 +18,8 @@ import {
 } from "../../../../../sdk/src/driver";
 import { AcpClient, AcpError, type AcpUpdate, type DriverProcess, type SpawnFn } from "./acp";
 
-export const DEFAULT_ARGV = ["/opt/dsh/node_modules/.bin/dsh", "--profile", "acp", "--patch", "/opt/ash/patch.yml"];
+/** `dsh` is a name the main body resolves: its own binary on a development machine, /opt/dsh/... in the container. */
+export const DEFAULT_ARGV = ["dsh", "--profile", "acp", "--patch", "/opt/ash/patch.yml"];
 const IMAGE = /^image\/(png|jpeg|webp|gif)$/;
 /** The file DSH loads from the working directory as the base of every session. */
 export const BASELINE_FILE = "AGENTS.md";

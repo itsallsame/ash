@@ -152,14 +152,33 @@ test("a failure in Cloudflare is told in Cloudflare's words, without any credent
   assert.equal(w.gw.claimed, false, "nothing was claimed");
 });
 
-test("deploying needs the packaged relay program; without it the setup stays authorized and says why", async (t) => {
-  const { cf, setup, card } = await build(t, { bundle: false });
-  const started = await setup.start("person:owner");
-  await cf.signIn(card()!.url);
-  await eventually(() => setup.status(started.setup_id).state === "authorized", "authorized");
-  assert.throws(() => setup.deploy(started.setup_id), (e: { code: string; message: string }) => e.code === "unavailable" && /packaged relay program/.test(e.message));
-  assert.throws(() => setup.deploy(started.setup_id, "Bad Name"), (e: { code: string }) => e.code === "bad_request");
-  assert.equal(setup.status(started.setup_id).state, "authorized");
+test("without the packaged relay program a setup does not even start: unavailable, no sign-in card, no listener, and gateway.status says why", async (t) => {
+  const w = await startWorld(t, { gateway: false, fresh: true, cloudflare: { bundle: false } });
+  await assert.rejects(w.control.setup.start("person:owner"), (e: { code: string; message: string }) => e.code === "unavailable" && /packaged relay program/.test(e.message));
+  assert.equal(w.card(), undefined, "the owner was not asked to sign in");
+  assert.equal(await listening(w.port), false);
+  assert.match((await w.link("gateway.status")).setup_unavailable, /packaged relay program/);
+  assert.equal(await w.refused("gateway.setup.start", { provider: "cloudflare" }), "unavailable");
+});
+
+test("a packaged relay program that is not there (bundleMissing) stops start and deploy with its reason, and works once the file appears", async (t) => {
+  let missing: string | null = "the packaged relay program is not at /app/ash-gateway.mjs";
+  const w = await startWorld(t, { gateway: false, fresh: true, control: { bundleMissing: () => missing } });
+  await assert.rejects(w.control.setup.start("person:owner"), (e: { code: string; message: string; recovery_hint?: string }) =>
+    e.code === "unavailable" && /not at \/app\/ash-gateway\.mjs/.test(e.message) && /gateway\.use/.test(e.recovery_hint ?? ""));
+  assert.equal((await w.link("gateway.status")).setup_unavailable, "the packaged relay program is not at /app/ash-gateway.mjs");
+  missing = null;
+  assert.equal((await w.link("gateway.status")).setup_unavailable, undefined, "the file is there now");
+  const started = await w.control.setup.start("person:owner");
+  await w.cf.signIn(w.card()!.url);
+  await eventually(() => w.control.setup.status(started.setup_id).state === "authorized", "authorized");
+  missing = "the packaged relay program is not at /app/ash-gateway.mjs";               // gone again before the deploy
+  assert.throws(() => w.control.setup.deploy(started.setup_id), (e: { code: string }) => e.code === "unavailable");
+  assert.throws(() => w.control.setup.deploy(started.setup_id, "Bad Name"), (e: { code: string }) => e.code === "unavailable" || e.code === "bad_request");
+  assert.equal(w.control.setup.status(started.setup_id).state, "authorized", "nothing was started");
+  missing = null;
+  assert.equal(w.control.setup.deploy(started.setup_id).state, "deploying");
+  await eventually(() => w.control.setup.status(started.setup_id).state === "connected", "connected");
 });
 
 test("an expired sign-in is renewed with the refresh token before deploying; a redeploy to an existing script does not migrate again", async (t) => {

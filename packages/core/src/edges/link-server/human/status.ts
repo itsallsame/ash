@@ -23,19 +23,8 @@ export interface TaskFrame {
   agent?: string;
 }
 
-/** What the summarizer is asked: the recent steps, oldest first. The assembly turns it into a call of edges/llm. */
+/** What the summarizer is asked: the recent steps, oldest first. The assembly builds it with `createSummarizer` (edges/llm/summary). */
 export type Summarize = (steps: string[]) => Promise<string | null>;
-
-/** The request to hand to `llm.complete(caller, …)` for a summary of [steps]. */
-export function summaryRequest(steps: string[]): { messages: { role: "system" | "user"; content: string }[]; max_tokens: number } {
-  return {
-    messages: [
-      { role: "system", content: "你在给主人看一个助手正在做什么。根据下面的步骤，用不超过 20 个字写一句进行时的话（例如「在整理今天的日程」），不要标点结尾，不要解释。" },
-      { role: "user", content: steps.join("\n") },
-    ],
-    max_tokens: 60,
-  };
-}
 
 const OUTCOME_TEXT: Record<string, string> = { completed: "本轮回复", cancelled: "已停止" };
 const MAX_STEPS = 5;

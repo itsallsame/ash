@@ -214,16 +214,31 @@ test("post: no key is unavailable and fetch is never called; the timeout applies
   assert.deepEqual(slow.reports.map((r) => r.ok), [false]);
 });
 
-test("baseUrl: complete and post both go to that address, with the same keys, paths and reports", async () => {
+test("baseUrl: complete and post both go to that origin, keep their own paths, and use the same keys and reports", async () => {
   const seen: Model<Api>[] = [];
   const sent: string[] = [];
   const reports: LlmUsageReport[] = [];
+  // The path of the override itself ("/fake") does not count: only protocol, host and port are taken from it.
   const llm = createLlm({ key: (ref) => keys[ref] ?? null, report: (u) => { reports.push(u); }, baseUrl: "http://127.0.0.1:9/fake/",
     complete: async (model) => { seen.push(model); return reply(); },
     fetch: (async (url: unknown) => { sent.push(String(url)); return new Response(JSON.stringify({ answers: {} })); }) as unknown as typeof fetch });
   await llm.complete("a", hello);
   await llm.post("hub:jev", jevRequest);
-  assert.equal(seen[0]!.baseUrl, "http://127.0.0.1:9/fake");
-  assert.deepEqual(sent, ["http://127.0.0.1:9/fake/api/alpha/decisions"]);
+  assert.equal(seen[0]!.baseUrl, "http://127.0.0.1:9");
+  assert.deepEqual(sent, ["http://127.0.0.1:9/api/alpha/decisions"]);
   assert.equal(reports.length, 2);
+});
+
+test("baseUrl: DeepSeek (no path) and OpenRouter (/api/v1) keep the model's own path in complete, and post sends the same path", async () => {
+  const seen: string[] = [];
+  const sent: string[] = [];
+  const llm = createLlm({ key: (ref) => keys[ref] ?? null, report: () => {}, baseUrl: "http://127.0.0.1:9",
+    complete: async (model) => { seen.push(model.baseUrl); return reply(); },
+    fetch: (async (url: unknown) => { sent.push(String(url)); return new Response(JSON.stringify({})); }) as unknown as typeof fetch });
+  await llm.complete("a", { ...hello, model: "deepseek-flash" });
+  await llm.complete("a", { ...hello, model: "openrouter:vendor/unlisted-1" });
+  await llm.post("a", { provider: "deepseek", path: "/chat/completions", body: {} });
+  await llm.post("a", { provider: "openrouter", path: "/api/v1/chat/completions", body: {} });
+  assert.deepEqual(seen, ["http://127.0.0.1:9", "http://127.0.0.1:9/api/v1"]);
+  assert.deepEqual(sent, ["http://127.0.0.1:9/chat/completions", "http://127.0.0.1:9/api/v1/chat/completions"]);
 });

@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "46f98e19a4886b3f69a12df7bf561f67067392e4e8bb139f59e141ad0aafef56",
+ "hash": "af77a5cda5b2c222af2630afda9b796d6f74050213a06ced0b31c7320e5064b5",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -2977,7 +2977,7 @@
    "word": "gateway.status",
    "kind": "request",
    "direction": "in",
-   "description": "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error.",
+   "description": "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error, and (setup_unavailable) why building a relay is not possible in this build.",
    "input_schema": {
     "type": "object",
     "properties": {},
@@ -3006,6 +3006,9 @@
       }
      },
      "last_error": {
+      "type": "string"
+     },
+     "setup_unavailable": {
       "type": "string"
      }
     },

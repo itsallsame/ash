@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { chmod } from "node:fs/promises";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import test from "node:test";
 import type { HandleContext, Message } from "../../../../sdk/src/message";
 import { lintWords } from "../../../../sdk/src/word";
 import { createLocalBody, bodyWords, mainBodyKind, type LocalBody } from "../../../src/edges/body/local";
+import { createDshDriver, DEFAULT_ARGV } from "../../../src/edges/agents/dsh";
 import type { ProotConfig } from "../../../src/edges/body/proot";
 
 const caller = { member: "agent:cloud", via: "agent" as const, local: false };
@@ -171,6 +173,12 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
     child.stdout.on("data", (chunk) => { out += chunk; });
     await new Promise((resolve) => child.on("close", resolve));
     assert.equal(out, `${await realpath(join(dir, "ws", "agents", "main"))}|${join(dir, "dsh")}|x`);
+    // Only `dsh` means the host's runtime: another program runs as written, without the runtime's home.
+    const plain = native.spawn([process.execPath, "-e", "process.stdout.write(String(process.env.DSH_HOME) + '|' + process.env.EXTRA)"], { env: { EXTRA: "y" } });
+    let plainOut = "";
+    plain.stdout.on("data", (chunk) => { plainOut += chunk; });
+    await new Promise((resolve) => plain.on("close", resolve));
+    assert.equal(plainOut, `${process.env.DSH_HOME}|y`);
     const launcher = native.appLauncher()!;
     assert.equal(launcher.root, join(dir, "ws", "apps"));
     const run = launcher.spawn({ server: { command: "node", args: ["server.mjs"], env: { A: "1" } } } as never, join(launcher.root, "notes"), { ASH_X: "y" });
@@ -187,5 +195,44 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
     const other = createLocalBody({ isolation: { kind: "container", container: { engine: "docker", image: "x" } } });
     assert.equal(other.appLauncher(), null);
     assert.throws(() => other.spawn(["x"]), (error: any) => error.code === "unavailable");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+const startSpec = { runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "agents/main" }, tools: { mcp_url: "http://127.0.0.1:1/mcp", token: "t", allowed: [] }, modules: { static: [] }, lanes: ["front"], sessions: {} };
+
+test("the dsh driver's default argv, through a native body: it is the host's dsh_bin, with DSH_HOME and the host's patch file", async () => {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-dsh-"));
+  try {
+    assert.equal(DEFAULT_ARGV[0], "dsh", "the driver only names the runtime; the body knows where it is");
+    const record = join(dir, "record");
+    const fake = join(dir, "fake-dsh");
+    await writeFile(fake, `#!/bin/sh\nprintf '%s\\n' "$0" "$@" "HOME=$DSH_HOME" > ${record}\n`);
+    await chmod(fake, 0o755);
+    const patched = createLocalBody({ isolation: { kind: "native", native: { workspace: join(dir, "ws"), dsh_bin: fake, dsh_home: join(dir, "dsh"), dsh_patch: join(dir, "patch.yml") } } });
+    const driver = createDshDriver({ report: () => {}, spawn: (argv, o) => patched.spawn(argv, o), writeFile: async () => {} });
+    await assert.rejects(driver.start("agent:main", startSpec as never));         // the fake exits without speaking ACP
+    assert.deepEqual((await readFile(record, "utf8")).trim().split("\n"), [fake, "--profile", "acp", "--patch", join(dir, "patch.yml"), `HOME=${join(dir, "dsh")}`]);
+
+    // No patch file on this machine: the option goes away with its value.
+    const bare = createLocalBody({ isolation: { kind: "native", native: { workspace: join(dir, "ws"), dsh_bin: fake, dsh_home: join(dir, "dsh") } } });
+    const second = createDshDriver({ report: () => {}, spawn: (argv, o) => bare.spawn(argv, o), writeFile: async () => {} });
+    await assert.rejects(second.start("agent:main", startSpec as never));
+    assert.deepEqual((await readFile(record, "utf8")).trim().split("\n"), [fake, "--profile", "acp", `HOME=${join(dir, "dsh")}`]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("in the container, `dsh` becomes /opt/dsh/node_modules/.bin/dsh and the patch path stays", async () => {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-proot-"));
+  try {
+    const record = join(dir, "record");
+    const proot = join(dir, "proot");
+    await writeFile(proot, `#!/bin/sh\nprintf '%s\\n' "$@" > ${record}\n`);
+    await chmod(proot, 0o755);
+    const config: ProotConfig = { root: join(dir, "main"), rootfs: join(dir, "main", "ubuntu"), bin: proot, loader: "", lib: "" };
+    const body = createLocalBody({ isolation: { kind: "proot", proot: config } });
+    const child = body.spawn(DEFAULT_ARGV, { cwd: "/root/agents/main" });
+    await new Promise((resolve) => child.on("close", resolve));
+    const args = (await readFile(record, "utf8")).trim().split("\n");
+    assert.deepEqual(args.slice(-5), ["/opt/dsh/node_modules/.bin/dsh", "--profile", "acp", "--patch", "/opt/ash/patch.yml"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
