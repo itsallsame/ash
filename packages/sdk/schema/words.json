@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "5e9317f5059a4626c4e9fa2452cc3a07a68665fdddc5ad434fc11a673e805e7a",
+ "hash": "70eda74b9c1730071d3c5ed957788fd5040053b1e378e81ec5eed4662d33be21",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -12786,7 +12786,7 @@
    "word": "ask",
    "kind": "request",
    "direction": "in",
-   "description": "A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options. detail, source and expires_at are optional: the gate fills them for an approval, and the expiry follows approval_ttl_minutes. The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards.",
+   "description": "A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options, while a confirmation without options gets yes and no from the owner's side. detail, source and expires_at are optional: the gate fills them for an approval, the tools fill expires_at from approval_ttl_minutes, and the owner's side ends the question at expires_at (at most seven days). The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -12904,7 +12904,7 @@
    "callers": [
     "agent"
    ],
-   "timeout_ms": 600000,
+   "timeout_ms": 604800000,
    "label": {
     "doing": "在问你"
    }

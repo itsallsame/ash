@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `5e9317f5059a4626`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `70eda74b9c173007`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -326,7 +326,7 @@
 | `say` | agent, app | act / none | - | text*, kind, facts, dedupe_key | 在回你消息 | Send the owner a short message; it is acknowledged when recorded and does not wait for a reply or replace ask. kind (default reply): reply, due (a reminder), offer or heads_up (unprompted; an opaque stable dedupe_key keeps a repeat from showing twice). facts are source message or fact ids. |
 | `react` | agent, app | act / none | - | message_id*, emoji* | 在给消息加表情 | React to one existing message with an emoji; an unknown message id fails. Not for a new explanation: use say for that. |
 | `show` | agent, app | act / none | - | card* | 在给你看卡片 | Show the owner a file, image, link, a permission page to switch on, or choices. Showing choices does not itself authorize anything. A permission card only names an Android setting the owner must switch on; calling a capability asks the owner by itself. |
-| `ask` | agent | act / none | timeout 600s | title*, detail, human_kind, allow_custom, options, expires_at, source | 在问你 | A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options. detail, source and expires_at are optional: the gate fills them for an approval, and the expiry follows approval_ttl_minutes. The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards. |
+| `ask` | agent | act / none | timeout 604800s | title*, detail, human_kind, allow_custom, options, expires_at, source | 在问你 | A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options, while a confirmation without options gets yes and no from the owner's side. detail, source and expires_at are optional: the gate fills them for an approval, the tools fill expires_at from approval_ttl_minutes, and the owner's side ends the question at expires_at (at most seven days). The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards. |
 | `open` | agent, app | act / none | - | target*, id, mode, client | 在打开页面 | Open or suggest a page on one of the owner's channels: settings, the activity of a turn, a file (id says which). `client` picks the channel; leave it out for the one the owner is on. Check `opened`: a suggestion may be declined. |
 
 ## `agent:*`
