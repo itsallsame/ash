@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `ed8a67581f604264`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `ec54292779c40250`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -56,7 +56,7 @@
 
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
-| `pause` | owner, kernel | write / none | local_only | by | 在暂停 | Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine, or the hub's own reflex: `by` cites the one owner message that said stop. |
+| `pause` | owner | write / none | local_only | by | 在暂停 | Durably pause all activity (agent turns, timers that would wake an agent). Like resume, only the owner from a channel on this machine: `by` cites the one owner message that said stop. |
 | `resume` | owner | write / none | local_only | confirmed* | 在恢复 | Resume after a pause. Only the owner can, from a channel on this machine, after an explicit confirmation. |
 | `settings.get` | owner, agent, app | read / none | - | keys | 在看设置 | Read the hub's settings (all of them, or the named keys). Credentials are never part of the result. |
 | `settings.set` | owner, agent, app | write / structure | - | - | 在改设置 | Change settings: the body is the keys to change and their new values. Agents asking for this are asked about by the owner. |
@@ -323,11 +323,11 @@
 
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
-| `say` | agent, app, kernel | act / none | - | text*, kind, facts, dedupe_key | 在回你消息 | Send the owner a short message; it is acknowledged when recorded and does not wait for a reply or replace ask. kind (default reply): reply, due (a reminder), offer or heads_up (unprompted; an opaque stable dedupe_key keeps a repeat from showing twice). facts are source message or fact ids. |
-| `react` | agent, app, kernel | act / none | - | message_id*, emoji* | 在给消息加表情 | React to one existing message with an emoji; an unknown message id fails. Not for a new explanation: use say for that. |
-| `show` | agent, app, kernel | act / none | - | card* | 在给你看卡片 | Show the owner a file, image, link, a permission page to switch on, or choices. Showing choices does not itself authorize anything. A permission card only names an Android setting the owner must switch on; calling a capability asks the owner by itself. |
+| `say` | agent, app | act / none | - | text*, kind, facts, dedupe_key | 在回你消息 | Send the owner a short message; it is acknowledged when recorded and does not wait for a reply or replace ask. kind (default reply): reply, due (a reminder), offer or heads_up (unprompted; an opaque stable dedupe_key keeps a repeat from showing twice). facts are source message or fact ids. |
+| `react` | agent, app | act / none | - | message_id*, emoji* | 在给消息加表情 | React to one existing message with an emoji; an unknown message id fails. Not for a new explanation: use say for that. |
+| `show` | agent, app | act / none | - | card* | 在给你看卡片 | Show the owner a file, image, link, a permission page to switch on, or choices. Showing choices does not itself authorize anything. A permission card only names an Android setting the owner must switch on; calling a capability asks the owner by itself. |
 | `ask` | agent | act / none | timeout 600s | title*, detail, human_kind, allow_custom, options, expires_at, source | 在问你 | A durable question to the owner, who must choose before something continues. Only title is required; a question (the default human_kind) also needs options. detail, source and expires_at are optional: the gate fills them for an approval, and the expiry follows approval_ttl_minutes. The tools human_ask and human_confirm are this word under two names and take exactly this input. The answer (or the expiry) comes back as the response; an approval does not execute anything by itself. The hub's gate uses this for approval cards. |
-| `open` | agent, app, kernel | act / none | - | target*, id, mode, client | 在打开页面 | Open or suggest a page on one of the owner's channels: settings, the activity of a turn, a file (id says which). `client` picks the channel; leave it out for the one the owner is on. Check `opened`: a suggestion may be declined. |
+| `open` | agent, app | act / none | - | target*, id, mode, client | 在打开页面 | Open or suggest a page on one of the owner's channels: settings, the activity of a turn, a file (id says which). `client` picks the channel; leave it out for the one the owner is on. Check `opened`: a suggestion may be declined. |
 
 ## `agent:*`
 
@@ -336,7 +336,7 @@
 | `say` | owner | act / none | - | text*, attachments*, in_reply_to, option_id | 在读你的消息 | The owner speaks to the agent, or answers an option card (in_reply_to and option_id together). Acknowledged at once and queued on the front lane; the agent's answer arrives later as a message. |
 | `tell` | owner, agent, app | act / none | - | text*, attachments | 在告诉帮手 | Tell the agent something. It joins the agent's back lane and the agent decides what to do with it; there is no direct answer to the sender. |
 | `ask` | owner, agent, app | act / none | timeout 600s | text* | 在问帮手 | Put a question to the agent; what it says in the turn that takes the question is the answer. A quick answer is returned directly, a slow one as a receipt. |
-| `wake` | agent, app, kernel | act / none | - | lane, reason*, context | 在叫醒帮手 | Wake the agent for a reason, on a lane (default back), with the facts it needs in context. Its own turn runs; nothing is said to the owner by this. Harmless by itself, so organs (apps) may use it to alert an agent. |
+| `wake` | agent, app | act / none | - | lane, reason*, context | 在叫醒帮手 | Wake the agent for a reason, on a lane (default back), with the facts it needs in context. Its own turn runs; nothing is said to the owner by this. Harmless by itself, so organs (apps) may use it to alert an agent. |
 | `typing` | kernel | read / none | event in | - | 在等你说完 | The owner is composing a message to this agent in some channel; the inbox waits for them to finish before opening a turn. Sent by the human module. |
 | `turn.started` | kernel | read / none | event out, record | turn*, lane*, ids | 在记下一轮开始 | A turn of the agent began (the lane and the ids of the messages it was given). Goes into the ledger. |
 | `turn.ended` | kernel | read / none | event out, record | turn*, lane*, outcome*, error | 在记下一轮结束 | A turn of the agent ended, with how it ended. Goes into the ledger. |

@@ -79,7 +79,7 @@ test("the events SPEC-02 names exist, and the ones that go in the ledger are mar
 test("wake, say and the kernel-only words have the callers the spec gives", () => {
   const wake = wordContract("agent:main", "wake")!;
   assert.deepEqual([wake.effect, wake.risk], ["act", "none"]);
-  assert.ok(wake.callers.includes("app") && wake.callers.includes("kernel"));
+  assert.deepEqual(wake.callers, ["agent", "app"]);
   assert.deepEqual(wordContract("service:vault", "set")?.callers, ["owner"]);
   assert.equal(wordContract("service:vault", "set")?.local_only, true);
   assert.equal(wordContract("service:admin", "resume")?.local_only, true);
@@ -148,7 +148,7 @@ const VIOLATIONS: Record<LintRule, [string, WordContract][]> = {
   "result-schema": [["not a schema", bad({ result_schema: "x" })], ["does not compile", bad({ result_schema: { type: "bogus" } })]],
   "effect-risk": [["read with risk", bad({ effect: "read", risk: "outward" })], ["execute without structure", bad({ effect: "execute", risk: "none" })], ["old effect value", bad({ effect: "send" })], ["old effect structure", bad({ effect: "structure" })], ["unknown risk", bad({ risk: "high" })]],
   "event-shape": [["event with an effect", bad({ effect: "act" }, EVENT)], ["event with risk", bad({ effect: "read", risk: "outward" }, EVENT)], ["event with foreground", bad({ foreground: true }, EVENT)]],
-  "callers": [["missing", bad({ callers: undefined })], ["empty", bad({ callers: [] })], ["unknown caller", bad({ callers: ["owner", "robot"] })], ["repeated", bad({ callers: ["owner", "owner"] })], ["the old audience field is not callers", bad({ callers: "all" })]],
+  "callers": [["missing", bad({ callers: undefined })], ["empty", bad({ callers: [] })], ["unknown caller", bad({ callers: ["owner", "robot"] })], ["repeated", bad({ callers: ["owner", "owner"] })], ["kernel next to another kind", bad({ callers: ["agent", "kernel"] })], ["kernel after owner", bad({ callers: ["owner", "kernel"] })], ["the old audience field is not callers", bad({ callers: "all" })]],
   "local-only": [["without owner", bad({ local_only: true, callers: ["agent"] })], ["false is not a value", bad({ local_only: false })]],
   "record": [["on a request", bad({ record: true })], ["false is not a value", bad({ record: false }, EVENT)]],
   "timeout": [["zero", bad({ timeout_ms: 0 })], ["fraction", bad({ timeout_ms: 1.5 })], ["string", bad({ timeout_ms: "5" })]],
@@ -204,16 +204,20 @@ test("the kernel passes the first layer for every word; ['kernel'] is for the ke
     assert.equal(mayCall(["owner"], who), who === "owner", who);
     assert.equal(mayCall([...DEFAULT_CALLERS], who), true, who);
   }
-  // so every word that is for the kernel alone says exactly ["kernel"]
+  // so `kernel` only ever stands alone: no word lists it next to another kind
+  assert.ok(ALL.every((item) => !item.callers.includes("kernel") || item.callers.length === 1));
+  // and every word that is for the kernel alone says exactly ["kernel"]
   for (const word of ALL.filter((item) => item.callers.includes("kernel") && item.callers.length === 1)) {
     for (const who of ["owner", "agent", "app"] as const) assert.equal(mayCall(word.callers, who), false, `${word.member}/${word.word}`);
   }
 });
 
-test("pause is the owner's from this machine (or the kernel's reflex), like resume", () => {
+test("pause is the owner's from this machine, like resume (the kernel's reflex may call it anyway)", () => {
   const pause = wordContract("service:admin", "pause")!;
   const resume = wordContract("service:admin", "resume")!;
-  assert.deepEqual(pause.callers, ["owner", "kernel"]);
+  assert.deepEqual(pause.callers, ["owner"]);
+  assert.deepEqual(pause.callers, resume.callers);
+  assert.equal(mayCall(pause.callers, "kernel"), true);
   assert.equal(pause.local_only, true);
   assert.equal(resume.local_only, true);
   assert.equal(mayCall(pause.callers, "agent"), false);

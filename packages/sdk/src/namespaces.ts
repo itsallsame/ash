@@ -8,6 +8,8 @@
  * CapabilityPolicy.kt and the computer's workspace.ts (old effect `send` is `act`, old `structure` is `write`).
  * Results describe the structured part of a call result (`data`); images and files travel in the result's content.
  */
+import { DATE_PATTERN } from "./ids";
+import type { ErrorCode } from "./message";
 import { DEFAULT_CALLERS, type CallerKind, type Effect, type JsonSchema, type Risk, type WordContract } from "./word";
 
 /** A JSON Schema (2020-12) document; the shared `JsonSchema` type of word.ts. */
@@ -28,7 +30,7 @@ export interface StandardAction {
   /** True when the call operates the screen the owner is currently looking at on that hand. */
   foreground: boolean;
   /** Error codes (SPEC-02 §7) this action is expected to return besides the generic bad_request / timeout / failed. */
-  errors: readonly string[];
+  errors: readonly ErrorCode[];
   /** The risk is assessed per call by the hand (SPEC-01 §6.3). */
   per_call_risk?: boolean;
   /** Who may call; default `DEFAULT_CALLERS`. */
@@ -241,7 +243,7 @@ const anyResult = (): SchemaObject => loose();
 const nullable = (schema: SchemaObject): SchemaObject => ({ anyOf: [schema, { type: "null" }] });
 
 function action(name: string, label: string, description: string, input: SchemaObject, result: SchemaObject, effect: Effect, risk: Risk,
-  extra: { foreground?: boolean; errors?: readonly string[]; per_call_risk?: boolean; callers?: CallerKind[] } = {}): StandardAction {
+  extra: { foreground?: boolean; errors?: readonly ErrorCode[]; per_call_risk?: boolean; callers?: CallerKind[] } = {}): StandardAction {
   return {
     name, description, label, input_schema: input, result_schema: result, effect, risk, foreground: extra.foreground ?? false, errors: extra.errors ?? [],
     ...(extra.per_call_risk ? { per_call_risk: true } : {}), ...(extra.callers ? { callers: extra.callers } : {}),
@@ -552,7 +554,7 @@ const HEALTH_ACTIONS: readonly StandardAction[] = [
     }),
     loose({ rows: list(loose({ ts: int(), metric: choice(HEALTH_METRICS), value: num(), unit: str(), source: str() }, ["ts", "metric", "value", "unit", "source"])) }, ["rows"]), "read", "none", { errors: SENSE_ERRORS }),
   action("health.summary", "在看健康汇总", "A day's or a week's health in a few numbers (steps, heart rate, sleep, weight ...), computed by rule from health.read, with the sources that have gone stale.",
-    object({ period: choice(["day", "week"], "day (default) or week (the 7 days ending with date)."), date: { type: "string", pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", description: "YYYY-MM-DD (default today)." } }),
+    object({ period: choice(["day", "week"], "day (default) or week (the 7 days ending with date)."), date: { type: "string", pattern: DATE_PATTERN, description: "YYYY-MM-DD (default today)." } }),
     loose({ stale_sources: list(loose({ source: str(), summary: str() })) }), "read", "none", { errors: SENSE_ERRORS }),
   action("health.sync", "在让手表同步健康数据", "Ask Gadgetbridge to fetch new data from the watch and export its database now, and wait up to 90 s for the export. Needs Gadgetbridge's Intent API enabled.",
     object({}), anyResult(), "act", "none", { errors: [...SENSE_ERRORS, "timeout"] }),

@@ -3,7 +3,7 @@
 //   packages/sdk/schema/words.json   for the web client, Kotlin and the docs
 //   docs/WORDS.md                    the list for people
 // Source of truth: packages/sdk/src/words.ts (service, owner and agent words) and packages/sdk/src/namespaces.ts
-// (standard hand actions). Run `node --import tsx tools/gen-words.mjs`; with --check it writes nothing and fails when
+// (standard hand actions). Run `npm run gen:words`; with --check it writes nothing and fails when
 // the files in the repository differ from what the source generates.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
