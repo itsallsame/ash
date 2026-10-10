@@ -202,7 +202,7 @@ function project(records) {
     } else if (r.type === "tool" && view.turns[r.turn]) {
       const steps = view.turns[r.turn].steps;
       if (r.phase === "start") {
-        const step = { seq: r.seq, ts: r.ts, label: r.summary || activityText(r.name, 100), tool: activityText(r.name, 100), state: "pending" };
+        const step = { seq: r.seq, ts: r.ts, label: r.summary || activityText(r.name, 100), state: "pending" };
         steps.push(step);
         openTools.get(r.turn)?.push({ name: r.name, step });
       } else {

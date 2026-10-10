@@ -43,7 +43,7 @@ test("a turn is its start, its tool calls and its end; the front lane is the con
   ]);
   assert.equal(state.turns.t1.title, "查一下订单");
   assert.equal(state.turns.t1.background, false);
-  assert.deepEqual(state.turns.t1.steps.map(({ label, state: s, tool }) => ({ label, s, tool })), [{ label: "在搜索 订单", s: "ok", tool: "web_search" }]);
+  assert.deepEqual(state.turns.t1.steps.map(({ label, state: s, tool }) => ({ label, s, tool })), [{ label: "在搜索 订单", s: "ok", tool: undefined }], "the raw tool name is not shown");
   assert.equal(state.turns.t1.outcome, "completed");
   assert.equal(state.turns.t2.background, true);
   assert.equal(state.turns.t2.outcome, "cancelled", "an interrupted turn reads as cancelled on the activity page");

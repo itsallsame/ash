@@ -40,7 +40,7 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
   let seq = 0;
   let reads = 0;
   let clientCount = 0;
-  let clock = 1_700_000_000_000;
+  let clock = Date.now();
   const kernel = {
     ledger: [],
     /** Every request the page sent as the owner, in order. */
