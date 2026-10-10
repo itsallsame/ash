@@ -22,18 +22,9 @@ import type { HandConnection, HandRegistry } from "./hands/registry";
 export type HttpHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
 /** What a channel module is told about a connection whose channel is open. */
-export interface ChannelContext extends HandConnection {
-  /** The hand came in through the relay, not over the local link. */
-  transport: "local" | "gateway";
-}
+export type ChannelContext = HandConnection;
 /** Takes one open channel of one connection; the handlers it returns get that channel's frames. */
 export type ChannelAttach = (session: LinkSession, ctx: ChannelContext) => SessionHandlers | void;
-
-/** What happened to a connection, for the connection layer's events (`connected`, `disconnected`, `handshake_failed`). */
-export type LinkObservation =
-  | { kind: "connected"; session: LinkSession; ctx: ChannelContext }
-  | { kind: "disconnected"; session: LinkSession; ctx: ChannelContext; code: number; reason: string }
-  | { kind: "handshake_failed"; code: number; reason: string; hand?: string };
 
 export interface LinkServerOptions {
   hostClient: Pick<HostClient, "handsHandoff">;
@@ -56,10 +47,6 @@ export interface HubLinkServer {
   onChannel(channel: Exclude<LinkChannel, "device">, attach: ChannelAttach): void;
   /** A WebSocket the relay opened for device [from]; it is judged like any other connection, by the hand's record. */
   acceptGateway(socket: LinkSocket, from: string): void;
-  /** The connections that are up. */
-  connections(): { session: LinkSession; ctx: ChannelContext }[];
-  closeConnection(sessionId: string, code: number, reason?: string): boolean;
-  observe(listener: (observation: LinkObservation) => void): () => void;
 }
 
 /** Marks a socket as one the relay vouches for; only `acceptGateway` makes one. */
@@ -73,22 +60,12 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
   const log = options.log ?? (() => {});
   const channels = new Map<Exclude<LinkChannel, "device">, ChannelAttach>();
   const mounts = new Map<string, HttpHandler>();
-  const observers = new Set<(o: LinkObservation) => void>();
-  const connections = new Map<string, ChannelContext>();
-  /** How each handshake arrived, until its session is made (the server hands the same `hello` object on). */
-  const transports = new WeakMap<HelloFrame, "local" | "gateway">();
+  /** Whether each handshake came over the local link, until its session is made (the server hands the same `hello` object on). */
+  const locals = new WeakMap<HelloFrame, boolean>();
   let token = "";
   let http: Server | null = null;
 
-  const observe = (o: LinkObservation) => { for (const listener of observers) { try { listener(o); } catch (error) { log("observer failed", error); } } };
-
   async function authenticate(hello: HelloFrame, ctx: AuthContext): Promise<AuthResult> {
-    const verdict = await judge(hello, ctx);
-    if (!verdict.ok) observe({ kind: "handshake_failed", code: verdict.code, reason: verdict.reason ?? "" });
-    return verdict;
-  }
-
-  async function judge(hello: HelloFrame, ctx: AuthContext): Promise<AuthResult> {
     const relay = ctx.meta instanceof FromGateway ? ctx.meta : null;
     const key = hello.hand.public_key;
     if (!relay && !bearerIs(ctx.headers.authorization, token)) return refuse(CLOSE_CODES.unauthenticated, "bad token");
@@ -99,7 +76,7 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
 
     const hand = hands.get(id);
     if (hand?.revoked_at) return refuse(CLOSE_CODES.revoked, "revoked");
-    transports.set(hello, relay ? "gateway" : "local");
+    locals.set(hello, !relay);
     if (relay) {
       // A hand that came through the relay is held to what the owner allowed it (SPEC-03 §2.2.1).
       if (!hand) return refuse(CLOSE_CODES.unauthenticated, "unknown device");
@@ -134,22 +111,12 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
     authenticate,
     log,
     onSession(session) {
-      const transport = transports.get(session.hello) ?? "local";
-      const ctx: ChannelContext = { handId: session.handId, hello: session.hello, local: transport === "local", transport };
-      connections.set(session.id, ctx);
+      const ctx: ChannelContext = { handId: session.handId, hello: session.hello, local: locals.get(session.hello) ?? true };
       const parts: SessionHandlers[] = [];
       if (granted(session, "device")) parts.push(hands.attach(session, ctx));
       for (const [channel, attach] of channels) if (granted(session, channel)) { const handlers = attach(session, ctx); if (handlers) parts.push(handlers); }
       hands.touch(session.handId, session.hello.hand);
-      observe({ kind: "connected", session, ctx });
-      return {
-        ...handlersOf(parts),
-        closed: (code, reason) => {
-          for (const part of parts) part.closed?.(code, reason);
-          connections.delete(session.id);
-          observe({ kind: "disconnected", session, ctx, code, reason });
-        },
-      };
+      return { ...handlersOf(parts), closed: (code, reason) => { for (const part of parts) part.closed?.(code, reason); } };
     },
   });
   hands.bindLink({
@@ -197,9 +164,6 @@ export function createLinkServer(options: LinkServerOptions): HubLinkServer {
       channels.set(channel, attach);
     },
     acceptGateway(socket, from) { link.accept(socket, { meta: new FromGateway(from) }); },
-    connections: () => link.sessions().map((session) => ({ session, ctx: connections.get(session.id)! })).filter((c) => c.ctx),
-    closeConnection: (sessionId, code, reason) => link.closeSession(sessionId, code, reason),
-    observe(listener) { observers.add(listener); return () => void observers.delete(listener); },
   };
   return self;
 }

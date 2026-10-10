@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import test from "node:test";
-import type { LinkObservation } from "../../../src/edges/link-server";
 import { eventually } from "../../fixtures/wait";
 import { cap, connect, connected, connectViaRelay, newIdentity, startHub } from "./harness";
 
@@ -36,8 +35,6 @@ test("mount: a path and what is under it, the fallback for the rest, and /link i
 
 test("identity: a wrong or missing token and a wrong signature are 4001; nothing is registered for them", async (t) => {
   const hub = await startHub(); t.after(() => hub.stop());
-  const seen: LinkObservation[] = [];
-  hub.server.observe((o) => seen.push(o));
   const stranger = await newIdentity();
   const attempts = [
     await connect(hub, { token: "wrong" }),
@@ -50,7 +47,6 @@ test("identity: a wrong or missing token and a wrong signature are 4001; nothing
     assert.equal(attempt.closes[0]!.willReconnect, true);
   }
   assert.equal(hub.hands.list().length, 0);
-  assert.equal(seen.filter((o) => o.kind === "handshake_failed" && o.code === 4001).length >= 3, true);
 });
 
 test("a hand seen for the first time on the local link is registered: paired_by local, tier ask, hand_id from its key", async (t) => {
@@ -102,13 +98,13 @@ test("local channels: device and human are open (human with local=true); agent i
 test("a channel's module gets its frames and the facts of the connection", async (t) => {
   const hub = await startHub(); t.after(() => hub.stop());
   const got: unknown[] = [];
-  hub.server.onChannel("human", (session, ctx) => ({ human: (frame) => got.push([frame.t, ctx.local, ctx.transport, session.channels.human]) }));
+  hub.server.onChannel("human", (session, ctx) => ({ human: (frame) => got.push([frame.t, ctx.local, session.channels.human]) }));
   const web = await connect(hub, { channels: { human: {} } });
   await web.client.ready();
   web.client.send({ to: "agent:main", kind: "request", word: "say", body: { text: "hi" } }).catch(() => {});
   const client = (web.client.welcome!.channels.human as { client: string }).client;
   await eventually(() => got.length === 1, "the send frame");
-  assert.deepEqual(got[0], ["send", true, "local", { client, local: true }]);
+  assert.deepEqual(got[0], ["send", true, { client, local: true }]);
   assert.throws(() => hub.server.onChannel("human", () => {}));
 });
 
@@ -157,16 +153,11 @@ test("through the relay: an unknown device, a key that is not the device's, and 
   assert.equal(revoked.client.stoppedBy, 4003);
 });
 
-test("observers hear connected and disconnected; the device channel reaches the hand registry", async (t) => {
+test("the device channel reaches the hand registry, and its end marks the hand offline", async (t) => {
   const hub = await startHub(); t.after(() => hub.stop());
-  const seen: string[] = [];
-  hub.server.observe((o) => seen.push(o.kind === "handshake_failed" ? o.kind : `${o.kind} ${o.ctx.handId}`));
   const hand = await connected(hub, { capabilities: [cap("location.get")] });
-  assert.deepEqual(seen, [`connected ${hand.identity.handId}`]);
-  assert.equal(hub.server.connections().length, 1);
+  assert.equal(hub.hands.online(hand.identity.handId), true);
   hand.client.stop();
-  await eventually(() => seen.length === 2, "disconnected");
-  assert.equal(seen[1], `disconnected ${hand.identity.handId}`);
-  assert.equal(hub.server.connections().length, 0);
+  await eventually(() => !hub.hands.online(hand.identity.handId), "offline");
   assert.ok(hub.hands.get(hand.identity.handId)!.last_seen);
 });

@@ -86,7 +86,7 @@ test("a hand that is gone is offline; a call that was out when it dropped is res
   assert.equal(hub.hands.online(hand.identity.handId), false);
 });
 
-test("cancel sends a cancel frame; the hand's answer ends the call as cancelled", async (t) => {
+test("aborting the request sends a cancel frame; the hand's answer ends the call as cancelled", async (t) => {
   const hub = await startHub(); t.after(() => hub.stop());
   let started = false;
   const hand = await connected(hub, {
@@ -94,10 +94,10 @@ test("cancel sends a cancel frame; the hand's answer ends the call as cancelled"
     handlers: { call: (_call, { signal }) => new Promise((_, reject) => { started = true; signal.addEventListener("abort", () => reject(new Error("stopped"))); }) },
   });
   const m = member(hub, hand.member);
-  const msg = request(hand.member, "x.test.act");
-  const outcome = code(m.handle(msg, ctx()));
+  const control = new AbortController();
+  const outcome = code(m.handle(request(hand.member, "x.test.act"), ctx({ signal: control.signal })));
   await eventually(() => started, "the call reaching the hand");
-  m.cancel!(msg.id);
+  control.abort(); // what the router does on cancel
   assert.equal(await outcome, "cancelled");
 });
 

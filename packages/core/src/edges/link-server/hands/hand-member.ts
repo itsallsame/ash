@@ -47,7 +47,6 @@ export class HandMember implements Member {
   readonly local: boolean;
   private readonly contracts: WordContract[];
   private readonly byWord = new Map<string, WordContract>();
-  private readonly running = new Map<string, AbortController>();
 
   constructor(private readonly init: HandMemberInit) {
     this.id = init.id;
@@ -65,15 +64,10 @@ export class HandMember implements Member {
     if (!contract) throw new WordError("not_found", `${this.id} has no capability ${msg.word}`);
     const session = this.init.session();
     if (!session) throw new WordError("offline", `${this.name} is not connected`);
-    const control = new AbortController();
-    const stop = () => control.abort();
-    this.running.set(msg.id, control);
-    ctx.signal.addEventListener("abort", stop, { once: true });
-    if (ctx.signal.aborted) stop();
     try {
       const timeout = contract.timeout_ms ?? (contract.effect === "read" ? READ_TIMEOUT_MS : ACT_TIMEOUT_MS);
       const result = await session.call({
-        capability: msg.word, args: argsOf(msg, ctx), signal: control.signal,
+        capability: msg.word, args: argsOf(msg, ctx), signal: ctx.signal,
         deadline: (this.init.now ?? Date.now)() + timeout,
         caller: { member: ctx.caller.member, label: contract.label.doing, ...(ctx.caller.turn ? { turn: ctx.caller.turn } : {}) },
       });
@@ -81,14 +75,8 @@ export class HandMember implements Member {
       return { content: result.content, ...(result.data !== undefined ? { data: result.data } : {}) };
     } catch (error) {
       throw error instanceof LinkError ? linkProblem(error, this.name, contract) : error;
-    } finally {
-      ctx.signal.removeEventListener("abort", stop);
-      this.running.delete(msg.id);
     }
   }
-
-  /** Sends `cancel`; the hand still answers (code `cancelled`), which ends the `handle`. */
-  cancel(requestId: string): void { this.running.get(requestId)?.abort(); }
 
   /** The risk of one call, asked of the hand (the gate's `GateDeps.assess`); null = use the declared risk. */
   async assess(msg: Message): Promise<Risk | null> {
