@@ -90,10 +90,14 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
         return runInProot(isolation.proot, argv, { ...(opts.cwd ? { workdir: opts.cwd } : {}), ...(opts.env ? { env: opts.env } : {}), stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
       }
       if (isolation.kind === "native") {
-        // The development form: the runtime named by the host runs straight on this machine, its place under the workspace.
+        // The development form: the program runs straight on this machine, its place under the workspace. `dsh` is the
+        // runtime the host names (its binary and home); any other program runs as written.
         const cwd = join(isolation.native.workspace, opts.cwd ?? "");
         mkdirSync(cwd, { recursive: true });
-        return spawnProcess(isolation.native.dsh_bin, argv.slice(1), { cwd, env: { ...process.env, DSH_HOME: isolation.native.dsh_home, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] });
+        const runtime = argv[0] === "dsh";
+        return spawnProcess(runtime ? isolation.native.dsh_bin : argv[0]!, argv.slice(1), {
+          cwd, env: { ...process.env, ...(runtime ? { DSH_HOME: isolation.native.dsh_home } : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
+        });
       }
       throw new WordError("unavailable", `The ${isolation.kind} main body cannot run a program yet`);
     },

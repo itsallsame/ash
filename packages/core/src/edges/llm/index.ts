@@ -45,7 +45,10 @@ export interface LlmOptions {
   /** Tests only: a stand-in for fetch, used by post(). */
   fetch?: typeof fetch;
   clock?: { now(): number };
-  /** Send every call to this address instead of the providers' own (a model server of the owner's, a fake in tests). No trailing slash needed. */
+  /**
+   * Send every call to this protocol, host and port instead of the providers' own (a model server of the owner's, a fake
+   * in tests). Only the origin counts: each call keeps its own path (`/api/v1/...` for OpenRouter, none for DeepSeek).
+   */
   baseUrl?: string;
 }
 export interface Llm {
@@ -101,13 +104,19 @@ function checkNumbers(request: { max_tokens?: number; timeout_ms?: number }): vo
   }
 }
 
+/** [address] with its protocol, host and port replaced by [origin]'s; its path is kept. */
+export function withOrigin(address: string, origin: string): string {
+  const { pathname } = new URL(address);
+  return `${origin}${pathname === "/" ? "" : pathname.replace(/\/+$/, "")}`;
+}
+
 /** What one call learns as it goes; whatever is known when it ends is what gets reported. */
 interface Tally { provider: Provider; model: string; key: string | null; input: number; output: number; cost?: number }
 
 export function createLlm(options: LlmOptions): Llm {
-  const base = options.baseUrl?.replace(/\/+$/, "");
+  const origin = options.baseUrl ? new URL(options.baseUrl).origin : null;
   const complete = options.complete ?? (piComplete as unknown as Complete);
-  const call: Complete = base ? (model, context, o) => complete({ ...model, baseUrl: base }, context, o) : complete;
+  const call: Complete = origin ? (model, context, o) => complete({ ...model, baseUrl: withOrigin(model.baseUrl, origin) }, context, o) : complete;
   const doFetch = options.fetch ?? fetch;
   const clock = options.clock ?? { now: () => Date.now() };
 
@@ -186,7 +195,7 @@ export function createLlm(options: LlmOptions): Llm {
         const apiKey = need(tally);
         const timeoutMs = Math.min(request.timeout_ms ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
         return bounded(timeoutMs, async (signal) => {
-          const response = await doFetch(base ? `${base}${url.pathname}${url.search}` : url, { method: "POST", signal, redirect: "error",
+          const response = await doFetch(origin ? `${origin}${url.pathname}${url.search}` : url, { method: "POST", signal, redirect: "error",
             headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${apiKey}` }, body: payload });
           const text = await response.text();
           if (!response.ok) throw new LlmError("failed", `the provider answered HTTP ${response.status}`);

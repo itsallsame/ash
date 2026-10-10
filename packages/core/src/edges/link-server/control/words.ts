@@ -180,6 +180,8 @@ export interface LinkControlDeps {
   identity: OwnerIdentity;
   /** The relay program packaged in this build, as one module. */
   bundle?: () => Promise<string>;
+  /** Why the packaged relay program cannot be used right now, or null when it can. */
+  bundleMissing?: () => string | null;
   ownerName?: string;
   // Tests:
   retryMs?: number;
@@ -211,7 +213,7 @@ export interface LinkControl {
 export function createLinkControl(deps: LinkControlDeps): LinkControl {
   const gateway = new GatewayControl({ db: deps.db, link: deps.link, hands: deps.hands, vault: deps.vault, identity: deps.identity, relay: deps.relay, ownerName: deps.ownerName, retryMs: deps.retryMs, log: deps.log });
   const setup = new RelaySetup({
-    db: deps.db, router: deps.router, vault: deps.vault, bundle: deps.bundle,
+    db: deps.db, router: deps.router, vault: deps.vault, bundle: deps.bundle, bundleMissing: deps.bundleMissing,
     activate: async (url, claimSecret, account) => { await gateway.use(url, { claimSecret, account }); },
     connected: (timeoutMs) => gateway.connected(timeoutMs),
     cloudflare: deps.cloudflare, callbackPort: deps.callbackPort, callbackHost: deps.callbackHost, loginMs: deps.loginMs, reachable: deps.reachable,

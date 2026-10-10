@@ -11,8 +11,8 @@
  * presented to every channel that declared `widget`, and what a channel reports becomes `widget.rendered`. A channel that
  * has just connected is given the current state from `service:widgets/widget.list`.
  *
- * Assembly: `link.onChannel("human", human.attach)`, `registry.add(human.member)`; the small model goes in as
- * `summarize` (see `summaryRequest`).
+ * Assembly: `link.onChannel("human", human.attach)`, `registry.add(human.member)`; the small model goes in as `llm`
+ * (the progress summary is asked for here, see `summaryRequest`).
  */
 import { isAgentId, OWNER_ID } from "../../../../../sdk/src/ids";
 import type { HelloFrame } from "../../../../../sdk/src/link";
@@ -29,13 +29,18 @@ import { Clients, SURFACES, type ClientInfo, type LiveClient, type Surface } fro
 import { Inbound, Recorded } from "./inbound";
 import { Notifier } from "./notify";
 import { Presenter, type PresentResult } from "./present";
-import { TaskStatus, type Summarize } from "./status";
+import { summaryRequest, TaskStatus, type Summarize } from "./status";
 import { Syncs } from "./sync";
 
 export { summaryRequest, type Summarize, type TaskFrame } from "./status";
 export { isQuiet, QUIET_HOURS_KEY, DEDUPE_MINUTES_KEY } from "./delivery";
 export type { ClientInfo, Surface } from "./clients";
 export type { PresentResult } from "./present";
+
+/** The part of `edges/llm` this edge uses. */
+export interface SummaryModel {
+  complete(caller: string, request: ReturnType<typeof summaryRequest>): Promise<{ text: string }>;
+}
 
 export interface HumanDeps {
   router: Pick<Router, "send" | "subscribe">;
@@ -44,8 +49,8 @@ export interface HumanDeps {
   settings(): Record<string, unknown>;
   /** The primary agent's id, or null while there is no agent: then replies on notifications have nobody to go to and are not sent. */
   primary(): string | null;
-  /** One short line about what the agent is doing, from the small model; null when there is none. */
-  summarize?: Summarize;
+  /** The hub's small model (`edges/llm`): one short line about what the agent is doing comes from it. Absent: the tool's own line stays. */
+  llm?: SummaryModel;
   now?: () => number;
   /** IANA zone for quiet hours; default the host's local time. */
   timeZone?: string;
@@ -68,6 +73,13 @@ export interface HumanEdge {
 /** The member `person:owner` acting on its own (its events `typing` and `widget.rendered`, reading the widget state): the hub's code, not the owner speaking. */
 const AS_SERVICE: Caller = { member: OWNER_ID, via: "service", local: true };
 
+/** A summary of the steps, or null when the model has none or cannot be reached (a summary is a courtesy). */
+function summarizer(llm: SummaryModel): Summarize {
+  return async (steps) => {
+    try { return (await llm.complete(OWNER_ID, summaryRequest(steps))).text.trim() || null; } catch { return null; }
+  };
+}
+
 export function createHuman(deps: HumanDeps): HumanEdge {
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((message, error) => console.error(`[human] ${message}${error ? `: ${(error as Error).message}` : ""}`));
@@ -82,7 +94,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
   const status = new TaskStatus({
     session: `ts_${now().toString(36)}`, primary: () => deps.primary(),
     asks: () => asks.list(),
-    ...(deps.summarize ? { summarize: deps.summarize } : {}),
+    ...(deps.llm ? { summarize: summarizer(deps.llm) } : {}),
     ...(t.summaryDelayMs !== undefined ? { summaryDelayMs: t.summaryDelayMs } : {}),
     emit: (frame) => { for (const c of clients.withSurface("status")) void presenter.send(c, { surface: "status", op: "frame", body: frame as never }); },
   });

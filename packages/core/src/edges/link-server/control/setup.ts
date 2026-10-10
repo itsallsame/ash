@@ -59,6 +59,8 @@ export interface SetupDeps {
   connected(timeoutMs: number): Promise<boolean>;
   /** The relay program packaged in this build, as one module (SPEC-03 §8.1 item 5). */
   bundle?(): Promise<string>;
+  /** Why the packaged relay program cannot be used right now, or null when it can; asked at every deploy. */
+  bundleMissing?(): string | null;
   cloudflare?: Partial<CloudflareEndpoints>;
   /** The listener's port. Default 8976, the one Cloudflare's sign-in was registered with; 0 = any (tests). */
   callbackPort?: number;
@@ -164,7 +166,8 @@ export class RelaySetup {
     }
     const script = name ?? DEFAULT_SCRIPT;
     if (!SCRIPT_NAME.test(script)) throw new WordError("bad_request", "name must be lowercase letters, digits and dashes");
-    if (!this.d.bundle) throw new WordError("unavailable", "this build has no packaged relay program", { recovery_hint: "Update Ash, or use an existing relay with gateway.use." });
+    const missing = this.d.bundle ? this.d.bundleMissing?.() ?? null : "this build has no packaged relay program";
+    if (missing) throw new WordError("unavailable", missing, { recovery_hint: "Update Ash, or use an existing relay with gateway.use." });
     this.move(id, "deploying");
     void this.runDeploy(id, script).catch((error) => this.fail(id, this.reason(error)));
     return this.info(id);

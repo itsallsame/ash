@@ -23,11 +23,12 @@ import { createLlm } from "./edges/llm";
 import { createReviewer } from "./edges/llm/review";
 import { createLlmService } from "./edges/llm/service";
 import { createLinkServer } from "./edges/link-server";
+import { relayBundleFile, RELAY_BUNDLE_FILE } from "./edges/link-server/control/bundle";
 import { createLinkControl } from "./edges/link-server/control/words";
 import { Devices } from "./edges/link-server/hands/devices";
 import { createBodies, splitBodyCapabilities } from "./edges/link-server/hands/bodies";
 import { HandRegistry } from "./edges/link-server/hands/registry";
-import { createHuman, summaryRequest } from "./edges/link-server/human";
+import { createHuman } from "./edges/link-server/human";
 import { staticWeb } from "./edges/link-server/web";
 import { createToolsEdge, TOOL_NAMES, toolWords } from "./edges/tools";
 import { createGate, GateStore } from "./kernel/gate";
@@ -70,6 +71,11 @@ export interface HubOptions {
   llm?: { baseUrl: string };
   /** Drivers by runtime kind (`dsh`, `codex`, ...). Absent: the real ones. */
   drivers?: Record<string, AgentDriverFactory>;
+  /**
+   * The relay program (`ash-gateway.mjs`, from the gateway's `npm run build:bundle`) that `gateway.setup.deploy` uploads.
+   * Absent: `ash-gateway.mjs` next to the hub's own program. If the file is not there, deploy answers `unavailable`.
+   */
+  relayBundle?: string;
   /** The clock of everything that waits for a time (timers, approval expiry, pulse). Absent: the system clock. */
   now?: () => number;
 }
@@ -86,7 +92,6 @@ export interface Hub {
 const log = (...args: unknown[]): void => console.error("[hub]", ...args.map((a) => (a instanceof Error ? a.message : a)));
 const service = (member: string): Caller => ({ member, via: "service", local: true });
 const SKILLS = fileURLToPath(new URL("../../ash-skills/", import.meta.url));
-const PERSONA = ["SOUL", "IDENTITY", "PULSE"] as const;
 
 function hubVersion(): string {
   try { return String((JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown }).version ?? "dev"); } catch { return "dev"; }
@@ -151,7 +156,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const vaultService = createVaultService({ vault, ledger, router });
   const semantic = createSemantic({
     ledger, router, now, log,
-    templates: Object.fromEntries(PERSONA.map((name) => [`${name}.md`, readFileSync(join(SKILLS, "persona", `${name}.template.md`), "utf8")])) as never,
+    templatesDir: join(SKILLS, "persona"),
   });
 
   // 6. edges
@@ -170,8 +175,9 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     },
   });
   const link = createLinkServer({ hands, hostClient: host, ...(opts.port ? { port: opts.port } : {}), log });
+  const relayBundle = relayBundleFile(opts.relayBundle ?? fileURLToPath(new URL(RELAY_BUNDLE_FILE, import.meta.url)));
   const linkControl = createLinkControl({
-    db: ledger.db(), router, link, hands, vault, now, log,
+    db: ledger.db(), router, link, hands, vault, now, log, bundle: relayBundle.read, bundleMissing: relayBundle.missing,
     identity: { key: () => host.identityKey(), sign: (data) => host.identitySign(data) },
   });
   const devices = new Devices({ hands, router, bodies, gateway: linkControl.pairing, now });
@@ -198,7 +204,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   });
   const human = createHuman({
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
-    summarize: async (steps) => { try { return (await llm.complete("person:owner", summaryRequest(steps))).text.trim() || null; } catch { return null; } },
+    llm,
   });
   const hostService = createHostService({ client: host, router, onStop: (deadline) => stop(deadline), log });
   link.onChannel("human", human.attach);

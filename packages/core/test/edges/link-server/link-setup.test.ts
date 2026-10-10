@@ -162,6 +162,20 @@ test("deploying needs the packaged relay program; without it the setup stays aut
   assert.equal(setup.status(started.setup_id).state, "authorized");
 });
 
+test("a packaged relay program that is not there (bundleMissing) refuses deploy with its reason, and works once the file appears", async (t) => {
+  let missing: string | null = "the packaged relay program is not at /app/ash-gateway.mjs";
+  const w = await startWorld(t, { gateway: false, fresh: true, control: { bundleMissing: () => missing } });
+  const started = await w.control.setup.start("person:owner");
+  await w.cf.signIn(w.card()!.url);
+  await eventually(() => w.control.setup.status(started.setup_id).state === "authorized", "authorized");
+  assert.throws(() => w.control.setup.deploy(started.setup_id), (e: { code: string; message: string; recovery_hint?: string }) =>
+    e.code === "unavailable" && /not at \/app\/ash-gateway\.mjs/.test(e.message) && /gateway\.use/.test(e.recovery_hint ?? ""));
+  assert.equal(w.control.setup.status(started.setup_id).state, "authorized", "still authorized: nothing was started");
+  missing = null;
+  assert.equal(w.control.setup.deploy(started.setup_id).state, "deploying");
+  await eventually(() => w.control.setup.status(started.setup_id).state === "connected", "connected");
+});
+
 test("an expired sign-in is renewed with the refresh token before deploying; a redeploy to an existing script does not migrate again", async (t) => {
   const { cf, setup, card, w } = await build(t, { expiresIn: 1 });
   const started = await setup.start("person:owner");

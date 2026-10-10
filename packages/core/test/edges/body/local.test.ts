@@ -171,6 +171,12 @@ test("spawn and appLauncher follow the isolation: native runs the host's runtime
     child.stdout.on("data", (chunk) => { out += chunk; });
     await new Promise((resolve) => child.on("close", resolve));
     assert.equal(out, `${await realpath(join(dir, "ws", "agents", "main"))}|${join(dir, "dsh")}|x`);
+    // Only `dsh` means the host's runtime: another program runs as written, without the runtime's home.
+    const plain = native.spawn([process.execPath, "-e", "process.stdout.write(String(process.env.DSH_HOME) + '|' + process.env.EXTRA)"], { env: { EXTRA: "y" } });
+    let plainOut = "";
+    plain.stdout.on("data", (chunk) => { plainOut += chunk; });
+    await new Promise((resolve) => plain.on("close", resolve));
+    assert.equal(plainOut, `${process.env.DSH_HOME}|y`);
     const launcher = native.appLauncher()!;
     assert.equal(launcher.root, join(dir, "ws", "apps"));
     const run = launcher.spawn({ server: { command: "node", args: ["server.mjs"], env: { A: "1" } } } as never, join(launcher.root, "notes"), { ASH_X: "y" });
