@@ -1,0 +1,17 @@
+{
+  "contract": "ash-app/1",
+  "id": "my-sense-rule",
+  "name": "我的感知规则",
+  "version": "0.1.0",
+  "summary": "听手机的感知事件，该叫醒 Ash 时叫醒：到达某个地点，或来了要紧的通知。",
+  "role": "Ash 自己的一条感知规则：规则写在 server.mjs 的 onEvent 里，可以按主人的需要改，改完再装一次。",
+  "publisher": "agent:main",
+  "server": { "command": "node", "args": ["server.mjs"] },
+  "listens": ["sense.geofence", "sense.notification"],
+  "data_dir": "data",
+  "needs": [
+    { "member": "agent:*", "words": ["wake"], "why": "该叫醒时叫醒主 agent。" },
+    { "member": "service:agents", "words": ["list"], "why": "找出现在谁是主 agent，叫醒它。" },
+    { "member": "service:llm", "words": ["complete"], "why": "通知拿不准要不要紧时，让小模型判断一次。" }
+  ]
+}

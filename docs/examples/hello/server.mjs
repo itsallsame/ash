@@ -20,7 +20,7 @@ const load = () => { try { return existsSync(DATA) ? JSON.parse(readFileSync(DAT
 const save = (data) => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(`${DATA}.tmp`, JSON.stringify(data, null, 1)); renameSync(`${DATA}.tmp`, DATA); };
 
 // ---- 回 Ash（ASH_MCP_URL）：只能用主人安装时批准的（app.json 的 needs）----
-//   await ash("capability_call", { member: "device:phone", word: "health.read", body: { … } })
+//   await ash("capability_call", { member: "device:<手机的 id>", word: "health.read", body: { … } })
 //   await ash("ash_event", { name: "app.card", body: { title: "…", text: "…" } })
 // 结果是 { ok: true, result } 或 { ok: false, error: { code, message, owner_text, recent? } }；owner_text 是给主人看的一句话。
 async function ash(tool, args) {

@@ -38,7 +38,8 @@ const INTRO_MAX_CHARS = 400;
 const SKILL_MAX_BYTES = 9000;
 /** Detail that belongs in a skill; seeing it in the system prompt means the layers have blurred again. */
 const DETAIL_ONLY_IN_SKILLS = ["widget.card.put", "widget.card.validate", "apps.scaffold", "apps.validate", "apps.contract", "apps.restart", "apps.logs",
-  "apps.reset", "apps.remove", "browser.run", "vscreen.create", "workspace.write"];
+  "apps.reset", "apps.remove", "browser.run", "vscreen.create"];
+/* workspace.write is allowed once, in rules/tools.md: the review model refuses a request over 64000 characters and tells the agent to write a script file first. */
 
 const withoutCode = (text: string) => text.replace(/`[^`]*`/gu, "x");
 const body = (text: string) => text.split("\n").filter((line) => !line.startsWith("#")).join("\n").trim();
