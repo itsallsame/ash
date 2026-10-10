@@ -37,15 +37,12 @@ export interface Agents {
 /** What `createAgents` takes: the module's dependencies, with the templates given as the directory they are files in. */
 export type AgentsOptions = Omit<AgentsDeps, "templates"> & {
   /** `ash-skills/agents`: `<name>.json` templates, read here. */
-  templatesDir?: string;
-  /** Tests: templates already in memory, instead of `templatesDir`. */
-  templates?: Templates;
+  templatesDir: string;
 };
 
-export function createAgents({ templatesDir, templates, ...rest }: AgentsOptions): Agents {
-  const source = templates ?? (templatesDir ? fileTemplates(templatesDir) : null);
-  if (!source) throw new Error("createAgents needs templatesDir");
-  const manager = new AgentManager({ ...rest, templates: source });
+export function createAgents({ templatesDir, ...rest }: AgentsOptions): Agents {
+  if (!templatesDir) throw new Error("createAgents needs templatesDir");
+  const manager = new AgentManager({ ...rest, templates: fileTemplates(templatesDir) });
   const service = createAgentsService(manager);
   return { service, manager, startAll: () => manager.startAll(), stopAll: () => manager.stopAll(), primary: () => manager.runs.primary()?.id ?? null,
     refreshModules: (agent, lane) => manager.refreshModules(agent, lane),

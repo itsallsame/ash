@@ -6,6 +6,7 @@ import type { Member } from "../../../../sdk/src/word";
 import { createAgents, type Agents } from "../../../src/edges/agents";
 import type { Ledger } from "../../../src/kernel/ledger";
 import type { Registry, Router } from "../../../src/kernel/types";
+import { scratchDir, writeFiles } from "../../fixtures/scratch";
 import { openLedger } from "../../kernel/ledger/helpers";
 
 export const OWNER: Caller = { member: "person:owner", via: "human", local: true, client: "client:a" };
@@ -141,6 +142,11 @@ type AgentStatus0 = { state: "starting" | "running" | "exited" | "failed"; detai
 export const MAIN_TEMPLATE = { id: "agent:main", name: "main", summary: "the main agent", brief: "You are main.", runtime: { kind: "dsh" }, native: { on: "body:main", cwd: "/root/work" },
   lanes: { front: { from: ["person:owner"] }, back: { from: ["wake", "timer", "event"], guide: "PULSE.md" } }, primary: true };
 
+/** A directory of `<name>.json` templates, as `createAgents` reads them; a null entry is a template that is not there. */
+export function templateDir(templates: Record<string, unknown>): string {
+  return scratchDir(Object.fromEntries(Object.entries(templates).filter(([, t]) => t != null).map(([name, t]) => [`${name}.json`, JSON.stringify(t)])), "agents-templates-");
+}
+
 export interface Options {
   templates?: Record<string, unknown>;
   secrets?: Record<string, string>;
@@ -167,7 +173,9 @@ export function fixture(opts: Options = {}) {
   const files = { ...(opts.files ?? {}) };
   const persona = { files: opts.persona ?? [{ file: "SOUL.md", content: "soul v1" }] };
   const skills: { path: string; text: string }[] = [];
-  const templates: Record<string, unknown> = { main: MAIN_TEMPLATE, ...(opts.templates ?? {}) };
+  const templatesDir = templateDir({ main: MAIN_TEMPLATE, ...(opts.templates ?? {}) });
+  /** A template the module can read from now on (a test adds one while the module runs). */
+  const addTemplate = (name: string, template: unknown) => writeFiles(templatesDir, { [`${name}.json`]: JSON.stringify(template) });
   const logs: unknown[][] = [];
 
   router.on("body:main/workspace.read", (msg) => {
@@ -181,7 +189,7 @@ export function fixture(opts: Options = {}) {
   const agents: Agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => secrets[ref] ?? null },
     drivers: opts.drivers ?? { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
-    templates: { read: (name) => templates[name] ?? null },
+    templatesDir,
     tools: (agent, lanes, allowed) => ({ mcp_url: "http://hub/mcp", tokens: Object.fromEntries(lanes.map((lane) => [lane, `tok-${agent}-${lane}`])), allowed: allowed ?? ["*"] }),
     ...(opts.network ? { network: opts.network } : {}), rules: () => "rules v1", now: () => clock.t, newId: () => `n${++ids}-${randomBytes(2).toString("hex")}`, log: (...a) => logs.push(a),
     timers: {
@@ -201,6 +209,6 @@ export function fixture(opts: Options = {}) {
     return found.member.handle(msg, { signal: new AbortController().signal, caller: who, raw: body });
   };
   const service = (word: string, body: unknown, who: Caller = OWNER) => agents.service.handle(message(who.member, "service:agents", word, body), { signal: new AbortController().signal, caller: who, raw: body });
-  return { ledger, router, registry, clock, timers, drivers, driver, secrets, files, persona, skills, templates, agents, logs, call, service, message,
+  return { ledger, router, registry, clock, timers, drivers, driver, secrets, files, persona, skills, addTemplate, agents, logs, call, service, message,
     start: async () => { await agents.startAll(); registry.add(agents.service); await settle(); } };
 }

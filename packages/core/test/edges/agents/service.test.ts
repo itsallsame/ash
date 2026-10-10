@@ -145,7 +145,7 @@ test("spawn: too slow is a timeout and the worker is gone anyway; an unknown tem
   await f.service("declare", decl("agent:a", { tools: ["read"], words: ["body:main/workspace.read"] }));
   await assert.rejects(f.service("spawn", { task: "x", tools: ["read", "exec"] }, caller("agent:a")), code("forbidden"));
   await assert.rejects(f.service("spawn", { task: "x", template: "wide" }, caller("agent:a")), code("not_found"));
-  f.templates.wide = { tools: ["read", "exec"] };
+  f.addTemplate("wide", { tools: ["read", "exec"] });
   await assert.rejects(f.service("spawn", { task: "x", template: "wide" }, caller("agent:a")), code("forbidden"));
   // no tools named: the worker gets what its parent has, no more
   const inherit = f.service("spawn", { task: "inherit" }, caller("agent:a"));

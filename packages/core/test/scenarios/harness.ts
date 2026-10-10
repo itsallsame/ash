@@ -704,6 +704,7 @@ export class Scenario {
     // The packaged relay program, as a stand-in: a setup is refused without one.
     const relayBundle = join(this.dataDir, "ash-gateway.mjs");
     writeFileSync(relayBundle, "export default {};\n");
+    writeFileSync(join(this.dataDir, "ash-gateway.metadata.json"), JSON.stringify({ main_module: "ash-gateway.mjs" }));
     this.hubValue = await startHub({
       dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
       ...(this.options.llm ? { llm: this.options.llm } : {}),

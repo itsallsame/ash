@@ -199,7 +199,7 @@ object Permissions {
                 { a -> a.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri(a))) },
             ))
             add(Permission(
-                "shizuku", "Shizuku", "解锁高级能力：执行 shell 命令、虚拟屏（在后台操作应用，不打扰你）",
+                "shizuku", "Shizuku", "解锁高级能力：Ash 在后台时也能替你打开应用、执行 shell 命令、虚拟屏（在后台操作应用，不打扰你）",
                 { ShizukuState.ready() },
                 ::openShizuku,
                 { ctx ->

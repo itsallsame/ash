@@ -6,6 +6,7 @@ import { errorBody, WordError } from "../../../../sdk/src/message";
 import { compileSchema, type Member, type WordContract } from "../../../../sdk/src/word";
 import { WORD_CONTRACTS, wordContract } from "../../../../sdk/src/words";
 import { createClockService, type ClockService } from "../../../src/services/clock";
+import { scratchDir } from "../../fixtures/scratch";
 import { createSemantic, type Semantic } from "../../../src/services/semantic";
 import { openLedger } from "../../kernel/ledger/helpers";
 import type { Ledger } from "../../../src/kernel/ledger";
@@ -71,6 +72,8 @@ export interface Hub {
 }
 
 export const TEMPLATES = { "SOUL.md": "# SOUL\nbe kind\n", "IDENTITY.md": "# IDENTITY\nAsh\n", "PULSE.md": "# PULSE\nlook first\n" };
+/** The same texts as the files `createSemantic` reads (`<NAME>.template.md`). */
+const TEMPLATES_DIR = scratchDir(Object.fromEntries(Object.entries(TEMPLATES).map(([file, text]) => [file.replace(/\.md$/, ".template.md"), text])), "semantic-templates-");
 
 export function newHub(options: { ledger?: Ledger; t?: number; budget?: number; cardWidgets?: number } = {}): Hub {
   const ledger = options.ledger ?? openLedger().ledger;
@@ -149,7 +152,7 @@ export function newHub(options: { ledger?: Ledger; t?: number; budget?: number; 
     for (const m of extra) hub.members.set(m.id, m);
     hub.clock = createClockService({ ledger, router, now, setTimer: () => () => {}, log: () => {} });
     hub.members.set(hub.clock.id, hub.clock);
-    hub.semantic = createSemantic({ ledger, router, now, templates: TEMPLATES, tickMs: 0, log: () => {}, ...(options.budget !== undefined ? { budget: options.budget } : {}) });
+    hub.semantic = createSemantic({ ledger, router, now, templatesDir: TEMPLATES_DIR, tickMs: 0, log: () => {}, ...(options.budget !== undefined ? { budget: options.budget } : {}) });
     for (const m of hub.semantic.members) hub.members.set(m.id, m);
   };
   build();

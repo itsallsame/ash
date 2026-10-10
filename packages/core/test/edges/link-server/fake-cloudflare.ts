@@ -117,7 +117,7 @@ export class FakeCloudflare {
     if (upload) {
       const form = await new Response(raw, { headers: { "content-type": String(req.headers["content-type"]) } }).formData();
       const metadata = JSON.parse(await (form.get("metadata") as File).text());
-      const source = await (form.get("worker.mjs") as File).text();
+      const source = await (form.get(metadata.main_module) as File).text();
       this.uploads.push({ script: upload[1]!, metadata, source });
       if (!this.scripts.includes(upload[1]!)) this.scripts.push(upload[1]!);
       this.relay.secret = metadata.bindings.find((b: any) => b.name === "BOOTSTRAP_SECRET")?.text ?? null;

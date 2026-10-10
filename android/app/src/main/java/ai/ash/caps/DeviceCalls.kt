@@ -39,7 +39,8 @@ class DeviceCalls(private val ctx: Context) : HandHandlers {
             val given = data?.optString("code").orEmpty()
             val code = if (given in ERROR_CODES) given else "failed"
             val message = (if (code == given) data?.optString("message") else null).orEmpty().ifEmpty { json.optString("error") }.ifEmpty { "the call failed" }
-            return CallOutcome.Err(code, message)
+            val hint = if (code == given) data?.optString("recovery_hint")?.ifEmpty { null } else null
+            return CallOutcome.Err(code, message, recoveryHint = hint)
         }
 
         private fun parts(content: JSONArray): List<Part> = (0 until content.length()).map { i ->
