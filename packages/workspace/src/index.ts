@@ -32,7 +32,6 @@ const MAX_WALK = 200_000;
 
 /** The actions a workspace serves: the standard `workspace.*` and `body.info` (sdk namespaces). */
 const ACTIONS = [...STANDARD_NAMESPACES.workspace!, ...STANDARD_NAMESPACES.body!].map((action) => action.name);
-type WorkspaceAction = "workspace.ls" | "workspace.read" | "workspace.find" | "workspace.grep" | "workspace.write" | "workspace.edit" | "workspace.bash" | "workspace.poll" | "workspace.signal" | "body.info";
 
 /**
  * Sends bytes to the caller as a stream and returns the stream id the result refers to
@@ -95,7 +94,7 @@ export class Workspace {
     }
     try {
       opts.signal?.throwIfAborted();
-      return await this.run(name as WorkspaceAction, args, opts.signal);
+      return await this.run(name, args, opts.signal);
     } catch (error) {
       throw asWorkspaceError(error, opts.signal);
     }
@@ -157,7 +156,7 @@ export class Workspace {
 
   // --- actions ---
 
-  private async run(name: WorkspaceAction, a: Args, signal?: AbortSignal): Promise<CallOutcome> {
+  private async run(name: string, a: Args, signal?: AbortSignal): Promise<CallOutcome> {
     switch (name) {
       case "body.info": {
         const data = await describeBody(this.jail, this.workdir, this.ownership);
@@ -182,6 +181,7 @@ export class Workspace {
       case "workspace.grep": return this.grep(await this.target(a, cwd), a, signal);
       case "workspace.write": return this.write(await this.target(a, cwd), a.content);
       case "workspace.edit": return this.edit(await this.target(a, cwd), a.edits);
+      default: throw new WordError("not_found", `This workspace does not serve ${name}`);
     }
   }
 
