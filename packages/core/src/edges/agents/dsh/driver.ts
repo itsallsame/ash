@@ -227,7 +227,7 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
     return sess;
   }
 
-  /** The declaration's model and effort go onto a new session. After `model.set` the choice is only remembered once the next model request writes its `request/header`; if the process restarts before that, the session goes back to this default. */
+  /** The declaration's model and effort go onto a new session. DSH's `dsh-ash-control` plugin writes the choice into the session log when the set succeeds, so it outlives a restart that comes before the first turn. */
   async function applyRuntime(agent: string, p: Proc, sess: Session): Promise<void> {
     const { model, effort } = p.spec.runtime;
     const wanted: Record<string, unknown> = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
@@ -235,12 +235,14 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
     await configureSession(p, sess, wanted).catch((error) => report({ event: "error", agent, message: `could not set ${Object.keys(wanted).join(", ")}: ${errorText(error)}` }));
   }
 
-  /** The model option's value is a JSON [provider, model] pair; a bare model name is looked up among the offered values. */
+  /** The model option's value is a JSON [provider, model] pair; a bare model name is looked up among the offered values (DSH offers them in provider groups). */
   function optionValue(sess: Session, id: string, value: unknown): string {
     const wanted = String(value);
     if (id !== "model" || wanted.startsWith("[")) return wanted;
-    const option = (sess.options as { id?: string; options?: { value?: string }[] }[]).find((o) => o.id === "model");
-    const hit = option?.options?.find((o) => { try { const pair = JSON.parse(String(o.value)); return Array.isArray(pair) && pair[1] === wanted; } catch { return o.value === wanted; } });
+    type Offer = { value?: string; options?: Offer[] };
+    const flat = (offers: Offer[] = []): Offer[] => offers.flatMap((o) => (o.options ? flat(o.options) : [o]));
+    const option = (sess.options as { id?: string; options?: Offer[] }[]).find((o) => o.id === "model");
+    const hit = flat(option?.options).find((o) => { try { const pair = JSON.parse(String(o.value)); return Array.isArray(pair) && pair[1] === wanted; } catch { return o.value === wanted; } });
     return hit?.value ?? wanted;
   }
 
