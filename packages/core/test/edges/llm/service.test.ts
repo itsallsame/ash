@@ -26,7 +26,7 @@ test("service:llm speaks the words of its contract", () => {
   const { member } = service();
   assert.equal(member.id, "service:llm");
   assert.equal(member.kind, "service");
-  assert.deepEqual(member.words().map((word) => word.word), ["complete"]);
+  assert.deepEqual(member.words().map((word) => word.word), ["complete", "usage.recorded"]);
   assert.deepEqual(member.words(), wordsOf("service:llm"));
 });
 

@@ -106,5 +106,5 @@ test("S111: a tap on a card reaches the agent that made it, as the owner's actio
 
   assert.ok(tapped.ok);
   const { message } = await s.driver.delivery((m) => m.word === "widget.action", "the creator being told about the tap");
-  assert.equal(bodyOf(message).card, "todo");
+  assert.ok(message.text.includes("todo"));
 });

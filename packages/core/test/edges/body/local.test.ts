@@ -161,3 +161,31 @@ test("isolation container is not supported yet: unavailable", async () => {
   assert.equal(mainBodyKind({ kind: "container", container: { engine: "docker", image: "x" } }), "container");
   await body.close();
 });
+
+test("spawn and appLauncher follow the isolation: native runs the host's runtime in the workspace, proot goes through the container, another kind cannot", async () => {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-spawn-"));
+  try {
+    const native = createLocalBody({ isolation: { kind: "native", native: { workspace: join(dir, "ws"), dsh_bin: process.execPath, dsh_home: join(dir, "dsh") } } });
+    const child = native.spawn(["dsh", "-e", "process.stdout.write(process.cwd() + '|' + process.env.DSH_HOME + '|' + process.env.EXTRA)"], { cwd: "agents/main", env: { EXTRA: "x" } });
+    let out = "";
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    await new Promise((resolve) => child.on("close", resolve));
+    assert.equal(out, `${await realpath(join(dir, "ws", "agents", "main"))}|${join(dir, "dsh")}|x`);
+    const launcher = native.appLauncher()!;
+    assert.equal(launcher.root, join(dir, "ws", "apps"));
+    const run = launcher.spawn({ server: { command: "node", args: ["server.mjs"], env: { A: "1" } } } as never, join(launcher.root, "notes"), { ASH_X: "y" });
+    assert.deepEqual([run.command, run.args, run.cwd, run.env.A, run.env.ASH_X], ["node", ["server.mjs"], join(launcher.root, "notes"), "1", "y"]);
+
+    const proot: ProotConfig = { root: join(dir, "main"), rootfs: join(dir, "main", "ubuntu"), bin: "/nonexistent/proot", loader: "", lib: "" };
+    const contained = createLocalBody({ isolation: { kind: "proot", proot } }).appLauncher()!;
+    assert.equal(contained.root, join(proot.rootfs, "root", "apps"));
+    assert.equal(contained.agentRoot, "/root/apps");
+    const inside = contained.spawn({ server: { command: "node", args: ["server.mjs"] } } as never, join(contained.root, "notes"), { ASH_X: "y" });
+    assert.equal(inside.command, "/nonexistent/proot");
+    assert.ok(inside.args.join(" ").includes("-w /root/apps/notes") && inside.args.includes("ASH_X=y") && inside.args.at(-2) === "node");
+
+    const other = createLocalBody({ isolation: { kind: "container", container: { engine: "docker", image: "x" } } });
+    assert.equal(other.appLauncher(), null);
+    assert.throws(() => other.spawn(["x"]), (error: any) => error.code === "unavailable");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

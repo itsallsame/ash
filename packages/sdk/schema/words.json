@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "4424a32553ee74071287ac28d1c46e2f53ee5ea34013e81481c2290a641abeb4",
+ "hash": "7b7cf1e26dc2c4d2de18501ab321c10a80c689d57e698d7163396d8b745ac483",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8562,6 +8562,70 @@
    }
   },
   {
+   "member": "service:llm",
+   "word": "usage.recorded",
+   "kind": "event",
+   "direction": "out",
+   "description": "One call of the hub's small model (the approval review, JEV, the progress summary, service:llm/complete), passed to service:cost under the caller's name.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "caller": {
+      "type": "string",
+      "minLength": 1
+     },
+     "provider": {
+      "type": "string",
+      "minLength": 1
+     },
+     "model": {
+      "type": "string",
+      "minLength": 1
+     },
+     "input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "cost": {
+      "type": "number",
+      "minimum": 0
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "at": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "caller",
+     "provider",
+     "model",
+     "input_tokens",
+     "output_tokens",
+     "ok",
+     "at"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在记下用量"
+   }
+  },
+  {
    "member": "service:persona",
    "word": "get",
    "kind": "request",
@@ -9971,6 +10035,27 @@
    ],
    "label": {
     "doing": "在转达小组件上的点击"
+   }
+  },
+  {
+   "member": "service:widgets",
+   "word": "widget.state",
+   "kind": "event",
+   "direction": "out",
+   "description": "The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list.",
+   "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": true
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在更新桌面卡片"
    }
   },
   {
@@ -12345,6 +12430,120 @@
   },
   {
    "member": "service:host",
+   "word": "wake.fired",
+   "kind": "event",
+   "direction": "out",
+   "description": "The host's alarm went off (the device woke): the host module passes it on to service:clock.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "at": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "at"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在转达唤醒闹钟"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "env.changed",
+   "kind": "event",
+   "direction": "out",
+   "description": "The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay).",
+   "input_schema": {
+    "type": "object",
+    "oneOf": [
+     {
+      "type": "object",
+      "properties": {
+       "what": {
+        "const": "network"
+       },
+       "network": {
+        "type": "object",
+        "properties": {
+         "proxy": {
+          "anyOf": [
+           {
+            "type": "object",
+            "properties": {
+             "http": {
+              "type": "string"
+             },
+             "https": {
+              "type": "string"
+             },
+             "no_proxy": {
+              "type": "string"
+             }
+            },
+            "required": [],
+            "additionalProperties": false
+           },
+           {
+            "type": "null"
+           }
+          ]
+         }
+        },
+        "required": [
+         "proxy"
+        ],
+        "additionalProperties": false
+       },
+       "online": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "what",
+       "network",
+       "online"
+      ],
+      "additionalProperties": false
+     },
+     {
+      "type": "object",
+      "properties": {
+       "what": {
+        "const": "power"
+       },
+       "saver": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "what",
+       "saver"
+      ],
+      "additionalProperties": false
+     }
+    ]
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在转达环境变化"
+   }
+  },
+  {
+   "member": "service:host",
    "word": "hands.handoff",
    "kind": "request",
    "direction": "in",
@@ -13360,27 +13559,6 @@
    }
   },
   {
-   "member": "person:owner",
-   "word": "widget.state",
-   "kind": "event",
-   "direction": "out",
-   "description": "The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list.",
-   "input_schema": {
-    "type": "object",
-    "properties": {},
-    "required": [],
-    "additionalProperties": true
-   },
-   "effect": "read",
-   "risk": "none",
-   "callers": [
-    "kernel"
-   ],
-   "label": {
-    "doing": "在更新桌面卡片"
-   }
-  },
-  {
    "member": "agent:*",
    "word": "say",
    "kind": "request",
@@ -13457,6 +13635,22 @@
        "attachments": {
         "type": "array",
         "minItems": 1
+       }
+      }
+     },
+     {
+      "required": [
+       "in_reply_to",
+       "option_id"
+      ],
+      "properties": {
+       "in_reply_to": {
+        "type": "string",
+        "minLength": 1
+       },
+       "option_id": {
+        "type": "string",
+        "minLength": 1
        }
       }
      }

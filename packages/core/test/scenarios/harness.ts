@@ -25,11 +25,12 @@ import type { CallFrame, CapabilitySpec, HandKind, HelloChannels, ManifestAckFra
 import { base64url, deviceId, handId } from "../../../sdk/src/ids";
 import type { Message, Reply } from "../../../sdk/src/message";
 import { standardAction } from "../../../sdk/src/namespaces";
-import {
-  startHub, type AgentDriver, type AgentDriverFactory, type AgentEvent, type AgentStartSpec, type DriverMessage, type Hub,
-} from "../../src/next";
+import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage } from "../../../sdk/src/driver";
+import { startHub, type Hub } from "../../src/next";
 import { FakeHost } from "../fixtures/host";
 import { eventually } from "../fixtures/wait";
+
+export type { DriverMessage };
 
 export const OWNER = "person:owner";
 export const MAIN = "agent:main";
@@ -57,15 +58,15 @@ export const textOf = (m: { body: unknown }): string => {
 
 /** Predicates over ledger messages (what a person's `sync` shows). */
 export const sentBy = (from: string, word?: string) => (m: Message): boolean => m.from === from && (word === undefined || m.word === word);
-export const toOwner = (word: string, from?: string) => (m: Message): boolean => m.to === OWNER && m.word === word && (from === undefined || m.from === from);
+export const toOwner = (word: string, from?: string) => (m: Message): boolean => m.kind !== "response" && m.to === OWNER && m.word === word && (from === undefined || m.from === from);
 /** The approval card: the gate asks the owner. */
 export const isApprovalAsk = (m: Message): boolean => m.kind === "request" && m.from === GATE && m.to === OWNER && m.word === "ask";
 
-export const ownerMessage = (text: string) => (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && textOf(m) === text;
+export const ownerMessage = (text: string) => (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && m.text === text;
 /** The gate telling the agent that asked: an `agent:<x>/tell` from `service:gate` (BUILD-PROGRESS §7, decision 4). */
 export const fromGate = (m: DriverMessage): boolean => m.from === GATE && m.word === "tell";
 /** A background `tell` whose text names this id (a `pending_id`, a `setup_id`). */
-export const tellAbout = (id: string) => (m: DriverMessage): boolean => m.word === "tell" && JSON.stringify(m.body).includes(id);
+export const tellAbout = (id: string) => (m: DriverMessage): boolean => m.word === "tell" && m.text.includes(id);
 
 // --- identities (a hand proves itself by signing the challenge, SPEC-03 §2.2) --------------------------------------------
 
@@ -260,11 +261,28 @@ export class ScriptedDriver {
 
   private driver(report: (event: AgentEvent) => void): AgentDriver {
     const safe = (event: AgentEvent) => { try { report(event); } catch { /* the hub is gone */ } };
+    const handles = new Map<string, string>();
+    const handleOf = (agent: string, key: string) => handles.get(`${agent}/${key}`) ?? null;
+    const open = (agent: string, key: string) => { const handle = `h_${++this.serial}`; handles.set(`${agent}/${key}`, handle); safe({ event: "handle.updated", agent, key, handle }); return handle; };
     return {
+      info: { kind: "dsh", models: [], abilities: { resume: true, steer: true, inject_live: true, images: false, compact: false, configure: [], plugins: false, mcp: true, system_prompt: "inject", credentials: false, usage: false } },
+      status: () => ({ state: "running" }),
+      restart: async () => {},
+      session: {
+        get: handleOf,
+        set: async (agent, key, handle) => { handles.set(`${agent}/${key}`, handle); },
+        new: async (agent, key) => ({ handle: open(agent, key) }),
+        reload: async (agent, key) => ({ handle: open(agent, key) }),
+        compact: async () => ({ compacted: false }),
+      },
+      inject: async () => {},
+      configure: async () => ({}),
+      plugins: async () => ({}),
       start: async (agent, spec) => {
         this.starts.push({ agent, spec });
         await this.lines.get(agent)?.close();
         this.lines.set(agent, new ToolLine(spec.tools));
+        for (const key of spec.lanes) if (!spec.sessions[key]) open(agent, key);
       },
       stop: async (agent, reason) => {
         this.stops.push({ agent, reason });
@@ -283,8 +301,10 @@ export class ScriptedDriver {
         else this.begin(safe, agent, key, batch);
       },
       steer: async (agent, key, text) => {
-        this.deliveries.push({ via: "steer", agent, key, messages: [{ id: `steer-${++this.serial}`, from: OWNER, word: "say", lane: key, at: Date.now(), body: { text } }] });
-        this.running.get(`${agent}/${key}`)?.record.steers.push(text);
+        this.deliveries.push({ via: "steer", agent, key, messages: [{ id: `steer-${++this.serial}`, from: OWNER, word: "say", lane: key, at: Date.now(), text }] });
+        const run = this.running.get(`${agent}/${key}`);
+        run?.record.steers.push(text);
+        return run !== undefined;
       },
       interrupt: async (agent, key) => {
         this.interrupts.push({ agent, key });
@@ -349,7 +369,7 @@ export function byOwnerText(handlers: Record<string, TurnScript>): TurnScript {
   return async (turn) => {
     for (const message of turn.messages) {
       if (message.from !== OWNER) continue;
-      const handler = handlers[textOf(message)];
+      const handler = handlers[message.text];
       if (handler) return handler(turn);
     }
   };

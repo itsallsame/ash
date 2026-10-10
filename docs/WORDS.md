@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `4424a32553ee7407`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `7b7cf1e26dc2c4d2`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -15,9 +15,9 @@
 - [`service:agents`](#serviceagents) (31)
 - [`service:apps`](#serviceapps) (16)
 - [`service:clock`](#serviceclock) (4)
-- [`service:llm`](#servicellm) (1)
+- [`service:llm`](#servicellm) (2)
 - [`service:persona`](#servicepersona) (2)
-- [`service:widgets`](#servicewidgets) (12)
+- [`service:widgets`](#servicewidgets) (13)
 - [`service:pulse`](#servicepulse) (7)
 - [`service:cost`](#servicecost) (4)
 - [`service:reflex`](#servicereflex) (6)
@@ -25,9 +25,9 @@
 - [`service:directory`](#servicedirectory) (2)
 - [`service:history`](#servicehistory) (4)
 - [`service:blobs`](#serviceblobs) (2)
-- [`service:host`](#servicehost) (6)
+- [`service:host`](#servicehost) (8)
 - [`service:bodies`](#servicebodies) (4)
-- [`person:owner`](#personowner) (9)
+- [`person:owner`](#personowner) (8)
 - [`agent:*`](#agent) (8)
 - [`app:*`](#app) (1)
 - [`device:*`](#device) (75)
@@ -205,6 +205,7 @@
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
 | `complete` | owner, agent, app | read / none | timeout 60s | model, messages*, max_tokens | 在问小模型 | A short completion from the hub's small model (the model argument is optional). For organs that must judge something in code, e.g. a sensor rule. The usage is counted against the caller and its quota. |
+| `usage.recorded` | kernel | read / none | event out | caller*, provider*, model*, input_tokens*, output_tokens*, cost, ok*, at* | 在记下用量 | One call of the hub's small model (the approval review, JEV, the progress summary, service:llm/complete), passed to service:cost under the caller's name. |
 
 ## `service:persona`
 
@@ -228,6 +229,7 @@
 | `widget.bind` | kernel | read / none | event in | widget*, card* | 在记下小组件选的卡片 | The owner picked which card one placed 'Ash 卡片' widget shows. Sent by the hands module from the hand's event; not recorded. |
 | `widget.rendered` | kernel | read / none | event in | widgets, rendered* | 在记下卡片画出来没有 | What a channel reports after being asked to show widget state: which widgets are placed and which cards it drew, with the problem or a preview picture. Turned from the channel's present result by the human module; not recorded. |
 | `widget.action` | kernel | read / none | event out | card*, action*, owner*, title, component, item, checked, value, context | 在转达小组件上的点击 | The owner tapped, toggled or chose something on a home-screen card. owner is the card's creator, who decides what it means; component is the element, item the list item's key, checked / value the new state. On an app's card (owner app:<id>) the tap goes to the app's own action tool, which changes the app's data; otherwise the tap itself does nothing else. |
+| `widget.state` | kernel | read / none | event out | - | 在更新桌面卡片 | The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list. |
 | `widget.problem` | kernel | read / none | event out | card*, owner*, title, problem* | 在转达卡片画不出来 | The phone could not fully draw a home-screen card (problem says what and why); the card's creator should fix it. |
 
 ## `service:pulse`
@@ -310,6 +312,8 @@
 | `wake.clear` | kernel | act / none | - | - | 在取消唤醒闹钟 | Cancel the host alarm. |
 | `power.hold` | kernel | act / none | - | ms*, reason* | 在保持唤醒 | Keep the device awake for a while (at most 10 minutes) for a stated reason; released by itself when the time is up. |
 | `power.release` | kernel | act / none | - | - | 在放开唤醒锁 | Release the wake lock before its time is up. |
+| `wake.fired` | kernel | read / none | event out | at* | 在转达唤醒闹钟 | The host's alarm went off (the device woke): the host module passes it on to service:clock. |
+| `env.changed` | kernel | read / none | event out | what*, network*, online*, saver* | 在转达环境变化 | The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay). |
 | `hands.handoff` | kernel | act / none | - | port*, token* (secret) | 在交接本机的手 | Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down. |
 | `update.install` | owner | execute / structure | - | version*, url*, sha256* | 在安装内核更新 | Have the host download and install a new kernel package (checked against sha256). Only the owner. |
 
@@ -334,13 +338,12 @@
 | `typing` | kernel | read / none | event out | - | 在等你说完 | The human module tells an agent the owner is composing a message to it. |
 | `widget.rendered` | kernel | read / none | event out | widgets, rendered* | 在记下卡片画出来没有 | The human module passes on what a channel reported after showing widget state, for service:widgets. |
 | `widget.preview` | kernel | read / none | - | card*, size | 在画卡片预览 | Ask a channel that shows widgets to draw a card and return the picture (an image part), for service:widgets. |
-| `widget.state` | kernel | read / none | event out | - | 在更新桌面卡片 | The home-screen cards changed: the whole state for the channels that show widgets (the human edge pushes it as present{widget}). A channel that just connected gets the current state from service:widgets/widget.list. |
 
 ## `agent:*`
 
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
-| `say` | owner | act / none | - | text*, attachments*, in_reply_to, option_id | 在读你的消息 | The owner speaks to the agent, or answers an option card (in_reply_to and option_id together). Acknowledged at once and queued on the front lane; the agent's answer arrives later as a message. |
+| `say` | owner | act / none | - | text*, attachments*, in_reply_to*, option_id* | 在读你的消息 | The owner speaks to the agent, or answers an option card (in_reply_to and option_id together). Acknowledged at once and queued on the front lane; the agent's answer arrives later as a message. |
 | `tell` | owner, agent, app | act / none | - | text*, attachments | 在告诉帮手 | Tell the agent something. It joins the agent's back lane and the agent decides what to do with it; there is no direct answer to the sender. |
 | `ask` | owner, agent, app | act / none | timeout 600s | text* | 在问帮手 | Put a question to the agent; what it says in the turn that takes the question is the answer. A quick answer is returned directly, a slow one as a receipt. |
 | `wake` | agent, app | act / none | - | lane, reason*, context | 在叫醒帮手 | Wake the agent for a reason, on a lane (default back), with the facts it needs in context. Its own turn runs; nothing is said to the owner by this. Harmless by itself, so organs (apps) may use it to alert an agent. |

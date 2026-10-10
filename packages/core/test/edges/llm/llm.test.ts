@@ -213,3 +213,17 @@ test("post: no key is unavailable and fetch is never called; the timeout applies
   assert.equal(aborted, true);
   assert.deepEqual(slow.reports.map((r) => r.ok), [false]);
 });
+
+test("baseUrl: complete and post both go to that address, with the same keys, paths and reports", async () => {
+  const seen: Model<Api>[] = [];
+  const sent: string[] = [];
+  const reports: LlmUsageReport[] = [];
+  const llm = createLlm({ key: (ref) => keys[ref] ?? null, report: (u) => { reports.push(u); }, baseUrl: "http://127.0.0.1:9/fake/",
+    complete: async (model) => { seen.push(model); return reply(); },
+    fetch: (async (url: unknown) => { sent.push(String(url)); return new Response(JSON.stringify({ answers: {} })); }) as unknown as typeof fetch });
+  await llm.complete("a", hello);
+  await llm.post("hub:jev", jevRequest);
+  assert.equal(seen[0]!.baseUrl, "http://127.0.0.1:9/fake");
+  assert.deepEqual(sent, ["http://127.0.0.1:9/fake/api/alpha/decisions"]);
+  assert.equal(reports.length, 2);
+});
