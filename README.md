@@ -1,6 +1,6 @@
 # ash
 
-ash 是运行在 Android 手机上的常驻个人 Agent。ash core 管理消息、设备、权限、定时和界面；[DeepSeek Harness (DSH)](https://www.npmjs.com/package/@deepseek-ai/dsh) 运行 Agent。当前生产入口使用 `ash-api/2`，两者在同一 Core 进程中通过公开扩展点连接，DSH 发布包不作修改。
+ash 是运行在 Android 手机上的常驻个人 Agent。ash core 管理消息、设备、权限、定时和界面；[DeepSeek Harness (DSH)](https://www.npmjs.com/package/@deepseek-ai/dsh) 运行 Agent。DSH 发布包不作修改，在 Ash 的主 body（手机上的 proot Ubuntu）里运行，经 ACP 被驱动、经 MCP 调用 Core 的工具。
 
 当前代码包含：
 
@@ -31,7 +31,7 @@ Android WebView 从 APK 加载静态界面，通过原生桥访问 Core；远程
 | `packages/link`、`packages/workspace`、`packages/device` | 连接协议实现、文件与命令操作、电脑程序 |
 | `packages/web` | 网页界面（Core 当静态文件发，Android 打包进 APK） |
 | `packages/ash-skills` | 人格模板、首次见面与其他技能 |
-| `packages/android-compat` | Android 上运行原样 DSH 的适配 |
+| `packages/android-compat` | Core 进程在 Android 上的运行时预加载（硬链接、flock 的兜底） |
 | `payload/` | DSH、运行时和 Core 的锁定输入与组装 |
 | `android/` | Android 宿主（Gradle/Kotlin） |
 | `tools/` | 构建、验证和回归脚本 |

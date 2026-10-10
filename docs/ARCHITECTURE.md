@@ -23,7 +23,7 @@ The import rules (kernel imports sdk only; edges and services import kernel and 
 
 Other packages: `sdk` (the contracts), `link` (`ash-link/1`), `workspace` (file and shell operations), `web` (the page the
 hub serves), `device` (the computer program), `ash-skills` (rules, skills, persona templates), `dsh-ash-control` and
-`ash-cost` (DSH plugins), `apps` (first-party apps), `android-compat` (the Node preload the Android host loads).
+`ash-cost` (DSH plugins), `apps` (first-party apps), `android-compat` (the Node preload the Android host starts core with).
 
 ## Guidance for the main agent: two layers
 
