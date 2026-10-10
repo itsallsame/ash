@@ -277,5 +277,5 @@ test("the host events and the usage event take the shapes their producers have",
   const usage = ajv.compile(wordContract("service:cost", "usage.recorded")!.input_schema);
   assert.ok(usage({ caller: "service:gate", provider: "deepseek", model: "m", input_tokens: 1, output_tokens: 2, ok: true, at: 5 }));
   assert.ok(usage({ caller: "agent:x", provider: "openrouter", model: "m", input_tokens: 1, output_tokens: 2, cost: 0.01, ok: false, at: 5 }));
-  assert.ok(!usage({ caller: "a", provider: "other", model: "m", input_tokens: 1, output_tokens: 2, ok: true, at: 5 }) && !usage({ caller: "a", provider: "deepseek", model: "m", ok: true, at: 5 }));
+  assert.ok(usage({ caller: "a", provider: "other", model: "m", input_tokens: 1, output_tokens: 2, ok: true, at: 5 }) && !usage({ caller: "a", provider: "", model: "m", input_tokens: 1, output_tokens: 2, ok: true, at: 5 }) && !usage({ caller: "a", provider: "deepseek", model: "m", ok: true, at: 5 }));
 });
