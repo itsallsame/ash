@@ -29,7 +29,7 @@ export interface GateServiceDeps {
   redeem(pendingId: string, redeemer: Caller, opts?: SendOptions): Promise<Reply>;
   /** The contract of a word, for rules (the registry's `find`). */
   contractOf(member: string, word: string): WordContract | null;
-  /** The name a person reads for a member (the registry's `name`), or null when it is gone. The card falls back to the id. */
+  /** The name a person reads for a member (see `names.ts`); null when there is none worth showing (a service): the card then leaves the object out. Without it the card shows ids. */
   nameOf?(id: string): string | null | undefined;
   onError?(where: string, error: unknown): void;
   /** How often waiting questions are checked for their time (ms). Default 30 s. */
@@ -90,10 +90,20 @@ export function createGateService(deps: GateServiceDeps): GateService {
     tellOriginator(p, `你的${what(p)}超时没有得到主人回答，按拒绝处理。需要的话请重新提出。`);
   };
 
-  /** What the owner reads for a member: its name; the id only when the member is gone (or has no name). */
+  /** What the owner reads for a member: its name; the id only when nothing knows it. */
   function nameOf(id: string): string {
-    try { return deps.nameOf?.(id)?.trim() || id; } catch { return id; }
+    try { return deps.nameOf ? deps.nameOf(id)?.trim() || id : id; } catch { return id; }
   }
+  /** The target's name, or null when it has none a person would know (a service): the sentence then has no object. */
+  function targetName(id: string): string | null {
+    if (!deps.nameOf) return id;
+    try { return deps.nameOf(id)?.trim() || null; } catch { return id; }
+  }
+  const sentence = (p: PendingRecord): string => {
+    const target = targetName(p.to);
+    const doing = `${p.label ?? p.word}。${p.purpose ? `目的：${p.purpose}` : ""}`;
+    return `${nameOf(p.originator)} ${target ? `想对「${target}」做这件事：` : "想做这件事："}${doing}`.trim();
+  };
 
   function issueCard(p: PendingRecord): void {
     if (p.state !== "waiting") return;
@@ -105,7 +115,7 @@ export function createGateService(deps: GateServiceDeps): GateService {
       title: `需要你确认：${p.label ?? p.word}`,
       // Only words a person reads: names, not ids; the contract's label, not the word. The effect and the risk are left out: their codes
       // mean nothing to the owner, and what matters (why it is risky) is the review's reason on the first line.
-      detail: [p.review_reason ? `审核：${p.review_reason}` : "", `${nameOf(p.originator)} 想对「${nameOf(p.to)}」做这件事：${p.label ?? p.word}。${p.purpose ? `目的：${p.purpose}` : ""}`.trim(), p.detail].filter(Boolean).join("\n"),
+      detail: [p.review_reason ? `审核：${p.review_reason}` : "", sentence(p), p.detail].filter(Boolean).join("\n"),
       human_kind: "question", options, expires_at: p.expires_at,
       source: { word: p.word, to: p.to, body_preview: preview.slice(0, 300), ...(preview.length > 300 ? { body_full: preview } : {}) },
     };

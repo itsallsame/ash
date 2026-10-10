@@ -249,6 +249,45 @@ test("the card reads in names and labels: no ids, no word, no effect or risk cod
   assert.equal(card.source.to, DEVICE);
 });
 
+test("a card for a service leaves the object out; the main container is the main agent's container", async () => {
+  const s = setup();
+  const APPS = word("service:apps", "apps.install", { effect: "act", risk: "structure", label: { doing: "在安装应用" } });
+  s.registry.add(fake("service:apps", [APPS], () => ({ data: {} }), { name: "apps" }));
+  s.registry.add(fake("body:main", [word("body:main", "workspace.bash", { effect: "execute", risk: "structure", label: { doing: "在跑命令" } })], () => ({ data: {} }), { name: "main body" }));
+  success(await s.router.send({ to: "service:apps", kind: "request", word: "apps.install", body: {} }, agent()));
+  success(await s.router.send({ to: "body:main", kind: "request", word: "workspace.bash", body: { command: "ls" } }, agent()));
+  await flush();
+  const [apps, main] = s.owner.cards.map((c) => (c.msg.body as any).detail as string);
+  assert.equal(apps, "ash 想做这件事：在安装应用。");
+  assert.equal(main, "ash 想对「ash 的容器」做这件事：在跑命令。");
+  for (const text of [apps, main]) assert.doesNotMatch(text, /service:|body:|apps|main body/);
+});
+
+test("after a restart the phone is not connected: the card uses the name it was paired with, and the id only if even that is gone", async () => {
+  const hand = DEVICE.slice("device:".length);
+  const s = setup({ handNames: { [hand]: "手机 · Xiaomi M2006J10C" } });
+  success(await s.ask("x"));                       // parked while the phone is connected
+  await flush();
+  s.registry.remove(DEVICE);                       // the hub restarts: the phone has not reconnected, the registry does not have it
+  s.svc.stop(); s.svc.start();                     // and the hub sends the open questions again
+  await flush();
+  const again = (s.owner.cards.at(-1)!.msg.body as any).detail as string;
+  assert.match(again, /^ash 想对「手机 · Xiaomi M2006J10C」做这件事：在发消息。/);
+  assert.doesNotMatch(again, /device:/);
+  s.owner.answer("deny"); await flush();
+  s.svc.stop();
+
+  const bare = setup();
+  success(await bare.ask("y"));
+  await flush();
+  bare.registry.remove(DEVICE);
+  bare.svc.stop(); bare.svc.start();
+  await flush();
+  assert.match((bare.owner.cards.at(-1)!.msg.body as any).detail, new RegExp(`^ash 想对「${DEVICE}」`));
+  bare.owner.answer("deny"); await flush();
+  bare.svc.stop();
+});
+
 test("a member that is gone falls back to its id on the card, and nothing breaks", async () => {
   const s = setup();
   s.registry.remove(s.main.id);
