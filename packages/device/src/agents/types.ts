@@ -9,6 +9,8 @@ export type AgentEvent =
 
 export interface OpenOptions {
   cwd: string; seed?: string; model?: string; effort?: string; system?: string; tools: Tool[];
+  /** Added to the runtime process's environment (never credentials: the runtimes use their own logins). */
+  env?: Record<string, string>;
   onEvent(event: AgentEvent): void;
   /** Read-only discovery; absence means this runtime did not expose a catalog. */
   onModels?(models: { id: string; efforts?: string[] }[]): void;
@@ -20,6 +22,8 @@ export interface AgentSession {
   steer(turn: string, text: string): Promise<boolean>;
   interrupt(turn: string): Promise<void>;
   select(model?: string, effort?: string): Promise<void>;
+  /** Compact the context, for a runtime that has a call for it. */
+  compact?(): Promise<{ compacted: boolean; detail?: string }>;
   close(): Promise<void>;
 }
 

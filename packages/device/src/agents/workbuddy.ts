@@ -36,7 +36,7 @@ export class WorkBuddySession implements AgentSession {
       const desktop = "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy";
       const args = ["--acp", "--acp-transport", "stdio", "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "bypassPermissions"];
       if (options.system) args.push("--append-system-prompt", options.system);
-      session.process = new JsonProcess(command ?? { command: existsSync(desktop) ? desktop : "codebuddy", args, env: workbuddyEnvironment() }, options.cwd);
+      session.process = new JsonProcess(command ?? { command: existsSync(desktop) ? desktop : "codebuddy", args, env: workbuddyEnvironment({ ...process.env, ...options.env }) }, options.cwd);
       session.process.onFrame = frame => session.receive(frame);
       session.process.onExit = reason => {
         session.unavailable = true; session.endpoint?.close();

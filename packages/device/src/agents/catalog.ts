@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { detectRuntimes, type RuntimeInfo } from "./detect";
+import { detectRuntimes, type DetectedRuntime } from "./detect";
 import { CodexSession } from "./codex";
 import { ClaudeSession } from "./claude";
 import { WorkBuddySession } from "./workbuddy";
@@ -36,5 +36,5 @@ export async function runtimeCatalog(stateDir: string, detect = detectRuntimes) 
   };
   // Test/injected runtimes already supply their catalog; do not launch local CLIs for them.
   if (detect === detectRuntimes) refresh();
-  return { get: (): RuntimeInfo[] => { if (detect === detectRuntimes) refresh(); return items; }, close: async () => { stopped = true; await pending; } };
+  return { get: (): DetectedRuntime[] => { if (detect === detectRuntimes) refresh(); return items; }, close: async () => { stopped = true; await pending; } };
 }

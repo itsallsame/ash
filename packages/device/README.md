@@ -1,148 +1,101 @@
-# Device endpoint — integration branch
+# Computer program (`ash-device`)
 
-The construction branch provides a standalone Node device endpoint, the shared
-gateway transport, workspace tools, and local-agent drivers for Codex, Claude Code
-and WorkBuddy. Remote runtimes are wired into the phone's AgentSystem/MCP tools,
-including live delegation permissions, owner intent, work threads, @ recipients,
-scoped cancellation, and capsule progress. Device management uses one service for
-both MCP and settings. An installer and four platform archives are built locally.
-Production publication, gateway deployment and replacement of an existing client
-are separate owner-approved steps; none has been performed by this branch.
+A Node program that makes a Mac or Linux computer part of Ash. It speaks `ash-link/1` (SPEC-03) with the hub, through the
+relay, and has two channels:
 
-## Development
+- **`device`**: the computer is a hand. It declares `workspace.*` and `body.info` (always; the hub registers them as
+  `body:<id>` only while the owner has bound this computer as a body, SPEC-09), the standard `browser.*` while the Kimi
+  browser extension is connected, `x.kimi.browser.upload|network`, `x.ego.browser.script` when ego-browser is installed,
+  and `x.ash.update` (only the hub's device service may call it). It answers `call`, `cancel` and `assess`.
+- **`agent`**: the computer runs Codex, Claude Code and WorkBuddy for the hub (SPEC-08). Only asked for while one of them
+  is installed and signed in; the hub grants it per computer ("run local agents").
 
-The integration branch temporarily depends on `file:../ash-gateway-device` (gateway
-0.5 development). Keep that sibling checkout available, run `npm ci` there, then
-run `npm ci` in this repository. Before merging/releasing, replace this dependency
-with an approved, published gateway revision and regenerate the lockfile.
-
-Build with `npm run build:device`. Run:
+## Run
 
 ```sh
 node packages/device/dist/ash-device.mjs run --config /absolute/path/device.json --pair CODE
 ```
 
-The config contains `gateway`, `name`, optional `kind` (`laptop` or `server`), and
-absolute `stateDir` and `workdir` paths. Omit `--pair` on later starts. Pairing must
-be approved on the owner side. Revocation stops reconnection and retains the local
-key; an explicit new pairing is required to reconnect.
+The config has `gateway`, `name`, and absolute `stateDir` and `workdir`; `installRoot` when installed by `install.sh`.
+Omit `--pair` on later starts. The owner approves the pairing in Ash and ticks what the computer may do (lend its
+abilities, be a body, run local agents, web access); each can be taken back later without pairing again. A revoked
+computer stops for good and needs a new pairing. Build with `npm run build:device`, package with `npm run package:device`.
 
-`workspace.poll` is read-only. `workspace.signal` is a separate action. Commands
-run under the device's OS account; paths are not sandboxed. Output is kept in a
-normal file under the state directory, with a bounded preview and path returned.
-Common credentials are redacted in returned text, with `redacted:true` where
-applicable; this is display hygiene, not a security boundary.
+## How it connects
 
-## Local agents
+The program signs in to the relay as itself (`ash-gw/1`, unchanged: `src/link.ts`, `GatewayLine`). The hub opens a
+tunnelled WebSocket on path `/link`; any other path is refused. The hub speaks first (`challenge`); the handshake, the
+channels, reconnecting and the manifest are `packages/link`'s `HandClient`. `TunnelPort` turns the tunnel into the socket
+the client wants, and keeps what the hub said before the client asked. The hand id is the hash of the identity key in
+`<stateDir>/device.jwk`.
 
-Native runtimes use their own installed login. This endpoint runs them with full
-local access, as configured for this feature. The **phone** must enforce the
-device's `local_agents` grant before discovering, creating or dispatching sessions.
-DSH uses `agent_runtimes`, then `agent_create` with a device runtime. Native actions
-on the authorized computer run with that OS account's access; remote Ash tools
-retain the declared agent identity and the delegators' intersected permissions.
+## The device channel
 
-`agents/host.ts` accepts one `/ash/device/stream` connection. Both ends send
-`hello {epoch}`. An `op` includes the device epoch, a stable `id`, `op`, `args`,
-and (except `open`) `session` and `generation`. Operations are `open`, `send`,
-`steer`, `interrupt`, `select`, `clear`, `close`, `status`, and `result`.
-The phone assigns `args.turn` for `send`; progress and outbound calls preserve
-that turn, session and generation. `agents/remote.ts` implements the phone half.
+`src/hand.ts` builds the manifest and answers calls. `workspace.*` / `body.info` are the `packages/workspace` package
+(`src/workspace.ts`): the OS account is the file system boundary, `workspace.write|edit` are assessed per call (inside the
+work directory is harmless; the home folder and the program's own state never count as free), and a picture or large
+file is sent as a `stream`. `~/` means the home folder. Browser actions are `src/kimi.ts` (one tab per caller and space;
+refs checked against the last page, and the site and name of the control before a click or type) and `src/browser.ts`.
 
-- Only one turn runs in a session. Control operations have a 45-second timeout;
-  tasks do not have that timeout. An unconfirmed interrupt does not free a session.
-- Reconnects in the same process reuse operation IDs. A changed process epoch
-  returns `result_unknown` instead of automatically running the action again.
-- Session seeds live in `agents/<session>.json`. Reopen by passing
-  `open {session, kind}`; changing Claude effort reopens using the same seed.
-  Clear opens a fresh generation without the old seed.
-- Final results live in `results/<session>/<turn>.json`. Large final replies also
-  have a full `.txt` file, with `reply_path` and `truncated:true` in the response.
-  Read it through ordinary `workspace.read`. Progress is bounded to 4 KiB.
-- Only `agent_list`, `agent_ask`, and `agent_tell` are exposed as Ash tools.
-  WorkBuddy's local HTTP MCP endpoint is authenticated and rejects browser origins.
-- Installed/login discovery refreshes in the background (at most once a minute).
-  Native model catalogs refresh at most every 15 minutes using initialization only,
-  never a paid model task. Unknown login status is `null`, not logged-in. Pick an
-  advertised model; an old local default may not be valid for the current account.
-- Phone reconnection waits up to ten minutes with visible disconnected status.
-  An uncertain acceptance/result is reconciled, never silently replayed.
+## The agent channel
 
-Claude's static SDK MCP declaration is passed as inline JSON (no credentials),
-which its CLI supports. This avoids Linux `/dev/fd` reopening of Node socket-pipes.
+`src/agents/driver.ts` is the sdk's `AgentDriver` over the session classes (`codex.ts`, `claude.ts`, `workbuddy.ts`).
+One runtime process holds one lane (session key) of one agent. `src/agents/channel.ts` carries the frames:
+
+| hub to computer | answer |
+|---|---|
+| `{t:"agent", id, op, agent, ...}` | `{t:"agent", id, op_result: op, ok:true, result}` or `{..., ok:false, error:{code, message, recovery_hint?}}` |
+
+The operation's fields are the driver method's arguments by name:
+
+| op | fields | result |
+|---|---|---|
+| `agent.start` | `spec` (`AgentStartSpec`; `runtime` may also stand beside it) | `{sessions:{<key>:<handle>}, attached}` |
+| `agent.stop` | `reason` | `{}` |
+| `agent.list` | | `{agents:[{agent, runtime, state, detail?}]}` |
+| `session.get` | `key` | `{handle: string\|null}` |
+| `session.set` | `key`, `handle` | `{}` |
+| `session.new` | `key` | `{handle}` |
+| `session.reload` | `key`, `modules:{static:[...]}` | `{handle}` |
+| `session.compact` | `key` | `{compacted, detail?}` |
+| `send`, `followup` | `key`, `messages:[DriverMessage]` | `{}` |
+| `steer` | `key`, `text` | `{accepted}` |
+| `inject` | `key`, `modules?`, `text?` | `{}` |
+| `interrupt` | `key` | `{}` |
+| `restart` | `key?` | `{}` |
+| `configure`, `config.get` | `key?`, `config?` (`model`, `effort`) | the current `{model?, effort?}` |
+| `plugins` | `action`, `name?` | `unavailable` |
+
+Events go out as `{t:"agent", event, ...}`: the sdk's `AgentEvent`, and `agent.status {agent, state, detail?}`
+(`starting`, `running`, `exited`, `failed`). A runtime's call of an Ash tool goes out as
+`{t:"agent", id, outbound: <tool>, agent, key, turn, args}` and is answered by
+`{t:"agent", id, outbound_result: <tool>, ok, result | error:{message}}`. Only `agent_list`, `agent_ask`, `agent_tell`
+are offered (SPEC-08 §2.7).
+
+- The hub's tool address is not reachable from here, so the tool list in the spec is not used; the hub decides on its side
+  what each call may do.
+- These runtimes take nothing between turns: `inject` is held and goes in front of the next turn. Images are not passed
+  (`images:false`); an attachment is named in the message with its ref.
+- `session.compact`: Codex `thread/compact/start`; Claude Code is sent `/compact` as a turn that is not reported;
+  WorkBuddy cannot. Both are reported as `compact:"unknown"` in `hello` because they have not been run against the
+  real programs.
+- A runtime that dies ends its turn as `error`, then `ended` (and `agent.status failed`) is reported once, and the whole agent
+  is closed; the hub starts it again with its saved handles.
+- When the connection drops the agents keep running for ten minutes. Their events are kept (the last 2000) and sent when
+  the channel opens again; an `agent.start` for an agent that is still running attaches (and says where every lane is)
+  instead of starting it over. After ten minutes without the hub they are stopped.
+
+## Install and update
+
+`install.sh GATEWAY CODE` downloads the release `device-v<version>` for the platform, verifies its SHA-256, installs it
+under `~/.ash-device`, pairs, and installs a per-user launchd/systemd service. `ash-device update --version-to V --sha256 H`
+and the capability `x.ash.update` take an explicit official version and checksum, check the archive, platform and startup,
+and switch `current` atomically. Operational logs are bounded and redacted: `logs/device.log` and three backups.
 
 ## Tests
 
-`node --import tsx --test packages/device/test/*.test.ts` covers workspace behavior,
-three fake-CLI protocols, private MCP, session recovery, stale turn filtering and
-process-group shutdown. Fake-CLI tests do not verify provider model behavior.
-`tools/e2e-device.ts` exercises the actual phone core, pairing, gateway and workspace
-and duplex fake-CLI turns against a **fresh local** gateway only. Set `GATEWAY_URL` and a local fixture
-`BOOTSTRAP_SECRET`; no model key is needed. The gateway repository also has a
-`tunnel-e2e` script covering browser and duplex device traffic.
-
-`tools/smoke-device-runtimes.ts --execute --only=codex --lifecycle` is an explicit
-real-provider smoke test using existing desktop logins. It sends only fixed text,
-forbids tools, and checks an advertised model, stopping and reopening a session.
-It must not be counted as passing merely because a CLI was found or initialized.
-
-## Browser tools
-
-`browser.script` uses an installed `ego-browser`, a private task space per caller
-and task, and `finish:true` to close that space. Native scripts have the computer
-account's authority and are actions, never advertised as read-only.
-
-The optional Kimi extension bridge listens on loopback (`/ws`, port 10086 or
-10089–10091). It advertises capabilities only while connected. The installed
-extension protocol supports navigation, snapshots, clicks, fill, evaluation,
-screenshots, upload and network inspection. It does not support the draft's
-tab-close/PDF operations, so those are not fabricated. Caller/task-owned tabs and
-snapshot references cannot be reused by another caller. An existing extension
-connection is not changed automatically. Long output and screenshots are ordinary
-files readable through workspace tools.
-
-## Installation and upgrades
-
-`npm run package:device -- --all` creates Linux/macOS x64/arm64 archives with a
-pinned, checksum-verified Node runtime, `install.sh`, and `SHA256SUMS` in
-`build/device`. No publishing occurs. The owner's devices page shows the pairing
-code together with the one-line install command for the `device-v0.1.1` release
-(`curl -fsSL …/install.sh | sh -s -- GATEWAY CODE`); the code is never returned to
-an agent or written to the ledger.
-
-`ash-device setup --gateway URL --pair CODE` pairs, waits for owner approval, then
-installs a per-user launchd/systemd service. `--no-service` pairs without replacing
-a service. `status` reveals no credentials. `uninstall` stops the service and
-preserves keys, work and installations. Do not run setup/uninstall against a real
-existing device merely to test installation.
-
-Updates accept an explicit official version plus approved SHA-256, reject unsafe
-archive entries, check platform and startup, then atomically switch `current`.
-An active task prevents updates; a failed check leaves the old version running.
-Previous versions remain available. Bounded, redacted operational logs are in
-`logs/device.log` plus three rotated backups; command/runtime output is not logged.
-
-## Verification snapshot — 2026-10-07
-
-- Full repository suite: 765 tests, 764 passed, one live-API test skipped; no failures.
-- Device tests: 28 passed. Chromium device settings and @/work-card tests: two passed.
-- Real local gateway: owner approval followed by explicit agent redemption, workspace
-  operations, native protocol callbacks, remote AgentSystem/MCP delegation, full
-  results, grant removal and device revocation all passed. Provider turns in this
-  gateway test use a deterministic fake CLI, not a real paid model.
-- Mac Codex and WorkBuddy: real model reply and session reopening passed using their
-  advertised models. Stop requests settled with a known completed outcome: these
-  very short tasks finished before cancellation, so this is not a long-running
-  provider interruption test. Deterministic CLI interruption tests passed.
-- Mac Claude: initialization works; the provider reports an expired OAuth session
-  that could not refresh. Credentials were not changed. Model execution remains
-  unverified until the owner logs in again.
-- Real Mac browser script: create task space, navigate, read, click and close passed.
-  Kimi uses a protocol-level mock extension test, not the owner's live connection.
-- Android unit tests and debug assembly passed. A matching-signed APK was installed
-  over the existing emulator app; no uninstall or data clearing. The @ picker and
-  settings screen were inspected. No real phone or production gateway was changed.
-
-Production pairing/reboot/old-client replacement and the public installer URL/QR
-remain release-acceptance work. A locally built archive or emulator screenshot is
-not evidence that those production steps have been completed.
+`node --expose-internals --import tsx --test packages/device/test/*.test.ts`. `device.test.ts` runs the program against a
+kernel made of the link server, the hand registry and the bodies service, with a fake `codex` script as the runtime;
+`driver.test.ts` and `channel.test.ts` cover the agent side with fake sessions and with the fixture runtimes
+(`test/fixtures/agent-cli.mjs`). The fixture runtimes do not verify the real programs' behaviour.
+`tools/smoke-device-runtimes.ts --execute --only=codex` is an explicit smoke test against a real, signed-in runtime.

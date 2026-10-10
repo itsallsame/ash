@@ -1,55 +1,209 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { Connection, DeviceKey, GatewayClient, GatewayError } from "ash-gateway/client/client";
-import { b64u, fromB64u, LIMITS, shortFingerprint } from "ash-gateway/src/protocol";
-import type { CallResult, CapabilitySpec, DeviceKind } from "../../sdk/src/api";
-export interface Signer { readonly id: string; readonly publicKey: string; sign(data: Uint8Array): Promise<string> }
-
-
-export type TunnelResponse = { status: number; headers?: Record<string, string>; body?: string | Buffer } |
-  { status: number; headers?: Record<string, string>; stream: (write: (chunk: string) => void, onClose: (fn: () => void) => void, end: () => void) => void };
-type EdgeResponse = TunnelResponse;
-interface Inbound { method: string; path: string; headers: [string, string][]; body: Uint8Array[]; from?: string }
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-/** Each step of reaching the gateway gets this long; on a slow mobile network a request can otherwise hang for minutes. */
-export const STEP_MS = 20_000;
 /**
- * [work], or a timeout error after [ms]. What arrives late is handed to [late] (a connection is closed there), so a
- * stalled request never holds up the next attempt.
+ * The computer program's connection (SPEC-03): `ash-link/1` with the hub, over the relay.
+ *
+ * The program is a hand. It signs in to the relay as itself (`GatewayLine`: the relay protocol `ash-gw/1`, unchanged);
+ * when the hub wants it, the relay hands over a tunnelled WebSocket for path `/link`, and the hub speaks first
+ * (`challenge`). `TunnelPort` makes that tunnel look like the WebSocket `HandClient` (packages/link) opens by itself, so
+ * the handshake, the channels, the reconnecting and the manifest are the link package's, not written again here.
  */
-export function bounded<T>(work: Promise<T>, ms: number, what: string, late?: (value: T) => void): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error(`timeout: ${what} took over ${ms / 1000}s`)); }, ms); });
-  work.then((value) => { if (timedOut) late?.(value); }, () => {});
-  return Promise.race([work, limit]).finally(() => clearTimeout(timer));
+import { createPrivateKey, sign as signBytes, type KeyObject } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { Connection, DeviceKey, DeviceStream, GatewayClient, GatewayError } from "ash-gateway/client/client";
+import { shortFingerprint } from "ash-gateway/src/protocol";
+import { base64url } from "../../sdk/src/ids";
+import type { Connector, SocketEvents } from "../../link/src/hand";
+import type { RawSocket } from "../../link/src/socket";
+import { bounded, STEP_MS } from "./bounded";
+
+export { bounded, STEP_MS } from "./bounded";
+// The old core still imports these from here; they go with it (see legacy-link.ts).
+export { ClientLink, Link, fileSigner, type LocalCapabilities, type Signer, type TunnelResponse } from "./legacy-link";
+
+/** The path the hub's tunnel opens on this program (SPEC-03 §8.1). Any other path is refused. */
+export const LINK_PATH = "/link";
+
+// ---------------------------------------------------------------------------------------------------------------------
+// who this computer is
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface Identity {
+  /** The relay's key object (it signs the relay's challenges). */
+  readonly key: DeviceKey;
+  /** SPKI, base64url: what `hello.hand.public_key` carries. */
+  readonly publicKey: string;
+  /** The hand id: the first 22 characters of base64url(sha256(SPKI)), the same as the relay's device id. */
+  readonly id: string;
+  /** Signs the hub's challenge nonce: ECDSA P-256 over its UTF-8 bytes, ASN.1 DER, base64url (SPEC-03 §2.2). */
+  signNonce(nonce: string): string;
 }
-export async function fileSigner(stateDir: string): Promise<Signer> {
+
+/** The identity key lives in `<stateDir>/device.jwk` (created on first use, owner-only). */
+export async function loadIdentity(stateDir: string): Promise<Identity> {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const file = join(stateDir, "device.jwk");
-  if (existsSync(file)) return DeviceKey.fromJwk(JSON.parse(readFileSync(file, "utf8")));
-  const key = await DeviceKey.generate();
-  writeFileSync(file, JSON.stringify(await key.exportJwk()), { mode: 0o600 });
-  return key;
+  let jwk: JsonWebKey;
+  let key: DeviceKey;
+  if (existsSync(file)) {
+    jwk = JSON.parse(readFileSync(file, "utf8"));
+    key = await DeviceKey.fromJwk(jwk);
+  } else {
+    key = await DeviceKey.generate();
+    jwk = await key.exportJwk();
+    writeFileSync(file, JSON.stringify(jwk), { mode: 0o600 });
+  }
+  const priv: KeyObject = createPrivateKey({ key: jwk as never, format: "jwk" });
+  return {
+    key, publicKey: key.publicKey, id: key.id,
+    signNonce: (nonce) => base64url(signBytes("sha256", Buffer.from(nonce, "utf8"), { key: priv, dsaEncoding: "der" })),
+  };
 }
 
+/** What `hello.hand` says about this program. */
+export function helloHand(identity: Identity, o: { name: string; version: string }) {
+  return { kind: "computer" as const, name: o.name, version: o.version, platform: `${process.platform}-${process.arch}`, public_key: identity.publicKey };
+}
 
-export abstract class Link {
-  protected conn: Connection | null = null;
-  protected readonly gateway: GatewayClient;
-  protected stopped = false;
+// ---------------------------------------------------------------------------------------------------------------------
+// the tunnel as a WebSocket
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** What a tunnel said before anything was listening: the hub speaks first, so its challenge may arrive before the client asks. */
+class Tunnel {
+  private readonly queue: (string | Uint8Array)[] = [];
+  private sink: TunnelSocket | null = null;
+  private ended: { code: number; reason: string } | null = null;
+  constructor(readonly stream: DeviceStream, private readonly dead: (tunnel: Tunnel) => void) {
+    stream.onMessage((message) => { if (this.sink) this.sink.deliver(message); else this.queue.push(message); });
+    stream.onClose((result) => { this.ended = result; this.dead(this); this.sink?.ended(result); });
+  }
+  attach(socket: TunnelSocket): void {
+    this.sink = socket;
+    for (const message of this.queue.splice(0)) socket.deliver(message);
+    if (this.ended) socket.ended(this.ended);
+  }
+  close(code: number, reason: string): void { this.stream.close(code, reason); }
+}
+
+/** The socket `HandClient` is given: it is open as soon as the relay's tunnel is bound to it. */
+class TunnelSocket implements RawSocket {
+  private tunnel: Tunnel | null = null;
+  constructor(private readonly events: SocketEvents, private readonly gone: (socket: TunnelSocket) => void) {}
+  bind(tunnel: Tunnel): void {
+    this.tunnel = tunnel;
+    this.events.open();
+    tunnel.attach(this);
+  }
+  deliver(message: string | Uint8Array): void { this.events.message(message, typeof message !== "string"); }
+  ended({ code, reason }: { code: number; reason: string }): void { this.gone(this); this.events.close(code, reason); }
+  send(data: string): void { if (!this.tunnel) throw new Error("the tunnel is not open yet"); this.tunnel.stream.send(data); }
+  close(code = 1000, reason = ""): void {
+    if (this.tunnel) this.tunnel.close(code, reason);
+    else this.gone(this);
+  }
+  terminate(): void { this.close(1006, "terminated"); }
+}
+
+/**
+ * Brings the hub's tunnels to the link client. The client asks for a socket (`connector`) whenever it wants to connect;
+ * the hub decides when a tunnel arrives (`adopt`). Whichever comes first waits for the other.
+ */
+export class TunnelPort {
+  private waiting: TunnelSocket | null = null;
+  private active: TunnelSocket | null = null;
+  private stash: Tunnel | null = null;
+  /** Set by the owner of the client: a tunnel arrived while the client sleeps between attempts. */
+  onIdleTunnel: () => void = () => {};
+
+  readonly connector: Connector = (_url, _headers, events) => {
+    const socket = new TunnelSocket(events, (gone) => {
+      if (this.waiting === gone) this.waiting = null;
+      if (this.active === gone) this.active = null;
+    });
+    if (this.stash) {
+      const tunnel = this.stash;
+      this.stash = null;
+      this.active = socket;
+      queueMicrotask(() => socket.bind(tunnel));
+    } else {
+      this.waiting = socket;
+    }
+    return socket;
+  };
+
+  /** The hub opened a tunnel on `/link`. */
+  adopt(stream: DeviceStream): void {
+    const tunnel = new Tunnel(stream, (dead) => { if (this.stash === dead) this.stash = null; });
+    if (this.waiting) {
+      const socket = this.waiting;
+      this.waiting = null;
+      this.active = socket;
+      socket.bind(tunnel);
+      return;
+    }
+    // A hand has one executor (SPEC-03 §2.2.2): a newer tunnel replaces the one in use. The client reconnects onto it.
+    this.stash?.close(1000, "replaced by a newer tunnel");
+    this.stash = tunnel;
+    if (this.active) this.active.close(1000, "replaced by a newer tunnel");
+    else this.onIdleTunnel();
+  }
+
+  /** The relay connection went away, or the program is stopping. */
+  close(): void {
+    this.stash?.close(1000, "closing");
+    this.stash = null;
+    this.waiting?.close(1000, "closing");
+    this.active?.close(1000, "closing");
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the relay
+// ---------------------------------------------------------------------------------------------------------------------
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Signs in to the relay (`ash-gw/1`) and stays signed in, handing every tunnel the hub opens on `/link` to [port].
+ * This is only the road; what travels on it is `ash-link/1`.
+ */
+export class GatewayLine {
+  private readonly gateway: GatewayClient;
+  private conn: Connection | null = null;
+  private stopped = false;
+  private pairFile?: string;
+  private readonly tunnels = new Map<string, DeviceStream>();
   connected = false;
   lastError = "";
-  constructor(url: string, readonly signer: Signer, protected readonly log: (...args: unknown[]) => void) {
-    this.gateway = new GatewayClient(url, signer as unknown as DeviceKey);
+
+  constructor(url: string, private readonly identity: Identity, private readonly port: TunnelPort, private readonly log: (...args: unknown[]) => void) {
+    this.gateway = new GatewayClient(url, identity.key);
   }
-  protected send(frame: Record<string, unknown>): void {
-    if (this.conn?.ws.readyState === WebSocket.OPEN) this.conn.ws.send(JSON.stringify(frame));
+
+  /** Pairs on the first run (the owner approves on their side); later runs only check that the pairing was not revoked. */
+  async pair(stateDir: string, code: string | undefined, name: string): Promise<void> {
+    const file = join(stateDir, "paired.json");
+    this.pairFile = file;
+    if (existsSync(file) && !code) {
+      if (JSON.parse(readFileSync(file, "utf8")).revoked) throw new Error("Device revoked; explicitly pair again to reconnect");
+      return;
+    }
+    if (!code) throw new Error("not paired: use --pair once");
+    const request = await this.gateway.requestPairing(code, name);
+    this.log("pairing requested", await shortFingerprint(this.identity.publicKey), request.owner_fingerprint);
+    const grant = await this.gateway.waitForApproval(request.request_id, request.owner_key, 10 * 60_000);
+    writeFileSync(file, JSON.stringify({ owner_key: request.owner_key, ...grant }), { mode: 0o600 });
   }
-  protected abstract onFrame(frame: Record<string, unknown>): void;
-  protected async onConnected(_conn: Connection): Promise<void> {}
-  protected onDisconnected(): void {}
-  protected onRevoked(): void {}
+
+  /** Remember that the owner revoked this computer: it will not reconnect until it is paired again. */
+  markRevoked(): void {
+    this.stopped = true;
+    if (this.pairFile && existsSync(this.pairFile)) {
+      const old = JSON.parse(readFileSync(this.pairFile, "utf8"));
+      writeFileSync(this.pairFile, JSON.stringify({ ...old, revoked: true }), { mode: 0o600 });
+    }
+  }
+
   async run(): Promise<void> {
     let delay = 1000;
     while (!this.stopped) {
@@ -60,7 +214,9 @@ export abstract class Link {
         const session = await bounded(this.gateway.authenticate(), STEP_MS, "gateway sign-in");
         const conn = await bounded(this.gateway.connect(session), STEP_MS, "gateway connection", (late) => late.close());
         this.conn = conn; this.connected = true; this.lastError = ""; delay = 1000;
-        conn.onUnmatched = (frame) => this.onFrame(frame);
+        conn.onUnmatched = (frame) => this.tunnelFrame(conn, frame);
+        // A newer gateway library may route `/link` tunnels itself; take them the same way.
+        conn.onStream((stream) => (stream.path === LINK_PATH ? this.take(stream) : stream.close(4404, "unsupported path")));
         let lastHeard = Date.now();
         let expired!: () => void;
         const silent = new Promise<void>((resolve) => { expired = resolve; });
@@ -70,136 +226,39 @@ export abstract class Link {
           if (Date.now() - lastHeard > 90_000) { conn.ws.close(4000, "silent"); expired(); }
           else conn.ws.send("ping");
         }, 30_000);
-        await bounded(this.onConnected(conn), STEP_MS * 3, "gateway first sync");
         const closed = await Promise.race([conn.closed, silent]);
-        if (closed && closed.code === 4003) { this.stopped = true; this.lastError = "Device revoked"; this.onRevoked(); }
+        if (closed && closed.code === 4003) { this.log("the relay says this device was revoked"); this.markRevoked(); }
       } catch (error) {
-        this.conn?.close(); this.lastError = error instanceof Error ? error.message : String(error);
-        if (error instanceof GatewayError && /revoked/i.test(error.message)) { this.stopped = true; this.onRevoked(); }
+        this.conn?.close();
+        this.lastError = error instanceof Error ? error.message : String(error);
+        if (error instanceof GatewayError && /revoked/i.test(error.message)) this.markRevoked();
         this.log("gateway connection failed", this.lastError);
       } finally { if (beat) clearInterval(beat); }
-      this.connected = false; this.conn = null; this.onDisconnected();
+      this.connected = false; this.conn = null;
+      for (const stream of this.tunnels.values()) stream.finish({ code: 1006, reason: "relay connection lost" });
+      this.tunnels.clear();
       if (this.stopped) break;
       await sleep(delay * (0.5 + Math.random() / 2)); delay = Math.min(delay * 2, 30_000);
     }
   }
-  stop(): void { this.stopped = true; this.conn?.close(); }
-  protected reply(sid: string, result: EdgeResponse, onStream?: (end: () => void) => () => void): void {
-    const headers = Object.entries(result.headers ?? {}).filter(([name]) => !/^(set-cookie|content-length|content-encoding|transfer-encoding|connection)$/i.test(name));
-    this.send({ t: "tun", op: "http.head", sid, status: result.status, headers });
-    const data = (value: Uint8Array) => {
-      for (let i = 0; i < value.length; i += LIMITS.tunnelChunkBytes) this.send({ t: "tun", op: "http.body", sid, data: b64u(new Uint8Array(value.subarray(i, i + LIMITS.tunnelChunkBytes))) });
-    };
-    if ("stream" in result) {
-      let ended = false; const cleanups: (() => void)[] = [];
-      const end = () => { if (ended) return; ended = true; for (const cleanup of cleanups) cleanup(); this.send({ t: "tun", op: "http.end", sid }); };
-      const timeout = setTimeout(end, 4 * 60_000);
-      cleanups.push(() => clearTimeout(timeout));
-      const unregister = onStream?.(end);
-      if (unregister) cleanups.push(unregister);
-      result.stream((chunk) => { if (!ended) data(Buffer.from(chunk)); }, (cleanup) => cleanups.push(cleanup), end);
-      return;
-    }
-    if (result.body !== undefined) data(typeof result.body === "string" ? Buffer.from(result.body) : result.body);
-    this.send({ t: "tun", op: "http.end", sid });
-  }
-}
 
+  stop(): void { this.stopped = true; this.conn?.close(); this.port.close(); }
 
-export interface LocalCapabilities {
-  manifest(): Promise<{ protocol?: string; version?: string; name: string; kind: DeviceKind; capabilities: CapabilitySpec[]; agents?: unknown[] }>;
-  /** declared: the phone let this call through without asking because assess answered "none"; hold it to that. */
-  call(capability: string, args: Record<string, unknown>, caller: string, signal?: AbortSignal, declared?: "none"): Promise<CallResult>;
-  /** This call's risk, for a capability marked per_call_risk; null when the capability states none per call. */
-  assess?(capability: string, args: Record<string, unknown>): Promise<{ risk: "none" | "structure"; effect: string } | null>;
-  stream?(stream: import("ash-gateway/client/client").DeviceStream): void;
-  update?(version: string, sha256: string): Promise<unknown>;
-}
-
-/** Client role retains the existing gateway manifest/call protocol. */
-export class ClientLink extends Link {
-  private readonly incoming = new Map<string, Inbound>();
-  private readonly calls = new Map<string, AbortController>();
-  private pairFile?: string;
-  protected override async onConnected(conn: Connection): Promise<void> {
-    conn.onStream(stream => this.local.stream ? this.local.stream(stream) : stream.close(4404, "Device agents unavailable"));
-  }
-  protected override onDisconnected(): void {
-    this.incoming.clear();
-    for (const call of this.calls.values()) call.abort();
-    this.calls.clear();
-  }
-  protected override onRevoked(): void {
-    if (this.pairFile && existsSync(this.pairFile)) {
-      const old = JSON.parse(readFileSync(this.pairFile, "utf8"));
-      writeFileSync(this.pairFile, JSON.stringify({ ...old, revoked: true }), { mode: 0o600 });
-    }
-  }
-  constructor(url: string, signer: Signer, private readonly local: LocalCapabilities, log: (...args: unknown[]) => void) { super(url, signer, log); }
-  async pair(stateDir: string, code: string | undefined, name: string): Promise<void> {
-    const file = join(stateDir, "paired.json");
-    this.pairFile = file;
-    if (existsSync(file) && !code) {
-      if (JSON.parse(readFileSync(file, "utf8")).revoked) throw new Error("Device revoked; explicitly pair again to reconnect");
-      return;
-    }
-    if (!code) throw new Error("not paired: use --pair once");
-    const request = await this.gateway.requestPairing(code, name);
-    this.log("pairing requested", await shortFingerprint(this.signer.publicKey), request.owner_fingerprint);
-    const grant = await this.gateway.waitForApproval(request.request_id, request.owner_key, 10 * 60_000);
-    writeFileSync(file, JSON.stringify({ owner_key: request.owner_key, ...grant }), { mode: 0o600 });
-  }
-  protected onFrame(frame: Record<string, unknown>): void {
+  /** The relay's tunnel frames that its client library did not route. */
+  private tunnelFrame(conn: Connection, frame: Record<string, unknown>): void {
     if (frame.t !== "tun" || typeof frame.sid !== "string") return;
     const sid = frame.sid;
-    if (frame.op === "http.abort") { this.incoming.delete(sid); this.calls.get(sid)?.abort(); return; }
-    if (frame.op === "http.req") this.incoming.set(sid, { method: String(frame.method), path: String(frame.path), headers: (frame.headers as [string, string][]) ?? [], body: [] });
-    else if (frame.op === "http.reqbody") {
-      const inbound = this.incoming.get(sid);
-      if (inbound) {
-        inbound.body.push(fromB64u(String(frame.data)));
-        if (inbound.body.reduce((n, b) => n + b.byteLength, 0) > 8 * 1024 * 1024) {
-          this.incoming.delete(sid); this.reply(sid, { status: 413, body: "Request too large" });
-        }
-      }
-    }
-    else if (frame.op === "http.reqend") {
-      const inbound = this.incoming.get(sid); this.incoming.delete(sid);
-      if (inbound) {
-        const controller = new AbortController(); this.calls.set(sid, controller);
-        void this.serve(sid, inbound, controller.signal)
-          .catch((error) => { if (!controller.signal.aborted) this.send({ t: "tun", op: "http.error", sid, message: error instanceof Error ? error.message : "client failed" }); })
-          .finally(() => this.calls.delete(sid));
-      }
-    }
-  }
-  private async serve(sid: string, inbound: Inbound, signal: AbortSignal): Promise<void> {
-    const path = inbound.path.split("?")[0];
-    const json = (status: number, body: unknown): EdgeResponse => ({ status, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    if (inbound.method === "POST" && path === "/ash/update") {
-      const input = JSON.parse(Buffer.concat(inbound.body).toString("utf8") || "{}");
-      if (!this.local.update || typeof input.version !== "string" || !/^v?\d+\.\d+\.\d+$/.test(input.version) || typeof input.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.sha256)) return this.reply(sid, json(400, { ok: false, error: "Invalid approved update" }));
-      try { return this.reply(sid, json(200, { ok: true, result: await this.local.update(input.version, input.sha256) })); }
-      catch (error) { return this.reply(sid, json(409, { ok: false, error: error instanceof Error ? error.message : "Update failed" })); }
-    }
-    if (inbound.method === "GET" && path === "/ash/manifest") {
-      const manifest = await this.local.manifest();
-      return this.reply(sid, json(200, { ...manifest, capabilities: manifest.capabilities.map((capability) => ({
-        ...capability, risk: capability.risk === "none" ? "none" : "structure", label: `Use ${capability.name}`,
-      })) }));
-    }
-    if (inbound.method === "POST" && path === "/ash/assess") {
-      const input = JSON.parse(Buffer.concat(inbound.body).toString("utf8") || "{}") as { capability?: string; args?: Record<string, unknown> };
-      const answer = this.local.assess ? await this.local.assess(String(input.capability ?? ""), input.args ?? {}) : null;
-      return this.reply(sid, answer ? json(200, answer) : json(404, { error: "not_found" }));
-    }
-    if (inbound.method === "POST" && path === "/ash/call") {
-      const input = JSON.parse(Buffer.concat(inbound.body).toString("utf8") || "{}") as { capability?: string; args?: Record<string, unknown>; caller?: string; declared_risk?: unknown };
-      if (typeof input.caller !== "string" || !/^(agent:[a-z][a-z0-9_-]{0,31}|person:owner)$/.test(input.caller)) return this.reply(sid, json(403, { error: "Invalid caller" }));
-      const answer = await this.local.call(String(input.capability ?? ""), input.args ?? {}, input.caller, signal, input.declared_risk === "none" ? "none" : undefined);
-      if (!signal.aborted) this.reply(sid, json(200, answer));
+    if (frame.op === "ws.open") {
+      if (frame.path !== LINK_PATH) { conn.send({ t: "tun", op: "ws.error", sid, message: "unsupported path" }); return; }
+      const stream = new DeviceStream(sid, String(frame.from), LINK_PATH, (out) => conn.send(out), () => this.tunnels.delete(sid));
+      this.tunnels.set(sid, stream);
+      conn.send({ t: "tun", op: "ws.opened", sid });
+      this.take(stream);
       return;
     }
-    this.reply(sid, json(404, { error: "not_found" }));
+    const stream = this.tunnels.get(sid);
+    if (stream && (frame.op !== "ws.msg" || frame.from === stream.peer)) stream.accept(frame);
   }
+
+  private take(stream: DeviceStream): void { this.port.adopt(stream); }
 }
