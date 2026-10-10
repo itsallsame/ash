@@ -1,0 +1,12 @@
+{
+  "name": "ash-workspace",
+  "private": true,
+  "type": "module",
+  "description": "The body contract (workspace.* and body.info) on a Node filesystem and shell. Depends on the sdk only; shared by the hub's main body and the computer program.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  }
+}
