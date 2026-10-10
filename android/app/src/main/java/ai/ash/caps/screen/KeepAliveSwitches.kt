@@ -10,13 +10,14 @@ import org.json.JSONObject
  */
 object KeepAliveSwitches {
     const val ASH_PACKAGE = "ai.ash.agent"
+    const val KERNEL_PACKAGE = "ai.ash.kernel"
     /** Opened by the flow when it is done: Ash's task comes back as it was left (see Ash's ReturnActivity). */
     const val RETURN_ACTIVITY = "ai.ash.host.screen.ReturnActivity"
 
     /** An app as the maker's settings list it. */
     data class Target(val pkg: String, val label: String)
     /** The only apps the flow ever touches. */
-    val targets: List<Target> = listOf(Target(ASH_PACKAGE, "Ash"))
+    val targets: List<Target> = listOf(Target(ASH_PACKAGE, "Ash"), Target(KERNEL_PACKAGE, "Ash 内核"))
     fun target(pkg: String): Target? = targets.firstOrNull { it.pkg == pkg }
 
     /** One switch, by the text next to it. */

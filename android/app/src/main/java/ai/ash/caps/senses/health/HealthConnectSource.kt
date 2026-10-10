@@ -57,8 +57,8 @@ object HealthConnectSource {
     private fun client(ctx: Context): HealthConnectClient {
         when (state(ctx)) {
             "available" -> {}
-            "update_required" -> throw SenseError("source_unavailable", "Health Connect needs an update before it can be read")
-            else -> throw SenseError("source_unavailable", "Health Connect is not available on this phone (install it, or use Gadgetbridge)")
+            "update_required" -> throw SenseError("unavailable", "Health Connect needs an update before it can be read", "source_unavailable")
+            else -> throw SenseError("unavailable", "Health Connect is not available on this phone (install it, or use Gadgetbridge)", "source_unavailable")
         }
         return HealthConnectClient.getOrCreate(ctx, PROVIDER)
     }
@@ -99,9 +99,9 @@ object HealthConnectSource {
                 }
             }
         } catch (e: SecurityException) {
-            throw SenseError("permission_denied", "Health Connect refused the read: ${e.message}" + if (BACKGROUND !in granted) " (no background-read permission)" else "")
+            throw SenseError("forbidden", "Health Connect refused the read: ${e.message}" + if (BACKGROUND !in granted) " (no background-read permission)" else "")
         } catch (e: IllegalStateException) {
-            throw SenseError("source_unavailable", "Health Connect could not be read: ${e.message}")
+            throw SenseError("unavailable", "Health Connect could not be read: ${e.message}", "source_unavailable")
         }
         return out
     }
@@ -110,10 +110,10 @@ object HealthConnectSource {
     fun read(ctx: Context, metrics: List<String>, range: LongRange, max: Int): List<HealthRow> {
         val client = client(ctx)
         val wanted = metrics.filter { it in RECORDS }
-        if (wanted.isEmpty()) throw SenseError("source_unavailable", "Health Connect has none of ${metrics.joinToString()} (spo2 is read from Gadgetbridge)")
+        if (wanted.isEmpty()) throw SenseError("unavailable", "Health Connect has none of ${metrics.joinToString()} (spo2 is read from Gadgetbridge)", "source_unavailable")
         val granted = runBlocking { client.permissionController.getGrantedPermissions() }
         val allowed = wanted.filter { permission(it) in granted }
-        if (allowed.isEmpty()) throw SenseError("permission_denied", "Health Connect has not granted Ash ${wanted.joinToString()} (open its setup page)")
+        if (allowed.isEmpty()) throw SenseError("forbidden", "Health Connect has not granted Ash ${wanted.joinToString()} (open its setup page)")
         val filter = TimeRangeFilter.between(Instant.ofEpochMilli(range.first), Instant.ofEpochMilli(range.last))
         val out = mutableListOf<HealthRow>()
         try {
@@ -129,9 +129,9 @@ object HealthConnectSource {
             }
         } catch (e: SecurityException) {
             val background = if (BACKGROUND !in granted) " Reading while Ash is in the background needs Health Connect's background-read permission." else ""
-            throw SenseError("permission_denied", "Health Connect refused the read: ${e.message}.$background")
+            throw SenseError("forbidden", "Health Connect refused the read: ${e.message}.$background")
         } catch (e: IllegalStateException) {
-            throw SenseError("source_unavailable", "Health Connect could not be read: ${e.message}")
+            throw SenseError("unavailable", "Health Connect could not be read: ${e.message}", "source_unavailable")
         }
         return out.filter { it.ts in range }.sortedBy { it.ts }.take(max)
     }

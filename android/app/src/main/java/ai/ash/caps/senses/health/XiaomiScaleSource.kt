@@ -228,8 +228,8 @@ object XiaomiScaleSource {
 
     /** The scale's stored weigh-ins in [range]. Throws [SenseError] when no scale is set up, or for other metrics. */
     fun read(ctx: Context, metrics: List<String>, range: LongRange, max: Int): List<HealthRow> {
-        if (!configured(ctx)) throw SenseError("source_unavailable", "no Xiaomi scale is set up (the owner adds it on the senses setup page)")
-        if ("weight" !in metrics) throw SenseError("source_unavailable", "the Xiaomi scale only measures weight")
+        if (!configured(ctx)) throw SenseError("unavailable", "no Xiaomi scale is set up (the owner adds it on the senses setup page)", "source_unavailable")
+        if ("weight" !in metrics) throw SenseError("unavailable", "the Xiaomi scale only measures weight", "source_unavailable")
         return Senses.store.health(range, "weight", XiaomiScale.SOURCE, max)
     }
 

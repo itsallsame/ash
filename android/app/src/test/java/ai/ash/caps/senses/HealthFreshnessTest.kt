@@ -96,7 +96,7 @@ class HealthFreshnessTest {
         // Stored and read back.
         assertEquals(24, SenseConfig.stored(c.toJson().toString()).staleHours("gadgetbridge"))
         for (bad in listOf(JSONObject().put("watch", 3), JSONObject().put("gadgetbridge", -1), JSONObject().put("gadgetbridge", 721), "12")) {
-            try { SenseConfig.apply(c, JSONObject().put("stale_hours", bad)); fail("accepted $bad") } catch (e: SenseError) { assertEquals("bad_args", e.code) }
+            try { SenseConfig.apply(c, JSONObject().put("stale_hours", bad)); fail("accepted $bad") } catch (e: SenseError) { assertEquals("bad_request", e.code) }
         }
     }
 

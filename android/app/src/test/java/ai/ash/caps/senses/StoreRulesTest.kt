@@ -33,8 +33,6 @@ class StoreRulesTest {
         val batches = Batches.split(items) { "b${n++}" }
         assertEquals(listOf(500, 500, 201), batches.map { it.getJSONArray("items").length() })
         assertEquals(listOf("b0", "b1", "b2"), batches.map { it.getString("batch_id") })
-        val env = Batches.envelope("b0", Batches.LOCATION, batches[0])
-        assertEquals(setOf("batch_id", "word", "body"), env.keySet())
     }
 
     @Test fun deletingTakesRowsOutOfUndeliveredBatches() {

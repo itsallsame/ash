@@ -329,17 +329,17 @@ internal class Sampler(private val ctx: Context) {
             val outcome = runCatching { LocationReader.fix(ctx, config.accuracy, timeout, mode) { !running } }
             val error = outcome.exceptionOrNull() as? SenseError
             if (outcome.isFailure && error == null) throw outcome.exceptionOrNull()!!
-            if (error?.code == "not_recording") return null
+            if (error?.reason == "not_recording") return null
             // Only the providers' failures count: no permission or location off is not theirs.
-            if (error == null || error.code == "no_fix") {
+            if (error == null || error.reason == "no_fix") {
                 state = LocationPolicy.after(state, mode, error == null, System.currentTimeMillis())
                 LocationReader.saveBackground(ctx, state)
             }
             if (error == null) return outcome.getOrNull()!!.fix
             val next = state.mode(System.currentTimeMillis())
             if (mode == LocationPolicy.Mode.BACKGROUND && next == LocationPolicy.Mode.BACKGROUND_FALLBACK && running) { mode = next; continue }
-            Recorder.lastProblem = "${error.code}: ${error.message}"
-            Log.i("ash.senses", "no point: ${error.code}")
+            Recorder.lastProblem = "${error.reason.ifEmpty { error.code }}: ${error.message}"
+            Log.i("ash.senses", "no point: ${error.reason.ifEmpty { error.code }}")
             return null
         }
     }

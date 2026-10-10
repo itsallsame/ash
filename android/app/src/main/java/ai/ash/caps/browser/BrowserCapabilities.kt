@@ -16,8 +16,8 @@ import ai.ash.caps.schema
 /**
  * A basic browser for the agent: open a public page, read it as text with numbered controls, click, type, scroll,
  * go back, take a picture. Pages are untrusted data. Clicks and typing name the site and the control so the owner
- * can approve them by reading one line; passwords and files stay with the owner (browser.show hands the page over).
- * Each task can have its own space (a separate tab sharing the same logins); browser.run does several steps in one call.
+ * can approve them by reading one line; passwords and files stay with the owner (x.android.browser.show hands the page over).
+ * Each task can have its own space (a separate tab sharing the same logins); x.android.browser.run does several steps in one call.
  */
 object BrowserCapabilities {
     /** What every action that returns a page promises (`data`): the page as the agent reads it. */
@@ -55,7 +55,7 @@ object BrowserCapabilities {
     private fun spaceProp() = prop("string", SPACE_HELP)
     private fun space(args: JSONObject) = BrowserArguments.space(args.opt("space"))
 
-    /** A single capability is one step of browser.run: same parsing, same session path, same rules. */
+    /** A single capability is one step of x.android.browser.run: same parsing, same session path, same rules. */
     private fun single(name: String, description: String, op: String, effect: String, risk: String, label: String, vararg props: Pair<String, JSONObject>) = Cap(
         name = name, description = description, schema = schema(*props, "space" to spaceProp()),
         effect = effect, risk = risk, label = label, result = PAGE_RESULT,
@@ -81,7 +81,7 @@ object BrowserCapabilities {
 
     private val type = single("browser.type",
         "Type text into a field from the latest browser.read of that space, optionally submitting its form. Give the site and the field's visible name. " +
-            "Password and file fields are refused: use browser.show and let the owner enter those. Returns the page afterwards.",
+            "Password and file fields are refused: use x.android.browser.show and let the owner enter those. Returns the page afterwards.",
         "type", Effect.ACT, Risk.OUTWARD, "在网页上输入",
         "ref" to prop("integer", "The field number from browser.read.", required = true),
         "site" to prop("string", "The site you are on.", required = true),
@@ -160,7 +160,7 @@ object BrowserCapabilities {
         CapResult.text(lines.toString().trimEnd(), JSONObject().put("spaces", items))
     } }
 
-    /** browser.run stops before a step once this much time has gone, so the whole call ends well inside the bridge's limit. */
+    /** x.android.browser.run stops before a step once this much time has gone, so the whole call ends well inside the bridge's limit. */
     private const val RUN_BUDGET_MS = 140_000L
 
     private fun short(data: JSONObject) = "${BrowserArguments.host(data.optString("url")) ?: data.optString("url")} — ${data.optString("title").take(60)}"
@@ -223,7 +223,7 @@ object BrowserCapabilities {
         for ((i, step) in steps.withIndex()) {
             val n = i + 1
             var failure = when {
-                System.currentTimeMillis() - started > RUN_BUDGET_MS -> "out of time (browser.run has about ${RUN_BUDGET_MS / 1000} s in all)"
+                System.currentTimeMillis() - started > RUN_BUDGET_MS -> "out of time (x.android.browser.run has about ${RUN_BUDGET_MS / 1000} s in all)"
                 serial != null && BrowserSession.serial(id) != serial -> "space $id was closed while the steps ran (by the owner or another call)"
                 else -> null
             }

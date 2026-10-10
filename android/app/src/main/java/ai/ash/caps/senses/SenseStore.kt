@@ -23,7 +23,7 @@ data class Segment(val id: Long, val start: Long, val end: Long?, val state: Str
 }
 
 /** An undelivered batch for Ash. */
-data class Batch(val id: String, val word: String, val body: JSONObject, val created: Long, val sentAt: Long)
+data class Batch(val id: String, val word: String, val body: JSONObject, val created: Long)
 
 /**
  * Everything the senses recorded, on this phone only: location points, activity segments, step-counter snapshots,
@@ -207,10 +207,9 @@ class SenseStore(ctx: Context) : SQLiteOpenHelper(ctx, "senses.db", null, 1) {
         db.insert("outbox", null, ContentValues().apply { put("id", id); put("word", word); put("body", body.toString()); put("created", now) })
     }
 
-    fun outbox(): List<Batch> = readableDatabase.rawQuery("SELECT id, word, body, created, sent_at FROM outbox ORDER BY created, rowid", null)
-        .use { c -> c.all { Batch(it.getString(0), it.getString(1), JSONObject(it.getString(2)), it.getLong(3), it.getLong(4)) } }
+    fun outbox(): List<Batch> = readableDatabase.rawQuery("SELECT id, word, body, created FROM outbox ORDER BY created, rowid", null)
+        .use { c -> c.all { Batch(it.getString(0), it.getString(1), JSONObject(it.getString(2)), it.getLong(3)) } }
 
-    fun markSent(id: String, ts: Long) { writableDatabase.execSQL("UPDATE outbox SET sent_at = ? WHERE id = ?", arrayOf<Any>(ts, id)) }
     fun ack(id: String) { writableDatabase.delete("outbox", "id = ?", arrayOf(id)) }
     fun pendingBatches(): Long = readableDatabase.rawQuery("SELECT COUNT(*) FROM outbox", null).use { it.moveToFirst(); it.getLong(0) }
 

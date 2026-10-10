@@ -62,7 +62,7 @@ object MediaCapabilities {
 
     private fun granted(ctx: Context, p: String) = ctx.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
-    private fun denied(what: String) = CapResult.error("permission_denied", "Ash may not $what yet (the phone's photos, videos and files permission is off). $ASK")
+    private fun denied(what: String) = CapResult.error("forbidden", "Ash may not $what yet (the phone's photos, videos and files permission is off). $ASK")
 
     private val paths = ContainerPaths()
 

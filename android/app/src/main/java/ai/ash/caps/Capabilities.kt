@@ -8,6 +8,7 @@ import ai.ash.caps.media.MediaCapabilities
 import ai.ash.caps.screen.Screen
 import ai.ash.caps.screen.ScreenCapabilities
 import ai.ash.caps.senses.SenseCapabilities
+import ai.ash.caps.senses.SenseError
 import ai.ash.caps.shell.ShellCapabilities
 import ai.ash.caps.system.SystemCapabilities
 import ai.ash.caps.vscreen.VScreenCapabilities
@@ -44,11 +45,13 @@ object Capabilities {
      * call was made in, when it was made in one. Every failure comes back as a failed [CapResult], never as an exception.
      */
     fun call(ctx: Context, name: String, args: JSONObject, turn: String = ""): CapResult {
-        val c = byName[name] ?: return CapResult.fail("the phone has no capability $name")
-        if (!c.available(ctx)) return CapResult.fail("$name is not available right now (a permission or service is off on the phone)")
+        val c = byName[name] ?: return CapResult.error("not_found", "the phone has no capability $name")
+        if (!c.available(ctx)) return CapResult.error("unavailable", "$name is not available right now (a permission or service is off on the phone)")
         val run = {
             try {
                 c.run(ctx, args, turn)
+            } catch (e: SenseError) {
+                e.result()
             } catch (e: Throwable) {
                 Log.w(TAG, "$name failed", e)
                 CapResult.fail("$name failed: ${e.message ?: e.javaClass.simpleName}")
@@ -62,7 +65,7 @@ object Capabilities {
                 Overlay.HIDDEN -> if (args.optInt("display", 0) != 0) run() else Screen.withoutOverlay(run)
             }
         } catch (e: IllegalStateException) {
-            CapResult.fail(e.message ?: "owner_input_busy")
+            CapResult.error("unavailable", e.message ?: "owner_input_busy")
         }
     }
 

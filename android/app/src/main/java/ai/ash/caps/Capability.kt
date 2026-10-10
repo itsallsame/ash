@@ -4,6 +4,12 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** The unified error codes (SPEC-02 §7); a failed call carries one of these and says the specifics in its message. */
+val ERROR_CODES = setOf(
+    "bad_request", "unauthorized", "forbidden", "not_found", "denied", "cancelled", "timeout",
+    "offline", "result_unknown", "conflict", "too_large", "unavailable", "failed", "internal",
+)
+
 /** What a capability does to the world (the `effect` of the link's CapabilitySpec). */
 object Effect {
     const val READ = "read"
@@ -109,8 +115,9 @@ class CapResult private constructor(val ok: Boolean, val content: JSONArray, val
 
         fun fail(msg: String) = CapResult(false, JSONArray().put(JSONObject().put("type", "text").put("text", msg)), null, msg)
 
-        /** A failure with a stable code the caller can act on (e.g. "permission_denied"): the error reads "code: message". */
+        /** A failure with one of the unified [ERROR_CODES] the caller can act on (e.g. "forbidden"): the error reads "code: message". */
         fun error(code: String, message: String): CapResult {
+            require(code in ERROR_CODES) { "$code is not an error code" }
             val text = "$code: $message"
             return CapResult(false, JSONArray().put(JSONObject().put("type", "text").put("text", text)),
                 JSONObject().put("code", code).put("message", message), text)

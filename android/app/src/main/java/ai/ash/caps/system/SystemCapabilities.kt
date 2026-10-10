@@ -228,7 +228,7 @@ object SystemCapabilities {
         val d = JSONObject()
             .put("package", pkg)
             .put("label", pm.getApplicationLabel(ai).toString())
-            .put("version", pi.versionName ?: "").put("version_name", pi.versionName ?: "")
+            .put("version", pi.versionName ?: "")
             .put("version_code", if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong())
             .put("first_install", iso(pi.firstInstallTime))
             .put("last_update", iso(pi.lastUpdateTime))
@@ -492,7 +492,7 @@ object SystemCapabilities {
             return CapResult.fail("Android refused to change $key (Do Not Disturb policy): ${e.message}")
         }
         val after = am.getStreamVolume(stream)
-        return CapResult.text("$key: $before → $after (max $max).", JSONObject().put("key", key).put("previous", before.toString()).put("value", after.toString()).put("before", before).put("after", after).put("max", max))
+        return CapResult.text("$key: $before → $after (max $max).", JSONObject().put("key", key).put("previous", before.toString()).put("value", after.toString()).put("max", max))
     }
 
     // ───────────────────────────── intents & keys ─────────────────────────────

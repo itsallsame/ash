@@ -42,19 +42,22 @@ class DeviceCallsTest {
     }
 
     @Test fun failuresGetTheUnifiedCodes() {
-        assertEquals("not_found", err(DeviceCalls.outcomeOf(CapResult.fail("the phone has no capability x.y"))).code)
-        assertEquals("unavailable", err(DeviceCalls.outcomeOf(CapResult.fail("screen.tap is not available right now (the accessibility service is off)"))).code)
-        assertEquals("unavailable", err(DeviceCalls.outcomeOf(CapResult.fail("owner_input_busy: owner is entering a message"))).code)
+        assertEquals("not_found", err(DeviceCalls.outcomeOf(CapResult.error("not_found", "the phone has no capability x.y"))).code)
+        assertEquals("unavailable", err(DeviceCalls.outcomeOf(CapResult.error("unavailable", "screen.tap is not available right now"))).code)
         assertEquals("failed", err(DeviceCalls.outcomeOf(CapResult.fail("boom"))).code)
         assertEquals("cancelled", err(DeviceCalls.outcomeOf(CapResult.error("cancelled", "stopped"))).code)
         assertEquals("timeout", err(DeviceCalls.outcomeOf(CapResult.error("timeout", "too slow"))).code)
     }
 
-    @Test fun aCodeOfTheCapabilitysOwnIsKeptAsDetail() {
-        val outcome = err(DeviceCalls.outcomeOf(CapResult.error("permission_denied", "location is off")))
-        assertEquals("failed", outcome.code)
-        assertEquals("permission_denied: location is off", outcome.message)
-        assertEquals("permission_denied", (outcome.detail as JSONObject).getString("code"))
+    @Test fun theMessageIsTheSpecificReasonWithoutTheCodeInFront() {
+        val outcome = err(DeviceCalls.outcomeOf(CapResult.error("forbidden", "location permission is not granted")))
+        assertEquals("forbidden", outcome.code)
+        assertEquals("location permission is not granted", outcome.message)
+        assertNull(outcome.detail)
+    }
+
+    @Test fun aCodeThatIsNotAUnifiedOneCannotBeMade() {
+        try { CapResult.error("permission_denied", "x"); throw AssertionError("should refuse") } catch (_: IllegalArgumentException) {}
     }
 
     @Test fun assessGivesTheDeclaredRiskAndTheRiskiestForAnUnknownCapability() {

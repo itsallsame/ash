@@ -140,6 +140,25 @@ class CapabilityConformanceTest {
         }
     }
 
+    // ---- error codes
+
+    @Test fun theErrorCodesAreTheStandardsFourteen() {
+        val std = JSONObject(File(Repo.root, "packages/sdk/schema/words.json").readText()).getJSONArray("error_codes")
+        assertEquals(strings(std), ERROR_CODES)
+        assertEquals(14, ERROR_CODES.size)
+    }
+
+    @Test fun everyErrorCodeTheAppRaisesIsAUnifiedOne() {
+        val sources = File(System.getProperty("user.dir"), "src/main/java/ai/ash/caps").walk().filter { it.extension == "kt" }.toList()
+        assertTrue(sources.size > 50)
+        // The first argument of the calls that make a failed result or a sense error.
+        val raise = Regex("""(?:CapResult\.error|SenseError|\bfail)\(\s*"([a-z_]+)"\s*,""")
+        val found = HashMap<String, MutableList<String>>()
+        for (f in sources) for (m in raise.findAll(f.readText())) found.getOrPut(m.groupValues[1]) { mutableListOf() }.add(f.name)
+        assertTrue(found.keys.containsAll(listOf("forbidden", "unavailable", "bad_request")))
+        for ((code, where) in found) assertTrue("$code is not an error code (in $where)", code in ERROR_CODES)
+    }
+
     // ---- events
 
     @Test fun everyDeclaredEventIsAStandardOneAndItsBodyAcceptsNothingTheStandardRefuses() {

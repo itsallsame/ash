@@ -1,7 +1,6 @@
 package ai.ash.caps
 
 import ai.ash.caps.decision.Decision
-import ai.ash.caps.senses.SenseSync
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,9 +20,6 @@ class DeviceCalls(private val ctx: Context) : HandHandlers {
     override fun call(call: CallRequest, ctx: CallContext): CallOutcome =
         outcomeOf(Decision.call(this.ctx, call.capability, call.args, call.turn.orEmpty()))
 
-    /** The kernel is there (again): sense batches it never acknowledged are offered once more. */
-    override fun welcome(welcome: JSONObject) { SenseSync.pull() }
-
     override fun assess(capability: String, args: JSONObject): Assessment = assessmentFor(capability)
 
     override fun log(message: String, error: Throwable?) { android.util.Log.w("ash.link", message, error) }
@@ -35,23 +31,15 @@ class DeviceCalls(private val ctx: Context) : HandHandlers {
             return Assessment(declared.risk)
         }
 
-        /** Failures a capability reports as plain text, and the unified error code (SPEC-02 §7) each one is. */
-        private val CODES = setOf("cancelled", "timeout", "unavailable", "not_found", "forbidden", "bad_request", "failed")
-
+        /** A failed result is a unified error code ([ERROR_CODES]) and a message; a failure without a code of its own is `failed`. */
         fun outcomeOf(result: CapResult): CallOutcome {
             val json = result.toJson()
             if (json.optBoolean("ok")) return CallOutcome.Ok(parts(json.optJSONArray("content") ?: JSONArray()), json.opt("data"))
-            val message = json.optString("error").ifEmpty { "the call failed" }
             val data = json.opt("data") as? JSONObject
             val given = data?.optString("code").orEmpty()
-            val code = when {
-                given in CODES -> given
-                message.startsWith("the phone has no capability") -> "not_found"
-                message.contains("is not available right now") || message.startsWith("owner_input_busy") -> "unavailable"
-                else -> "failed"
-            }
-            // A code of the capability's own (e.g. permission_denied) is kept for whoever wants it.
-            return CallOutcome.Err(code, message, if (given.isNotEmpty() && given !in CODES) JSONObject().put("code", given) else null)
+            val code = if (given in ERROR_CODES) given else "failed"
+            val message = (if (code == given) data?.optString("message") else null).orEmpty().ifEmpty { json.optString("error") }.ifEmpty { "the call failed" }
+            return CallOutcome.Err(code, message)
         }
 
         private fun parts(content: JSONArray): List<Part> = (0 until content.length()).map { i ->

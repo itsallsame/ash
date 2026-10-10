@@ -15,7 +15,7 @@ class SenseArgsTest {
 
     private fun bad(block: () -> Unit) {
         val e = assertThrows(SenseError::class.java) { block() }
-        assertEquals("bad_args", e.code)
+        assertEquals("bad_request", e.code)
     }
 
     @Test fun everyToolHasAnObjectSchema() {

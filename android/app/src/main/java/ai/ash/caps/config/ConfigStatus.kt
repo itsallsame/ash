@@ -20,7 +20,7 @@ object ConfigStatus {
     const val UNSUPPORTED = "unsupported"
 
     /** The package of the kernel, whose battery exemption matters as much as this app's. */
-    const val KERNEL_PACKAGE = "ai.ash.kernel"
+    private const val KERNEL_PACKAGE = ai.ash.caps.screen.KeepAliveSwitches.KERNEL_PACKAGE
 
     class Item(val item: String, val state: String, val detail: String? = null) {
         fun toJson(): JSONObject = JSONObject().put("item", item).put("state", state).apply { if (!detail.isNullOrEmpty()) put("detail", detail) }

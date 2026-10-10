@@ -47,12 +47,12 @@ object LocationReader {
      */
     fun fix(ctx: Context, accuracy: String, timeoutMs: Long, mode: Mode = Mode.ON_DEMAND, cancelled: () -> Boolean = { false }): Result {
         val started = System.currentTimeMillis()
-        fun fail(code: String, message: String, asked: List<String> = emptyList(), reasons: Map<String, String> = emptyMap()): Nothing {
-            record(FixAttempt(started, mode.id, accuracy, asked, reasons, System.currentTimeMillis() - started, error = "$code: $message"))
-            throw SenseError(code, message)
+        fun fail(code: String, message: String, asked: List<String> = emptyList(), reasons: Map<String, String> = emptyMap(), reason: String = ""): Nothing {
+            record(FixAttempt(started, mode.id, accuracy, asked, reasons, System.currentTimeMillis() - started, error = "${reason.ifEmpty { code }}: $message"))
+            throw SenseError(code, message, reason)
         }
-        if (!Senses.locationPermission(ctx)) fail("permission_denied", "location permission is not granted to Ash (open the senses setup page)")
-        if (!Senses.locationOn(ctx)) fail("location_off", "location is turned off in the phone's settings")
+        if (!Senses.locationPermission(ctx)) fail("forbidden", "location permission is not granted to Ash (open the senses setup page)")
+        if (!Senses.locationOn(ctx)) fail("unavailable", "location is turned off in the phone's settings", reason = "location_off")
         val lm = ctx.getSystemService(LocationManager::class.java)
         val providers = providers(ctx)
         val plan = LocationPolicy.plan(providers, accuracy, mode)
@@ -64,7 +64,7 @@ object LocationReader {
             record(attempt)
             return Result(known.fix, attempt)
         }
-        if (plan.ask.isEmpty()) fail("no_fix", "no location provider can be used: ${LocationPolicy.explainAll(plan.skipped, timeoutS)}", reasons = plan.skipped)
+        if (plan.ask.isEmpty()) fail("unavailable", "no location provider can be used: ${LocationPolicy.explainAll(plan.skipped, timeoutS)}", reasons = plan.skipped, reason = "no_fix")
 
         val lock = Object()
         var best: Candidate? = known
@@ -108,7 +108,7 @@ object LocationReader {
                     val now = System.currentTimeMillis()
                     val listening = plan.ask.count { it !in failed }
                     if (now >= deadline || LocationPolicy.done(best, firstAt ?: known?.let { started }, now, accuracy, plan.ask, listening)) break
-                    if (cancelled()) fail("not_recording", "recording was turned off", plan.ask, failed)
+                    if (cancelled()) fail("unavailable", "recording was turned off", plan.ask, failed, "not_recording")
                     lock.wait(minOf(500L, deadline - now).coerceAtLeast(1L))
                 }
             }
@@ -130,9 +130,9 @@ object LocationReader {
             record(attempt)
             return Result(chosen.fix, attempt)
         }
-        if (!Senses.locationOn(ctx)) fail("location_off", "location was turned off", plan.ask, reasons)
+        if (!Senses.locationOn(ctx)) fail("unavailable", "location was turned off", plan.ask, reasons, "location_off")
         val background = if (!Senses.backgroundLocation(ctx)) " (background location is not allowed: with the phone locked or Ash not in front, the system gives no fix; set location to 「始终允许」)" else ""
-        fail("no_fix", "no location fix within ${timeoutS}s: ${LocationPolicy.explainAll(reasons, timeoutS)}$background", plan.ask, reasons)
+        fail("unavailable", "no location fix within ${timeoutS}s: ${LocationPolicy.explainAll(reasons, timeoutS)}$background", plan.ask, reasons, "no_fix")
     }
 
     private fun request(lm: LocationManager, provider: String, accuracy: String, l: LocationListener) {

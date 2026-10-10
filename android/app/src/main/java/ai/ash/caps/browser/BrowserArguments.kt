@@ -5,7 +5,7 @@ import java.net.URI
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** One browser action, parsed and checked for shape before anything runs (single capabilities and browser.run share these). */
+/** One browser action, parsed and checked for shape before anything runs (single capabilities and x.android.browser.run share these). */
 sealed class BrowserStep {
     data class Open(val url: String) : BrowserStep()
     object Read : BrowserStep()
@@ -38,7 +38,7 @@ object BrowserArguments {
         return text
     }
 
-    /** The fields each browser.run op takes (op itself aside). */
+    /** The fields each x.android.browser.run op takes (op itself aside). */
     val STEP_FIELDS: Map<String, Set<String>> = mapOf(
         "open" to setOf("url"), "read" to emptySet(), "click" to setOf("ref", "site", "label"),
         "type" to setOf("ref", "site", "label", "text", "submit"), "scroll" to setOf("direction"), "back" to emptySet(),
@@ -47,7 +47,7 @@ object BrowserArguments {
     val OPS: Set<String> get() = STEP_FIELDS.keys
 
     /**
-     * Parses one action. In browser.run every field must be one the op knows ([strict]); a single capability only
+     * Parses one action. In x.android.browser.run every field must be one the op knows ([strict]); a single capability only
      * reads the fields it needs (its other arguments, like space, are not the step's business).
      */
     fun step(op: String, input: JSONObject, strict: Boolean = false): BrowserStep {
@@ -90,7 +90,7 @@ object BrowserArguments {
         return BrowserStep.WaitText(wanted)
     }
 
-    /** browser.run's steps: all of them are checked before the first one runs, so a typo never leaves half a script done. */
+    /** x.android.browser.run's steps: all of them are checked before the first one runs, so a typo never leaves half a script done. */
     fun steps(raw: Any?): List<BrowserStep> {
         val list = raw as? JSONArray ?: throw Rejected("steps must be a list of {op, ...}")
         if (list.length() < 1 || list.length() > MAX_STEPS) throw Rejected("steps must have 1 to $MAX_STEPS entries")

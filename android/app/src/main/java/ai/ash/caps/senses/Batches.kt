@@ -18,9 +18,6 @@ object Batches {
     fun split(items: List<JSONObject>, newId: () -> String): List<JSONObject> =
         items.chunked(MAX_ITEMS).map { chunk -> JSONObject().put("batch_id", newId()).put("items", JSONArray().apply { chunk.forEach { put(it) } }) }
 
-    /** What crosses to Ash: {batch_id, word, body}. */
-    fun envelope(id: String, word: String, body: JSONObject): JSONObject = JSONObject().put("batch_id", id).put("word", word).put("body", body)
-
     /** The moment an item describes, for deleting it from an undelivered batch. */
     fun itemTime(word: String, item: JSONObject): Long = when (word) {
         ACTIVITY -> item.optLong("ts_start")

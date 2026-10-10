@@ -170,7 +170,7 @@ object BrowserSession {
     private fun page(space: Space): JSONObject = script(space, BrowserScripts.READ).put("space", space.id)
 
     /**
-     * Does one action in space [id] and returns the page afterwards. Every rule lives on this path, so browser.run and
+     * Does one action in space [id] and returns the page afterwards. Every rule lives on this path, so x.android.browser.run and
      * the single capabilities enforce the same ones. Capture is not a page action; use [screenshot].
      */
     fun perform(ctx: Context, id: String, step: BrowserStep): JSONObject = when (step) {
@@ -222,7 +222,7 @@ object BrowserSession {
     private fun type(space: Space, step: BrowserStep.Type): JSONObject {
         val found = describe(space, step.ref, step.site, step.label)
         if (!BrowserArguments.typable(found.optString("tag"), found.optString("type").ifEmpty { null }) && !found.optBoolean("editable"))
-            throw Failure("element ${step.ref} cannot take typed text (passwords and files are for the owner; use browser.show)")
+            throw Failure("element ${step.ref} cannot take typed text (passwords and files are for the owner; use x.android.browser.show)")
         val latch = CountDownLatch(1)
         space.loadLatch = latch
         script(space, BrowserScripts.type(step.ref, step.text, step.submit))
@@ -270,7 +270,7 @@ object BrowserSession {
     /** Every open space, most recently used first. */
     fun list(): List<Info> = onMain { spaces.values.sortedByDescending { it.lastUsed }.map { infoOf(it) } }
 
-    /** Tells one opening of a space from the next: null when it is not open. browser.run stops if this changes under it. */
+    /** Tells one opening of a space from the next: null when it is not open. x.android.browser.run stops if this changes under it. */
     fun serial(id: String): Long? = onMain { spaces[id]?.serial }
 
     /** Gives space [id] to a visible screen (the owner watches, logs in or takes over there). False when it is not open. */

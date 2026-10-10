@@ -36,7 +36,7 @@ object SenseCapabilities {
     private fun now() = System.currentTimeMillis()
 
     val list: List<Capability> = listOf(
-        Cap("location.get", "The phone's location now: the fused, GPS and network providers are asked together and the first fix good enough for the accuracy wins (a fix from the last 2 minutes may answer at once). The result says which provider answered, its accuracy, the fix's age, whether the accuracy asked for was met, and why other providers gave nothing (e.g. GPS switched off by the system). Nothing is stored. Errors: permission_denied, location_off, no_fix (the message gives each provider's reason).",
+        Cap("location.get", "The phone's location now: the fused, GPS and network providers are asked together and the first fix good enough for the accuracy wins (a fix from the last 2 minutes may answer at once). The result says which provider answered, its accuracy, the fix's age, whether the accuracy asked for was met, and why other providers gave nothing (e.g. GPS switched off by the system). Nothing is stored. Errors: forbidden (no location permission), unavailable (location off, or no fix; the message gives each provider's reason).",
             schema(
                 "accuracy" to prop("string", "high (GPS), balanced (default) or low (network)", enum = SenseConfig.ACCURACIES),
                 "timeout_s" to prop("integer", "Seconds to wait for a fix (5 to 120, default 30)"),
@@ -58,7 +58,7 @@ object SenseCapabilities {
                         .put("provider_notes", LocationPolicy.explainAll(a.reasons, timeout.toLong()))
                 })
         },
-        Cap("location.track", "Turn location and motion recording on or off. While on, Ash keeps a notification with a stop button, takes a point when movement starts or stops and every interval_min minutes (still or moving), and pushes new points to Ash. Errors: permission_denied.",
+        Cap("location.track", "Turn location and motion recording on or off. While on, Ash keeps a notification with a stop button, takes a point when movement starts or stops and every interval_min minutes (still or moving), and pushes new points to Ash. Errors: forbidden (no location permission).",
             schema(
                 "on" to prop("boolean", "true to record, false to stop", required = true),
                 "interval_min" to prop("integer", "Minutes between points (${SenseConfig.MIN_INTERVAL} to ${SenseConfig.MAX_INTERVAL}, default 30)"),
@@ -82,13 +82,13 @@ object SenseCapabilities {
             CapResult.json(JSONObject().put("from", r.first).put("to", r.last + 1).put("recording", Senses.config(ctx).recording)
                 .put("total", all.size).put("returned", points.size).put("points", JSONArray().apply { points.forEach { put(it.toJson()) } }))
         },
-        Cap("activity.current", "What the owner is doing now (still, walking, running, cycling, in_vehicle) and since when, from step cadence and location speed. Needs recording on. Errors: not_recording.",
+        Cap("activity.current", "What the owner is doing now (still, walking, running, cycling, in_vehicle) and since when, from step cadence and location speed. Needs recording on. Errors: unavailable (recording is off, or no motion data yet).",
             effect = Effect.READ, risk = Risk.NONE, label = "在看运动状态",
             result = result("state:string!", "since:integer")) { ctx, args ->
             SenseArgs.only(args, emptySet())
-            if (!Senses.config(ctx).recording) throw SenseError("not_recording", "motion is only followed while recording is on (location.track or sense.configure)")
+            if (!Senses.config(ctx).recording) throw SenseError("unavailable", "motion is only followed while recording is on (location.track or sense.configure)", "not_recording")
             val current = Recorder.sampler?.current() ?: Senses.store.openSegment()?.toJson()?.let { JSONObject().put("state", it.getString("state")).put("since", it.getLong("ts_start")) }
-            CapResult.json(current ?: throw SenseError("no_data", "recording just started: no motion data yet"))
+            CapResult.json(current ?: throw SenseError("unavailable", "recording just started: no motion data yet"))
         },
         Cap("activity.history", "Recorded activity segments (still, walking, running, cycling, in_vehicle) in a time range (default: the last 24 hours), with minutes per state.",
             schema(*range("24 hours")),
@@ -106,7 +106,7 @@ object SenseCapabilities {
                 .put("segments", JSONArray().apply { segs.forEach { put(it.toJson()) } })
                 .put("minutes", JSONObject().apply { minutes.forEach { (k, v) -> put(k, Math.round(v * 10) / 10.0) } }))
         },
-        Cap("sensors.steps", "Steps today from the phone's step counter. A complete count needs recording on since midnight; otherwise `complete` is false and `since` says from when it counts. The count is `steps`. Errors: permission_denied, source_unavailable, no_data (no reading yet today).",
+        Cap("sensors.steps", "Steps today from the phone's step counter. A complete count needs recording on since midnight; otherwise `complete` is false and `since` says from when it counts. The count is `steps`. Errors: forbidden (no activity-recognition permission), unavailable (no step counter, or no reading yet today).",
             effect = Effect.READ, risk = Risk.NONE, label = "在看今日步数",
             result = result("steps:integer!", "complete:boolean", "since:integer")) { ctx, args ->
             SenseArgs.only(args, emptySet())
@@ -116,7 +116,7 @@ object SenseCapabilities {
             val snaps = listOfNotNull(Senses.store.stepsBefore(dayStart)) + Senses.store.steps(dayStart..now.ts) + now
             val today = StepMath.today(snaps.distinct(), dayStart, now.ts)
             if (today == null || (today.steps == 0L && !today.complete))
-                throw SenseError("no_data", "no earlier step-counter reading today: turn recording on to count from midnight")
+                throw SenseError("unavailable", "no earlier step-counter reading today: turn recording on to count from midnight")
             CapResult.json(JSONObject().put("counter", now.counter).put("ts", now.ts).put("steps", today.steps).put("since", today.since).put("complete", today.complete))
         },
         Cap("health.sources", "Health data sources and their state: Health Connect (installed, which permissions granted), Gadgetbridge (installed, export folder granted, newest export file, recognised metrics) and xiaomi_scale (a Xiaomi scale the owner set up: configured or not, its last weigh-in). For each set-up source: latest_data_ts, the time of its newest actual reading (not the export file's time: Gadgetbridge can rewrite the file with nothing new from the watch), latest_data_age_h, and stale (true when older than stale_hours; null when not checked), with stale_summary in plain Chinese for the owner. Ash is also told once by a sense.source event when a source goes stale, and when it comes back.",
@@ -125,7 +125,7 @@ object SenseCapabilities {
             SenseArgs.only(args, emptySet())
             CapResult.json(JSONObject().put("sources", HealthHub.sources(ctx)))
         },
-        Cap("health.read", "Health readings in a time range (default: the last 7 days): rows {ts, metric, value, unit, source}. Metrics: ${HealthMetric.names.joinToString()}. Sources: ${HealthHub.SOURCES.joinToString()} (xiaomi_scale: weight only, each weigh-in heard from the owner's Xiaomi scale). Read only. Errors: permission_denied, source_unavailable, unsupported_schema.",
+        Cap("health.read", "Health readings in a time range (default: the last 7 days): rows {ts, metric, value, unit, source}. Metrics: ${HealthMetric.names.joinToString()}. Sources: ${HealthHub.SOURCES.joinToString()} (xiaomi_scale: weight only, each weigh-in heard from the owner's Xiaomi scale). Read only. Errors: forbidden (a source refuses the read), unavailable (no source, or an export that cannot be read).",
             schema(
                 "metrics" to arrayProp("Metrics to read (default: all)", JSONObject().put("type", "string").put("enum", JSONArray(HealthMetric.names))),
                 *range("7 days"),
@@ -157,7 +157,7 @@ object SenseCapabilities {
                 .apply { if (reading.errors.length() > 0) put("source_errors", reading.errors) }
                 .apply { if (stale.length() > 0) put("stale_sources", stale) })
         },
-        Cap("health.sync", "Ask Gadgetbridge to fetch new data from the watch and export its database now, and wait (up to 90 s) for the export. Needs Gadgetbridge's Intent API enabled. Errors: source_unavailable, timeout.",
+        Cap("health.sync", "Ask Gadgetbridge to fetch new data from the watch and export its database now, and wait (up to 90 s) for the export. Needs Gadgetbridge's Intent API enabled. Errors: unavailable (Gadgetbridge missing or its export failed), timeout.",
             effect = Effect.ACT, risk = Risk.NONE, label = "在让手表同步健康数据") { ctx, args ->
             SenseArgs.only(args, emptySet())
             val result = GadgetbridgeSource.sync(ctx)
@@ -170,7 +170,7 @@ object SenseCapabilities {
             SenseArgs.only(args, emptySet())
             CapResult.json(SenseSync.status(ctx).put("stored", Senses.store.counts()))
         },
-        Cap("sense.configure", "Change what is recorded: recording on/off, interval_min, accuracy (high|balanced|low), retention_days, geofences (named circles; crossing one is reported to Ash), stale_hours (per health source, hours without a new reading before it counts as stale; 0 = not checked; defaults health_connect 12, gadgetbridge 12, xiaomi_scale 0). Only the given keys change. Errors: permission_denied, bad_args.",
+        Cap("sense.configure", "Change what is recorded: recording on/off, interval_min, accuracy (high|balanced|low), retention_days, geofences (named circles; crossing one is reported to Ash), stale_hours (per health source, hours without a new reading before it counts as stale; 0 = not checked; defaults health_connect 12, gadgetbridge 12, xiaomi_scale 0). Only the given keys change. Errors: forbidden (no location permission), bad_request.",
             schema(
                 "recording" to prop("boolean", "Record location and motion"),
                 "interval_min" to prop("integer", "Minutes between points (${SenseConfig.MIN_INTERVAL} to ${SenseConfig.MAX_INTERVAL})"),
@@ -213,7 +213,7 @@ object SenseCapabilities {
         val before = Senses.config(ctx)
         val next = SenseConfig.apply(before, args)
         if (next.recording && !before.recording && !Senses.locationPermission(ctx))
-            throw SenseError("permission_denied", "location permission is not granted to Ash: the owner grants it on the senses setup page")
+            throw SenseError("forbidden", "location permission is not granted to Ash: the owner grants it on the senses setup page")
         val warnings = JSONArray()
         if (next.recording && !Senses.backgroundLocation(ctx)) warnings.put("background location is not allowed: no points while the phone is locked (set location to 「始终允许」)")
         if (next.recording && !Senses.locationOn(ctx)) warnings.put("location_off: location is turned off; points start once it is on")

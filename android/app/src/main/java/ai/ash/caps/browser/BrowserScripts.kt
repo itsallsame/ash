@@ -75,7 +75,7 @@ object BrowserScripts {
 (function(){ var before=scrollY; window.scrollBy(0,$direction*Math.round(innerHeight*0.8));
   return JSON.stringify({ok:true,y:Math.round(scrollY),moved:Math.round(scrollY)!==Math.round(before),height:document.documentElement.scrollHeight}); })()"""
 
-    /** Whether the page's visible text contains [text] (case and spacing ignored), for browser.run's wait step. */
+    /** Whether the page's visible text contains [text] (case and spacing ignored), for x.android.browser.run's wait step. */
     fun contains(text: String): String {
         val quoted = org.json.JSONObject.quote(text)
         return """

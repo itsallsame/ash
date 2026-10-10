@@ -75,10 +75,10 @@ object GadgetbridgeSource {
     }
 
     private fun ready(ctx: Context): Pair<Uri, GadgetbridgeFiles.Doc> {
-        val tree = folder(ctx) ?: throw SenseError("source_unavailable",
-            if (installedVersion(ctx) == null) "Gadgetbridge is not installed, and no export folder is granted" else "no Gadgetbridge export folder is granted (pick it on Ash 感知's setup page)")
-        val doc = GadgetbridgeFiles.newest(try { docs(ctx, tree) } catch (e: Exception) { throw SenseError("source_unavailable", "the export folder could not be listed: ${e.message}") })
-            ?: throw SenseError("source_unavailable", "no Gadgetbridge export in the granted folder (turn on auto export in Gadgetbridge, into this folder)")
+        val tree = folder(ctx) ?: throw SenseError("unavailable",
+            if (installedVersion(ctx) == null) "Gadgetbridge is not installed, and no export folder is granted" else "no Gadgetbridge export folder is granted (pick it on the senses setup page)", "source_unavailable")
+        val doc = GadgetbridgeFiles.newest(try { docs(ctx, tree) } catch (e: Exception) { throw SenseError("unavailable", "the export folder could not be listed: ${e.message}", "source_unavailable") })
+            ?: throw SenseError("unavailable", "no Gadgetbridge export in the granted folder (turn on auto export in Gadgetbridge, into this folder)", "source_unavailable")
         return tree to doc
     }
 
@@ -91,7 +91,7 @@ object GadgetbridgeSource {
         if (db.isFile && key.isFile && key.readText() == stamp) return db
         val uri = DocumentsContract.buildDocumentUriUsingTree(tree, doc.id)
         val tmp = File(dir, "export.tmp")
-        val input = ctx.contentResolver.openInputStream(uri) ?: throw SenseError("source_unavailable", "the export ${doc.name} could not be opened")
+        val input = ctx.contentResolver.openInputStream(uri) ?: throw SenseError("unavailable", "the export ${doc.name} could not be opened", "source_unavailable")
         input.use { raw ->
             if (doc.name.lowercase().endsWith(".zip")) {
                 ZipInputStream(raw).use { zip ->
@@ -100,12 +100,12 @@ object GadgetbridgeSource {
                         val e = zip.nextEntry ?: break
                         if (!e.isDirectory && GadgetbridgeFiles.zipEntry(e.name)) { tmp.outputStream().use { zip.copyTo(it) }; found = true; break }
                     }
-                    if (!found) throw SenseError("unsupported_schema", "the zip ${doc.name} holds no Gadgetbridge database")
+                    if (!found) throw SenseError("unavailable", "the zip ${doc.name} holds no Gadgetbridge database")
                 }
             } else tmp.outputStream().use { raw.copyTo(it) }
         }
         val head = tmp.inputStream().use { s -> ByteArray(16).also { s.read(it) } }
-        if (!head.contentEquals(GadgetbridgeFiles.MAGIC)) { tmp.delete(); throw SenseError("unsupported_schema", "${doc.name} is not an SQLite database") }
+        if (!head.contentEquals(GadgetbridgeFiles.MAGIC)) { tmp.delete(); throw SenseError("unavailable", "${doc.name} is not an SQLite database") }
         if (!tmp.renameTo(db)) { tmp.copyTo(db, overwrite = true); tmp.delete() }
         key.writeText(stamp)
         return db
@@ -117,7 +117,7 @@ object GadgetbridgeSource {
         val (tree, doc) = ready(ctx)
         val file = copy(ctx, tree, doc)
         val db = try { SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS) }
-        catch (e: Exception) { throw SenseError("unsupported_schema", "the export could not be opened: ${e.message}") }
+        catch (e: Exception) { throw SenseError("unavailable", "the export could not be opened: ${e.message}") }
         db.use {
             val names = db.rawQuery("SELECT name FROM sqlite_master WHERE type = 'table'", null).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
             val tables = names.map { n -> GadgetbridgeSchema.Table(n, db.rawQuery("PRAGMA table_info(${quote(n)})", null).use { c ->
@@ -152,7 +152,7 @@ object GadgetbridgeSource {
     /** The readings of [metrics] in [range] from the newest export. Throws [SenseError]. */
     fun read(ctx: Context, metrics: List<String>, range: LongRange, max: Int): List<HealthRow> = open(ctx) { o ->
         val plan = when (val p = o.plan) {
-            is GadgetbridgeSchema.Unsupported -> throw SenseError("unsupported_schema",
+            is GadgetbridgeSchema.Unsupported -> throw SenseError("unavailable",
                 "no recognised sample tables in the Gadgetbridge export (database version ${o.version}); tables: ${p.tables.joinToString()}")
             is GadgetbridgeSchema.Plan -> p
         }
@@ -243,7 +243,7 @@ object GadgetbridgeSource {
      * database export).
      */
     fun sync(ctx: Context, timeoutMs: Long = 90_000): JSONObject {
-        if (installedVersion(ctx) == null) throw SenseError("source_unavailable", "Gadgetbridge is not installed")
+        if (installedVersion(ctx) == null) throw SenseError("unavailable", "Gadgetbridge is not installed", "source_unavailable")
         ready(ctx)
         val events = LinkedBlockingQueue<String>()
         val receiver = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) { i.action?.let { events.offer(it) } } }
@@ -256,8 +256,8 @@ object GadgetbridgeSource {
             ctx.sendBroadcast(Intent(TRIGGER_EXPORT).setPackage(PACKAGE))
             when (waitFor(events, setOf(EXPORT_SUCCESS, EXPORT_FAIL), timeoutMs - (System.currentTimeMillis() - started))) {
                 EXPORT_SUCCESS -> {}
-                EXPORT_FAIL -> throw SenseError("source_unavailable", "Gadgetbridge reported that its database export failed (check its auto-export folder)")
-                else -> throw SenseError("timeout", "Gadgetbridge did not confirm an export within ${timeoutMs / 1000}s. Turn on its Intent API " +
+                EXPORT_FAIL -> throw SenseError("unavailable", "Gadgetbridge reported that its database export failed (check its auto-export folder)", "source_unavailable")
+                else -> throw SenseError("unavailable", "Gadgetbridge did not confirm an export within ${timeoutMs / 1000}s. Turn on its Intent API " +
                     "(Gadgetbridge → Settings → Developer options → Intent API: allow activity sync and allow database export), keep it allowed to run in the background, and try again")
             }
             Thread.sleep(1_500)

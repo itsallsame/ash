@@ -83,10 +83,10 @@ object HealthHub {
                 answered++
             } catch (e: SenseError) {
                 errors.put(s, JSONObject().put("code", e.code).put("message", e.message))
-                if (firstError == null || firstError.code == "source_unavailable") firstError = e
+                if (firstError == null || firstError.reason == "source_unavailable") firstError = e
             }
         }
-        if (answered == 0) throw firstError ?: SenseError("source_unavailable", "no health source is set up")
+        if (answered == 0) throw firstError ?: SenseError("unavailable", "no health source is set up", "source_unavailable")
         return Reading(rows.sortedBy { it.ts }.take(max), errors)
     }
 }
