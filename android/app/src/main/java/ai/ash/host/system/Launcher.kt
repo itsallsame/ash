@@ -9,7 +9,7 @@ import android.os.Process
 import android.provider.Settings
 
 /**
- * Starts activities for capabilities, which run in the background (CoreService). Since Android 10,
+ * Starts activities for capabilities, which run in the background (the hand app's process). Since Android 10,
  * background activity starts are silently dropped unless an exemption applies: ash has a visible
  * window, ash's accessibility service is enabled (bound by the system), or (before Android 15)
  * ash may draw overlays. Otherwise the start goes through the privileged shell (`am start`, the

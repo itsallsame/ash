@@ -2,7 +2,6 @@ package ai.ash.host.cap
 
 import ai.ash.host.AppState
 import ai.ash.host.Notifications
-import ai.ash.host.Paths
 import ai.ash.host.media.CameraActivity
 import ai.ash.host.media.CameraRequest
 import ai.ash.host.media.CameraRequests
@@ -47,6 +46,7 @@ import java.util.concurrent.TimeUnit
  * else is copied into its workspace's media/ folder.
  */
 object MediaCapabilities {
+    private const val KERNEL_CONTAINER_ROOT = "/data/user/0/ai.ash.kernel/files/container/main"
     private const val ASK = "Ask the owner to allow it: show a permission card with permission \"photos\"."
 
     private fun canRead(ctx: Context) = granted(ctx, Manifest.permission.READ_EXTERNAL_STORAGE) ||
@@ -57,7 +57,10 @@ object MediaCapabilities {
     private fun denied(what: String) = CapResult.error("permission_denied", "Ash may not $what yet (the phone's photos, videos and files permission is off). $ASK")
 
     private fun paths(ctx: Context): ContainerPaths {
-        val root = Paths(ctx).containerRoot
+        // TODO(T11c): the container now lives in the kernel package's private storage, which this app cannot read or
+        // write, so a copy into the agent's workspace (handOver with copy = true) fails until media hand-over is
+        // redesigned. Files in shared storage are still handed over in place.
+        val root = File(KERNEL_CONTAINER_ROOT)
         return ContainerPaths(File(root, "ubuntu"), File(root, "tmp"))
     }
 

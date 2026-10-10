@@ -1,56 +1,11 @@
-// The ash Android host: keeps ash core alive, lends the phone's abilities to it, shows its UI.
-// Everything agent-related lives in ash core (the payload); this app has no business logic.
+// The ash hand app: lends the phone's abilities to the kernel over the ash-link/1 link and shows the owner what it sends.
+// The kernel (ash core, its payload and the agent container) lives in its own package, android/kernel (ai.ash.kernel).
 import java.security.KeyStore
 import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-}
-
-// payload.zip + payload-index.json from `npm run build:payload` (repo root build/payload).
-val payloadDir = rootProject.file("../build/payload")
-val payloadAssets = layout.buildDirectory.dir("generated/payload-assets")
-
-val copyPayload by tasks.registering(Copy::class) {
-    from(payloadDir) { include("payload.zip", "payload-index.json") }
-    into(payloadAssets)
-    doFirst {
-        if (!payloadDir.resolve("payload.zip").exists()) {
-            throw GradleException("no payload: run `npm run build:payload` at the repo root first")
-        }
-    }
-}
-
-// The agent container (arm64 Ubuntu + node + DSH + proot) from `npm run build:container`
-// (repo root build/container): shipped as assets/container/{ash-container.tgz,VERSION}
-// (not .tar.gz: the asset merger would gunzip anything named *.gz).
-val containerDir = rootProject.file("../build/container")
-val containerAssets = layout.buildDirectory.dir("generated/container-assets")
-
-// A plain task, not part of the Copy: a Copy with nothing to copy is skipped as NO-SOURCE.
-val checkContainer by tasks.registering {
-    doLast {
-        val version = containerDir.resolve("VERSION")
-        if (!version.exists()) throw GradleException("no container: run `npm run build:container` at the repo root first")
-        val v = version.readText().trim()
-        val all = containerDir.listFiles { f -> f.name.matches(Regex("ash-container-.*\\.tar\\.gz")) }.orEmpty().map { it.name }
-        if (all != listOf("ash-container-$v.tar.gz")) {
-            throw GradleException("build/container/VERSION is $v but the archives are $all: run `npm run build:container` again")
-        }
-        // The container carries ash's skills and control plugin: a container older than their source must not ship.
-        val check = ProcessBuilder("node", rootProject.file("../tools/container-sources.mjs").path, "--check", containerDir.path)
-            .redirectErrorStream(true).start()
-        val said = check.inputStream.bufferedReader().readText().trim()
-        if (check.waitFor() != 0) throw GradleException(said)
-    }
-}
-
-val copyContainer by tasks.registering(Sync::class) {
-    dependsOn(checkContainer)
-    from(containerDir) { include("ash-container-*.tar.gz", "VERSION") }
-    into(containerAssets.map { it.dir("container") })
-    rename("ash-container-.*\\.tar\\.gz", "ash-container.tgz")
 }
 
 // The ash-link/1 frame schemas that packages/sdk generates (npm run gen:link-schema): the app checks every frame against them.
@@ -69,18 +24,14 @@ android {
     defaultConfig {
         applicationId = "ai.ash.agent"
         minSdk = 26
-        // 35, as SPEC-05 asks. The kernel classes still in this module (payload, container, node) cannot run from files/ at 35;
-        // they move to their own package, which stays on 28.
+        // 35, as SPEC-05 asks. What cannot run from files/ at 35 (the payload's executables) lives in the kernel package, which stays on 28.
         targetSdk = 35
         versionCode = 12
         versionName = "0.4.0"
-        buildConfigField("int", "CORE_PORT", "4700")
         buildConfigField("boolean", "ISOLATED_PROBE", "false")
         buildConfigField("long", "SENSE_RESCAN_MS", "21600000L")
         ndk { abiFilters += listOf("arm64-v8a") }
     }
-    ndkVersion = "27.2.12479018"
-    externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
 
     signingConfigs {
         create("release") {
@@ -99,7 +50,6 @@ android {
             // Opt-in isolated package for emulator probes; never replace the owner's installed app.
             if (providers.gradleProperty("ashIsolatedProbe").orNull == "true") {
                 applicationIdSuffix = ".probe"
-                buildConfigField("int", "CORE_PORT", "14763")
                 buildConfigField("boolean", "ISOLATED_PROBE", "true")
             }
             // Production debug updates must match Claude's last installed/re-signed APK.
@@ -126,7 +76,6 @@ android {
             initWith(getByName("debug"))
             matchingFallbacks += listOf("debug")
             applicationIdSuffix = ".sensesprobe"
-            buildConfigField("int", "CORE_PORT", "4700")
             buildConfigField("boolean", "ISOLATED_PROBE", "false")
             // Isolated emulator probe only; release keeps the six-hour rolling scan.
             buildConfigField("long", "SENSE_RESCAN_MS", "90000L")
@@ -137,16 +86,8 @@ android {
         }
     }
 
-    sourceSets["main"].assets.srcDir(payloadAssets)
     sourceSets["main"].assets.srcDir(linkSchemaAssets)
-    sourceSets["main"].assets.srcDir(containerAssets)
     buildFeatures { buildConfig = true; aidl = true }
-
-    androidResources {
-        // The payload is extracted with java.util.zip and the container with tar -z: store both,
-        // do not compress them twice (stored assets also report their length for progress).
-        noCompress += listOf("zip", "tgz")
-    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -158,9 +99,7 @@ android {
     lint { abortOnError = false; checkReleaseBuilds = false }
 }
 
-tasks.named("preBuild") { dependsOn(copyPayload, copyLinkSchema) }
-// Only packaging needs the container (unit tests do not merge assets, so they run without it).
-tasks.matching { it.name.matches(Regex("merge.*Assets")) }.configureEach { dependsOn(copyContainer) }
+tasks.named("preBuild") { dependsOn(copyLinkSchema) }
 // The card cases the core checks too (npm run gen:widget-cards): the phone's tests read them, so they rerun when they change.
 tasks.withType<Test>().configureEach { inputs.file(rootProject.file("../packages/core/test/fixtures/widget-cards.json")).withPropertyName("widgetCards") }
 

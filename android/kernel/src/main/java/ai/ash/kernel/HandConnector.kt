@@ -70,9 +70,9 @@ class HandConnector(
                 // A hand installed since the last try should not wait out the retry timer.
                 if (!bound) bindNow()
                 if (connectWaitMs > 0) {
-                    val until = System.currentTimeMillis() + connectWaitMs
-                    while (deliveredFor == null && System.currentTimeMillis() < until) {
-                        val left = until - System.currentTimeMillis()
+                    val until = android.os.SystemClock.elapsedRealtime() + connectWaitMs
+                    while (deliveredFor == null && android.os.SystemClock.elapsedRealtime() < until) {
+                        val left = until - android.os.SystemClock.elapsedRealtime()
                         if (left > 0) lock.wait(left)
                     }
                 }

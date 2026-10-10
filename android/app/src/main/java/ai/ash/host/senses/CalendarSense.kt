@@ -14,7 +14,7 @@ import android.os.Looper
 import android.provider.CalendarContract
 import android.util.Log
 import ai.ash.link.Link
-import ai.ash.host.CoreService
+import ai.ash.host.HandRuntime
 import org.json.JSONObject
 
 /** One observer and one next reminder alarm, owned by the resident service. */
@@ -205,5 +205,5 @@ class CalendarSense(private val ctx: Context, private val rescanIntervalMs: Long
 }
 
 class CalendarAlarmReceiver : BroadcastReceiver() {
-    override fun onReceive(ctx: Context, intent: Intent) = CoreService.start(ctx, CoreService.ACTION_CALENDAR_ALARM)
+    override fun onReceive(ctx: Context, intent: Intent) = HandRuntime.calendarRefresh()
 }

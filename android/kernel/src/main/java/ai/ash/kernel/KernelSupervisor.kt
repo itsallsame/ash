@@ -2,7 +2,11 @@ package ai.ash.kernel
 
 /** Time and waiting, so the supervisor can be driven by a fake clock. */
 interface Clock {
+    /** Monotonic milliseconds for measuring intervals (start timeout, heartbeat, backoff): not the wall clock, so changing the system time cannot fake a timeout. */
     fun now(): Long
+
+    /** Wall-clock epoch milliseconds, for a time the core must also understand (the `lifecycle.stop` deadline). */
+    fun wallNow(): Long = now()
 
     /** Sleeps up to [ms]; returns early when [wake] is called. */
     fun sleep(ms: Long)
@@ -13,7 +17,9 @@ class SystemClock : Clock {
     private val lock = Object()
     private var signaled = false
 
-    override fun now(): Long = System.currentTimeMillis()
+    override fun now(): Long = android.os.SystemClock.elapsedRealtime()
+
+    override fun wallNow(): Long = System.currentTimeMillis()
 
     override fun sleep(ms: Long) = synchronized(lock) {
         if (!signaled) try { lock.wait(ms) } catch (_: InterruptedException) {}
@@ -244,7 +250,7 @@ class KernelSupervisor(
     @Synchronized
     fun stopNode(reason: String, graceMs: Long = stopGraceMs) {
         val n = node ?: return
-        val line = HostEvents.lifecycleStop(clock.now() + graceMs, reason)
+        val line = HostEvents.lifecycleStop(clock.wallNow() + graceMs, reason)
         n.stop(line, graceMs)
         node = null
         watch.reset()
