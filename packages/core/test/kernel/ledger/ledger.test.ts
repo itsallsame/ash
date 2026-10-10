@@ -125,13 +125,6 @@ test("page filters: after, before, limit, from, to, word, text, thread", () => {
   assert.deepEqual(seqs({ limit: 0 }), [s0], "limit is at least 1");
 });
 
-test("text finds characters that JSON escapes", () => {
-  const { ledger } = openLedger();
-  ledger.append({ from: "person:owner", to: null, kind: "event", word: "say", body: { note: 'he said "hi"\nbye' } });
-  assert.equal(ledger.page({ text: 'said "hi"', limit: 10 }).length, 1);
-  assert.equal(ledger.page({ text: "hi\"\nbye", limit: 10 }).length, 1);
-});
-
 test("text also matches a long message through its summary", () => {
   const { ledger } = openLedger();
   ledger.append(say(`NEEDLE-START ${"x".repeat(20_000)} NEEDLE-END`));
@@ -140,17 +133,7 @@ test("text also matches a long message through its summary", () => {
   assert.equal(ledger.page({ text: "not there", limit: 10 }).length, 0);
 });
 
-test("page byte estimate counts thread as well as the body", () => {
-  const body = { text: "x" };
-  const bare = openLedger({ pageBytes: 400 });
-  bare.ledger.append(say("x"));
-  assert.equal(bare.ledger.page({ limit: 10 }).length, 1, "fits without a thread");
-  const threaded = openLedger({ pageBytes: 400 });
-  threaded.ledger.append({ ...say("x"), body, thread: "t".repeat(2000) });
-  assert.throws(() => threaded.ledger.page({ limit: 10 }), RangeError);
-});
-
-test("requests: waiting_owner, dispatched, done, interrupted; unfinished is everything not done", () => {
+test("requests: waiting_owner, dispatched, done, interrupted; unfinished is the ones still open", () => {
   const { ledger } = openLedger();
   const req = (word: string, options?: Parameters<Ledger["append"]>[1]) =>
     ledger.append({ from: "agent:main", to: "service:clock", kind: "request", word, body: {} }, options);
@@ -168,9 +151,9 @@ test("requests: waiting_owner, dispatched, done, interrupted; unfinished is ever
   assert.equal(ledger.request(b.id)?.state, "dispatched");
   ledger.setRequest(a.id, "done");
   ledger.setRequest(c.id, "interrupted");
-  assert.deepEqual(ledger.unfinished().map((r) => [r.id, r.state]), [[b.id, "dispatched"], [c.id, "interrupted"]]);
+  assert.deepEqual(ledger.unfinished().map((r) => [r.id, r.state]), [[b.id, "dispatched"]], "interrupted is final: it is not reported again");
+  assert.equal(ledger.request(c.id)?.state, "interrupted");
   ledger.setRequest(b.id, "done");
-  ledger.setRequest(c.id, "done");
   assert.deepEqual(ledger.unfinished(), []);
 });
 
@@ -207,16 +190,19 @@ test("tx commits on return and rolls back on throw, including appended messages 
   assert.equal(ledger.append(say("after")).seq > kept.seq, true, "the ledger still works after a rollback");
 });
 
-test("tx nests: an inner failure that is caught undoes only the inner part", () => {
+test("a tx inside a tx joins it: it commits or rolls back with the outer one", () => {
   const { ledger } = openLedger();
-  const outer = ledger.tx(() => {
+  const kept = ledger.tx(() => {
     const a = ledger.append(say("outer"));
-    try { ledger.tx(() => { ledger.append(say("inner")); throw new Error("inner"); }); } catch { /* caught on purpose */ }
+    ledger.tx(() => ledger.append(say("inner")));
     return a;
   });
-  assert.deepEqual(ledger.page({ limit: 10 }).map((m) => m.id), [outer.id]);
+  assert.equal(ledger.page({ limit: 10 }).length, 2);
+  assert.ok(ledger.get(kept.id));
   assert.throws(() => ledger.tx(() => { ledger.tx(() => ledger.append(say("x"))); throw new Error("outer"); }));
-  assert.equal(ledger.page({ limit: 10 }).length, 1);
+  assert.equal(ledger.page({ limit: 10 }).length, 2, "the inner work went with the outer failure");
+  ledger.tx(() => { ledger.append(say("after")); });
+  assert.equal(ledger.page({ limit: 10 }).length, 3, "the ledger still works after a failed nested tx");
 });
 
 test("tx refuses an async function and leaves nothing open", () => {

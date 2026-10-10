@@ -1,6 +1,6 @@
-export { Ledger, LedgerVersionError, EXIT_CONFIG, PAGE_BYTES } from "./ledger";
+export { Ledger, LedgerVersionError, EXIT_CONFIG } from "./ledger";
 export type {
-  Db, LedgerMessage, NewMessage, AppendOptions, PageQuery, RequestState, BlobApi, LedgerOpenOptions,
+  Db, LedgerMessage, NewMessage, AppendOptions, PageQuery, RequestState, BlobApi,
 } from "./ledger";
 export { SCHEMA_VERSION, REQUEST_STATES } from "./schema";
 export { HASH_PATTERN } from "./blob-store";

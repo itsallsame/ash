@@ -3,8 +3,8 @@
  * it is over 8 KB, or when it carries binary. What is long is replaced by a reference
  * `{"$blob": <sha256>, "mime", "size", "summary"}` and the content goes to the blob store.
  *
- * Binary is a `Uint8Array`, or an object that has a base64 string in `b64` or `data` next to a mime in `mime`,
- * `mime_type` or `mimeType` (an image, audio or file part). Only the data field is replaced; its siblings stay.
+ * Binary is a `Uint8Array`, or an object that has a base64 string in `b64` or `data` next to a mime in `mime`
+ * or `mimeType` (an image, audio or file part). Only the data field is replaced; its siblings stay.
  *
  * A `$blob` object inside an incoming body is only data: it is not registered as a reference, so a sender cannot
  * make a message "hold" somebody else's attachment.
@@ -13,10 +13,8 @@ import { binaryNote, textSummary, REF_SUMMARY_MAX } from "./summary";
 
 export const ROW_BODY_LIMIT = 16 * 1024;
 export const STRING_LIMIT = 8 * 1024;
-/** More than this many fields moved out one by one means the body is mostly small pieces: move the whole body instead. */
-const MAX_FIELD_REFS = 32;
-/** What one reference costs in the row, rounded up. */
-const REF_ESTIMATE = 420;
+/** A top-level field smaller than this is not worth moving out: its reference is as big. */
+const MIN_FIELD_BYTES = 512;
 
 export interface BlobRef { $blob: string; mime: string; size: number; summary: string }
 export interface Externalized {
@@ -33,7 +31,7 @@ export type PutBlob = (bytes: Uint8Array, mime: string) => string;
 
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const DATA_FIELDS = ["b64", "data"] as const;
-const MIME_FIELDS = ["mime", "mime_type", "mimeType"] as const;
+const MIME_FIELDS = ["mime", "mimeType"] as const;
 
 const isPlain = (value: unknown): value is Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value) || value instanceof Uint8Array) return false;
@@ -58,10 +56,13 @@ export function externalize(body: unknown, put: PutBlob): Externalized {
   const notes: string[] = [];
   let binaryBytes = 0;
 
+  const made = new WeakSet<object>();
   const makeRef = (path: string, bytes: Uint8Array, mime: string, summary: string): BlobRef => {
     const hash = put(bytes, mime);
     refs.push({ path, hash });
-    return { $blob: hash, mime, size: bytes.byteLength, summary };
+    const ref = { $blob: hash, mime, size: bytes.byteLength, summary };
+    made.add(ref);
+    return ref;
   };
 
   const walk = (node: unknown, path: string): unknown => {
@@ -93,33 +94,26 @@ export function externalize(body: unknown, put: PutBlob): Externalized {
   const input = body === undefined ? null : body;
   const size = Buffer.byteLength(JSON.stringify(input, function (this: any, key, value) { return this[key] instanceof Uint8Array ? null : value; }) ?? "null");
   let tree = walk(input, "");
-  let text = json(tree);
+  const text = json(tree);
 
   if (Buffer.byteLength(text) > ROW_BODY_LIMIT) {
-    const fields = fieldsOf(tree);
-    const plan: { key: string | number; bytes: number }[] = [];
+    // Move the largest top-level field out, work out the new size, and repeat while the row is still too big.
     let total = Buffer.byteLength(text);
-    for (const field of fields.sort((a, b) => b.bytes - a.bytes || String(a.key).localeCompare(String(b.key)))) {
-      if (total <= ROW_BODY_LIMIT || plan.length >= MAX_FIELD_REFS || field.bytes <= REF_ESTIMATE) break;
-      plan.push(field);
-      total -= field.bytes - REF_ESTIMATE;
+    const fields = fieldsOf(tree).filter((field) => field.bytes > MIN_FIELD_BYTES && !made.has((tree as any)[field.key])).sort((a, b) => b.bytes - a.bytes);
+    const copy: any = Array.isArray(tree) ? [...tree] : isPlain(tree) ? { ...tree } : null;
+    for (const field of fields) {
+      if (total <= ROW_BODY_LIMIT) break;
+      const child = copy[field.key];
+      const [bytes, mime, source] = typeof child === "string"
+        ? [Buffer.from(child, "utf8"), "text/plain", child] as const
+        : [Buffer.from(json(child), "utf8"), "application/json", json(child)] as const;
+      const ref = makeRef(pointer("", field.key), bytes, mime, textSummary(source, REF_SUMMARY_MAX));
+      copy[field.key] = ref;
+      total -= field.bytes - Buffer.byteLength(json(ref));
     }
-    if (total <= ROW_BODY_LIMIT) {
-      const copy: any = Array.isArray(tree) ? [...tree] : { ...(tree as object) };
-      for (const { key } of plan) {
-        const child = copy[key];
-        const [bytes, mime, summarySource] = typeof child === "string"
-          ? [Buffer.from(child, "utf8"), "text/plain", child] as const
-          : [Buffer.from(json(child), "utf8"), "application/json", json(child)] as const;
-        copy[key] = makeRef(pointer("", key), bytes, mime, textSummary(summarySource, REF_SUMMARY_MAX));
-      }
-      tree = copy;
-      text = json(tree);
-    }
-    if (Buffer.byteLength(text) > ROW_BODY_LIMIT) {
-      const bytes = Buffer.from(json(tree), "utf8");
-      tree = makeRef("", bytes, "application/json", textSummary(text, REF_SUMMARY_MAX));
-    }
+    if (copy) tree = copy;
+    // No top-level field left to move and the row is still too big: the whole body goes out.
+    if (total > ROW_BODY_LIMIT) tree = makeRef("", Buffer.from(json(tree), "utf8"), "application/json", textSummary(json(tree), REF_SUMMARY_MAX));
   }
   return { stored: tree, refs, notes, size: size + binaryBytes };
 }

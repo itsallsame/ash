@@ -65,10 +65,6 @@ export interface RequestState {
 export interface BlobApi {
   put(bytes: Uint8Array, mime: string): string;
   get(ref: string): { bytes: Uint8Array; mime: string } | null;
-  /** Size and mime without reading the content. */
-  info(ref: string): { size: number; mime: string } | null;
-  /** A piece of the content, `length` bytes from `offset`. */
-  read(ref: string, offset: number, length: number): Uint8Array | null;
 }
 
 export interface Ledger {
@@ -85,19 +81,12 @@ export interface Ledger {
   readonly blob: BlobApi;
   /** The one connection, for other modules' own tables. */
   db(): Db;
-  /** All or nothing; nests (an inner failure rolls back only the inner part when the outer code catches it). */
+  /** All or nothing. A call inside another `tx` joins it: nothing is undone until the outermost one fails. */
   tx<T>(fn: () => T): T;
   close(): void;
 }
 
-export interface LedgerOpenOptions {
-  /** The largest page `page` will build, in bytes (default 32 MiB). */
-  pageBytes?: number;
-}
-
-export const PAGE_BYTES = 32 * 1024 * 1024;
 const PAGE_LIMIT_MAX = 1000;
-const ROW_OVERHEAD = 64;
 
 type Row = Record<string, unknown>;
 const newId = () => `m_${randomBytes(9).toString("base64url")}`;
@@ -122,13 +111,11 @@ class SqliteLedger implements Ledger {
   private depth = 0;
   private readonly store: BlobStore;
 
-  constructor(private readonly conn: DatabaseSync, blobDir: string, private readonly pageBytes: number) {
+  constructor(private readonly conn: DatabaseSync, blobDir: string) {
     this.store = new BlobStore(blobDir, conn);
     this.blob = {
       put: (bytes, mime) => this.store.put(bytes, mime),
       get: (ref) => this.store.get(ref),
-      info: (ref) => this.store.info(ref),
-      read: (ref, offset, length) => this.store.read(ref, offset, length),
     };
   }
 
@@ -137,20 +124,26 @@ class SqliteLedger implements Ledger {
   close(): void { this.conn.close(); }
 
   tx<T>(fn: () => T): T {
-    const nested = this.depth > 0;
-    const name = `ledger_tx_${this.depth}`;
-    this.conn.exec(nested ? `SAVEPOINT ${name}` : "BEGIN IMMEDIATE");
+    // Inside a transaction the work simply joins it: whoever opened the outer one commits or rolls back all of it.
+    if (this.depth > 0) return this.run(fn);
+    this.conn.exec("BEGIN IMMEDIATE");
     this.depth++;
     try {
-      const result = fn();
-      if (result && typeof (result as { then?: unknown }).then === "function") throw new TypeError("ledger.tx takes a synchronous function");
-      this.conn.exec(nested ? `RELEASE ${name}` : "COMMIT");
+      const result = this.run(fn);
+      this.conn.exec("COMMIT");
       return result;
     } catch (error) {
-      try { this.conn.exec(nested ? `ROLLBACK TO ${name}; RELEASE ${name}` : "ROLLBACK"); } catch { /* the original error matters more */ }
+      try { this.conn.exec("ROLLBACK"); } catch { /* the original error matters more */ }
       throw error;
     } finally { this.depth--; }
   }
+
+  private run<T>(fn: () => T): T {
+    const result = fn();
+    if (result && typeof (result as { then?: unknown }).then === "function") throw new TypeError("ledger.tx takes a synchronous function");
+    return result;
+  }
+
   append(m: NewMessage, options: AppendOptions = {}): LedgerMessage {
     if (m.kind === "request" && m.to === null) throw new TypeError("a request needs a recipient");
     const id = m.id ?? newId();
@@ -194,22 +187,11 @@ class SqliteLedger implements Ledger {
     if (q.word !== undefined) { where.push("word=?"); args.push(q.word); }
     if (q.thread !== undefined) { where.push("thread=?"); args.push(q.thread); }
     if (q.text !== undefined && q.text !== "") {
-      // The body is stored as JSON, so a needle with a quote or a newline is also tried in its JSON spelling.
-      const needles = [...new Set([q.text, JSON.stringify(q.text).slice(1, -1)])];
-      where.push(`(${needles.map(() => `summary LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\'`).join(" OR ")})`);
-      for (const needle of needles) args.push(`%${likeEscape(needle)}%`, `%${likeEscape(needle)}%`);
+      where.push(`(summary LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')`);
+      args.push(`%${likeEscape(q.text)}%`, `%${likeEscape(q.text)}%`);
     }
     const descending = q.before !== undefined;
     const tail = `${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY seq ${descending ? "DESC" : "ASC"} LIMIT ?`;
-    // First count what the page would weigh without building it; every column that is sent counts, `thread` included.
-    let bytes = 0;
-    for (const row of this.conn.prepare(`SELECT length(CAST(body AS BLOB)) + length(CAST(id AS BLOB)) + length(CAST("from" AS BLOB))
-      + coalesce(length(CAST("to" AS BLOB)),0) + length(CAST(kind AS BLOB)) + length(CAST(word AS BLOB))
-      + coalesce(length(CAST(reply_to AS BLOB)),0) + coalesce(length(CAST(origin AS BLOB)),0) + coalesce(length(CAST(turn AS BLOB)),0)
-      + coalesce(length(CAST(thread AS BLOB)),0) + length(CAST(summary AS BLOB)) AS n FROM messages${tail}`).iterate(...args, limit) as Iterable<Row>) {
-      bytes += Number(row.n) + ROW_OVERHEAD;
-      if (bytes > this.pageBytes) throw new RangeError(`page exceeds ${this.pageBytes} bytes`);
-    }
     const rows = (this.conn.prepare(`SELECT * FROM messages${tail}`).all(...args, limit) as Row[]).map(decode);
     return descending ? rows.reverse() : rows;
   }
@@ -226,7 +208,7 @@ class SqliteLedger implements Ledger {
   }
 
   unfinished(): RequestState[] {
-    return (this.conn.prepare(`SELECT r.* FROM requests r JOIN messages m ON m.id=r.id WHERE r.state<>'done' ORDER BY m.seq`).all() as Row[])
+    return (this.conn.prepare(`SELECT * FROM requests WHERE state IN ('waiting_owner','dispatched') ORDER BY rowid`).all() as Row[])
       .map((row) => this.requestOf(row));
   }
 
@@ -235,7 +217,7 @@ class SqliteLedger implements Ledger {
   }
 }
 
-function open(path: string, options: LedgerOpenOptions = {}): Ledger {
+function open(path: string): Ledger {
   mkdirSync(dirname(path), { recursive: true });
   const conn = new DatabaseSync(path);
   try {
@@ -259,7 +241,7 @@ function open(path: string, options: LedgerOpenOptions = {}): Ledger {
     conn.close();
     throw error;
   }
-  return new SqliteLedger(conn, join(dirname(path), "blobs"), options.pageBytes ?? PAGE_BYTES);
+  return new SqliteLedger(conn, join(dirname(path), "blobs"));
 }
 
 /** `Ledger.open(path)`: the only way to get a ledger. */

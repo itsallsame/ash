@@ -130,10 +130,10 @@ test("a Uint8Array in a body is binary and leaves the row, however small", () =>
   assert.equal(m.size, Buffer.byteLength(JSON.stringify({ name: "a.bin", data: null })) + 4);
 });
 
-test("a small image part ({mime, b64}) is binary too; plain base64-looking text without a mime is not", () => {
+test("a small image part ({mime|mimeType, b64|data}) is binary too; plain base64-looking text without a mime is not", () => {
   const { ledger } = openLedger();
   const png = randomBytes(300);
-  const m = ledger.append({ from: "agent:main", to: null, kind: "event", word: "say", body: { parts: [{ type: "image", mime_type: "image/jpeg", data: png.toString("base64") }, { data: "AAAA" }] } });
+  const m = ledger.append({ from: "agent:main", to: null, kind: "event", word: "say", body: { parts: [{ type: "image", mimeType: "image/jpeg", data: png.toString("base64") }, { data: "AAAA" }] } });
   const parts = (m.body as { parts: { data: BlobRef | string }[] }).parts;
   assert.equal((parts[0]!.data as BlobRef).$blob, sha(png));
   assert.equal(parts[1]!.data, "AAAA");
@@ -147,18 +147,15 @@ test("a $blob object sent in a body is plain data: it does not make the message 
   assert.deepEqual(refs(ledger, forged.id), []);
 });
 
-test("blob.put/get/info/read: refs are content hashes, unknown refs give null", () => {
+test("blob.put/get: refs are content hashes, unknown refs give null", () => {
   const { ledger } = openLedger();
   const bytes = new TextEncoder().encode("0123456789");
   const ref = ledger.blob.put(bytes, "text/plain");
   assert.equal(ref, sha(bytes));
-  assert.deepEqual(ledger.blob.info(ref), { size: 10, mime: "text/plain" });
-  assert.equal(Buffer.from(ledger.blob.read(ref, 3, 4)!).toString(), "3456");
-  assert.equal(Buffer.from(ledger.blob.read(ref, 8, 100)!).toString(), "89");
+  assert.deepEqual(ledger.blob.get(ref), { bytes: bytes, mime: "text/plain" });
   assert.equal(ledger.blob.put(bytes, "text/plain"), ref);
   assert.equal(ledger.blob.get("0".repeat(64)), null);
   assert.equal(ledger.blob.get("../../etc/passwd"), null);
-  assert.equal(ledger.blob.read("nope", 0, 1), null);
 });
 
 test("blob files are written under blobs/<2 hex>/<hash>, with no temp files left", () => {

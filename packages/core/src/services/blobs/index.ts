@@ -50,28 +50,22 @@ export function createBlobsService(ledger: Ledger, options: BlobsOptions = {}): 
     const limit = body.limit === undefined ? DEFAULT_READ_BYTES : body.limit;
     if (!Number.isSafeInteger(offset) || (offset as number) < 0) return fail("bad_request", "offset must be a non-negative integer");
     if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > MAX_READ_BYTES) return fail("bad_request", `limit must be an integer from 1 to ${MAX_READ_BYTES}`);
-    const info = referenced(hash) ? ledger.blob.info(hash) : null;
-    if (!info) return fail("not_found", "no such attachment");
-    if (!isTextMime(info.mime)) return fail("bad_request", `this attachment is ${info.mime}, not text; use get`);
-    const start0 = offset as number;
-    if (start0 >= info.size) return { ok: true, result: { text: "", offset: start0, next_offset: null, size: info.size, mime: info.mime } };
-    // Read a little more on both sides so the cut never lands inside a character.
-    const from = Math.max(start0 - 3, 0);
-    const chunk = ledger.blob.read(hash, from, (limit as number) + 3 + 4 + (start0 - from));
-    if (!chunk) return fail("not_found", "no such attachment");
-    let start = start0 - from;
-    while (start < chunk.length && isContinuation(chunk[start])) start++;
-    let end = Math.min(start + (limit as number), chunk.length);
-    const atEnd = from + chunk.length >= info.size && end === chunk.length;
-    if (!atEnd) {
-      while (end > start && isContinuation(chunk[end])) end--;
-      if (end === start) { end = start + 1; while (end < chunk.length && isContinuation(chunk[end])) end++; }
-    }
-    const realStart = from + start;
-    const realEnd = from + end;
+    const found = referenced(hash) ? ledger.blob.get(hash) : null;
+    if (!found) return fail("not_found", "no such attachment");
+    if (!isTextMime(found.mime)) return fail("bad_request", `this attachment is ${found.mime}, not text; use get`);
+    const bytes = found.bytes;
+    const size = bytes.byteLength;
+    const requested = offset as number;
+    if (requested >= size) return { ok: true, result: { text: "", offset: requested, next_offset: null, size, mime: found.mime } };
+    // The cut falls on whole characters: skip continuation bytes at the start, step back to a character start at the end.
+    let start = requested;
+    while (start < size && isContinuation(bytes[start])) start++;
+    let end = Math.min(start + (limit as number), size);
+    while (end < size && end > start && isContinuation(bytes[end])) end--;
+    if (end === start) { end = start + 1; while (end < size && isContinuation(bytes[end])) end++; }
     return { ok: true, result: {
-      text: Buffer.from(chunk.subarray(start, end)).toString("utf8"), offset: realStart,
-      next_offset: realEnd >= info.size ? null : realEnd, size: info.size, mime: info.mime,
+      text: Buffer.from(bytes.subarray(start, end)).toString("utf8"), offset: start,
+      next_offset: end >= size ? null : end, size, mime: found.mime,
     } };
   }
 

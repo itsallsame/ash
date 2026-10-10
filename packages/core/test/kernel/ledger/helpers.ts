@@ -17,10 +17,10 @@ export function tempDir(): string {
   return dir;
 }
 
-export function openLedger(options?: Parameters<typeof Ledger.open>[1]): { ledger: Ledger; dir: string; path: string } {
+export function openLedger(): { ledger: Ledger; dir: string; path: string } {
   const dir = tempDir();
   const path = join(dir, "state", "ash.db");
-  const ledger = Ledger.open(path, options);
+  const ledger = Ledger.open(path);
   ledgers.push(ledger);
   return { ledger, dir, path };
 }
