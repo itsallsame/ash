@@ -5,8 +5,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { mayCall, type CallerKind } from "../../../../sdk/src/word";
 import { WORD_CONTRACTS } from "../../../../sdk/src/words";
-import { authorize } from "../../../src/kernel/router";
-import { agent, app, fake, hand, owner, remoteOwner, service, word, world, failure } from "./world";
+import { agentMay, authorize } from "../../../src/kernel/router";
+import { toolWords } from "../../../src/edges/tools/tools";
+import { agent, app, DEVICE, fake, flush, hand, owner, remoteOwner, service, word, world, failure } from "./world";
 
 const SNAPSHOT = join(dirname(fileURLToPath(import.meta.url)), "auth.snapshot.txt");
 const KINDS: CallerKind[] = ["owner", "agent", "app", "kernel"];
@@ -95,12 +96,46 @@ test("rule: an app uses only what it was granted", async () => {
   assert.equal(failure(await none.router.send({ to: "service:t", kind: "request", word: "a", body: {} }, app())).code, "forbidden", "no grants given: nothing");
 });
 
-test("rule: a hand sends events and nothing else; which events is the hands module's check", async () => {
+test("rule: a hand sends events and nothing else", async () => {
   const w = world();
   w.registry.add(fake("service:senses", [word("service:senses", "sense.location", { kind: "event", callers: ["kernel"], direction: "in" })]));
+  w.registry.add(fake(DEVICE, [word(DEVICE, "sense.location", { kind: "event", callers: ["kernel"], direction: "out" })]));
   w.registry.add(fake("service:t", [word("service:t", "a")]));
   assert.equal(failure(await w.router.send({ to: "service:t", kind: "request", word: "a", body: {} }, hand)).code, "forbidden");
-  assert.ok((await w.router.send({ to: "service:senses", kind: "event", word: "sense.location", body: {} }, hand)).ok, "the contract's callers (kernel) are not asked of a hand");
+  assert.ok((await w.router.send({ to: "service:senses", kind: "event", word: "sense.location", body: {} }, hand)).ok);
+});
+
+test("rule: an event is allowed when the sender's own words declare it, whoever the sender is; callers are not asked", async () => {
+  const w = world({ appGranted: () => false });
+  const ev = (member: string) => word(member, "thing.happened", { kind: "event", callers: ["kernel"], direction: "out" });
+  const sender = (id: string, declares: boolean) => fake(id, declares ? [ev(id)] : []);
+  const heard = fake("service:t", [], undefined, { listens: ["thing.happened"] });
+  w.registry.add(heard);
+  const cases: [string, any][] = [[DEVICE, hand], ["app:todo", app()], ["agent:w-9", agent("w-9")], ["service:clock", service("clock")]];
+  for (const [id, caller] of cases) {
+    const send = () => w.router.send({ to: null, kind: "event", word: "thing.happened", body: {} }, caller);
+    w.registry.add(sender(id, false));
+    assert.equal(failure(await send()).code, "forbidden", `${id} does not declare it`);
+    w.registry.add(sender(id, true));
+    assert.ok((await send()).ok, `${id} declares it`);
+  }
+  assert.equal(failure(await w.router.send({ to: null, kind: "event", word: "thing.happened", body: {} }, owner)).code, "forbidden", "the owner's edge is a member too, and must declare");
+  await flush();
+  assert.equal(heard.calls.length, 4);
+});
+
+test("agentMay: no limits, a words list, the words of a tool, and the pending words every agent has", () => {
+  const tw = (t: string) => (t === "clock" ? ["service:clock/set"] : []);
+  assert.ok(agentMay({}, "device:x", "any", tw));
+  assert.ok(agentMay({ tools: null, words: null }, "device:x", "any", tw));
+  assert.ok(agentMay({ words: ["service:t/*"] }, "service:t", "a", tw));
+  assert.ok(!agentMay({ words: ["service:t/*"] }, "service:u", "a", tw));
+  assert.ok(agentMay({ tools: ["clock"] }, "service:clock", "set", tw));
+  assert.ok(!agentMay({ tools: ["clock"] }, "service:clock", "cancel", tw));
+  assert.ok(!agentMay({ tools: [], words: [] }, "service:t", "a", tw));
+  for (const w of ["pending.list", "pending.get", "pending.redeem", "pending.skip", "pending.withdraw"]) assert.ok(agentMay({ tools: [], words: [] }, "service:gate", w, tw), w);
+  assert.ok(!agentMay({ tools: [], words: [] }, "service:gate", "rules.set", tw));
+  assert.ok(Array.isArray(toolWords("device_*")));
 });
 
 test("rule: wake and the kernel-only words come from the kernel alone", async () => {
@@ -128,7 +163,7 @@ test("rule: an attachment follows the messages that hold it", async () => {
 });
 
 test("authorize: a lookup that found nothing still gets the caller's own checks", () => {
-  const deps = { agentPolicy: () => null, mayReadAttachment: () => true };
-  assert.equal(authorize({ to: "service:x", word: "w", kind: "request", body: {} }, null, agent(), deps)?.code, "forbidden");
-  assert.equal(authorize({ to: "service:x", word: "w", kind: "request", body: {} }, null, owner, deps), null);
+  const deps = { agentPolicy: () => null, ledger: world().ledger };
+  assert.equal(authorize({ to: "service:x", word: "w", kind: "request", body: {} }, null, agent(), deps, true)?.code, "forbidden");
+  assert.equal(authorize({ to: "service:x", word: "w", kind: "request", body: {} }, null, owner, deps, true), null);
 });

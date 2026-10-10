@@ -13,8 +13,6 @@ import { wordsOf } from "../../../../sdk/src/words";
 import { ALWAYS_ASK, contractFingerprint, isPayment, RULE_DAYS, type GateStore, type PendingRecord, type Rule } from "../../kernel/gate";
 import type { Gate, SendOptions } from "../../kernel/types";
 
-export { createAttachmentGuard } from "./attachments";
-
 export const GATE_ID = "service:gate";
 /** What the service itself sends as: the hub's own code. */
 const SELF: Caller = { member: GATE_ID, via: "service", local: true };
@@ -28,7 +26,7 @@ export interface GateServiceDeps {
   /** `router.send`. */
   send(msg: Outgoing, caller: Caller, opts?: SendOptions): Promise<Reply>;
   /** The router's internal door: run a parked request again, approved. */
-  redeem(pendingId: string, redeemer: Caller): Promise<Reply>;
+  redeem(pendingId: string, redeemer: Caller, opts?: SendOptions): Promise<Reply>;
   /** The contract of a word, for rules (the registry's `find`). */
   contractOf(member: string, word: string): WordContract | null;
   onError?(where: string, error: unknown): void;
@@ -98,7 +96,7 @@ export function createGateService(deps: GateServiceDeps): GateService {
     const options = [{ id: "once", label: "可以" }, ...(p.offer_always ? [{ id: "always", label: "以后都可以" }] : []), { id: "deny", label: "不行" }];
     const body = {
       title: `需要你确认：${p.label ?? p.word}`,
-      detail: [`${p.originator} 想对 ${p.to} 做「${p.word}」。${p.purpose ? `目的：${p.purpose}` : ""}`.trim(), p.detail].filter(Boolean).join("\n"),
+      detail: [`${p.originator} 想对 ${p.to} 做「${p.word}」（${p.label ?? p.word}；效果 ${p.effect}，风险 ${p.risk}）。${p.purpose ? `目的：${p.purpose}` : ""}`.trim(), p.detail].filter(Boolean).join("\n"),
       human_kind: "question", options, expires_at: p.expires_at,
       source: { word: p.word, to: p.to, body_preview: preview.slice(0, 300), ...(preview.length > 300 ? { body_full: preview } : {}) },
     };
@@ -149,17 +147,13 @@ export function createGateService(deps: GateServiceDeps): GateService {
       }
       case "pending.redeem": {
         const p = mine(ctx, body.id);
-        const reply = await deps.redeem(p.id, ctx.caller);
+        const reply = await deps.redeem(p.id, ctx.caller, { signal: ctx.signal });
         if (!reply.ok) throw new WordError(reply.error.code, reply.error.message, { detail: reply.error.detail, recovery_hint: reply.error.recovery_hint });
         return { data: { result: reply.result?.data ?? null }, ...(reply.result?.content ? { content: reply.result.content } : {}) };
       }
       case "pending.skip": {
-        const kernel = ctx.caller.via === "service";
-        const p = kernel ? store.getPending(String(body.id)) : mine(ctx, body.id);
-        if (!p) throw new WordError("not_found", "no such pending request");
-        // The agent skips what was answered; the hub's own code (reflex, for the owner) skips a question still waiting.
-        if (!store.setState(p.id, kernel ? ["waiting"] : ["approved", "denied", "expired"], "skipped")) throw new WordError("conflict", `this request is ${p.state}`);
-        if (kernel) { cards.get(p.id)?.abort(); cards.delete(p.id); return { data: { skipped: true } }; }
+        const p = mine(ctx, body.id);
+        if (!store.setState(p.id, ["approved", "denied", "expired"], "skipped")) throw new WordError("conflict", `this request is ${p.state}; only an answered one can be skipped`);
         const why = typeof body.reason === "string" && body.reason ? `：${body.reason}` : "";
         void deps.send({ to: OWNER_ID, kind: "request", word: "say", body: { text: `${p.originator} 决定不再执行你${p.state === "approved" ? "批准" : "回答"}过的${what(p)}${why}` } }, SELF).catch(oops("skip"));
         return { data: { skipped: true } };

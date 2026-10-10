@@ -21,8 +21,10 @@ export const ALWAYS_ASK: ReadonlySet<string> = new Set([
 ]);
 
 const PAYMENT = /\b(pay|payment|purchase|checkout|transfer)\b|支付|付款|购买|下单|转账|充值|买单/i;
-/** Payments always reach the owner: no review, no carry-over, no 「以后都可以」. */
-export const isPayment = (contract: WordContract): boolean => PAYMENT.test(contract.word.replace(/[._-]/g, " ")) || PAYMENT.test(contract.label.doing);
+/** Payments always reach the owner: no review, no carry-over, no 「以后都可以」. A click on the browser is judged by the button's text. */
+export const isPayment = (contract: WordContract, body?: unknown): boolean =>
+  PAYMENT.test(contract.word.replace(/[._-]/g, " ")) || PAYMENT.test(contract.label.doing)
+  || (contract.word === "browser.click" && PAYMENT.test(String((body as { label?: unknown } | null)?.label ?? "")));
 
 export const ASSESS_MS = 10_000;
 export const REVIEW_MS = 5_000;
@@ -34,7 +36,6 @@ export interface GateOptions {
   now?: () => number;
   assessMs?: number;
   reviewMs?: number;
-  carry?: Carry;
 }
 
 function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
@@ -44,7 +45,7 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 
 export function createGate(deps: GateDeps, store: GateStore, options: GateOptions = {}): Gate & { carry: Carry } {
   const now = options.now ?? store.now;
-  const carry = options.carry ?? new Carry(now);
+  const carry = new Carry(now);
 
   const evidence = (req: Message, contract: WordContract, caller: Caller, risk: Risk, extra: { by: string; decision?: string; reason?: string; rule_id?: string; offer_always?: boolean }) => {
     const text = stable(req.body);
@@ -73,7 +74,7 @@ export function createGate(deps: GateDeps, store: GateStore, options: GateOption
     // risk: the declared one, or what the hand or member says about this call (SPEC-01 §6.3)
     let risk: Risk = contract.risk;
     let assessed = false;
-    if (contract.per_call_risk && deps.assess && !isPayment(contract)) {
+    if (contract.per_call_risk && deps.assess && !isPayment(contract, req.body)) {
       const answer = await within(deps.assess(req), options.assessMs ?? ASSESS_MS);
       if (answer === "none" || answer === "outward" || answer === "structure") { risk = answer; assessed = true; }
     }
@@ -86,7 +87,7 @@ export function createGate(deps: GateDeps, store: GateStore, options: GateOption
     // 2. a read
     if (contract.effect === "read") return { verdict: "allow", by: "read", offer_always: false };
 
-    const payment = isPayment(contract);
+    const payment = isPayment(contract, req.body);
     const ask = (by: string, reason: string, offer: boolean): Decision => {
       evidence(req, contract, caller, risk, { by, reason, offer_always: offer });
       return { verdict: "ask", by, offer_always: offer, reason };
@@ -104,9 +105,9 @@ export function createGate(deps: GateDeps, store: GateStore, options: GateOption
     const target = req.to ?? "";
     if ((target.startsWith("device:") || target.startsWith("body:")) && deps.tier(target) === "full") return allow("hand_full", "hand_full");
     // 7. the owner wants every outward action asked about
-    if (deps.mode() === "always") return ask("mode_always", "the approval mode is always", false);
-
     const execute = contract.effect === "execute";
+    if (deps.mode() === "always") return ask("mode_always", "the approval mode is always", !execute);
+
     const fingerprint = contractFingerprint(contract);
     // 8. a rule (never for a command)
     if (!execute) {

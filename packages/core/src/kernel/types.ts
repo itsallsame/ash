@@ -22,6 +22,8 @@ export interface Registry {
   /** The same id again replaces the member (a hand reconnects, a manifest changes). */
   add(m: Member): void;
   remove(id: string): void;
+  /** The member with this id, if it is here (a named event is delivered to it whether or not it declares the event). */
+  get(id: string): Member | null;
   /** null when the member is not here (the router answers `offline`) or does not speak the word (`not_found`). */
   find(to: string, word: string): { member: Member; contract: WordContract } | null;
   /** Members that speak a word, e.g. who can do health.read; online local ones first. */

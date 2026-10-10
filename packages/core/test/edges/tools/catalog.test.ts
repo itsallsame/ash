@@ -56,13 +56,14 @@ test("the declaration cuts the catalog down: tools stand for their words, words 
   r.policies.set(MAIN, { tools: ["capability_list", "capability_describe", "capability_call", "timer_*"], words: [`${PHONE}/location.get`, "service:vault/*"] });
   const tools = await r.client();
   const data = (await tools.call("capability_list")).data;
-  assert.deepEqual(data.members.map((m: any) => m.id).sort(), [PHONE, "service:clock", "service:vault"].sort());
+  assert.deepEqual(data.members.map((m: any) => m.id).sort(), [PHONE, "service:clock", "service:gate", "service:vault"].sort());
+  assert.deepEqual(wordsIn(data, "service:gate").sort(), ["pending.get", "pending.list", "pending.redeem", "pending.skip", "pending.withdraw"], "an agent always has the words of its own pending requests");
   assert.deepEqual(wordsIn(data, PHONE), ["location.get"]);
   assert.deepEqual(wordsIn(data, "service:clock").sort(), ["cancel", "list", "set"]);
   assert.deepEqual(wordsIn(data, "service:vault").sort(), ["describe", "list"], "vault set is not for an agent whatever the pattern says");
   // a declaration with no limit sees everything the contracts allow; an empty list sees nothing
   r.policies.set(MAIN, { tools: ["capability_list"], words: [] });
-  assert.deepEqual((await tools.call("capability_list")).data.members, []);
+  assert.deepEqual((await tools.call("capability_list")).data.members.map((m: any) => m.id), ["service:gate"], "only the words of its own pending requests, which every agent has");
 });
 
 test("capability_list with a member names the others; an unknown or invisible member is not_found with a hint", async () => {

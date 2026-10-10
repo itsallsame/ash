@@ -4,6 +4,7 @@
  * it lives in memory only (carry.ts).
  */
 import { createHash, randomBytes } from "node:crypto";
+import { errorBody, type ErrorCode } from "../../../../sdk/src/message";
 import type { Caller, Message, WordContract } from "../types";
 import type { Ledger } from "../ledger";
 
@@ -57,10 +58,10 @@ export interface PendingRecord {
   word: string;
   /** The body with secret fields masked. */
   body: unknown;
-  /** The body held a secret, so it can be run again only while the process that took it is alive. */
-  has_secret: boolean;
   thread?: string;
   label?: string;
+  effect: string;
+  risk: string;
   state: PendingState;
   created_at: number;
   expires_at: number;
@@ -75,8 +76,10 @@ const newId = (prefix: string) => `${prefix}_${randomBytes(9).toString("base64ur
 type Row = Record<string, unknown>;
 
 export class GateStore {
-  /** Called whenever a waiting question becomes expired (it counts as a refusal); `service:gate` tells the originator. */
+  /** Called when a question that was waiting becomes expired (it counts as a refusal); `service:gate` tells the originator. */
   onExpired?: (pending: PendingRecord) => void;
+  /** Called with the response recorded when a request ends without being carried out; the router passes it to its subscribers. */
+  onClosed?: (response: Message) => void;
 
   constructor(private readonly ledger: Ledger, readonly now: () => number = Date.now) {
     ledger.db().exec(`
@@ -150,9 +153,8 @@ export class GateStore {
     if (q.request_id) { where.push("request_id=?"); args.push(q.request_id); }
     if (q.before) { where.push("id<?"); args.push(q.before); }
     const limit = Math.min(q.limit ?? 50, 1000);
-    const rows = this.db.prepare(`SELECT id,data FROM gate_audit ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC`).all(...args) as { id: number; data: string }[];
     const kept: { id: number; e: Evidence }[] = [];
-    for (const r of rows) {
+    for (const r of this.db.prepare(`SELECT id,data FROM gate_audit ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC`).iterate(...args) as Iterable<{ id: number; data: string }>) {
       const e = JSON.parse(r.data) as Evidence;
       if (q.requester && e.requester !== q.requester) continue;
       if (q.word && e.word !== q.word) continue;
@@ -187,7 +189,7 @@ export class GateStore {
   }
   listPending(originator: string): PendingRecord[] {
     const rows = this.db.prepare("SELECT id FROM gate_pending WHERE originator=? AND state IN ('waiting','approved','denied','expired') ORDER BY created_at").all(originator) as { id: string }[];
-    return rows.map((r) => this.getPending(r.id)!).filter((p) => p.state !== "redeemed");
+    return rows.map((r) => this.getPending(r.id)!);
   }
   /** Waiting records whose time has come; they become expired. */
   expireDue(): PendingRecord[] {
@@ -198,7 +200,11 @@ export class GateStore {
     return (this.db.prepare("SELECT id FROM gate_pending WHERE state='waiting' ORDER BY created_at").all() as { id: string }[])
       .map((r) => this.getPending(r.id)!).filter((p) => p.state === "waiting");
   }
-  /** Move a record from one of the given states to another; null when it was not in one of them. */
+  /**
+   * Move a record from one of the given states to another; null when it was not in one of them. A question that ends
+   * without being carried out (refused, expired, withdrawn, skipped) closes its request in the ledger with a response
+   * that says how it ended.
+   */
   setState(id: string, from: PendingState[], to: PendingState, answer?: PendingRecord["answer"]): PendingRecord | null {
     const row = this.db.prepare("SELECT * FROM gate_pending WHERE id=?").get(id) as Row | undefined;
     if (!row || !from.includes(row.state as PendingState)) return null;
@@ -206,8 +212,26 @@ export class GateStore {
     const data = JSON.parse(String(row.data)) as Record<string, unknown>;
     if (answer) data.answer = answer;
     this.db.prepare("UPDATE gate_pending SET state=?,data=? WHERE id=? AND state=?").run(to, JSON.stringify(data), id, String(row.state));
-    if (to === "expired") { this.amend(id, { decision: "timeout", answered_at: this.now() }); try { this.onExpired?.({ ...rec, state: to }); } catch { /* telling is best effort */ } }
+    const next: PendingRecord = { ...rec, state: to, ...(answer ? { answer } : {}) };
+    if (to === "expired") this.amend(id, { decision: "timeout", answered_at: this.now() });
     if (to === "withdrawn") this.amend(id, { decision: "cancelled", answered_at: this.now() });
-    return { ...rec, state: to, ...(answer ? { answer } : {}) };
+    const ending = ENDINGS[to];
+    if (ending) this.close(next, ending[0], ending[1]);
+    if (to === "expired" && rec.state === "waiting") { try { this.onExpired?.(next); } catch { /* telling is best effort */ } }
+    return next;
+  }
+
+  private close(p: PendingRecord, code: ErrorCode, message: string): void {
+    if (this.ledger.request(p.id)?.state !== "waiting_owner") return;
+    this.ledger.setRequest(p.id, "done");
+    const response = this.ledger.append({ from: p.to, to: p.originator, kind: "response", word: p.word, body: { ok: false, error: errorBody(code, message) }, reply_to: p.id, ...(p.thread ? { thread: p.thread } : {}) });
+    try { this.onClosed?.(response); } catch { /* a subscriber must not undo the state */ }
   }
 }
+
+const ENDINGS: Partial<Record<PendingState, [ErrorCode, string]>> = {
+  denied: ["denied", "the owner refused"],
+  expired: ["timeout", "the owner did not answer in time, which counts as a refusal"],
+  withdrawn: ["cancelled", "the question was taken back before it was answered"],
+  skipped: ["cancelled", "the agent decided not to carry it out"],
+};

@@ -27,6 +27,7 @@ export function createRegistry(): Registry {
   return {
     add(m) { members.set(m.id, m); emit(m.id, "added"); },
     remove(id) { if (members.delete(id)) emit(id, "removed"); },
+    get(id) { return members.get(id) ?? null; },
     find(to, word) {
       const member = members.get(to);
       const contract = member && contractOf(member, word);

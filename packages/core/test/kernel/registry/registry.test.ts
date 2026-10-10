@@ -60,3 +60,11 @@ test("listeners: an exact event name or a prefix", () => {
   assert.deepEqual(r.listeners("sense.health").map((m) => m.id), ["app:b"]);
   assert.deepEqual(r.listeners("typing"), []);
 });
+
+test("get: a member by its id, whatever words it speaks", () => {
+  const r = createRegistry();
+  const m = fake("app:quiet", []);
+  r.add(m);
+  assert.equal(r.get("app:quiet"), m);
+  assert.equal(r.get("app:gone"), null);
+});

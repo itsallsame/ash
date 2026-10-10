@@ -7,7 +7,7 @@ import { createGate, GateStore } from "../../../src/kernel/gate";
 import { createRedact } from "../../../src/kernel/redact";
 import { createRegistry } from "../../../src/kernel/registry";
 import { createRouter } from "../../../src/kernel/router";
-import { createAttachmentGuard, createGateService } from "../../../src/services/gate";
+import { createGateService } from "../../../src/services/gate";
 import type { Caller, GateDeps } from "../../../src/kernel/types";
 import { after } from "node:test";
 import { openLedger } from "../ledger/helpers";
@@ -97,12 +97,11 @@ export function world(options: WorldOptions = {}) {
     ...(options.appGranted ? { appGranted: options.appGranted } : {}),
     ...(options.mayTalkToOwner ? { mayTalkToOwner: options.mayTalkToOwner } : {}),
     ...(options.mayAnswer ? { mayAnswer: options.mayAnswer } : {}),
-    mayReadAttachment: createAttachmentGuard(ledger),
     onParked: (p) => svc.issueCard(p),
     onError: (where, error) => errors.push({ where, error }),
   });
   const svc = createGateService({
-    store, gate, send: (m, c, o) => router.send(m, c, o), redeem: (id, c) => router.redeem(id, c),
+    store, gate, send: (m, c, o) => router.send(m, c, o), redeem: (id, c, o) => router.redeem(id, c, o),
     contractOf: (member, w) => registry.find(member, w)?.contract ?? null, onError: (where, error) => errors.push({ where, error }),
   });
   services.push(svc);

@@ -72,6 +72,9 @@ test("agent step 3: a payment always asks, with no 「以后都可以」", async
   const pay = word(DEVICE, "wallet.pay", { effect: "act", risk: "outward", label: { doing: "在付款" } });
   const d = await verdict(g, req("agent:main", DEVICE, "wallet.pay"), pay);
   assert.deepEqual([d.verdict, d.by, d.offer_always], ["ask", "payment", false]);
+  const click = word(DEVICE, "browser.click", { effect: "act", risk: "outward", label: { doing: "在点击" } });
+  assert.equal((await verdict(g, req("agent:main", DEVICE, "browser.click", { label: "立即支付" }), click)).by, "payment", "the button's text decides");
+  assert.notEqual((await verdict(g, req("agent:main", DEVICE, "browser.click", { label: "展开" }), click)).by, "payment");
   const byLabel = word(DEVICE, "order.place", { effect: "act", risk: "outward", label: { doing: "在下单" } });
   assert.equal((await verdict(g, req("agent:main", DEVICE, "order.place"), byLabel)).by, "payment");
 });
@@ -118,8 +121,9 @@ test("agent step 7: mode always asks about everything with an effect", async () 
   g.store.setMode("always");
   const r = req("agent:main", DEVICE, "message.send");
   const d = await verdict(g, r, send);
-  assert.deepEqual([d.verdict, d.by, d.offer_always], ["ask", "mode_always", false]);
+  assert.deepEqual([d.verdict, d.by, d.offer_always], ["ask", "mode_always", true], "only payments, the always-ask words and commands go without 「以后都可以」");
   assert.equal((await verdict(g, req("agent:main", DEVICE, "badge.set"), quiet)).verdict, "allow", "no risk comes before the mode");
+  assert.equal((await verdict(g, req("agent:main", BODY, "workspace.bash"), bash)).offer_always, false);
 });
 
 test("agent step 8: a rule lets the same agent, word and contract through; not a command; not after the contract changes", async () => {

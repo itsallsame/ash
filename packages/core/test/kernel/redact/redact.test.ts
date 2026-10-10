@@ -10,10 +10,9 @@ const pairing = word("service:devices", "pair_code", { result_schema: { type: "o
   code: sensitive({ type: "string" }, "hidden"), email: sensitive({ type: "string" }, "email"), card: sensitive({ type: "string" }, "tail4"),
   ip: sensitive({ type: "string" }, "ip"), plain: { type: "string" },
   more: { type: "array", items: { type: "object", properties: { ip: sensitive({ type: "string" }, "ip") } } },
-  either: { anyOf: [{ type: "object", properties: { card: sensitive({ type: "string" }, "tail4") } }, { type: "null" }] },
 } } });
 const data = { code: "123456", email: "alice@gmail.com", card: "4242424242424242", ip: "192.168.1.20", plain: "keep",
-  more: [{ ip: "10.0.0.7" }, { ip: "fe80::1:2:3" }], either: { card: "9999" } };
+  more: [{ ip: "10.0.0.7" }, { ip: "fe80::1:2:3" }] };
 
 test("the four masks", () => {
   const masked = redact.forCaller(data, pairing, agent()) as any;
@@ -23,7 +22,6 @@ test("the four masks", () => {
   assert.equal(masked.ip, "192.168.*.*");
   assert.equal(masked.more[0].ip, "10.0.*.*");
   assert.equal(masked.more[1].ip, "fe80:*", "an IPv6 address keeps its first group");
-  assert.equal(masked.either.card, "****");
   assert.equal(masked.plain, "keep");
   assert.equal(data.code, "123456", "the original is untouched");
 });

@@ -7,6 +7,7 @@
  *   meta       capability_list / capability_describe / capability_call: the way to every other word.
  *   receipt    await_result / list_pending / cancel: the tool surface's own mechanism for calls that take long.
  */
+import { glob } from "../../kernel/router";
 import { mayCall, RESERVED_INPUT_NAMES, type JsonSchema, type WordContract } from "../../../../sdk/src/word";
 import { WORD_CONTRACTS, wordContract } from "../../../../sdk/src/words";
 
@@ -162,9 +163,7 @@ export function toolDefinitions(): readonly ToolDefinition[] {
 // patterns: the declaration's `tools` and `words`
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** `*` matches any run of characters; everything else matches itself. */
-export const glob = (pattern: string, text: string): boolean =>
-  new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`).test(text);
+export { glob };
 
 /**
  * The `member/word` patterns a fixed tool (or a pattern of tool names such as `device_*`) stands for. Meta and receipt

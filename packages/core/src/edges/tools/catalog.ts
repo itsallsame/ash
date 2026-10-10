@@ -4,29 +4,27 @@
  * authorization (step 3) decides the same way, so what the catalog lists is what a call can reach.
  */
 import { mayCall, wordEffect, type WordContract } from "../../../../sdk/src/word";
+import { agentMay, type AgentPolicy } from "../../kernel/router";
 import type { Registry } from "../../kernel/types";
 import { failure, plain, type Shaped } from "./result";
-import { glob, RECEIPT_TOOLS, toolWords } from "./tools";
+import { FIXED_TOOLS, glob, RECEIPT_TOOLS, toolWords } from "./tools";
 
-/** What an agent's declaration lets it use; absent or null = no limit. `tools` are tool names, `words` are `member/word`; `*` matches any run. */
-export interface AgentPolicy {
-  tools?: readonly string[] | null;
-  words?: readonly string[] | null;
-}
+export type { AgentPolicy };
 
 export const limited = (policy: AgentPolicy): boolean => Boolean(policy.tools || policy.words);
 
-/** May the agent use this tool at all? The receipt tools are always its own. */
+/** The tools that stand for `service:gate/pending.*`: they work only on the agent's own requests, so every agent has them. */
+const approvalTool = (tool: string): boolean => FIXED_TOOLS.some((t) => t.name === tool && t.member === "service:gate" && t.word.startsWith("pending."));
+
+/** May the agent use this tool at all? The receipt tools and the tools of its own pending requests are always its own. */
 export function toolAllowed(policy: AgentPolicy, tool: string): boolean {
-  if ((RECEIPT_TOOLS as readonly string[]).includes(tool)) return true;
+  if ((RECEIPT_TOOLS as readonly string[]).includes(tool) || approvalTool(tool)) return true;
   return !policy.tools || policy.tools.some((pattern) => glob(pattern, tool));
 }
 
-/** The declaration's words, plus the words of its fixed tools (a meta tool adds none). */
+/** The declaration's words, plus the words of its fixed tools (a meta tool adds none): the kernel's one rule. */
 export function wordAllowed(policy: AgentPolicy, member: string, word: string): boolean {
-  if (!limited(policy)) return true;
-  const patterns = [...(policy.words ?? []), ...(policy.tools ?? []).flatMap(toolWords)];
-  return patterns.some((pattern) => glob(pattern, `${member}/${word}`));
+  return agentMay(policy, member, word, toolWords);
 }
 
 /** Does the call put a question to the owner? An indication from the contract; the gate decides (SPEC-01 §6.4). */

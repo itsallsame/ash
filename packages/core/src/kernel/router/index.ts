@@ -1,3 +1,5 @@
-export { createRouter, HubRouter, waitingOwner, type RouterDeps, type RouterCaller } from "./router";
+export { createRouter, HubRouter, waitingOwner, type RouterDeps } from "./router";
 export { shouldRecord } from "./record";
-export { authorize, type AgentPolicy, type AuthDeps } from "./authorize";
+export { authorize, type AuthDeps } from "./authorize";
+export { agentMay, glob, type AgentPolicy } from "./policy";
+export { mayReadAttachment } from "./attachments";

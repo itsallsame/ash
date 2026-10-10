@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WordError } from "../../../../sdk/src/message";
 import { secret, sensitive } from "../../../../sdk/src/word";
+import { wordsOf } from "../../../../sdk/src/words";
 import { agent, app, BODY, DEVICE, failure, fake, flush, hand, owner, service, success, word, world } from "./world";
 
 const call = (w: ReturnType<typeof world>, to: string, wd: string, body: unknown = {}, caller: any = agent(), opts?: any) =>
@@ -19,7 +20,7 @@ test("step 1: the shape of the message and the caller", async () => {
   assert.equal((await bad({ to: "service:x", kind: "request", word: "w", body: {} }, { member: "agent:main", via: "robot", local: false })).code, "unauthorized");
 });
 
-test("step 2: the sender and the turn are the caller's; the owner's origin comes from the caller", async () => {
+test("step 2: the sender and the turn are the caller's; the origin is what the caller carries", async () => {
   const w = world();
   const t = fake("service:t", [word("service:t", "w", { effect: "write" })]);
   w.registry.add(t);
@@ -28,9 +29,10 @@ test("step 2: the sender and the turn are the caller's; the owner's origin comes
   assert.equal(t.calls[0]!.msg.turn, "t7");
   assert.equal(t.calls[0]!.ctx.caller.member, "agent:main");
   await call(w, "service:t", "w", {}, owner);
-  assert.deepEqual(t.calls[1]!.msg.origin, { channel: "app", client: "client:s1", label: "本机" });
-  await call(w, "service:t", "w", {}, { ...owner, origin: { channel: "web", client: "client:s1", label: "网页 · Mac Chrome" } });
-  assert.equal(t.calls[2]!.msg.origin?.label, "网页 · Mac Chrome");
+  assert.equal(t.calls[1]!.msg.origin, undefined, "the caller gave none, the router does not guess");
+  const origin = { channel: "web" as const, client: "client:s1", label: "网页 · Mac Chrome" };
+  await call(w, "service:t", "w", {}, { ...owner, origin });
+  assert.deepEqual(t.calls[2]!.msg.origin, origin);
   assert.equal(t.calls[0]!.msg.origin, undefined);
 });
 
@@ -85,6 +87,9 @@ test("steps 6 and 7: an agent's request is recorded with its response, state don
   assert.deepEqual(rows.map((m) => [m.kind, m.from, m.to]), [["request", "agent:main", "service:t"], ["response", "service:t", "agent:main"]]);
   assert.equal(rows[1]!.reply_to, rows[0]!.id);
   assert.equal((reply as { ref?: string }).ref, rows[1]!.id, "ref is the id of the recorded response");
+  assert.equal((reply as { id?: string }).id, rows[0]!.id, "id is the request's");
+  const refused = await call(w, "service:gone", "x");
+  assert.ok((refused as { id?: string }).id?.startsWith("m_"), "even a refusal says which request it was");
   assert.equal(w.ledger.request(rows[0]!.id)?.state, "done");
   assert.equal(t.calls[0]!.msg.id, rows[0]!.id, "the member sees the id the ledger has");
 });
@@ -206,15 +211,28 @@ test("an event goes to the member it names and to everyone who listens (a prefix
   assert.equal(w.ledger.page({ limit: 10 }).length, 0, "sense.* is not recorded");
 });
 
-test("an event to nobody (to = null) goes to subscribers and listeners only; whoever declares it describes it; record: true is recorded", async () => {
+test("a named event is delivered to the member that is here, whether it declares the event or listens or not", async () => {
+  const w = world();
+  const quiet = fake("app:quiet", []);
+  w.registry.add(quiet);
+  w.registry.add(fake("service:clock", [word("service:clock", "tick.now", { kind: "event", callers: ["kernel"] })]));
+  assert.ok((await w.router.send({ to: "app:quiet", kind: "event", word: "tick.now", body: {} }, service("clock"))).ok);
+  await flush();
+  assert.equal(quiet.calls.length, 1);
+  assert.equal(failure(await w.router.send({ to: "app:gone", kind: "event", word: "tick.now", body: {} }, service("clock"))).code, "offline");
+});
+
+test("an event to nobody (to = null) goes to subscribers and listeners only; the sender's declaration describes it; record: true is recorded", async () => {
   const w = world();
   const listener = fake("service:history", [], undefined, { listens: ["turn.ended"] });
+  const ended = (member: string) => ({ ...wordsOf("agent:main").find((c) => c.word === "turn.ended")!, member });
   w.registry.add(listener);
+  w.registry.add(fake("service:agents", [ended("service:agents")]));
   const seen: string[] = [];
   w.router.subscribe({ word: "turn.ended" }, (m) => seen.push(m.from));
   const agents = service("agents");
-  const ended = { turn: "t1", lane: "front", outcome: "completed" };
-  const first = await w.router.send({ to: null, kind: "event", word: "turn.ended", body: ended }, agents);
+  const body = { turn: "t1", lane: "front", outcome: "completed" };
+  const first = await w.router.send({ to: null, kind: "event", word: "turn.ended", body }, agents);
   assert.ok(first.ok, JSON.stringify(first));
   await flush();
   assert.equal(listener.calls.length, 1);
@@ -222,14 +240,14 @@ test("an event to nobody (to = null) goes to subscribers and listeners only; who
   assert.deepEqual(seen, ["service:agents"]);
   assert.deepEqual(w.ledger.page({ limit: 10 }).map((m) => [m.kind, m.word]), [["event", "turn.ended"]]);
   assert.equal(failure(await w.router.send({ to: null, kind: "event", word: "turn.ended", body: {} }, agents)).code, "bad_request");
-  assert.equal(failure(await w.router.send({ to: null, kind: "event", word: "never.declared", body: {} }, agents)).code, "not_found");
-  assert.equal(failure(await w.router.send({ to: "service:gone", kind: "event", word: "turn.ended", body: ended }, agents)).code, "offline");
-  assert.equal(failure(await w.router.send({ to: null, kind: "event", word: "turn.ended", body: ended }, agent())).code, "forbidden", "events are for the kernel");
+  assert.equal(failure(await w.router.send({ to: null, kind: "event", word: "never.declared", body: {} }, agents)).code, "forbidden", "not among the sender's words");
+  assert.equal(failure(await w.router.send({ to: "service:gone", kind: "event", word: "turn.ended", body }, agents)).code, "offline");
+  assert.equal(failure(await w.router.send({ to: null, kind: "event", word: "turn.ended", body }, agent("other"))).code, "forbidden", "an agent that does not declare it");
 });
 
 test("a failing listener does not fail the sender", async () => {
   const w = world();
-  w.registry.add(fake("agent:w-1", [word("agent:*", "typing", { kind: "event", callers: ["kernel"] })]));
+  w.registry.add(fake("service:human", [word("service:human", "typing", { kind: "event", callers: ["kernel"] })]));
   w.registry.add(fake("app:bad", [], () => { throw new Error("boom"); }, { listens: ["typing"] }));
   assert.ok((await w.router.send({ to: null, kind: "event", word: "typing", body: {} }, service("human"))).ok);
   await flush();

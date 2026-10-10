@@ -27,13 +27,6 @@ function mask(kind: SensitiveMask, value: unknown): unknown {
   }
 }
 
-const fits = (value: unknown, type: unknown): boolean => {
-  if (type === undefined) return true;
-  const kinds = Array.isArray(type) ? type : [type];
-  const actual = value === null ? "null" : Array.isArray(value) ? "array" : typeof value === "number" && Number.isInteger(value) ? "integer" : typeof value;
-  return kinds.some((k) => k === actual || (k === "number" && actual === "integer"));
-};
-
 /** Walk a value along its schema and replace what the markers name. `secrets` also replaces x-ash-secret. */
 function walk(value: unknown, schema: unknown, secrets: boolean): unknown {
   if (!schema || typeof schema !== "object" || Array.isArray(schema) || value === undefined || value === null) return value;
@@ -41,25 +34,21 @@ function walk(value: unknown, schema: unknown, secrets: boolean): unknown {
   if (secrets && node[SECRET_KEYWORD] === true) return { set: true, length: typeof value === "string" ? value.length : JSON.stringify(value).length };
   const marker = node[SENSITIVE_KEYWORD] as { mask?: SensitiveMask } | undefined;
   if (marker?.mask) return mask(marker.mask, value);
-  let out: unknown = value;
-  for (const key of ["allOf", "anyOf", "oneOf"]) {
-    if (Array.isArray(node[key])) for (const branch of node[key]) if (fits(out, (branch as JsonSchema).type)) out = walk(out, branch, secrets);
+  if (Array.isArray(value)) {
+    const mapped = value.map((item) => walk(item, node.items, secrets));
+    return mapped.some((item, i) => item !== value[i]) ? mapped : value;
   }
-  if (Array.isArray(out)) {
-    const { items, prefixItems } = node as { items?: unknown; prefixItems?: unknown };
-    return out.map((item, i) => walk(item, Array.isArray(prefixItems) && i < prefixItems.length ? prefixItems[i] : items, secrets));
-  }
-  if (out && typeof out === "object") {
+  if (typeof value === "object") {
     const props = (node.properties ?? {}) as Record<string, unknown>;
     const rest = node.additionalProperties;
     let copy: Record<string, unknown> | undefined;
-    for (const [key, child] of Object.entries(out as Record<string, unknown>)) {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       const next = walk(child, Object.hasOwn(props, key) ? props[key] : rest, secrets);
-      if (next !== child) { copy ??= { ...(out as Record<string, unknown>) }; copy[key] = next; }
+      if (next !== child) { copy ??= { ...(value as Record<string, unknown>) }; copy[key] = next; }
     }
-    return copy ?? out;
+    return copy ?? value;
   }
-  return out;
+  return value;
 }
 
 export function createRedact(): Redact {

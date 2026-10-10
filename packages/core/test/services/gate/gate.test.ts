@@ -132,19 +132,93 @@ test("withdraw: the agent takes its question back while it waits and the card is
   assert.equal(failure(await s.gateCall("pending.redeem", { id })).code, "conflict");
 });
 
-test("withdraw and skip from the hub's own code need only that the question still waits", async () => {
+test("withdraw from the hub's own code needs only that the question still waits; skip, get, list and redeem stay with the agent", async () => {
   const s = setup();
   const a = success(await s.ask("a")).pending_id;
-  const b = success(await s.ask("b")).pending_id;
   await flush();
   const reflex = service("reflex");
   assert.equal(success(await s.gateCall("pending.withdraw", { id: a }, reflex)).withdrawn, true);
-  assert.equal(success(await s.gateCall("pending.skip", { id: b }, reflex)).skipped, true);
   assert.equal(s.store.getPending(a)?.state, "withdrawn");
-  assert.equal(s.store.getPending(b)?.state, "skipped");
-  assert.equal(failure(await s.gateCall("pending.skip", { id: b }, reflex)).code, "conflict", "no longer waiting");
+  assert.equal(success(await s.gateCall("pending.withdraw", { id: a }, reflex)).withdrawn, false, "no longer waiting");
   assert.equal(failure(await s.gateCall("pending.withdraw", { id: "nope" }, reflex)).code, "not_found");
-  assert.equal(failure(await s.gateCall("pending.get", { id: a }, reflex)).code, "forbidden", "get, list and redeem stay with the agent");
+  for (const wd of ["pending.get", "pending.skip"]) assert.equal(failure(await s.gateCall(wd, { id: a }, reflex)).code, "forbidden", wd);
+});
+
+test("a question that ends without being carried out closes its request with a response that says how", async () => {
+  const s = setup();
+  const seen: string[] = [];
+  s.router.subscribe({ word: "message.send" }, (m) => seen.push(`${m.kind}:${m.seq > 0 ? "seq" : "noseq"}`));
+  const responseOf = (id: string) => s.ledger.page({ limit: 100 }).find((m) => m.kind === "response" && m.reply_to === id) as any;
+
+  const denied = success(await s.ask("1")).pending_id;
+  const expired = success(await s.ask("2")).pending_id;
+  const withdrawn = success(await s.ask("3")).pending_id;
+  const skipped = success(await s.ask("4")).pending_id;
+  assert.deepEqual(seen, ["request:seq", "request:seq", "request:seq", "request:seq"], "the parked request reaches the subscribers, recorded");
+  await flush();
+  s.owner.answer("deny", 0);                                      // 1: refused
+  await flush();
+  await s.gateCall("pending.withdraw", { id: withdrawn });          // 3: taken back
+  s.owner.answer("once", 3); await flush();                         // 4: approved, then given up
+  await s.gateCall("pending.skip", { id: skipped });
+  s.clock.now += 11 * 60_000;                                        // 2: nobody answered
+  s.svc.sweep();
+
+  for (const [id, code] of [[denied, "denied"], [expired, "timeout"], [withdrawn, "cancelled"], [skipped, "cancelled"]] as const) {
+    assert.equal(s.ledger.request(id)?.state, "done", code);
+    assert.equal(responseOf(id).body.error.code, code);
+  }
+  assert.ok(!s.ledger.unfinished().some((r) => [denied, expired, withdrawn, skipped].includes(r.id)));
+  await flush();
+  assert.equal(s.ledger.page({ limit: 100 }).filter((m) => m.kind === "response" && [denied, expired, withdrawn, skipped].includes(m.reply_to!)).length, 4, "one response each, none twice");
+  assert.equal(seen.filter((x) => x.startsWith("response")).length, 4, "and the subscribers see them");
+});
+
+test("redeem sends the request on without publishing it a second time; the signal reaches the request", async () => {
+  const s = setup();
+  const id = success(await s.ask("again")).pending_id;
+  await flush();
+  s.owner.answer("once"); await flush();
+  const seen: string[] = [];
+  s.router.subscribe({ word: "message.send" }, (m) => seen.push(`${m.kind}:${m.seq}`));
+  await s.gateCall("pending.redeem", { id });
+  assert.equal(seen.length, 1, "only the response");
+  assert.match(seen[0]!, /^response:[1-9]/);
+
+  const hang = setup();
+  hang.phone.handler = () => new Promise(() => {});
+  const id2 = success(await hang.ask("slow")).pending_id;
+  await flush();
+  hang.owner.answer("once"); await flush();
+  const controller = new AbortController();
+  const pending = hang.router.send({ to: "service:gate", kind: "request", word: "pending.redeem", body: { id: id2 } }, agent(), { signal: controller.signal });
+  await flush();
+  controller.abort();
+  assert.equal(failure(await pending).code, "cancelled");
+  await flush();
+  assert.equal(hang.phone.cancelled.length, 1, "the member doing the work was told to stop");
+});
+
+test("an approval is good until the original expires_at, not longer", async () => {
+  const s = setup();
+  const id = success(await s.ask("late")).pending_id;
+  await flush();
+  s.owner.answer("once"); await flush();
+  s.clock.now += 10 * 60_000;
+  const reply = await s.gateCall("pending.redeem", { id });
+  assert.equal(failure(reply).code, "conflict");
+  assert.equal(s.phone.calls.length, 0);
+  assert.equal(s.store.getPending(id)?.state, "expired");
+  assert.equal(s.ledger.request(id)?.state, "done");
+});
+
+test("the card names the effect and the risk", async () => {
+  const s = setup();
+  await s.ask("x");
+  await flush();
+  const detail = (s.owner.cards[0]!.msg.body as any).detail as string;
+  assert.match(detail, /在发消息/);
+  assert.match(detail, /效果 act，风险 outward/);
 });
 
 test("ask: 「以后都可以」 writes a rule, and the same agent is then let through without a card", async () => {
@@ -195,33 +269,16 @@ test("an app is refused, not asked", async () => {
   assert.equal(s.store.waiting().length, 0);
 });
 
-test("a request with a secret: the pending row and the ledger never hold it, redeem hands the handler the original", async () => {
+test("a request with a secret cannot wait for the owner: nothing is parked, nothing is written down", async () => {
   const s = setup();
-  const id = success(await s.ask("with secret", { token: "tok-123456" })).pending_id;
+  const reply = await s.ask("with secret", { token: "tok-123456" });
+  assert.equal(failure(reply).code, "forbidden");
   await flush();
-  const rows = JSON.stringify(s.ledger.db().prepare("SELECT data FROM gate_pending").all()) + JSON.stringify(s.ledger.page({ limit: 50 })) + JSON.stringify(s.ledger.db().prepare("SELECT data FROM gate_audit").all());
-  assert.ok(!rows.includes("tok-123456"));
-  assert.ok(!JSON.stringify(s.owner.cards[0]!.msg).includes("tok-123456"), "nor on the owner's card");
-  s.owner.answer("once"); await flush();
-  assert.ok((await s.gateCall("pending.redeem", { id })).ok);
-  assert.equal((s.phone.calls[0]!.ctx.raw as any).token, "tok-123456");
-  assert.ok(!JSON.stringify(s.ledger.page({ limit: 50 })).includes("tok-123456"));
-});
-
-test("a request with a secret cannot be redeemed after a restart", async () => {
-  const s = setup();
-  const id = success(await s.ask("x", { token: "tok-999999" })).pending_id;
-  await flush();
-  s.owner.answer("once"); await flush();
-  const restarted = setup();       // a new process: another router and no memory of the secret
-  void restarted;
-  // the same database, a new router: build one over the same store
-  const { createRouter } = await import("../../../src/kernel/router");
-  const { createAttachmentGuard } = await import("../../../src/services/gate");
-  const router2 = createRouter({ ledger: s.ledger, registry: s.registry, gate: s.gate, redact: s.redact, store: s.store, agentPolicy: () => ({}), mayReadAttachment: createAttachmentGuard(s.ledger), onParked: () => {} });
-  const reply = await router2.redeem(id, agent());
-  assert.equal(failure(reply).code, "conflict");
-  assert.equal(s.store.getPending(id)?.state, "approved", "still approved: nothing was used up");
+  assert.equal(s.owner.cards.length, 0);
+  assert.equal(s.store.waiting().length, 0);
+  assert.equal(s.ledger.page({ limit: 50 }).length, 0);
+  assert.ok(!JSON.stringify(s.ledger.db().prepare("SELECT data FROM gate_audit").all()).includes("tok-123456"));
+  assert.equal(s.phone.calls.length, 0);
 });
 
 test("restart: the open questions get their cards again, and an answer then still lets the agent redeem", async () => {

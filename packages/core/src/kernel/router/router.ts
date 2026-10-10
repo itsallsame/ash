@@ -9,7 +9,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { idKind, isAgentId, isMemberId } from "../../../../sdk/src/ids";
-import { CALLER_VIAS, errorBody, WordError, type ErrorBody, type HumanOrigin, type Outgoing, type Reply, type WordResult } from "../../../../sdk/src/message";
+import { CALLER_VIAS, errorBody, WordError, type ErrorBody, type Outgoing, type Reply } from "../../../../sdk/src/message";
 import { compileSchema, WORD_NAME_PATTERN, type Member, type WordContract } from "../../../../sdk/src/word";
 import { DEFAULT_TTL_MINUTES, type GateStore, type PendingRecord } from "../gate";
 import type { Ledger } from "../ledger";
@@ -43,10 +43,7 @@ const OUTGOING_KEYS = new Set(["to", "kind", "word", "body", "reply_to", "thread
 const fail = (error: ErrorBody): Reply => ({ ok: false, error });
 const newId = () => `m_${randomBytes(9).toString("base64url")}`;
 
-/** A caller as the edges may give it: the human edge can also hand over where the owner came from. */
-export type RouterCaller = Caller & { origin?: HumanOrigin };
-
-function validate(msg: Outgoing, caller: RouterCaller): ErrorBody | null {
+function validate(msg: Outgoing, caller: Caller): ErrorBody | null {
   if (!msg || typeof msg !== "object") return errorBody("bad_request", "the message must be an object");
   const extra = Object.keys(msg).filter((k) => !OUTGOING_KEYS.has(k));
   if (extra.length) return errorBody("bad_request", `unknown keys: ${extra.join(", ")}`);
@@ -79,29 +76,32 @@ function toError(error: unknown): ErrorBody {
   return errorBody("internal", "the hub failed while handling this request");
 }
 
-interface Located { member: Member | null; contract: WordContract | null; problem: ErrorBody | null }
-
-interface Resume { pending: PendingRecord; raw: unknown }
+/** What the lookup of step 3 and 4 found. `declared`: for an event, the sender's own words include it. */
+interface Located { member: Member | null; contract: WordContract | null; problem: ErrorBody | null; declared: boolean }
 
 export class HubRouter implements Router {
   private readonly now: () => number;
   private readonly subscribers = new Set<{ filter: Parameters<Router["subscribe"]>[0]; cb: (m: Message) => void }>();
-  /** Bodies that held a secret, kept while their request waits for the owner. Never on disk. */
-  private readonly held = new Map<string, unknown>();
 
-  constructor(private readonly deps: RouterDeps) { this.now = deps.now ?? Date.now; }
+  constructor(private readonly deps: RouterDeps) {
+    this.now = deps.now ?? Date.now;
+    deps.store.onClosed = (response) => this.publish(response);
+  }
 
   send(msg: Outgoing, caller: Caller, opts: SendOptions = {}): Promise<SendReply> { return this.run(msg, caller, opts, null); }
 
-  /** The internal door of `service:gate/pending.redeem`: run the stored request again, approved, once. */
+  /** The internal door of `service:gate/pending.redeem`: run the stored request again, approved, once, and before its question would have expired. */
   async redeem(pendingId: string, redeemer: Caller, opts: SendOptions = {}): Promise<SendReply> {
-    const pending = this.deps.store.getPending(pendingId);
+    const { store } = this.deps;
+    const pending = store.getPending(pendingId);
     if (!pending) return fail(errorBody("not_found", "no such pending request"));
     if (pending.state !== "approved") return fail(errorBody("conflict", pending.state === "redeemed" ? "this approval was already used" : `this request is ${pending.state}, not approved`));
-    const raw = pending.has_secret ? this.held.get(pendingId) : pending.body;
-    if (pending.has_secret && raw === undefined) return fail(errorBody("conflict", "the hub restarted and no longer holds the secret this request carried; make the request again"));
-    const msg: Outgoing = { to: pending.to, kind: "request", word: pending.word, body: raw, ...(pending.thread ? { thread: pending.thread } : {}) };
-    return this.run(msg, { ...pending.caller, turn: redeemer.turn }, opts, { pending, raw });
+    if (pending.expires_at <= this.now()) {
+      store.setState(pendingId, ["approved"], "expired");
+      return fail(errorBody("conflict", "this approval ran out; make the request again"));
+    }
+    const msg: Outgoing = { to: pending.to, kind: "request", word: pending.word, body: pending.body, ...(pending.thread ? { thread: pending.thread } : {}) };
+    return this.run(msg, { ...pending.caller, turn: redeemer.turn }, opts, pending);
   }
 
   subscribe(filter: Parameters<Router["subscribe"]>[0], cb: (m: Message) => void): () => void {
@@ -129,26 +129,23 @@ export class HubRouter implements Router {
   private locate(msg: Message): Located {
     const { registry } = this.deps;
     if (msg.kind === "request") {
-      if (!registry.describe(msg.to!)) return { member: null, contract: null, problem: errorBody("offline", `${msg.to} is not connected`) };
+      if (!registry.describe(msg.to!)) return { member: null, contract: null, problem: errorBody("offline", `${msg.to} is not connected`), declared: true };
       const found = registry.find(msg.to!, msg.word);
-      if (!found) return { member: null, contract: null, problem: errorBody("not_found", `${msg.to} has no word ${msg.word}`) };
-      if (found.contract.kind !== "request") return { member: found.member, contract: found.contract, problem: errorBody("bad_request", `${msg.word} is an event, not a request`) };
-      return { member: found.member, contract: found.contract, problem: null };
+      if (!found) return { member: null, contract: null, problem: errorBody("not_found", `${msg.to} has no word ${msg.word}`), declared: true };
+      if (found.contract.kind !== "request") return { member: found.member, contract: found.contract, problem: errorBody("bad_request", `${msg.word} is an event, not a request`), declared: true };
+      return { member: found.member, contract: found.contract, problem: null, declared: true };
     }
-    // An event is described by the member it goes to, else by the member that sends it, else by whoever declares it:
-    // the hub's own modules send events on behalf of others (the agents module sends `turn.ended`, which `agent:*` declares).
-    const to = msg.to === null ? null : registry.find(msg.to, msg.word);
-    if (msg.to !== null && !registry.describe(msg.to)) return { member: null, contract: null, problem: errorBody("offline", `${msg.to} is not connected`) };
-    const declarer = registry.findByWord(msg.word)[0];
-    const contract = to?.contract ?? registry.find(msg.from, msg.word)?.contract ?? (declarer && registry.find(declarer.id, msg.word)?.contract) ?? null;
-    if (!contract) return { member: null, contract: null, problem: errorBody("not_found", `no member declares the event ${msg.word}`) };
-    if (contract.kind !== "event") return { member: null, contract, problem: errorBody("bad_request", `${msg.word} is a request, not an event`) };
-    return { member: to?.member ?? null, contract, problem: null };
+    // An event is described by what its sender declares, else by what the member it goes to declares.
+    const sender = registry.find(msg.from, msg.word);
+    const member = msg.to === null ? null : registry.get(msg.to);
+    if (msg.to !== null && !member) return { member: null, contract: null, problem: errorBody("offline", `${msg.to} is not connected`), declared: sender !== null };
+    const contract = sender?.contract ?? (member ? registry.find(member.id, msg.word)?.contract : null) ?? null;
+    if (!contract) return { member, contract: null, problem: errorBody("not_found", `no member declares the event ${msg.word}`), declared: false };
+    if (contract.kind !== "event") return { member, contract, problem: errorBody("bad_request", `${msg.word} is a request, not an event`), declared: sender !== null };
+    return { member, contract, problem: null, declared: sender !== null };
   }
 
-  private async run(out: Outgoing, caller: RouterCaller, opts: SendOptions, resume: Resume | null): Promise<SendReply> {
-    const { ledger, registry, gate, redact, store } = this.deps;
-
+  private async run(out: Outgoing, caller: Caller, opts: SendOptions, resume: PendingRecord | null): Promise<SendReply> {
     // 1. validate
     const bad = validate(out, caller);
     if (bad) return fail(bad);
@@ -156,14 +153,21 @@ export class HubRouter implements Router {
     // 2. stamp: the sender and the origin come from the caller, never from the message
     const raw = out.body === undefined ? {} : out.body;
     const stamped: Message = {
-      seq: 0, id: resume ? resume.pending.id : newId(), ts: resume ? resume.pending.created_at : this.now(), from: caller.member, to: out.to, kind: out.kind, word: out.word, body: raw,
+      seq: 0, id: resume ? resume.id : newId(), ts: resume ? resume.created_at : this.now(), from: caller.member, to: out.to, kind: out.kind, word: out.word, body: raw,
       ...(out.reply_to ? { reply_to: out.reply_to } : {}), ...(out.thread ? { thread: out.thread } : {}), ...(caller.turn ? { turn: caller.turn } : {}),
-      ...(caller.via === "human" && (caller.origin || caller.client) ? { origin: caller.origin ?? { channel: caller.local ? "app" : "web", client: caller.client!, label: caller.local ? "本机" : "远程" } } : {}),
+      ...(caller.origin ? { origin: caller.origin } : {}),
     };
+    const reply: SendReply = await this.proceed(stamped, raw, caller, opts, resume);
+    reply.id = stamped.id;
+    return reply;
+  }
+
+  private async proceed(stamped: Message, raw: unknown, caller: Caller, opts: SendOptions, resume: PendingRecord | null): Promise<SendReply> {
+    const { ledger, gate, redact, store } = this.deps;
 
     // 3. authorize
     const located = this.locate(stamped);
-    const refused = authorize(stamped, located.contract, caller, this.deps);
+    const refused = authorize(stamped, located.contract, caller, this.deps, located.declared);
     if (refused) return fail(refused);
 
     // 4. find the endpoint; check the input; let the member refuse first
@@ -181,9 +185,8 @@ export class HubRouter implements Router {
 
     // 5. the gate
     if (resume) {
-      if (!store.setState(resume.pending.id, ["approved"], "redeemed")) return fail(errorBody("conflict", "this approval was already used"));
-      store.amend(resume.pending.id, { executed: this.now() });
-      this.held.delete(resume.pending.id);
+      if (!store.setState(resume.id, ["approved"], "redeemed")) return fail(errorBody("conflict", "this approval was already used"));
+      store.amend(resume.id, { executed: this.now() });
     } else {
       const decision = await gate.decide(view, contract, caller);
       if (decision.verdict === "deny") {
@@ -193,18 +196,17 @@ export class HubRouter implements Router {
       if (decision.verdict === "ask") return this.park(stamped, view, raw, contract, caller, decision.offer_always, opts, member);
     }
 
-    // 6. record
+    // 6. record: a request that was parked is in the ledger already and only goes on
     const timeout = contract.timeout_ms ?? (contract.effect === "read" ? READ_TIMEOUT_MS : OTHER_TIMEOUT_MS);
     const record = resume !== null || shouldRecord(stamped, contract, caller);
-    let recorded: Message = view;
     try {
       if (resume) ledger.setRequest(stamped.id, "dispatched");
-      else if (record) recorded = { ...view, seq: ledger.append(view, { request: { state: "dispatched", deadline: stamped.ts + timeout } }).seq };
+      else if (record) this.publish({ ...view, seq: ledger.append(view, { request: { state: "dispatched", deadline: stamped.ts + timeout } }).seq });
+      else this.publish(view);
     } catch (error) { this.deps.onError?.("record", error); return fail(errorBody("internal", "the request could not be recorded")); }
-    this.publish(recorded);
 
     // 7. deliver
-    const reply = await this.deliver(recorded, member, caller, raw, timeout, opts.signal);
+    const reply = await this.deliver(view, member, caller, raw, timeout, opts.signal);
     const shown: SendReply = this.forCaller(reply, contract, caller);
     if (record) {
       try {
@@ -219,23 +221,24 @@ export class HubRouter implements Router {
   }
 
   private park(stamped: Message, view: Message, raw: unknown, contract: WordContract, caller: Caller, offerAlways: boolean, opts: SendOptions, member: Member): Reply {
+    // A secret is never written down, so a request that carries one cannot wait for the owner.
+    if (JSON.stringify(view.body) !== JSON.stringify(raw)) return fail(errorBody("forbidden", "a request that carries a secret cannot wait for the owner's approval", { recovery_hint: "The owner can do this directly; an agent cannot." }));
     const ttl = Math.min(Math.max(Math.trunc(opts.approval?.ttl_minutes ?? DEFAULT_TTL_MINUTES) || DEFAULT_TTL_MINUTES, 1), 10_080);
     const expires = stamped.ts + ttl * 60_000;
     // The member may say more about what this request will do (an app install: the permissions it takes); the card carries it.
     let detail: string | null = null;
     try { detail = member.cardDetail?.(view) ?? null; } catch (error) { this.deps.onError?.("cardDetail", error); }
     try {
-      this.deps.ledger.tx(() => {
-        this.deps.ledger.append(view, { request: { state: "waiting_owner", deadline: expires } });
-        const hasSecret = JSON.stringify(view.body) !== JSON.stringify(raw);
-        const pending = this.deps.store.park({
-          id: stamped.id, originator: caller.member, caller, to: stamped.to!, word: stamped.word, body: view.body, has_secret: hasSecret,
+      const pending = this.deps.ledger.tx(() => {
+        const recorded = this.deps.ledger.append(view, { request: { state: "waiting_owner", deadline: expires } });
+        this.publish({ ...view, seq: recorded.seq });
+        return this.deps.store.park({
+          id: stamped.id, originator: caller.member, caller, to: stamped.to!, word: stamped.word, body: view.body, effect: contract.effect, risk: contract.risk,
           ...(stamped.thread ? { thread: stamped.thread } : {}), label: contract.label.doing, expires_at: expires, offer_always: offerAlways,
           ...(opts.approval?.purpose ? { purpose: opts.approval.purpose } : {}), ...(detail ? { detail } : {}),
         });
-        if (hasSecret) this.held.set(pending.id, raw);
-        queueMicrotask(() => { try { this.deps.onParked(pending); } catch (error) { this.deps.onError?.("onParked", error); } });
       });
+      queueMicrotask(() => { try { this.deps.onParked(pending); } catch (error) { this.deps.onError?.("onParked", error); } });
     } catch (error) { this.deps.onError?.("park", error); return fail(errorBody("internal", "the request could not be parked")); }
     return waitingOwner(stamped.id, expires);
   }
@@ -244,7 +247,6 @@ export class HubRouter implements Router {
     return new Promise<Reply>((resolve) => {
       const controller = new AbortController();
       let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = (reply: Reply) => {
         if (settled) return;
         settled = true;
@@ -259,7 +261,7 @@ export class HubRouter implements Router {
         finish(reply);
       };
       const onAbort = () => stop(fail(errorBody("cancelled", "the request was cancelled")));
-      timer = setTimeout(() => stop(fail(errorBody("timeout", `no result within ${Math.round(timeoutMs / 1000)} s`))), timeoutMs);
+      const timer = setTimeout(() => stop(fail(errorBody("timeout", `no result within ${Math.round(timeoutMs / 1000)} s`))), timeoutMs);
       if (signal?.aborted) return onAbort();
       signal?.addEventListener("abort", onAbort, { once: true });
       Promise.resolve().then(() => member.handle(msg, { signal: controller.signal, caller, raw })).then(
@@ -273,21 +275,18 @@ export class HubRouter implements Router {
   private forCaller(reply: Reply, contract: WordContract, caller: Caller): Reply {
     if (!reply.ok || reply.result?.data === undefined) return reply;
     const data = this.deps.redact.forCaller(reply.result.data, contract, caller);
-    return data === reply.result.data ? reply : { ok: true, result: { ...(reply.result as WordResult), data } };
+    return data === reply.result.data ? reply : { ok: true, result: { ...reply.result, data } };
   }
 
-  /** Events: to the member named, and to every member that listens; nobody waits for the answer. */
-  private deliverEvent(stamped: Message, view: Message, contract: WordContract, caller: Caller, to: Member | null): Reply {
+  /** Events: to the member named (if it is here), and to every member that listens; nobody waits for the answer. */
+  private deliverEvent(stamped: Message, view: Message, contract: WordContract, caller: Caller, named: Member | null): Reply {
     let recorded = view;
     if (shouldRecord(stamped, contract, caller)) {
       try { recorded = { ...view, seq: this.deps.ledger.append(view).seq }; } catch (error) { this.deps.onError?.("record", error); return fail(errorBody("internal", "the event could not be recorded")); }
     }
     this.publish(recorded);
     const targets = new Map<string, Member>();
-    if (stamped.to !== null) {
-      const named = to ?? this.deps.registry.find(stamped.to, stamped.word)?.member;
-      if (named) targets.set(named.id, named);
-    }
+    if (named) targets.set(named.id, named);
     for (const m of this.deps.registry.listeners(stamped.word)) targets.set(m.id, m);
     targets.delete(stamped.from);
     for (const m of targets.values()) {
