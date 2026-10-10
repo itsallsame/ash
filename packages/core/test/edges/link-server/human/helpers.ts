@@ -95,7 +95,7 @@ export async function startHumanHub(over: Partial<HumanDeps> = {}): Promise<Huma
     router: mini, ledger, settings: () => settings, now: () => clock.now, timeZone: "UTC", log: () => {},
     summarize: async (steps) => { summaries.push(steps); return "在整理日程"; },
     primary: () => "agent:main",
-    timing: { presentMs: 2000, islandMs: 300, recordMs: 1000, summaryDelayMs: 10 },
+    timing: { presentMs: 2000, islandMs: 3000, recordMs: 1000, summaryDelayMs: 10 },
     ...over,
   });
   mini.members.set("person:owner", human.member);
