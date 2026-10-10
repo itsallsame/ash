@@ -11,6 +11,7 @@ import type { HandleContext, Message } from "../../../../sdk/src/message";
 import { lintWords } from "../../../../sdk/src/word";
 import { createLocalBody, bodyWords, mainBodyKind, type LocalBody } from "../../../src/edges/body/local";
 import { createDshDriver, DEFAULT_ARGV } from "../../../src/edges/agents/dsh";
+import { proxyEnv } from "../../../src/edges/body/network";
 import type { ProotConfig } from "../../../src/edges/body/proot";
 
 const caller = { member: "agent:cloud", via: "agent" as const, local: false };
@@ -370,7 +371,7 @@ test("env.changed: setNetwork gives the next process the new proxy, and clears i
   } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test("python3 is installed once in the background on first use: log in the state directory, one at a time, a failure is only a log line", async () => {
+test("python3 is installed in the background only when provisionLater is called: once, log in the state directory, a failure is only a log line", async () => {
   const { dir, proot } = await prootDir(["apt-get"]);
   const stateDir = join(dir, "state");
   const fake = fakeProot(100, "E: no network\n");
@@ -378,33 +379,68 @@ test("python3 is installed once in the background on first use: log in the state
     isolation: { kind: "proot", proot }, runProot: fake.run, stateDir,
     network: { proxy: { http: "http://p:1" } }, env: { FROM: "options" },
   });
+  const installs = () => fake.runs.filter((run) => run.argv[0] === "/bin/sh");
   try {
-    body.spawn(["echo"]);
+    // The first meeting is not slowed by it: starting the runtime and opening the workspace install nothing.
+    body.spawn(["dsh"]);
     body.spawn(["echo"]);
     await ask(body, "workspace.ls", {});
-    const installs = fake.runs.filter((run) => run.argv[0] === "/bin/sh");
-    assert.equal(installs.length, 1, "started once, at once, without waiting");
-    assert.ok(installs[0]!.argv[2]!.includes("apt-get") && installs[0]!.argv[2]!.includes("python3"));
-    assert.equal(installs[0]!.env!.HTTP_PROXY, "http://p:1", "apt goes through the phone's proxy too");
-    assert.equal(installs[0]!.env!.FROM, "options");
+    assert.equal(installs().length, 0);
+    body.provisionLater();
+    body.provisionLater();
+    assert.equal(installs().length, 1, "started once, at once, without waiting");
+    assert.ok(installs()[0]!.argv[2]!.startsWith("dpkg --configure -a; "), "a half-installed package is put right first");
+    assert.ok(installs()[0]!.argv[2]!.includes("apt-get") && installs()[0]!.argv[2]!.includes("python3"));
+    assert.equal(installs()[0]!.env!.HTTP_PROXY, "http://p:1", "apt goes through the phone's proxy too");
+    assert.equal(installs()[0]!.env!.FROM, "options");
     for (let i = 0; i < 100 && !(await readFile(join(stateDir, "container-provision.log"), "utf8").catch(() => "")).includes("failed"); i++) await new Promise((r) => setTimeout(r, 10));
     const log = await readFile(join(stateDir, "container-provision.log"), "utf8");
     assert.ok(log.includes("E: no network") && log.includes("failed: exit 100"), log);
     // A failed attempt is not repeated in this run.
+    body.provisionLater();
     body.spawn(["echo"]);
-    assert.equal(fake.runs.filter((run) => run.argv[0] === "/bin/sh").length, 1);
+    assert.equal(installs().length, 1);
   } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test("python3 is not installed when the image has it, has no apt-get, or the body has no state directory", async () => {
+test("an attempt that did not start does not use up the one try", async () => {
+  const { dir, proot } = await prootDir([]);
+  const fake = fakeProot();
+  const body = createLocalBody({ isolation: { kind: "proot", proot }, runProot: fake.run, stateDir: join(dir, "state") });
+  try {
+    body.provisionLater(); // no apt-get in the image yet
+    assert.equal(fake.runs.length, 0);
+    await writeFile(join(proot.rootfs, "usr", "bin", "apt-get"), "");
+    body.provisionLater();
+    assert.equal(fake.runs.length, 1);
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("python3 is not installed when the image has it, has no apt-get, the body has no state directory, or it is not a container", async () => {
   for (const [files, withState] of [[["apt-get", "python3"], true], [[], true], [["apt-get"], false]] as const) {
     const { dir, proot } = await prootDir([...files]);
     const fake = fakeProot();
     const body = createLocalBody({ isolation: { kind: "proot", proot }, runProot: fake.run, ...(withState ? { stateDir: join(dir, "state") } : {}) });
     try {
-      body.spawn(["echo"]);
-      await ask(body, "workspace.ls", {});
+      body.provisionLater();
       assert.equal(fake.runs.filter((run) => run.argv[0] === "/bin/sh").length, 0, `${files.join(",")} state=${withState}`);
     } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
   }
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-native-"));
+  const fake = fakeProot();
+  const body = createLocalBody({ isolation: { kind: "native", native: { workspace: join(dir, "ws"), dsh_bin: "dsh", dsh_home: join(dir, "home") } }, runProot: fake.run, stateDir: join(dir, "state") });
+  try {
+    body.provisionLater();
+    assert.equal(fake.runs.length, 0);
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("NO_PROXY names each loopback address once, even when the host already listed some; a proxy turns Node's own proxy support on", async () => {
+  const env = proxyEnv({ proxy: { http: "http://p:1", no_proxy: " localhost , *.corp,127.0.0.1 ," } });
+  assert.equal(env.NO_PROXY, "localhost,*.corp,127.0.0.1,::1");
+  assert.equal(env.no_proxy, env.NO_PROXY);
+  assert.equal(env.NODE_USE_ENV_PROXY, "1");
+  assert.equal(proxyEnv({ proxy: { http: "http://p:1" } }).NO_PROXY, NO_PROXY_LOOPBACK);
+  assert.deepEqual(proxyEnv({ proxy: null }), {}, "no proxy, no Node switch either");
+  assert.deepEqual(proxyEnv({ proxy: {} }), {});
 });

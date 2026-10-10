@@ -8,7 +8,7 @@ import type { HostNetwork } from "../../../../sdk/src/host";
 export const LOOPBACK_NO_PROXY = "127.0.0.1,localhost,::1";
 
 /**
- * `HTTP_PROXY`/`HTTPS_PROXY` (both spellings) and `NO_PROXY` for one network state. Nothing when there is no proxy.
+ * `HTTP_PROXY`/`HTTPS_PROXY` (both spellings), `NO_PROXY` and `NODE_USE_ENV_PROXY` for one network state. Nothing when there is no proxy.
  * `NO_PROXY` always ends with the loopback addresses, after whatever the host excluded.
  */
 export function proxyEnv(network: HostNetwork | null | undefined): Record<string, string> {
@@ -17,8 +17,11 @@ export function proxyEnv(network: HostNetwork | null | undefined): Record<string
   const out: Record<string, string> = {};
   if (proxy.http) { out.HTTP_PROXY = proxy.http; out.http_proxy = proxy.http; }
   if (proxy.https) { out.HTTPS_PROXY = proxy.https; out.https_proxy = proxy.https; }
-  const noProxy = [proxy.no_proxy?.trim(), LOOPBACK_NO_PROXY].filter(Boolean).join(",");
+  // The host's own list first; a loopback address it already names is not added again.
+  const listed = (proxy.no_proxy ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+  const noProxy = [...listed, ...LOOPBACK_NO_PROXY.split(",").filter((entry) => !listed.includes(entry))].join(",");
   out.NO_PROXY = noProxy;
   out.no_proxy = noProxy;
+  out.NODE_USE_ENV_PROXY = "1"; // Node (DSH, apps) reads the proxy variables only when told to
   return out;
 }

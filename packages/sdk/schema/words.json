@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "af77a5cda5b2c222af2630afda9b796d6f74050213a06ced0b31c7320e5064b5",
+ "hash": "69df7261a5848cec39601aea6732a28e03e4a4c6dcff062d87735375bb742729",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -6471,7 +6471,7 @@
    "word": "env.changed",
    "kind": "event",
    "direction": "in",
-   "description": "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); the agents module restarts what needs it. Sent by the host module; not recorded.",
+   "description": "The host reports that the network or the power state changed (what: network with the proxy and whether the device is online, or power with whether it is in power-saving mode); when the proxy is a different one, the agents module restarts the agents running on this phone, between turns. Sent by the host module; not recorded.",
    "input_schema": {
     "type": "object",
     "oneOf": [

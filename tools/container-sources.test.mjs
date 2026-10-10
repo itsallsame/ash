@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { CONTAINER_PACKAGES, CONTAINER_PATCH, CONTAINER_REQUIRED_FILES, containerSourcesDigest, missingContainerFiles } from "./container-sources.mjs";
+import { CONTAINER_APT_LOCK, CONTAINER_APT_LOCK_PATH, CONTAINER_PACKAGES, CONTAINER_PATCH, CONTAINER_REQUIRED_FILES, containerSourcesDigest, missingContainerFiles } from "./container-sources.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -19,6 +19,8 @@ function layout(patch = CONTAINER_PATCH) {
     } else fs.mkdirSync(abs, { recursive: true });
   }
   fs.writeFileSync(path.join(work, "ubuntu/opt/ash/patch.yml"), patch);
+  fs.rmSync(path.join(work, "ubuntu", CONTAINER_APT_LOCK_PATH), { recursive: true, force: true });
+  fs.writeFileSync(path.join(work, "ubuntu", CONTAINER_APT_LOCK_PATH), CONTAINER_APT_LOCK);
   return work;
 }
 
@@ -51,4 +53,18 @@ test("the layout check wants the patch at /opt/ash/patch.yml, and the same patch
 test("the container carries the cost collector, and the sources digest is one hash", () => {
   assert.match(containerSourcesDigest(ROOT), /^[0-9a-f]{64}$/);
   assert.ok(CONTAINER_PACKAGES.includes("ash-cost"));
+});
+
+test("the image makes apt and dpkg wait for a held lock, and the layout check and the digest know the file", () => {
+  assert.equal(CONTAINER_APT_LOCK_PATH, "etc/apt/apt.conf.d/99ash-lock");
+  assert.equal(CONTAINER_APT_LOCK, 'DPkg::Lock::Timeout "300";\n');
+  assert.ok(CONTAINER_REQUIRED_FILES.includes(`ubuntu/${CONTAINER_APT_LOCK_PATH}`));
+  const work = layout();
+  try {
+    assert.deepEqual(missingContainerFiles(work), []);
+    fs.writeFileSync(path.join(work, "ubuntu", CONTAINER_APT_LOCK_PATH), "");
+    assert.deepEqual(missingContainerFiles(work), [`ubuntu/${CONTAINER_APT_LOCK_PATH} (not the one of this build)`]);
+    fs.rmSync(path.join(work, "ubuntu", CONTAINER_APT_LOCK_PATH));
+    assert.deepEqual(missingContainerFiles(work), [`ubuntu/${CONTAINER_APT_LOCK_PATH}`]);
+  } finally { fs.rmSync(work, { recursive: true, force: true }); }
 });

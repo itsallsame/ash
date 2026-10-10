@@ -226,7 +226,7 @@ export function createAgentsService(manager: AgentManager): Member {
       case "spawn": return spawn(body, ctx);
       case "vault.changed": await manager.onVaultChanged(String(body.ref), String(body.action)); return;
       case "settings.changed": if (Array.isArray(body.keys) && body.keys.includes("paused")) await manager.refreshPaused(); return;
-      case "env.changed": return;
+      case "env.changed": if (body.what === "network" && body.network) manager.onNetwork(body.network); return;
     }
     throw new WordError("not_found", `service:agents has no word ${word}`);
   }

@@ -8,6 +8,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { WordError, type Caller, type Message } from "../../../../sdk/src/message";
 import type { AgentDriver, AgentDriverFactory, AgentEvent, DriverAttachment, ModuleId, PromptModule } from "../../../../sdk/src/driver";
+import type { HostNetwork } from "../../../../sdk/src/host";
 import { OWNER_ID } from "../../../../sdk/src/ids";
 import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
@@ -51,7 +52,17 @@ export interface AgentsDeps {
   log?(...args: unknown[]): void;
   /** Vault refs the runtime may hold for itself. */
   credentialRefs?: string[];
+  /** The host's network when the module starts: what the running agents were given, to tell later whether the proxy changed. */
+  network?: HostNetwork;
+  /** The runtime kinds whose processes run on the main body, so a new proxy needs a new process (default `dsh`). Those on a computer are not the hub's to restart. */
+  localKinds?: string[];
 }
+
+/** The proxy as the body gives it to a process: one string, equal when the processes would be given the same environment. */
+const proxyKey = (network: HostNetwork | null | undefined): string => {
+  const proxy = network?.proxy;
+  return !proxy || (!proxy.http && !proxy.https) ? "" : JSON.stringify([proxy.http ?? "", proxy.https ?? "", proxy.no_proxy?.trim() ?? ""]);
+};
 
 export const DEFAULT_CREDENTIAL_REFS = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 export const USAGE_POLL_MS = 10 * 60_000;
@@ -92,6 +103,8 @@ interface Live {
   startedAt: number;
   failures: number;
   stopping: boolean;
+  /** The proxy changed while this process ran: it is restarted when no lane is in a turn, and takes no new turn before. */
+  networkStale?: boolean;
 }
 interface Waiter { id: string; agent: string; from: string; since: number; resolve(answer: string): void; reject(error: WordError): void }
 
@@ -109,6 +122,7 @@ export class AgentManager {
   private readonly outputs = new Map<string, string[]>();
   private readonly typingUntil = new Map<string, number>();
   private paused = false;
+  private proxy: string;
   private readonly stoppers: (() => void)[] = [];
   private readonly timers: Timers;
   readonly now: () => number;
@@ -118,6 +132,7 @@ export class AgentManager {
     this.now = deps.now ?? Date.now;
     this.timers = deps.timers ?? realTimers;
     this.log = deps.log ?? (() => {});
+    this.proxy = proxyKey(deps.network);
     this.runs = new Runs(deps.ledger, this.now);
     this.inbox = new Inbox(deps.ledger.db());
     this.modules = new Modules({ router: deps.router, registry: deps.registry, now: this.now, rules: deps.rules, channels: deps.channels });
@@ -238,6 +253,32 @@ export class AgentManager {
     if (live.state !== "failed") await live.driver.stop(id, reason).catch((error) => this.log(`agents: stopping ${id}: ${errorText(error)}`));
   }
 
+  /**
+   * The host's network changed. When the proxy is not the one the agents were started with, every agent whose process runs
+   * on the main body is restarted between turns: one in a turn finishes it first, and none starts another before then.
+   * The sessions are resumed as in any restart.
+   */
+  onNetwork(network: HostNetwork): void {
+    const next = proxyKey(network);
+    if (next === this.proxy) return;
+    this.proxy = next;
+    const local = this.deps.localKinds ?? ["dsh"];
+    for (const live of this.live.values()) {
+      if (live.state === "failed" || live.stopping || !local.includes(this.run(live.id).spec.decl.runtime.kind)) continue;
+      live.networkStale = true;
+      this.bg(this.restartIfStale(live), `restart ${live.id} for the new proxy`);
+    }
+  }
+
+  /** Restarts a process whose proxy is old once nothing is running in it. Returns whether the agent is held back for it. */
+  private async restartIfStale(live: Live): Promise<boolean> {
+    if (!live.networkStale || live.stopping || this.live.get(live.id) !== live) return false;
+    if (live.state !== "running" || [...live.lanes.values()].some((lane) => lane.busy || lane.sending)) return true;
+    this.log(`agents: ${live.id}: the proxy changed, restarting its process`);
+    await this.restartAgent(live.id);
+    return true;
+  }
+
   async restartAgent(id: string): Promise<void> {
     await this.stopAgent(id, "restart");
     this.runs.setDesired(id, "on");
@@ -354,6 +395,7 @@ export class AgentManager {
   /** The agent is idle on this lane: give it what is waiting (one batch). */
   async drain(live: Live, lane: Lane): Promise<void> {
     if (live.state !== "running" || lane.busy || lane.sending || this.paused) return;
+    if (live.networkStale) { await this.restartIfStale(live); return; }
     const rows = this.inbox.pending(live.id, lane.key, BATCH);
     if (!rows.length) return;
     // The owner is still typing to this agent: a lane that takes their words waits until they have had time to finish.
@@ -386,7 +428,10 @@ export class AgentManager {
         this.inbox.mark(rows.map((r) => r.id), "pending");
         if (!(error instanceof WordError && error.code === "conflict")) throw error; // conflict: the driver is in a turn already
       }
-    } finally { lane.sending = false; }
+    } finally {
+      lane.sending = false;
+      if (!sent && live.networkStale) this.bg(this.restartIfStale(live), `restart ${live.id} for the new proxy`); // nothing started: the process need not wait
+    }
     // What arrived while the batch was being handed over now meets a busy lane.
     if (lane.busy) for (const row of this.inbox.pending(live.id, lane.key)) this.bg(this.busyRoute(live, lane, row), `route ${row.id}`);
     else if (sent) this.bg(this.drain(live, lane), `drain ${live.id}/${lane.key}`); // the turn is over already: what came meanwhile goes next
