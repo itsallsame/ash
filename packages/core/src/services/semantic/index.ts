@@ -35,7 +35,7 @@ export interface SemanticOptions {
   /** Housekeeping interval (default 30 min); 0 turns it off. */
   tickMs?: number;
   /** The vault refs that are the agents' model keys; saving one lets the first meeting try again. */
-  modelKeys?: string[];
+  modelKeys: readonly string[];
   log?: (message: string, error?: unknown) => void;
 }
 
@@ -59,7 +59,7 @@ export function createSemantic(options: SemanticOptions): Semantic {
   const kv = new SemanticKv(ledger);
   const persona = new PersonaService({ ledger, router, templates, ...(now ? { now } : {}), ...(log ? { log } : {}) });
   const daily = new DailyReview({ ledger, router, kv, ...(now ? { now } : {}), ...(log ? { log } : {}) });
-  const entity = new Entity({ ledger, router, kv, daily, ...(options.modelKeys ? { modelKeys: options.modelKeys } : {}), ...(now ? { now } : {}), ...(log ? { log } : {}) });
+  const entity = new Entity({ ledger, router, kv, daily, modelKeys: options.modelKeys, ...(now ? { now } : {}), ...(log ? { log } : {}) });
   const pulse = new PulseService({
     ledger, router, templates: { pulse: templates["PULSE.md"] }, ...(now ? { now } : {}), ...(log ? { log } : {}),
     ...(options.budget !== undefined ? { budget: options.budget } : {}), ...(options.tickMs !== undefined ? { tickMs: options.tickMs } : {}),

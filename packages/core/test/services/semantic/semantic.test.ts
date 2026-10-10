@@ -205,6 +205,46 @@ test("the first meeting is not repeated while the last wake is still being worke
   assert.deepEqual(hub.invalid, []);
 });
 
+test("the first meeting is held when its own turn ended well, even if the agent said nothing; a turn that failed or was cancelled is not", async () => {
+  const hub = await startedHub();
+  const agent = agentSide(hub);
+  await connect(hub);
+  agent.start("t1"); agent.end("t1", "completed");
+  await connect(hub, "c2");
+  await keySaved(hub);
+  assert.equal(meetings(hub).length, 1);
+  assert.ok(hub.semantic.entity["options"].kv.get("first_meeting"));
+  const other = await startedHub();
+  const side = agentSide(other);
+  await connect(other);
+  side.start("t1"); side.end("t1", "error");
+  await connect(other, "c2");
+  assert.equal(meetings(other).length, 2);
+  side.start("t2"); side.end("t2", "completed");                                                        // the retry went through
+  await connect(other, "c3");
+  assert.equal(meetings(other).length, 2);
+});
+
+test("a turn whose process died has no end: a later turn on the same lane of the same agent overtakes it; a wake nobody took before this start is not waited for", async () => {
+  const hub = await startedHub();
+  const agent = agentSide(hub);
+  await connect(hub);
+  agent.start("t1");                                                                                    // never ends
+  await connect(hub, "c2");
+  assert.equal(meetings(hub).length, 1, "still running");
+  agent.start("t2", ["m_other"], "agent:helper");                                                       // another agent's turn: not the same lane owner
+  await connect(hub, "c3");
+  assert.equal(meetings(hub).length, 1);
+  agent.start("t3", ["m_other"]);                                                                       // the same agent, the same lane, a newer turn
+  await connect(hub, "c4");
+  assert.equal(meetings(hub).length, 2);
+  hub.t += 60_000;
+  await hub.restart();                                                                                  // the second wake was never taken by a turn
+  await connect(hub, "c5");
+  assert.equal(meetings(hub).length, 3);
+  assert.deepEqual(hub.invalid, []);
+});
+
 test("the first meeting is already held when an agent spoke to the owner: said first or showed, even the owner opening and being answered", async () => {
   for (const spoke of [
     (a: ReturnType<typeof agentSide>) => a.say(),
@@ -443,6 +483,6 @@ test("templates: fileTemplates reads <NAME>.template.md from a directory, and cr
     const ledger = { db: () => { throw new Error("not used"); }, tx: () => { throw new Error("not used"); } } as never;
     assert.throws(() => createSemantic({ ledger, router: { send } } as never), /templatesDir/);
     rmSync(join(dir, "PULSE.template.md"));
-    assert.throws(() => createSemantic({ ledger, router: { send } as never, templatesDir: dir }), /PULSE/);
+    assert.throws(() => createSemantic({ ledger, router: { send } as never, templatesDir: dir, modelKeys: [] }), /PULSE/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

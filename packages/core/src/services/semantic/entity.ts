@@ -6,9 +6,9 @@
  *     "first_meeting"}` when a hand with a channel for people connects (the link's event `connected`, `channels` include
  *     `human`) and when a model key is saved (the vault's event `vault.changed`, `action: "saved"`; a new install has no key
  *     at the first connection, and the wake's turn fails). "Has spoken" is read from the ledger: any `say` or `show` an agent
- *     sent to the owner, outside a turn that ended in error (the failure notice is not a greeting); then it is written to
- *     the layer's own table and never asked again. A wake whose turn has not ended is not repeated; a turn that failed is
- *     not retried by itself, the next trigger tries again.
+ *     sent to the owner, outside a turn that ended in error (the failure notice is not a greeting), or the wake's own turn
+ *     ended `completed`; then it is written to the layer's own table and never asked again. A wake whose turn has not ended
+ *     is not repeated; a turn that failed is not retried by itself, the next trigger tries again.
  *   - the daily new session: at `semantic.reload_time` (default 04:00) every agent's every lane gets
  *     `service:agents/session.reload`, so the persona and rules approved since are what the next session starts with
  *     (SPEC-08 §2.3.1). The agents list is asked each time; no agent is named here.
@@ -24,8 +24,6 @@ import { ask, CLOCK_TIME, listAgents, nextMoment, primaryAgent, readSetting, rec
 export const ENTITY_ID = "service:semantic";
 export const DEFAULT_RELOAD_TIME = "04:00";
 export const RELOAD_SETTING = "semantic.reload_time";
-/** The vault entries that are the agents' model keys (the same two the agents module hands to its runtimes). */
-export const DEFAULT_MODEL_KEYS = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 const OWNER_ID = "person:owner";
 
 export interface EntityOptions {
@@ -33,8 +31,8 @@ export interface EntityOptions {
   router: Sender;
   kv: SemanticKv;
   daily: DailyReview;
-  /** Vault refs whose saving means the agents can think now (default `DEFAULT_MODEL_KEYS`). */
-  modelKeys?: string[];
+  /** Vault refs whose saving means the agents can think now: the list the agents module hands to its runtimes, given by the assembly. */
+  modelKeys: readonly string[];
   now?: () => number;
   log?: (message: string, error?: unknown) => void;
 }
@@ -68,7 +66,7 @@ export class Entity implements Member {
     if (msg.word === "connected" && msg.from === "service:link") await this.connected(msg.body);
     else if (msg.word === "vault.changed") {
       const { ref, action } = (msg.body ?? {}) as { ref?: unknown; action?: unknown };
-      if (action === "saved" && typeof ref === "string" && (this.options.modelKeys ?? DEFAULT_MODEL_KEYS).includes(ref)) await this.firstMeeting();
+      if (action === "saved" && typeof ref === "string" && this.options.modelKeys.includes(ref)) await this.firstMeeting();
     } else if (msg.word === "settings.changed") {
       const keys = (msg.body as { keys?: unknown } | null)?.keys;
       if (Array.isArray(keys) && keys.some((key) => typeof key === "string" && key.startsWith("semantic."))) {
@@ -87,17 +85,18 @@ export class Entity implements Member {
     await this.firstMeeting();
   }
 
-  /** Wake the primary agent for the first meeting unless it has already spoken to the owner or the last such wake is still being worked on. */
+  /** Wake the primary agent for the first meeting unless it is already held or the last such wake is still being worked on. */
   async firstMeeting(): Promise<boolean> {
     if (this.meeting || this.options.kv.get("first_meeting")) return false;
     this.meeting = true;
     try {
-      if (this.hasSpoken()) { this.options.kv.set("first_meeting", String(this.now())); return false; }
-      if (this.inFlight()) return false;
+      const state = this.hasSpoken() ? "held" : this.lastWake();
+      if (state === "held") { this.options.kv.set("first_meeting", String(this.now())); return false; }
+      if (state === "running") return false;
       const agent = await primaryAgent(this.options.router, ENTITY_ID);
       if (!agent) return false;
       const sent = await wakeAgent(this.options.router, ENTITY_ID, agent, "first_meeting", {});
-      // Not written down here: the meeting is held when the agent has spoken, not when it took the wake.
+      // Not written down here: taking the wake is not the meeting; the agent speaking, or its turn ending well, is.
       if (!sent.ok) this.options.log?.(`first meeting wake failed: ${sent.error.message}`);
       return sent.ok;
     } finally { this.meeting = false; }
@@ -111,26 +110,36 @@ export class Entity implements Member {
     return !!this.options.ledger.db().prepare(
       `SELECT 1 FROM messages m WHERE m.kind='request' AND m."to"=? AND m.word IN ('say','show') AND m."from" LIKE 'agent:%'
        AND NOT EXISTS (SELECT 1 FROM messages e WHERE e.kind='event' AND e.word='turn.ended' AND e."from"=m."from"
-         AND json_extract(e.body,'$.turn')=m.turn AND json_extract(e.body,'$.outcome')='error') LIMIT 1`).get(OWNER_ID);
+         AND e.turn=m.turn AND json_extract(e.body,'$.outcome')='error') LIMIT 1`).get(OWNER_ID);
   }
 
   /**
-   * The last first-meeting wake an agent took is not over: the turn that has its id has not ended, or no turn has taken it yet.
-   * Read from the ledger, so a restart does not forget it; a turn the old process began and never ended is not waited for.
+   * Where the last first-meeting wake an agent took has got to, read from the ledger so a restart does not forget it:
+   *   held     the turn that had its id ended `completed` (a failed turn is `error`; without a key it always is);
+   *   running  no turn has taken it yet, or its turn has not ended;
+   *   open     nothing was sent, or its turn failed, was cancelled or was lost.
+   * A wake or a turn from before this process started, and a turn that a later turn on the same lane of the same agent has
+   * overtaken (its process died before it could end), is not waited for.
    */
-  private inFlight(): boolean {
+  private lastWake(): "held" | "running" | "open" {
     const db = this.options.ledger.db();
     const wake = db.prepare(
-      `SELECT w.id FROM messages w WHERE w."from"=? AND w.kind='request' AND w.word='wake' AND json_extract(w.body,'$.reason')='first_meeting'
+      `SELECT w.id, w.ts FROM messages w WHERE w."from"=? AND w.kind='request' AND w.word='wake' AND json_extract(w.body,'$.reason')='first_meeting'
        AND EXISTS (SELECT 1 FROM messages r WHERE r.reply_to=w.id AND r.kind='response' AND json_extract(r.body,'$.ok')=1)
-       ORDER BY w.seq DESC LIMIT 1`).get(ENTITY_ID) as { id: string } | undefined;
-    if (!wake) return false;
+       ORDER BY w.seq DESC LIMIT 1`).get(ENTITY_ID) as { id: string; ts: number } | undefined;
+    if (!wake) return "open";
     const turn = db.prepare(
-      `SELECT s."from" AS agent, s.ts, json_extract(s.body,'$.turn') AS turn FROM messages s, json_each(s.body,'$.ids') j
-       WHERE s.kind='event' AND s.word='turn.started' AND j.value=? ORDER BY s.seq DESC LIMIT 1`).get(wake.id) as { agent: string; ts: number; turn: string } | undefined;
-    if (!turn) return true;
-    const ended = db.prepare(`SELECT 1 FROM messages e WHERE e.kind='event' AND e.word='turn.ended' AND e."from"=? AND json_extract(e.body,'$.turn')=? LIMIT 1`).get(turn.agent, turn.turn);
-    return !ended && turn.ts >= this.bootedAt;
+      `SELECT s.seq, s."from" AS agent, s.ts, json_extract(s.body,'$.turn') AS turn, json_extract(s.body,'$.lane') AS lane
+       FROM messages s, json_each(s.body,'$.ids') j
+       WHERE s.kind='event' AND s.word='turn.started' AND j.value=? ORDER BY s.seq DESC LIMIT 1`).get(wake.id) as { seq: number; agent: string; ts: number; turn: string; lane: string | null } | undefined;
+    if (!turn) return wake.ts >= this.bootedAt ? "running" : "open";
+    const ended = db.prepare(`SELECT json_extract(e.body,'$.outcome') AS outcome FROM messages e WHERE e.kind='event' AND e.word='turn.ended' AND e."from"=? AND e.turn=? LIMIT 1`)
+      .get(turn.agent, turn.turn) as { outcome: string } | undefined;
+    if (ended) return ended.outcome === "completed" ? "held" : "open";
+    if (turn.ts < this.bootedAt) return "open";
+    const overtaken = db.prepare(
+      `SELECT 1 FROM messages n WHERE n.kind='event' AND n.word='turn.started' AND n."from"=? AND n.seq>? AND json_extract(n.body,'$.lane') IS ? LIMIT 1`).get(turn.agent, turn.seq, turn.lane);
+    return overtaken ? "open" : "running";
   }
 
   // ---- the daily new session ----

@@ -160,7 +160,7 @@ export function newHub(options: { ledger?: Ledger; t?: number; budget?: number; 
     for (const m of extra) hub.members.set(m.id, m);
     hub.clock = createClockService({ ledger, router, now, setTimer: () => () => {}, log: () => {} });
     hub.members.set(hub.clock.id, hub.clock);
-    hub.semantic = createSemantic({ ledger, router, now, templatesDir: TEMPLATES_DIR, tickMs: 0, log: () => {}, ...(options.budget !== undefined ? { budget: options.budget } : {}) });
+    hub.semantic = createSemantic({ ledger, router, now, templatesDir: TEMPLATES_DIR, modelKeys: ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"], tickMs: 0, log: () => {}, ...(options.budget !== undefined ? { budget: options.budget } : {}) });
     for (const m of hub.semantic.members) hub.members.set(m.id, m);
   };
   build();
