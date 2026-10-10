@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `547ac71d88b87d32`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `4424a32553ee7407`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -234,13 +234,13 @@
 
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
-| `pulse.get` | owner, agent, app | read / none | - | - | 在看主动更新的安排 | Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, the events you watch, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted. |
-| `pulse.set` | owner, agent, app | write / none | - | schedule, events, reason* | 在改主动更新的安排 | Change your own pulse and say why (reason is required and is kept in the history). Any of: schedule (list of {time:'HH:MM' local, days:'daily'\|'weekdays'\|'weekends'\|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers), events (the events to watch, replaces the list: geofence_enter, geofence_exit, approval_waiting, app_event, calendar_soon, source_stalled, each with min_gap_min between two wakes of that kind, default 60). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself. |
+| `pulse.get` | owner, agent, app | read / none | - | - | 在看主动更新的安排 | Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted. |
+| `pulse.set` | owner, agent, app | write / none | - | schedule, reason* | 在改主动更新的安排 | Change your own pulse and say why (reason is required and is kept in the history). Schedule (list of {time:'HH:MM' local, days:'daily'\|'weekdays'\|'weekends'\|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself. |
 | `pulse.history` | owner, agent, app | read / none | - | limit, before | 在看主动更新的记录 | Page through your pulse history, newest first: wakes (why, when), what you did (pulse.note), the owner's feedback on your cards, changes to the schedule with their reasons, skipped wakes and why. limit (default 20), before: an entry id from next_before to read older ones. |
 | `pulse.note` | owner, agent, app | write / none | - | did*, why, kind, data_used | 在记下这次做了什么 | Record what you did on this wake and why (did, why, data_used: what you looked at). kind: pulse (default) for an ordinary wake, gap for something you wanted to know or do but could not get; gaps are collected so the missing source can be added. Nothing here ever reaches the owner. |
-| `pulse.fire` | owner, agent, app | write / none | - | why | 在试一次主动更新 | Wake yourself now as a pulse (why defaults to schedule) to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on. |
+| `pulse.fire` | owner, agent, app | write / none | - | - | 在试一次主动更新 | Wake yourself now as a pulse to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on. |
 | `pulse.switch` | owner | write / none | - | enabled* | 在开关主动更新 | Owner only: switch the whole pulse on or off. Off keeps PULSE.md, history and feedback. |
-| `pulse.due` | kernel | write / none | - | kind*, at* | 在响应到点的主动更新 | Internal: the clock reports one of the pulse's own timers, and the pulse wakes the agent. Only the hub itself calls this. |
+| `pulse.due` | kernel | write / none | - | kind*, at* | 在响应到点的主动更新 | Internal: the clock reports one of the semantic layer's own timers: wake (an hourly pulse), daily (the evening look back at the day) or reload (the daily new session). The hub itself calls this; nobody else. |
 
 ## `service:cost`
 

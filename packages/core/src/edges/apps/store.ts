@@ -97,12 +97,12 @@ export class AppGrants {
     return this.get(id);
   }
 
-  /** May app:<id> use member/word through a need? Only an enabled app, only a granted word; `device:*` stands for every hand. */
+  /** May app:<id> use member/word through a need? Only an enabled app, only a granted word; `device:*` stands for every hand, `agent:*` for every agent. */
   allows(app: string, member: string, word: string): boolean {
     const id = app.replace(/^app:/, "");
     const grant = this.get(id);
     return Boolean(grant?.enabled && grant.needs.some((need) => "member" in need && need.words.includes(word)
-      && (need.member === member || (need.member === "device:*" && member.startsWith("device:")))));
+      && (need.member === member || (need.member === "device:*" && member.startsWith("device:")) || (need.member === "agent:*" && member.startsWith("agent:")))));
   }
 
   has(id: string, kind: "notify" | "widgets" | "card"): boolean {

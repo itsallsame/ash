@@ -1,0 +1,19 @@
+{
+  "contract": "ash-app/1",
+  "id": "sense-rules",
+  "name": "感知规则",
+  "version": "1.0.0",
+  "summary": "实时听手机的感知事件，该叫醒 Ash 时叫醒：到达或离开地点、开始或结束骑行、健康数据源断了、重要日程将到。",
+  "role": "Ash 自己的感知规则：判断哪些感知事件值得叫醒 agent。规则在这个文件夹的 rules.mjs 里，可以按主人的需要改，改完再装一次。",
+  "publisher": "ash",
+  "server": { "command": "node", "args": ["server.mjs"] },
+  "listens": ["sense.*"],
+  "data_dir": "data",
+  "needs": [
+    { "member": "agent:*", "words": ["wake"], "why": "该叫醒时叫醒主 agent：到离地点、骑行、数据源断了、重要日程将到。" },
+    { "member": "service:agents", "words": ["list"], "why": "找出现在谁是主 agent（primary），叫醒它。" },
+    { "member": "service:senses", "words": ["query"], "why": "翻最近的运动和位置记录，算出一次骑行的起止和公里数。" },
+    { "member": "service:llm", "words": ["complete"], "why": "日程拿不准重要不重要时，让小模型照 PULSE.md 里的说明判断一次。" },
+    { "member": "service:admin", "words": ["status"], "why": "看系统是不是暂停了；暂停时不叫醒。" }
+  ]
+}

@@ -214,7 +214,7 @@
 { "widgets": true, "why": "…" }                   // 同上
 ```
 
-- **`member` 怎么写**：`service:<名字>`（如 `service:llm`、`service:senses`）、`agent:<名字>`、手 `device:<hand_id>`（22 位，区分大小写）、`device:*`（任何一只手）、其他应用 `app:<id>`。应用要用中枢的任何词，包括小模型和叫醒 agent，都要在这里写；没写的一律 `forbidden`。词名用 `capability_list` / `capability_describe` 查；`apps.validate` 会提醒现在查不到的成员和词（可能拼错了，也可能只是暂时不在线）。
+- **`member` 怎么写**：`service:<名字>`（如 `service:llm`、`service:senses`）、`agent:<名字>`、手 `device:<hand_id>`（22 位，区分大小写）、`device:*`（任何一只手）、`agent:*`（任何 agent，例如叫醒 primary 时不必知道它叫什么）、其他应用 `app:<id>`。应用要用中枢的任何词，包括小模型和叫醒 agent，都要在这里写；没写的一律 `forbidden`。词名用 `capability_list` / `capability_describe` 查；`apps.validate` 会提醒现在查不到的成员和词（可能拼错了，也可能只是暂时不在线）。
 - 同一个成员（或 `notify` / `card` / `widgets`）只能出现一次；不能写自己。
 - **安装**：Agent 调 `apps.install {id}`。先检查（同 `apps.validate`），不通过直接拒绝，不打扰主人；通过后一定出 Ash 的审批卡：安装总是问主人，不经审核模型，也没有「以后都可以」。卡上写：
   - 应用名、版本、来源（「Ash 自带」「Ash 自己写的，没有发布过，也没有别人检查过」或「发布者写的是「X」，Ash 无法核实」）和 `summary`；

@@ -70,6 +70,12 @@ test("docs/app.schema.json is what APP_SCHEMA generates", () => {
   assert.equal(readFileSync(file, "utf8"), `${JSON.stringify(APP_SCHEMA, null, 2)}\n`, "run npm run gen:app-schema");
 });
 
+test("needs.member: a service, one agent, any agent (agent:*), one hand or any (device:*); not a wildcard anywhere else", () => {
+  const need = (member: string) => validateApp({ ...BASE, needs: [{ member, words: ["wake"], why: "w" }] });
+  for (const good of ["service:llm", "agent:main", "agent:*", "device:*", "device:ABCDEFGHIJKLMNOPQRSTUV", "app:notes"]) assert.equal(need(good), true, good);
+  for (const bad of ["agent:", "agent:Main", "agent:m*", "service:*", "app:*", "body:*", "*"]) assert.equal(need(bad), false, bad);
+});
+
 test("listens and wake_events as the schema accepts them", () => {
   const good: AppJson = {
     ...BASE, events: ["message.received", "digest.ready"],

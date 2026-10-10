@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "547ac71d88b87d32cbeca2bf235bf41b2cb3cd6857196b9d572286270ad43574",
+ "hash": "4424a32553ee74071287ac28d1c46e2f53ee5ea34013e81481c2290a641abeb4",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -10021,7 +10021,7 @@
    "word": "pulse.get",
    "kind": "request",
    "direction": "in",
-   "description": "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, the events you watch, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted.",
+   "description": "Your pulse: whether it is active (it exists only while an 'Ash 卡片' widget is on the home screen; otherwise active:false, reason:'no widget'), whether the owner has it switched on, your wake schedule, today's wake count against the daily budget, the next scheduled wakes, the latest history entries and gaps you noted.",
    "input_schema": {
     "type": "object",
     "properties": {},
@@ -10047,34 +10047,6 @@
        "properties": {},
        "required": [],
        "additionalProperties": true
-      }
-     },
-     "events": {
-      "type": "array",
-      "items": {
-       "type": "object",
-       "properties": {
-        "event": {
-         "type": "string",
-         "enum": [
-          "geofence_enter",
-          "geofence_exit",
-          "approval_waiting",
-          "app_event",
-          "calendar_soon",
-          "source_stalled"
-         ]
-        },
-        "min_gap_min": {
-         "type": "integer",
-         "minimum": 1,
-         "maximum": 1440
-        }
-       },
-       "required": [
-        "event"
-       ],
-       "additionalProperties": false
       }
      },
      "budget": {
@@ -10172,7 +10144,6 @@
      "active",
      "enabled",
      "schedule",
-     "events",
      "budget",
      "history"
     ],
@@ -10194,7 +10165,7 @@
    "word": "pulse.set",
    "kind": "request",
    "direction": "in",
-   "description": "Change your own pulse and say why (reason is required and is kept in the history). Any of: schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers), events (the events to watch, replaces the list: geofence_enter, geofence_exit, approval_waiting, app_event, calendar_soon, source_stalled, each with min_gap_min between two wakes of that kind, default 60). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself.",
+   "description": "Change your own pulse and say why (reason is required and is kept in the history). Schedule (list of {time:'HH:MM' local, days:'daily'|'weekdays'|'weekends'|[0..6 with 0 = Sunday]} or {time:{at: epoch ms}} for one moment; replaces the whole list; the next 48 hours become real timers). Other fields are refused. PULSE.md, the file that tells you how to use each wake, is in your home folder: edit it there yourself.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -10254,35 +10225,6 @@
        "additionalProperties": false
       },
       "maxItems": 48
-     },
-     "events": {
-      "type": "array",
-      "items": {
-       "type": "object",
-       "properties": {
-        "event": {
-         "type": "string",
-         "enum": [
-          "geofence_enter",
-          "geofence_exit",
-          "approval_waiting",
-          "app_event",
-          "calendar_soon",
-          "source_stalled"
-         ]
-        },
-        "min_gap_min": {
-         "type": "integer",
-         "minimum": 1,
-         "maximum": 1440
-        }
-       },
-       "required": [
-        "event"
-       ],
-       "additionalProperties": false
-      },
-      "maxItems": 12
      },
      "reason": {
       "type": "string",
@@ -10475,18 +10417,10 @@
    "word": "pulse.fire",
    "kind": "request",
    "direction": "in",
-   "description": "Wake yourself now as a pulse (why defaults to schedule) to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on.",
+   "description": "Wake yourself now as a pulse to try your schedule and cards; it does not use the daily budget. Needs the pulse to be active and switched on.",
    "input_schema": {
     "type": "object",
-    "properties": {
-     "why": {
-      "type": "string",
-      "enum": [
-       "schedule",
-       "event"
-      ]
-     }
-    },
+    "properties": {},
     "required": [],
     "additionalProperties": false
    },
@@ -10560,7 +10494,7 @@
    "word": "pulse.due",
    "kind": "request",
    "direction": "in",
-   "description": "Internal: the clock reports one of the pulse's own timers, and the pulse wakes the agent. Only the hub itself calls this.",
+   "description": "Internal: the clock reports one of the semantic layer's own timers: wake (an hourly pulse), daily (the evening look back at the day) or reload (the daily new session). The hub itself calls this; nobody else.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -10568,7 +10502,8 @@
       "type": "string",
       "enum": [
        "wake",
-       "floor"
+       "daily",
+       "reload"
       ]
      },
      "at": {
