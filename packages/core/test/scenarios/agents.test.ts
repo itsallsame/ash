@@ -165,6 +165,48 @@ test("S170, S171, SPEC-00 §6.5: the hub restarts in the middle of a turn: the b
   assert.equal(hand.calls.length, 1, "the call in flight was not replayed");
 });
 
+test("S172: the hub has just restarted and the main agent's runtime is still coming up: the owner's first words are not refused, and the agent answers once it is up", async (t) => {
+  const s = await startScenario(t);
+  s.driver.script((turn) => { for (const m of turn.messages) if (m.from === OWNER) turn.say(`听到了：${m.text}`); });
+  const up = deferred();
+  s.driver.holdStarts(up.promise);
+  let sent: Awaited<ReturnType<Awaited<ReturnType<typeof s.human>>["say"]>> | undefined;
+  let owner: Awaited<ReturnType<typeof s.human>> | undefined;
+  await s.restart(async () => {
+    owner = await s.human({ name: "reopened" });
+    sent = await owner.say("重启后的第一句");
+    await quiet();
+    assert.equal(s.driver.messages().filter(ownerMessage("重启后的第一句")).length, 0, "nothing is handed to a runtime that is not up");
+    up.resolve();
+  });
+  s.driver.holdStarts(null);
+  assert.ok(sent && sent.ok, `the hub took the words: ${JSON.stringify(sent)}`);
+  await s.driver.delivery(ownerMessage("重启后的第一句"), "the words reaching the agent once it is up");
+  await eventually(() => owner!.messages.find((m) => m.from === MAIN && m.to === OWNER && textOf(m) === "听到了：重启后的第一句"), "the answer");
+});
+
+test("S168: DSH is killed (kill -9) again and again, a few seconds apart; each time the hub starts it anew and the owner's next words are answered", async (t) => {
+  const s = await startScenario(t);
+  s.driver.script((turn) => { for (const m of turn.messages) if (m.from === OWNER) turn.say(`听到了：${m.text}`); });
+  const owner = await s.human();
+  for (let round = 1; round <= 5; round++) {
+    const text = `第${round}句`;
+    // every other round the runtime is slow to come up, and the words arrive while it does
+    const up = deferred();
+    if (round % 2 === 0) s.driver.holdStarts(up.promise);
+    const starts = s.driver.starts.length;
+    s.driver.die(MAIN);
+    await eventually(() => s.driver.starts.length > starts, `the runtime started anew (round ${round})`);
+    accepted(await owner.say(text));
+    up.resolve();
+    s.driver.holdStarts(null);
+    await eventually(() => owner.messages.find((m) => m.from === MAIN && m.to === OWNER && textOf(m) === `听到了：${text}`), `the answer to ${text}`);
+  }
+  const list = await owner.call("service:agents", "list");
+  const main = (dataOf(list) as { agents: { id: string; state: string; available: boolean }[] }).agents.find((a) => a.id === MAIN);
+  assert.equal(main?.available, true, "never given up on");
+});
+
 test("S164, S165: pausing stops the running turns of every agent; resuming is the owner's, from this machine", async (t) => {
   const s = await startScenario(t);
   const hold = deferred();

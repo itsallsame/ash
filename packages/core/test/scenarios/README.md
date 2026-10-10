@@ -79,6 +79,8 @@ T17 (agents + a driver). The "also needs" column lists only what a test needs on
 | | SPEC-08 §5.7 spawn: temporary agent, gone afterwards | T17 |
 | | SPEC-08 §5.8 front and back lanes run at once | T17 |
 | | S170, S171, SPEC-00 §6.5 restart mid-turn: no replay, "interrupted" note | T3/T4 `recover()`, T17 |
+| | S172 hub restart, runtime still starting: the owner's words are taken and delivered once it is up | T17 (member stays in the registry while starting) |
+| | S168 runtime killed again and again: restarted each time, words answered, never given up | T17 (failure count clears after a finished round) |
 | | S164, S165 pause interrupts all, resume is the owner's | `service:admin` (T6), T17 `session.interrupt` |
 | | S028 first meeting wake, once | T19 |
 | | SPEC-08 §5.7 `primary.set` | T17 |

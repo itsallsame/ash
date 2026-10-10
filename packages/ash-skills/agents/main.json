@@ -7,7 +7,7 @@
   "native": { "on": "body:main", "cwd": "/root/work" },
   "lanes": {
     "front": { "from": ["person:owner"] },
-    "back": { "from": ["wake", "timer", "event"], "guide": "PULSE.md" }
+    "back": { "from": ["wake", "event"], "guide": "PULSE.md" }
   },
   "primary": true
 }

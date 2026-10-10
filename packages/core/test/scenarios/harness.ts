@@ -217,6 +217,9 @@ export class ScriptedDriver {
   /** The prompt modules the hub injected into a lane (the content of each). */
   readonly injections: { agent: string; key: string; modules: { id: string; content: string }[] }[] = [];
   readonly interrupts: { agent: string; key: string }[] = [];
+  /** While set, `start()` waits for it: the runtime is still coming up. */
+  private startGate: Promise<void> | null = null;
+  private readonly reporters: ((event: AgentEvent) => void)[] = [];
   private fallback: TurnScript = () => {};
   private readonly scripts = new Map<string, TurnScript>();
   private readonly lines = new Map<string, ToolLine>();
@@ -230,6 +233,13 @@ export class ScriptedDriver {
 
   /** The script of every turn of every agent that has no script of its own. */
   script(fn: TurnScript): void { this.fallback = fn; }
+  /** Makes every `start()` from now on wait for [until] (the runtime takes its time to come up); `null` lets starts through again. */
+  holdStarts(until: Promise<void> | null): void { this.startGate = until; }
+  /** The runtime process of [agent] dies (kill -9): the hub hears `ended`, and its turns are gone with it. */
+  die(agent: string, reason = "killed"): void {
+    for (const [slot, run] of [...this.running]) if (slot.startsWith(`${agent}/`)) { run.abort.abort(); this.running.delete(slot); }
+    for (const report of this.reporters) report({ event: "ended", agent, reason });
+  }
   /** The script of one agent (`agent:main`). */
   scriptFor(agent: string, fn: TurnScript): void { this.scripts.set(agent, fn); }
 
@@ -274,6 +284,7 @@ export class ScriptedDriver {
 
   private driver(report: (event: AgentEvent) => void): AgentDriver {
     const safe = (event: AgentEvent) => { try { report(event); } catch { /* the hub is gone */ } };
+    this.reporters.push(safe);
     const handles = new Map<string, string>();
     const handleOf = (agent: string, key: string) => handles.get(`${agent}/${key}`) ?? null;
     const open = (agent: string, key: string) => { const handle = `h_${++this.serial}`; handles.set(`${agent}/${key}`, handle); safe({ event: "handle.updated", agent, key, handle }); return handle; };
@@ -293,6 +304,7 @@ export class ScriptedDriver {
       plugins: async () => ({}),
       start: async (agent, spec) => {
         this.starts.push({ agent, spec });
+        if (this.startGate) await this.startGate;
         await this.closeLines(agent);
         for (const key of spec.lanes) this.lines.set(`${agent}/${key}`, new ToolLine(spec.tools, key));
         for (const key of spec.lanes) if (!spec.sessions[key]) open(agent, key);
@@ -687,16 +699,21 @@ export class Scenario {
 
   get hub(): Hub { if (!this.hubValue) throw new Error("the hub is not running"); return this.hubValue; }
   /** `ws://127.0.0.1:<port>/link` */
-  linkUrl(): string { return `${this.hub.url.replace(/^http/, "ws")}/link`; }
+  linkUrl(): string { return `ws://127.0.0.1:${this.port()}/link`; }
+  /** The port the hub told the host: known as soon as the link is open, also while the agents are still starting. */
+  private port(): number {
+    if (!this.current) throw new Error("the hub has not handed its port to the host");
+    return this.current.port;
+  }
   /** `http://127.0.0.1:<port>/mcp` */
-  mcpUrl(): string { return `${this.hub.url}/mcp`; }
+  mcpUrl(): string { return `http://127.0.0.1:${this.port()}/mcp`; }
   /** The local connection token the hub gave the host (`hands.handoff`), the way it reaches the phone app. */
   token(): string {
     if (!this.current) throw new Error("the hub has not handed the local token to the host");
     return this.current.token;
   }
 
-  async boot(): Promise<void> {
+  async boot(whileStarting?: () => Promise<void>): Promise<void> {
     if (!this.host.endpoint) await this.host.start();
     // The hub boots the way a host starts it (SPEC-07): the environment names host.json, carries the seal key and the host
     // token (a copy: the hub takes them out of what it is given); the host's events arrive on its standard input.
@@ -707,20 +724,30 @@ export class Scenario {
     const relayBundle = join(this.dataDir, "ash-gateway.mjs");
     writeFileSync(relayBundle, "export default {};\n");
     writeFileSync(join(this.dataDir, "ash-gateway.metadata.json"), JSON.stringify({ main_module: "ash-gateway.mjs" }));
-    this.hubValue = await startHub({
+    const starting = startHub({
       dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
       ...(this.options.llm ? { llm: this.options.llm } : {}),
       ...(this.options.fakeNow ? { now: this.clock.now } : {}),
     });
-    this.booted = true;
+    starting.catch(() => {});
+    // The host is told the port as soon as the link is open, before the agents are up (`startHub` returns after that).
     this.handoffs += 1;
-    const handoff = await eventually(() => this.host.callsOf("hands.handoff")[this.handoffs - 1], "the hub handing its port and token to the host");
+    const told = eventually(() => this.host.callsOf("hands.handoff")[this.handoffs - 1], "the hub handing its port and token to the host");
+    told.catch(() => {});
+    const handoff = await Promise.race([told, starting.then(() => told)]); // a hub that fails to start ends the wait
     this.current = handoff.body as { port: number; token: string };
+    if (whileStarting) await whileStarting();
+    this.hubValue = await starting;
+    this.booted = true;
     if (`http://127.0.0.1:${this.current.port}` !== this.hub.url) throw new Error(`the host was told port ${this.current.port} but the hub is at ${this.hub.url}`);
   }
 
-  /** Stops the hub and starts it again on the same data directory; every connected client reconnects. */
-  async restart(): Promise<void> {
+  /**
+   * Stops the hub and starts it again on the same data directory; every connected client reconnects.
+   * [whileStarting] runs once the link is open and the hub is not done starting (an agent's runtime held with
+   * `driver.holdStarts`): a person can connect and speak then, as on the phone while the agent comes up.
+   */
+  async restart(whileStarting?: () => Promise<void>): Promise<void> {
     // The hub goes first: it ends the turns and the tool lines it holds itself, then the fake driver lets go.
     await this.hub.stop();
     await this.driver.dispose();
@@ -729,7 +756,7 @@ export class Scenario {
     if (this.stdin) { this.host.stdin.unpipe(this.stdin); this.stdin.end(); }
     const returning = [...this.clients].filter((client) => client.state !== "stopped");
     await eventually(() => returning.every((client) => client.state !== "ready"), "the connections noticing that the hub is gone");
-    await this.boot();
+    await this.boot(whileStarting);
     for (const client of returning) client.reconnectNow();
     await eventually(() => returning.every((client) => client.state === "ready"), "the connections coming back");
   }
