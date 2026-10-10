@@ -27,7 +27,9 @@ import type { Message, Reply } from "../../../sdk/src/message";
 import { standardAction } from "../../../sdk/src/namespaces";
 import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage } from "../../../sdk/src/driver";
 import { startHub, type Hub } from "../../src/next";
+import { FakeGateway } from "../../../link/test/fixtures/fake-gateway";
 import { FakeHost } from "../fixtures/host";
+import { hubKey } from "../edges/link-server/control-harness";
 import { eventually } from "../fixtures/wait";
 
 export type { DriverMessage };
@@ -248,6 +250,11 @@ export class ScriptedDriver {
   /** The first tool call of this name, waiting for it. */
   toolCall(name: string, what = `a ${name} call`): Promise<ToolCallRecord> {
     return eventually(() => this.calls.find((call) => call.name === name), what);
+  }
+
+  /** Empties what was recorded about turns, deliveries and tool calls. */
+  forget(): void {
+    for (const list of [this.turns, this.calls, this.deliveries]) list.length = 0;
   }
 
   /** Ends everything (the scenario is over or the hub is being restarted). */
@@ -478,6 +485,8 @@ export class Human {
   optionIds(ask: Message): string[] {
     return ((bodyOf(ask).options as { id: string }[] | undefined) ?? []).map((o) => o.id);
   }
+  /** Goes away (a normal close). */
+  disconnect(): void { this.client.stop(); }
   presence(state: { visible?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
 
   // --- seeing things
@@ -621,6 +630,11 @@ export interface ScenarioOptions {
   runtimes?: string[];
   /** Where the hub's small model lives (a fake model server of the scenario). */
   llm?: { baseUrl: string };
+  /**
+   * Leave the first meeting to the test. By default the scenario starts after it: someone connected once, the primary agent
+   * was woken for `first_meeting` and its turn is over, the connection is closed and the driver's records are empty.
+   */
+  firstMeeting?: boolean;
 }
 
 /** A clock the test moves. Starts at 2026-10-10 07:00 UTC. */
@@ -652,6 +666,7 @@ export class Scenario {
   readonly clock = new ManualNow();
   readonly dataDir = mkdtempSync(join(tmpdir(), "ash-scenario-"));
   private hubValue: Hub | undefined;
+  private relayValue: FakeGateway | undefined;
   private readonly clients = new Set<HandClient>();
   private handoffs = 0;
   private current: { port: number; token: string } | undefined;
@@ -697,8 +712,9 @@ export class Scenario {
 
   /** Stops the hub and starts it again on the same data directory; every connected client reconnects. */
   async restart(): Promise<void> {
-    await this.driver.dispose();
+    // The hub goes first: it ends the turns and the tool lines it holds itself, then the fake driver lets go.
     await this.hub.stop();
+    await this.driver.dispose();
     this.hubValue = undefined;
     // Events the host sends while the hub is down wait in the host's stream for the next boot's pipe.
     if (this.stdin) { this.host.stdin.unpipe(this.stdin); this.stdin.end(); }
@@ -707,6 +723,34 @@ export class Scenario {
     await this.boot();
     for (const client of returning) client.reconnectNow();
     await eventually(() => returning.every((client) => client.state === "ready"), "the connections coming back");
+  }
+
+  /**
+   * The owner's first connection: the hub wakes the primary agent once for `first_meeting` (its own turn, run by the
+   * fallback script). Connects, waits for that turn to end, disconnects, and empties what the driver recorded about turns,
+   * deliveries and tool calls, so a scenario counts only its own.
+   */
+  async passFirstMeeting(): Promise<void> {
+    const owner = await this.human({ name: "first meeting" });
+    const isMeeting = (m: DriverMessage): boolean => m.word === "wake" && m.text.startsWith("Wake · first_meeting");
+    const turn = await this.driver.turn((record) => record.messages.some(isMeeting), "the first-meeting turn");
+    await turn.done;
+    owner.disconnect();
+    this.driver.forget();
+  }
+
+  /**
+   * A fake relay (the owner's side of `ash-gw/1`) that already belongs to this hub: the host signs for the hub's key, which
+   * the relay knows as its owner. Nothing is connected yet; the owner points the hub at it with
+   * `service:link/gateway.use {url: relay.url}`, the way they would with a relay of their own.
+   */
+  async relay(): Promise<FakeGateway> {
+    if (this.relayValue) return this.relayValue;
+    const key = await hubKey();
+    this.host.results.set("identity.key", () => key.identity.key());
+    this.host.results.set("identity.sign", (body: unknown) => key.identity.sign((body as { data: string }).data));
+    this.relayValue = await FakeGateway.start({ claimedBy: { id: key.id, key: key.publicKey } });
+    return this.relayValue;
   }
 
   /** Moves the hub's clock (needs `fakeNow`). */
@@ -795,6 +839,8 @@ export class Scenario {
     await this.driver.dispose();
     await this.hubValue?.stop().catch(() => {});
     this.hubValue = undefined;
+    await this.relayValue?.stop().catch(() => {});
+    this.relayValue = undefined;
     await this.host.stop().catch(() => {});
     rmSync(this.dataDir, { recursive: true, force: true });
     if (this.booted) this.booted = false;
@@ -809,5 +855,6 @@ export async function startScenario(t: TestContext, options: ScenarioOptions = {
   const scenario = new Scenario(options);
   t.after(() => scenario.dispose());
   await scenario.boot();
+  if (!options.firstMeeting) await scenario.passFirstMeeting();
   return scenario;
 }

@@ -46,7 +46,7 @@ test("S084: a timer is listed and can be cancelled; a cancelled timer does not f
   const listed = await owner.call("service:clock", "list");
   assert.ok(listed.ok && JSON.stringify(dataOf(listed)).includes(id));
   const cancelled = await owner.call("service:clock", "cancel", { id });
-  assert.deepEqual(cancelled.ok && cancelled.result, { cancelled: true });
+  assert.deepEqual(dataOf(cancelled), { cancelled: true });
 
   await quiet(900);
   assert.equal(owner.messages.filter((m) => textOf(m) === "不该出现").length, 0);

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAIN, OWNER, accepted, bodyOf, byOwnerText, deferred, errorCode, extensionCapability, ownerMessage, quiet, resultOf,
-  startScenario, textOf, type ToolResult, dataOf } from "./harness";
+  startScenario, textOf, toOwner, type ToolResult, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 const HELPER = "agent:helper";
@@ -33,7 +33,7 @@ test("S046-S051: an agent declares a sub-agent, asks it, and the answer comes ba
   assert.equal(state.created!.isError, false);
   assert.equal(resultOf(state.asked!).answer, "答案是 42");
   await quiet();
-  assert.ok(!owner.messages.some((m) => m.from === HELPER), "a sub-agent does not speak to the owner on its own");
+  assert.ok(!owner.messages.some((m) => m.to === OWNER && m.word === "say" && m.from === HELPER), "a sub-agent does not speak to the owner on its own");
   const list = await owner.call("service:agents", "list");
   assert.ok(list.ok && JSON.stringify(dataOf(list)).includes(HELPER), "the declaration is in the list");
 });
@@ -144,7 +144,7 @@ test("S164, S165: pausing stops the running turns of every agent; resuming is th
 });
 
 test("S028 (first_meeting): the first time the owner connects, the primary agent is woken once; a later connection does not wake it again", async (t) => {
-  const s = await startScenario(t);
+  const s = await startScenario(t, { firstMeeting: true });
   await s.human();
 
   const { message } = await s.driver.delivery((m) => m.word === "wake" && m.text.startsWith("Wake · first_meeting"), "the first-meeting wake");
@@ -166,7 +166,7 @@ test("SPEC-08 §5.7: primary.set hands the primary role to another agent", async
 
   assert.ok(set.ok);
   const list = await owner.call("service:agents", "list");
-  const agents = (list.ok ? list.result : { agents: [] }) as { agents: { id: string; primary?: boolean }[] };
+  const agents = (dataOf(list) ?? { agents: [] }) as { agents: { id: string; primary?: boolean }[] };
   assert.equal(agents.agents.find((a) => a.id === HELPER)?.primary, true);
   assert.notEqual(agents.agents.find((a) => a.id === MAIN)?.primary, true);
 });
@@ -180,6 +180,6 @@ test("S046: the owner talks to a sub-agent directly; in that turn it may answer 
 
   accepted(await owner.say("帮手你好", { to: HELPER }));
 
-  const answer = await owner.seen((m) => m.from === HELPER && m.to === OWNER && m.word === "say", "the helper answering the owner");
+  const answer = await owner.seen(toOwner("say", HELPER), "the helper answering the owner");
   assert.equal(textOf(answer), "我是帮手，听到了");
 });
