@@ -44,41 +44,66 @@ test("the proxy did not change: nothing restarts, whether the host says so again
   assert.equal(starts(g), 2);
 });
 
-test("an agent in a turn finishes it first; no other lane starts a turn meanwhile; then it restarts and the waiting words go to the new process", async () => {
+const OWNER_C = { member: "person:owner", via: "human" as const, local: true, client: "client:a" };
+const PULSE = { member: "service:pulse", via: "service" as const, local: true };
+const OTHER = { member: "agent:other", via: "agent" as const, local: true };
+
+test("an agent in a turn is restarted at once: it is told the turn was cut, and what waits goes to the new process", async () => {
   const f = fixture({ network: OLD });
   await f.start();
   const d = f.driver();
-  await f.call(M, "wake", { reason: "pulse" }, { member: "service:pulse", via: "service", local: true });
+  await f.call(M, "wake", { reason: "pulse" }, PULSE);
   await waitFor(() => sends(d, "back").length === 1);
-  await changed(f, { proxy: { http: "http://10.0.2.2:7891" } });
-  await settle();
-  assert.equal(starts(f), 1, "the turn on back is not cut");
-  assert.equal(d.of("stop").length, 0);
-  await f.call(M, "say", { text: "hello" }, { member: "person:owner", via: "human", local: true, client: "client:a" });
-  await settle();
-  assert.equal(sends(d, "front").length, 0, "front takes no turn before the restart");
-  d.finish(M, "back");
-  await waitFor(() => starts(f) === 2);
-  assert.equal(d.of("stop").length, 1);
+  await f.call(M, "say", { text: "hello" }, OWNER_C); // front is idle: this turn is running too
   await waitFor(() => sends(d, "front").length === 1);
-  assert.equal(((sends(d, "front")[0]![3]) as any)[0].text, "hello");
+  await changed(f, { proxy: { http: "http://10.0.2.2:7891" } });
+  await waitFor(() => starts(f) === 2);
+  assert.equal(d.of("stop").length, 1, "no waiting for the turns to end");
+  const told = () => d.of("send").filter((c) => c[2] === "back" && ((c[3] as any[])[0].text as string).includes("上一轮中断了"));
+  await waitFor(() => told().length === 1);
+  assert.match(((told()[0]![3]) as any[])[0].text, /代理换了/);
+  // the words that came after are delivered in the new process like any others
+  await f.call(M, "say", { text: "still there?" }, OWNER_C);
+  await waitFor(() => sends(d, "front").length === 2);
+  assert.equal(((sends(d, "front")[1]![3]) as any[])[0].text, "still there?");
 });
 
-test("a change while the agent was still starting restarts it as soon as it is up", async () => {
-  let open!: () => void;
-  const gate = new Promise<void>((resolve) => { open = resolve; });
-  const made: FakeDriver[] = [];
-  class SlowFirst extends FakeDriver {
-    async start(agent: string, spec: Parameters<FakeDriver["start"]>[1]) { if (!this.of("start").length) await gate; return super.start(agent, spec); }
-  }
-  const f = fixture({ network: OLD, drivers: { dsh: (report) => { const d = new SlowFirst(report); made.push(d); return d; } } });
-  const started = f.agents.startAll();
-  await waitFor(() => f.agents.manager.liveOf(M)?.state === "starting");
+test("an ask queued behind a running turn is not refused by the restart: the new process gets the question and answers it", async () => {
+  const f = fixture({ network: OLD });
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "wake", { reason: "pulse" }, PULSE);
+  await waitFor(() => sends(d, "back").length === 1);
+  let outcome: unknown = "waiting";
+  const asked = (f.call(M, "ask", { text: "q" }, OTHER) as Promise<any>).then((v) => { outcome = v; return v; }, (e) => { outcome = e; throw e; });
+  await settle();
   await changed(f, { proxy: null });
-  open();
-  await started;
-  await waitFor(() => made[0]!.of("start").length === 2);
-  assert.equal(made[0]!.of("stop").length, 1);
+  await waitFor(() => starts(f) === 2);
+  await waitFor(() => d.of("send").some((c) => c[2] === "back" && ((c[3] as any[]).some((m) => m.text === "q"))));
+  assert.equal(outcome, "waiting", "the asker is still waiting, not refused");
+  d.say(M, "back", "the answer");
+  d.finish(M, "back");
+  assert.deepEqual(await asked, { data: { answer: "the answer" } });
+});
+
+test("a temporary worker is not restarted, and an agent that is off is not started by the change", async () => {
+  const f = fixture({ network: OLD });
+  await f.start();
+  const d = f.driver();
+  await f.service("declare", { id: "agent:b", name: "b", summary: "a helper agent", brief: "help" });
+  await f.service("stop", { agent: "agent:b" });
+  const job = f.service("spawn", { task: "look it up" });
+  await waitFor(() => d.of("start").some((c) => String(c[1]).startsWith("agent:w_") || (c[1] !== M && c[1] !== "agent:b")));
+  const worker = d.of("start").map((c) => c[1] as string).find((id) => id !== M && id !== "agent:b")!;
+  await waitFor(() => d.of("send").some((c) => c[1] === worker));
+  await changed(f, { proxy: null });
+  await waitFor(() => d.of("start").filter((c) => c[1] === M).length === 2);
+  await settle();
+  assert.equal(d.of("stop").filter((c) => c[1] === worker).length, 0, "the worker keeps its process");
+  assert.equal(d.of("start").filter((c) => c[1] === "agent:b").length, 1, "an agent that is off stays off");
+  d.say(worker, "work", "found");
+  d.finish(worker, "work");
+  assert.equal(((await job)!.data as any).answer, "found");
 });
 
 test("an agent that runs on a computer is left alone", async () => {

@@ -14,6 +14,7 @@ import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger } from "../../kernel/ledger";
 import type { Registry, Router, Vault } from "../../kernel/types";
+import { proxyEnv } from "../../../../sdk/src/proxy";
 import { failureText, RETRY_OPTION } from "./failure";
 import { Inbox, toDriverMessage, type InboxRow } from "./inbox";
 import { Modules, SERVICE_CALLER } from "./modules";
@@ -58,11 +59,8 @@ export interface AgentsDeps {
   localKinds?: string[];
 }
 
-/** The proxy as the body gives it to a process: one string, equal when the processes would be given the same environment. */
-const proxyKey = (network: HostNetwork | null | undefined): string => {
-  const proxy = network?.proxy;
-  return !proxy || (!proxy.http && !proxy.https) ? "" : JSON.stringify([proxy.http ?? "", proxy.https ?? "", proxy.no_proxy?.trim() ?? ""]);
-};
+/** The proxy as the body gives it to a process: the same environment is the same proxy. */
+const proxyKey = (network: HostNetwork | null | undefined): string => JSON.stringify(proxyEnv(network));
 
 export const DEFAULT_CREDENTIAL_REFS = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 export const USAGE_POLL_MS = 10 * 60_000;
@@ -103,8 +101,6 @@ interface Live {
   startedAt: number;
   failures: number;
   stopping: boolean;
-  /** The proxy changed while this process ran: it is restarted when no lane is in a turn, and takes no new turn before. */
-  networkStale?: boolean;
 }
 interface Waiter { id: string; agent: string; from: string; since: number; resolve(answer: string): void; reject(error: WordError): void }
 
@@ -238,51 +234,46 @@ export class AgentManager {
     this.live.set(id, live);
     this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
+    this.rejectWaiters(id, new WordError("failed", `${id} could not be started: ${reason}`));
     this.tellOwner(`${id} 起不来了：连着失败了三次（${reason}）。我先停下它，不再自动重试；你可以在设置里让它重启。`);
   }
 
-  async stopAgent(id: string, reason: string, off = false): Promise<void> {
+  async stopAgent(id: string, reason: string, off = false, keepWaiters = false): Promise<void> {
     const live = this.live.get(id);
     if (off) this.runs.setDesired(id, "off");
     this.deps.revokeTools?.(id);
     if (!live) return;
     live.stopping = true;
     this.deps.registry.remove(id);
-    this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
+    if (!keepWaiters) this.rejectWaiters(id, new WordError("unavailable", `${id} stopped`));
     this.live.delete(id);
     if (live.state !== "failed") await live.driver.stop(id, reason).catch((error) => this.log(`agents: stopping ${id}: ${errorText(error)}`));
   }
 
   /**
-   * The host's network changed. When the proxy is not the one the agents were started with, every agent whose process runs
-   * on the main body is restarted between turns: one in a turn finishes it first, and none starts another before then.
-   * The sessions are resumed as in any restart.
+   * The host's network changed. When the proxy is not the one the agents were started with, the agents that run on the main
+   * body are restarted at once, the way a process that ended is: a turn it was in is told as cut off, what waits in the inbox
+   * goes to the new process, and whoever asked and waits is answered by it. Temporary workers, agents that are off, and
+   * agents on a computer are left as they are.
    */
   onNetwork(network: HostNetwork): void {
     const next = proxyKey(network);
     if (next === this.proxy) return;
     this.proxy = next;
     const local = this.deps.localKinds ?? ["dsh"];
-    for (const live of this.live.values()) {
-      if (live.state === "failed" || live.stopping || !local.includes(this.run(live.id).spec.decl.runtime.kind)) continue;
-      live.networkStale = true;
-      this.bg(this.restartIfStale(live), `restart ${live.id} for the new proxy`);
+    for (const live of [...this.live.values()]) {
+      const run = this.runs.get(live.id);
+      if (!run || run.desired !== "on" || run.spec.decl.ephemeral || !local.includes(run.spec.decl.runtime.kind) || live.state !== "running" || live.stopping) continue;
+      this.log(`agents: ${live.id}: the proxy changed, restarting its process`);
+      this.bg(this.restartAgent(live.id, "代理换了", true), `restart ${live.id} for the new proxy`);
     }
   }
 
-  /** Restarts a process whose proxy is old once nothing is running in it. Returns whether the agent is held back for it. */
-  private async restartIfStale(live: Live): Promise<boolean> {
-    if (!live.networkStale || live.stopping || this.live.get(live.id) !== live) return false;
-    if (live.state !== "running" || [...live.lanes.values()].some((lane) => lane.busy || lane.sending)) return true;
-    this.log(`agents: ${live.id}: the proxy changed, restarting its process`);
-    await this.restartAgent(live.id);
-    return true;
-  }
-
-  async restartAgent(id: string): Promise<void> {
-    await this.stopAgent(id, "restart");
+  /** `keepWaiters`: the new process answers those who ask and wait, not the old one's end (a planned restart). */
+  async restartAgent(id: string, why = "重启", keepWaiters = false): Promise<void> {
+    await this.stopAgent(id, "restart", false, keepWaiters);
     this.runs.setDesired(id, "on");
-    await this.startAgent(id, "重启");
+    await this.startAgent(id, why);
   }
 
   /** What was in flight when the agent went away is not sent again; the agent hears that it was cut off and decides. */
@@ -395,7 +386,6 @@ export class AgentManager {
   /** The agent is idle on this lane: give it what is waiting (one batch). */
   async drain(live: Live, lane: Lane): Promise<void> {
     if (live.state !== "running" || lane.busy || lane.sending || this.paused) return;
-    if (live.networkStale) { await this.restartIfStale(live); return; }
     const rows = this.inbox.pending(live.id, lane.key, BATCH);
     if (!rows.length) return;
     // The owner is still typing to this agent: a lane that takes their words waits until they have had time to finish.
@@ -428,10 +418,7 @@ export class AgentManager {
         this.inbox.mark(rows.map((r) => r.id), "pending");
         if (!(error instanceof WordError && error.code === "conflict")) throw error; // conflict: the driver is in a turn already
       }
-    } finally {
-      lane.sending = false;
-      if (!sent && live.networkStale) this.bg(this.restartIfStale(live), `restart ${live.id} for the new proxy`); // nothing started: the process need not wait
-    }
+    } finally { lane.sending = false; }
     // What arrived while the batch was being handed over now meets a busy lane.
     if (lane.busy) for (const row of this.inbox.pending(live.id, lane.key)) this.bg(this.busyRoute(live, lane, row), `route ${row.id}`);
     else if (sent) this.bg(this.drain(live, lane), `drain ${live.id}/${lane.key}`); // the turn is over already: what came meanwhile goes next
@@ -630,7 +617,6 @@ export class AgentManager {
     this.live.delete(id);
     this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
-    this.rejectWaiters(id, new WordError("failed", `${id} stopped unexpectedly`));
     this.log(`agents: ${id} ended: ${reason ?? "?"}`);
     const failures = this.now() - live.startedAt >= STABLE_RUN_MS ? 1 : live.failures + 1;
     if (failures >= MAX_FAILURES) { this.giveUp(id, reason ?? "the process ended", live); return; }

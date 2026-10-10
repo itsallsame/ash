@@ -15,7 +15,7 @@ import { standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member, Risk, WordContract } from "../../../../sdk/src/word";
 import { Workspace, type Executor, type StreamPublisher } from "../../../../workspace/src";
 import type { AppJson } from "../../../../sdk/src/app";
-import { proxyEnv } from "./network";
+import { proxyEnv } from "../../../../sdk/src/proxy";
 import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot, type ProotConfig, type ProotSpawnOptions } from "./proot";
 import { startProvision, type ProvisionState } from "./provision";
 

@@ -11,7 +11,7 @@ import type { HandleContext, Message } from "../../../../sdk/src/message";
 import { lintWords } from "../../../../sdk/src/word";
 import { createLocalBody, bodyWords, mainBodyKind, type LocalBody } from "../../../src/edges/body/local";
 import { createDshDriver, DEFAULT_ARGV } from "../../../src/edges/agents/dsh";
-import { proxyEnv } from "../../../src/edges/body/network";
+import { proxyEnv } from "../../../../sdk/src/proxy";
 import type { ProotConfig } from "../../../src/edges/body/proot";
 
 const caller = { member: "agent:cloud", via: "agent" as const, local: false };
