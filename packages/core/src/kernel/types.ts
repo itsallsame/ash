@@ -75,6 +75,8 @@ export interface Decision {
   /** The approval card may offer 「以后都可以」. */
   offer_always: boolean;
   reason?: string;
+  /** The review model's one sentence about an "ask": what the command does and where the risk is. The approval card leads with it. */
+  review_reason?: string;
 }
 
 export interface Gate {
@@ -90,8 +92,8 @@ export interface GateDeps {
   mode(): "auto" | "always";
   /** Per-call assessment (10 s), e.g. a workspace write inside the work folder is "none". */
   assess?(req: Message): Promise<"none" | "outward" | "structure" | null>;
-  /** The review model (through edges/llm); a timeout or error is "ask". */
-  review(req: Message, contract: WordContract): Promise<"allow" | "ask">;
+  /** The review model (through edges/llm); a timeout or error is "ask". `reason` is its one sentence for the owner (ask) or the agent (deny). */
+  review(req: Message, contract: WordContract): Promise<{ verdict: "allow" | "ask" | "deny"; reason?: string }>;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

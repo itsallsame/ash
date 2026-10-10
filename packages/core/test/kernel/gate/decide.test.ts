@@ -19,7 +19,7 @@ function make(over: Partial<GateDeps> & { reviews?: { n: number } } = {}) {
   const clock = { now: 1_000_000 };
   const store = new GateStore(ledger, () => clock.now);
   const counter = over.reviews ?? { n: 0 };
-  const deps: GateDeps = { tier: () => "ask", mode: () => store.mode(), review: async () => { counter.n++; return "ask"; }, ...over };
+  const deps: GateDeps = { tier: () => "ask", mode: () => store.mode(), review: async () => { counter.n++; return { verdict: "ask" }; }, ...over };
   const gate = createGate(deps, store, { now: () => clock.now, reviewMs: 30, assessMs: 30 });
   return { gate, store, clock, counter };
 }
@@ -68,7 +68,7 @@ test("agent step 2: a read is let through without evidence", async () => {
 });
 
 test("agent step 3: a payment always asks, with no 「以后都可以」", async () => {
-  const g = make({ review: async () => "allow" });
+  const g = make({ review: async () => ({ verdict: "allow" }) });
   const pay = word(DEVICE, "wallet.pay", { effect: "act", risk: "outward", label: { doing: "在付款" } });
   const d = await verdict(g, req("agent:main", DEVICE, "wallet.pay"), pay);
   assert.deepEqual([d.verdict, d.by, d.offer_always], ["ask", "payment", false]);
@@ -80,7 +80,7 @@ test("agent step 3: a payment always asks, with no 「以后都可以」", async
 });
 
 test("agent step 4: the words that always ask the owner, and only those", async () => {
-  const g = make({ review: async () => "allow", tier: () => "full" });
+  const g = make({ review: async () => ({ verdict: "allow" }), tier: () => "full" });
   for (const [member, w] of [["service:gate", "rules.set"], ["service:gate", "rules.revoke"], ["service:gate", "mode.set"], ["service:devices", "access_set"],
     ["service:devices", "revoke"], ["service:devices", "pair_approve"], ["service:devices", "update"], ["service:persona", "propose"], ["service:apps", "apps.install"]] as const) {
     const c = word(member, w, { effect: "write", risk: "structure" });
@@ -117,7 +117,7 @@ test("agent step 6: a hand or a lent computer at tier full lets everything throu
 });
 
 test("agent step 7: mode always asks about everything with an effect", async () => {
-  const g = make({ review: async () => "allow" });
+  const g = make({ review: async () => ({ verdict: "allow" }) });
   g.store.setMode("always");
   const r = req("agent:main", DEVICE, "message.send");
   const d = await verdict(g, r, send);
@@ -160,7 +160,7 @@ test("agent step 9: 「这次可以」 carries over for five minutes, for the sa
 
 test("agent step 10: the review model lets it through and the allowance is carried; a command is reviewed every time and nothing is kept", async () => {
   const reviews = { n: 0 };
-  const g = make({ reviews, review: async () => { reviews.n++; return "allow"; } });
+  const g = make({ reviews, review: async () => { reviews.n++; return { verdict: "allow" }; } });
   const r1 = req("agent:main", DEVICE, "message.send", { text: "a" });
   assert.equal((await verdict(g, r1, send)).by, "review");
   assert.equal((await verdict(g, req("agent:main", DEVICE, "message.send", { text: "a" }), send)).by, "carry");
@@ -182,6 +182,17 @@ test("agent step 11: a command the review model will not pass asks the owner, wi
   g.gate.answered(c, "always");
   assert.equal((await verdict(g, req("agent:main", BODY, "workspace.bash", { command: "rm x" }), bash)).verdict, "ask", "and no rule");
   assert.equal(g.store.listRules().rules.length, 0);
+});
+
+test("agent step 10: the review model's deny is a deny with its reason; its ask carries the reason for the card", async () => {
+  const denied = make({ review: async () => ({ verdict: "deny", reason: "命令太长，请先写成文件再执行" }) });
+  const d = await verdict(denied, req("agent:main", BODY, "workspace.bash", { command: "x" }), bash);
+  assert.deepEqual([d.verdict, d.by, d.reason, d.offer_always], ["deny", "review", "命令太长，请先写成文件再执行", false]);
+  const asking = make({ review: async () => ({ verdict: "ask", reason: "会删除 build 目录，可恢复" }) });
+  const a = await verdict(asking, req("agent:main", BODY, "workspace.bash", { command: "rm -r build" }), bash);
+  assert.deepEqual([a.verdict, a.review_reason], ["ask", "会删除 build 目录，可恢复"]);
+  const none = await verdict(make(), req("agent:main", BODY, "workspace.bash", { command: "x" }), bash);
+  assert.equal(none.review_reason, undefined);
 });
 
 test("agent step 11: a review model that is slow, or fails, is an ask", async () => {

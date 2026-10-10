@@ -276,6 +276,34 @@ test("a command through the tool: review model, never a rule or a carry; full ti
   assert.equal(success(await asks.router.send({ to: BODY, kind: "request", word: "workspace.bash", body: {} }, agent())).status, "waiting_owner");
 });
 
+test("the review model denies: the agent gets denied with its reason, no card, nothing parked", async () => {
+  const reason = "命令太长（70000 字），审不了。请先用 workspace.write 把脚本写成文件，再执行那个文件。";
+  const s = setup({ review: { verdict: "deny", reason } });
+  const reply = await s.router.send({ to: BODY, kind: "request", word: "workspace.bash", body: { command: "x" } }, agent());
+  const err = failure(reply);
+  assert.equal(err.code, "denied");
+  assert.equal(err.message, reason);
+  await flush();
+  assert.equal(s.owner.cards.length, 0);
+  assert.equal(s.store.waiting().length, 0);
+  assert.equal(s.computer.calls.length, 0);
+});
+
+test("the review model asks with a reason: the card's detail starts with it, and the full body stays in the source", async () => {
+  const s = setup({ review: { verdict: "ask", reason: "会删除 build 目录，可以重新生成" } });
+  const command = `rm -r build ${"x".repeat(400)}`;
+  assert.equal(success(await s.router.send({ to: BODY, kind: "request", word: "workspace.bash", body: { command } }, agent())).status, "waiting_owner");
+  await flush();
+  const card = s.owner.cards[0]!.msg.body as any;
+  assert.equal(card.detail.split("\n")[0], "审核：会删除 build 目录，可以重新生成");
+  assert.equal(JSON.parse(card.source.body_full).command, command);
+  // no reason from the model: no 审核 line
+  const plain = setup({ review: "ask" });
+  await plain.router.send({ to: BODY, kind: "request", word: "workspace.bash", body: { command: "x" } }, agent());
+  await flush();
+  assert.doesNotMatch((plain.owner.cards[0]!.msg.body as any).detail, /审核：/);
+});
+
 test("an app is refused, not asked", async () => {
   const s = setup({ appGranted: () => true });
   const reply = await s.router.send({ to: DEVICE, kind: "request", word: "message.send", body: { text: "x" } }, { member: "app:todo", via: "app", local: false });

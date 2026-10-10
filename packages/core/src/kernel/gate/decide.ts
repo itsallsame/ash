@@ -118,13 +118,20 @@ export function createGate(deps: GateDeps, store: GateStore, options: GateOption
     // 9. carry-over (never for a command)
     if (!execute && carry.has(carryKey(req, contract, caller))) return allow("carry", "carry");
     // 10. the review model: a command goes here too, and nothing it says is remembered
-    const verdict = await within(deps.review(req, contract), options.reviewMs ?? REVIEW_MS);
-    if (verdict === "allow") {
+    const review = await within(deps.review(req, contract), options.reviewMs ?? REVIEW_MS);
+    if (review?.verdict === "allow") {
       if (!execute) carry.remember(carryKey(req, contract, caller));
       return allow("review", "review", { reason: "the review model found it fine" });
     }
-    // 11. everything else
-    return ask("ask", verdict === null ? "the review model gave no answer" : "the review model asked", !execute);
+    // 11. the review model refused (plainly malicious, or too long to review): the agent is told why and what to do instead
+    if (review?.verdict === "deny") {
+      const reason = review.reason || "the review model refused";
+      evidence(req, contract, caller, risk, { by: "review", decision: "review_deny", reason });
+      return { verdict: "deny", by: "review", offer_always: false, reason };
+    }
+    // 12. everything else: the owner decides, and the card leads with the review model's sentence
+    const decision = ask("ask", review === null ? "the review model gave no answer" : "the review model asked", !execute);
+    return review?.reason ? { ...decision, review_reason: review.reason } : decision;
   }
 
   return {
