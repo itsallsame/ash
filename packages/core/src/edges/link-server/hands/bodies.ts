@@ -10,7 +10,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { bodyId, idKind, MAIN_BODY_ID } from "../../../../../sdk/src/ids";
-import type { ErrorCode, HandleContext, Message } from "../../../../../sdk/src/message";
+import { WordError, type HandleContext, type Message, type WordResult } from "../../../../../sdk/src/message";
 import { standardMember } from "../../../../../sdk/src/namespaces";
 import { wordsOf } from "../../../../../sdk/src/words";
 import type { Member, WordContract } from "../../../../../sdk/src/word";
@@ -35,20 +35,15 @@ export interface BodiesDeps {
    * (calls `splitBodyCapabilities` again with the hand's current manifest). Called after the table is updated.
    */
   rebind(hand: string): void;
-  /** `router.send` as the service, for `body.info` on a body. Resolves with the member's result. */
-  call(to: string, word: string, body: unknown): Promise<unknown>;
+  /** `router.send` as the service, for `body.info` on a body. Resolves with the member's `WordResult`. */
+  call(to: string, word: string, body: unknown): Promise<WordResult | void>;
   now?: () => number;
   /** `bodies.kind` of the main body, from the host's isolation kind. Default `proot-ubuntu`. */
   mainKind?: string;
 }
 
-/** A request `service:bodies` refuses; `code` is one of the shared error codes. */
-export class BodiesError extends Error {
-  constructor(readonly code: ErrorCode, message: string) {
-    super(message);
-    this.name = "BodiesError";
-  }
-}
+/** A request `service:bodies` refuses: the sdk's `WordError`. */
+export { WordError as BodiesError };
 
 export interface Bodies extends Member {
   /** True while the owner has this computer bound as a body. The hand registry asks this when it splits a manifest. */
@@ -120,9 +115,9 @@ export function createBodies(deps: BodiesDeps): Bodies {
     ...(r.id === MAIN_BODY_ID ? {} : { hand: handOf(r.id) }),
   });
   const boundRow = (body: unknown): Row => {
-    if (typeof body !== "string" || idKind(body) !== "body") throw new BodiesError("bad_request", "body must be a body id such as body:main");
+    if (typeof body !== "string" || idKind(body) !== "body") throw new WordError("bad_request", "body must be a body id such as body:main");
     const r = row(body);
-    if (!r || r.unbound_at !== null) throw new BodiesError("not_found", `${body} is not a bound body`);
+    if (!r || r.unbound_at !== null) throw new WordError("not_found", `${body} is not a bound body`);
     return r;
   };
 
@@ -130,8 +125,7 @@ export function createBodies(deps: BodiesDeps): Bodies {
     let info: unknown = JSON.parse(r.info);
     if (online(r)) {
       try {
-        const reply = await deps.call(r.id, "body.info", {});
-        const data = reply && typeof reply === "object" && "content" in reply && "data" in reply ? (reply as { data: unknown }).data : reply;
+        const data = (await deps.call(r.id, "body.info", {}))?.data;
         if (data && typeof data === "object") {
           info = data;
           db.prepare("UPDATE bodies SET info = ?, last_seen = ? WHERE id = ?").run(JSON.stringify(data), now(), r.id);
@@ -146,10 +140,10 @@ export function createBodies(deps: BodiesDeps): Bodies {
   }
 
   function bind(handId: unknown) {
-    if (typeof handId !== "string" || handId === "") throw new BodiesError("bad_request", "hand must be a hand id");
+    if (typeof handId !== "string" || handId === "") throw new WordError("bad_request", "hand must be a hand id");
     const hand = deps.hands.get(handId);
-    if (!hand) throw new BodiesError("not_found", `${handId} is not a paired computer`);
-    if (hand.kind !== "computer") throw new BodiesError("bad_request", `${hand.name} is a ${hand.kind}; only a computer can be a body`);
+    if (!hand) throw new WordError("not_found", `${handId} is not a paired computer`);
+    if (hand.kind !== "computer") throw new WordError("bad_request", `${hand.name} is a ${hand.kind}; only a computer can be a body`);
     const id = bodyId(handId);
     const existing = row(id);
     if (existing && existing.unbound_at === null) return summary(existing);
@@ -160,7 +154,7 @@ export function createBodies(deps: BodiesDeps): Bodies {
   }
 
   function unbind(body: unknown) {
-    if (body === MAIN_BODY_ID) throw new BodiesError("forbidden", "body:main cannot be unbound: the hub always carries at least one body");
+    if (body === MAIN_BODY_ID) throw new WordError("forbidden", "body:main cannot be unbound: the hub always carries at least one body");
     const r = boundRow(body);
     db.prepare("UPDATE bodies SET unbound_at = ? WHERE id = ?").run(now(), r.id);
     errors.delete(r.id);
@@ -173,14 +167,14 @@ export function createBodies(deps: BodiesDeps): Bodies {
     kind: "service",
     name: "bodies",
     words: (): WordContract[] => wordsOf(BODIES_ID),
-    async handle(msg: Message, _ctx: HandleContext): Promise<unknown> {
+    async handle(msg: Message, _ctx: HandleContext): Promise<WordResult> {
       const input = (msg.body ?? {}) as Record<string, unknown>;
       switch (msg.word) {
-        case "list": return { bodies: (bound.all() as unknown as Row[]).map(summary) };
-        case "describe": return describe(boundRow(input.body));
-        case "bind": return bind(input.hand);
-        case "unbind": return unbind(input.body);
-        default: throw new BodiesError("not_found", `service:bodies has no word ${msg.word}`);
+        case "list": return { data: { bodies: (bound.all() as unknown as Row[]).map(summary) } };
+        case "describe": return { data: await describe(boundRow(input.body)) };
+        case "bind": return { data: bind(input.hand) };
+        case "unbind": return { data: unbind(input.body) };
+        default: throw new WordError("not_found", `service:bodies has no word ${msg.word}`);
       }
     },
     isBound: (hand) => { const r = row(bodyId(hand)); return !!r && r.unbound_at === null; },

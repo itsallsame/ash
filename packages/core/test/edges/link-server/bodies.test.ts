@@ -4,18 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import type { Message } from "../../../../sdk/src/message";
+import { WordError, type Message, type WordResult } from "../../../../sdk/src/message";
 import { STANDARD_ACTIONS } from "../../../../sdk/src/namespaces";
 import { lintWords } from "../../../../sdk/src/word";
 import { Workspace } from "../../../../workspace/src";
-import { BodiesError, createBodies, isBodyCapability, splitBodyCapabilities, type Bodies, type HandView } from "../../../src/edges/link-server/hands/bodies";
+import { createBodies, isBodyCapability, splitBodyCapabilities, type Bodies, type HandView } from "../../../src/edges/link-server/hands/bodies";
 
 const COMPUTER = "c".repeat(22), PHONE = "p".repeat(22), SECOND = "d".repeat(22);
 const ctx = { signal: new AbortController().signal, caller: { member: "person:owner", via: "human" as const, local: true }, raw: {} };
 let seq = 0;
 const send = (bodies: Bodies, word: string, body: Record<string, unknown> = {}) =>
-  bodies.handle({ seq: ++seq, id: `m${seq}`, ts: 1, from: "person:owner", to: "service:bodies", kind: "request", word, body } as Message, ctx) as Promise<any>;
-const refused = (code: string) => (error: unknown) => error instanceof BodiesError && error.code === code;
+  bodies.handle({ seq: ++seq, id: `m${seq}`, ts: 1, from: "person:owner", to: "service:bodies", kind: "request", word, body } as Message, ctx).then((result) => (result as WordResult).data as any);
+const refused = (code: string) => (error: unknown) => error instanceof WordError && error.code === code;
 
 /** A hand's manifest: the whole body contract plus two ordinary capabilities. */
 const manifest = () => [...STANDARD_ACTIONS.filter((a) => isBodyCapability(a.name) || a.name === "browser.open").map((a) => ({ name: a.name })), { name: "x.demo.ping" }];
@@ -35,7 +35,7 @@ class FakeHands {
 }
 
 interface Fixture { db: DatabaseSync; hands: FakeHands; bodies: Bodies; calls: string[]; clock: { t: number }; dir: string }
-async function fixture(opts: { call?: (to: string, word: string) => Promise<unknown>; db?: DatabaseSync } = {}): Promise<Fixture> {
+async function fixture(opts: { call?: (to: string, word: string) => Promise<WordResult | void>; db?: DatabaseSync } = {}): Promise<Fixture> {
   const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "bodies-"));
   const db = opts.db ?? new DatabaseSync(":memory:");
   const hands = new FakeHands();
@@ -187,8 +187,8 @@ withFixture("forget: a revoked hand's body binding ends without a registry call"
   bodies.forget(COMPUTER);
 });
 
-test("describe: body.info from the body itself (unwrapping a call result), its disk, and the latest error; offline shows what was last known", async () => {
-  const answers: (() => unknown)[] = [];
+test("describe: body.info from the body itself (from the WordResult), its disk, and the latest error; offline shows what was last known", async () => {
+  const answers: (() => WordResult)[] = [];
   const f = await fixture({ call: async () => answers.shift()!() });
   try {
     const info = { system: "macOS 15", arch: "arm64", workdir: "/Users/o/work", ownership: "borrowed", full_linux: false, resources: { cpu: { count: 8 }, memory: { total: 1 }, disk: { total: 100, free: 40 } } };
@@ -204,7 +204,7 @@ test("describe: body.info from the body itself (unwrapping a call result), its d
     const failed = await send(f.bodies, "describe", { body: `body:${COMPUTER}` });
     assert.equal(failed.last_error, "hand did not answer");
     assert.equal(failed.info.ownership, "borrowed");
-    answers.push(() => info);                                    // a plain result works too
+    answers.push(() => ({ data: info }));                        // content is optional
     const fine = await send(f.bodies, "describe", { body: `body:${COMPUTER}` });
     assert.equal(fine.last_error, undefined);
     assert.equal(fine.info.workdir, "/Users/o/work");

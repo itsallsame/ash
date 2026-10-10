@@ -6,10 +6,10 @@
 import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { MAIN_BODY_ID } from "../../../../sdk/src/ids";
-import type { HandleContext, Message } from "../../../../sdk/src/message";
+import type { HandleContext, Message, WordResult } from "../../../../sdk/src/message";
 import { standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member, Risk, WordContract } from "../../../../sdk/src/word";
-import { Workspace, WorkspaceError, type CallOutcome, type Executor, type StreamPublisher } from "../../../../workspace/src";
+import { Workspace, WorkspaceError, type Executor, type StreamPublisher } from "../../../../workspace/src";
 import { PROOT_WORKDIR, prootMounts, runInProot, type ProotConfig } from "./proot";
 
 export interface LocalBodyOptions {
@@ -56,7 +56,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     kind: "body",
     name: "main body",
     words: () => bodyWords(MAIN_BODY_ID),
-    async handle(msg: Message, ctx: HandleContext): Promise<CallOutcome> {
+    async handle(msg: Message, ctx: HandleContext): Promise<WordResult> {
       return open().call(msg.word, (msg.body ?? {}) as Record<string, unknown>, { signal: ctx.signal });
     },
     async assess(msg) {

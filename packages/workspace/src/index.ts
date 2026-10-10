@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { ContentPart } from "../../sdk/src/link";
+import type { WordResult } from "../../sdk/src/message";
 import { standardAction } from "../../sdk/src/namespaces";
 import { compileSchema, type Risk } from "../../sdk/src/word";
 import { asWorkspaceError, WorkspaceError } from "./errors";
@@ -45,7 +46,7 @@ export type WorkspaceAction = (typeof WORKSPACE_ACTION_NAMES)[number];
 export type StreamPublisher = (data: Uint8Array, meta: { mime: string }) => string | Promise<string>;
 
 /** What a call returns: the structured `data` of the standard action, and the `content` parts (the shape of a link `result` frame). */
-export interface CallOutcome { data: Record<string, unknown>; content: ContentPart[] }
+export interface CallOutcome extends WordResult { data: Record<string, unknown>; content: ContentPart[] }
 
 export interface WorkspaceOptions {
   /** The directory every path stays under. */
@@ -89,7 +90,7 @@ export class Workspace {
     for (const name of WORKSPACE_ACTION_NAMES) this.validators.set(name, compileSchema(standardAction(name)!.input_schema));
   }
 
-  /** Runs one standard action. Failures are thrown as `WorkspaceError`. */
+  /** Runs one standard action. Failures are thrown as the sdk's `WordError`. */
   async call(name: string, args: Args, opts: { signal?: AbortSignal } = {}): Promise<CallOutcome> {
     const validate = this.validators.get(name);
     if (!validate) throw new WorkspaceError("not_found", `No such action: ${name}`);
