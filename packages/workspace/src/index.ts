@@ -12,32 +12,27 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { ContentPart } from "../../sdk/src/link";
-import type { WordResult } from "../../sdk/src/message";
-import { standardAction } from "../../sdk/src/namespaces";
+import { WordError, type WordResult } from "../../sdk/src/message";
+import { STANDARD_NAMESPACES, standardAction } from "../../sdk/src/namespaces";
 import { compileSchema, type Risk } from "../../sdk/src/word";
-import { asWorkspaceError, WorkspaceError } from "./errors";
+import { asWorkspaceError } from "./errors";
 import { globToRegExp } from "./glob";
 import { describeBody } from "./info";
 import { isWithin, Jail } from "./jail";
 import { hostExecutor, Jobs, type Executor, type JobSnapshot } from "./jobs";
 
-export { WorkspaceError, asWorkspaceError } from "./errors";
-export { Jail, isWithin } from "./jail";
-export { globToRegExp } from "./glob";
-export { hostExecutor, POLL_BYTES, type CommandPlace, type Executor } from "./jobs";
+export type { CommandPlace, Executor } from "./jobs";
 
 /** A file `workspace.write` and `workspace.edit` may hold, and the longest text `workspace.read` returns inline. */
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
 /** The largest file `workspace.read` hands over as a stream. */
-export const MAX_STREAM_BYTES = 64 * 1024 * 1024;
+const MAX_STREAM_BYTES = 64 * 1024 * 1024;
 const SNIFF_BYTES = 8192;
 const MAX_WALK = 200_000;
 
-export const WORKSPACE_ACTION_NAMES = [
-  "workspace.ls", "workspace.read", "workspace.find", "workspace.grep", "workspace.write", "workspace.edit",
-  "workspace.bash", "workspace.poll", "workspace.signal", "body.info",
-] as const;
-export type WorkspaceAction = (typeof WORKSPACE_ACTION_NAMES)[number];
+/** The actions a workspace serves: the standard `workspace.*` and `body.info` (sdk namespaces). */
+const ACTIONS = [...STANDARD_NAMESPACES.workspace!, ...STANDARD_NAMESPACES.body!].map((action) => action.name);
+type WorkspaceAction = "workspace.ls" | "workspace.read" | "workspace.find" | "workspace.grep" | "workspace.write" | "workspace.edit" | "workspace.bash" | "workspace.poll" | "workspace.signal" | "body.info";
 
 /**
  * Sends bytes to the caller as a stream and returns the stream id the result refers to
@@ -75,7 +70,7 @@ const json = (data: Record<string, unknown>): ContentPart[] => [{ type: "text", 
 type Args = Record<string, any>;
 
 export class Workspace {
-  readonly jail: Jail;
+  private readonly jail: Jail;
   private readonly workdir: string;
   private readonly ownership: "own" | "borrowed";
   private readonly jobs: Jobs;
@@ -87,16 +82,16 @@ export class Workspace {
     this.workdir = o.workdir ?? this.jail.shownRoot;
     this.ownership = o.ownership ?? "borrowed";
     this.jobs = new Jobs(o.exec ?? hostExecutor, () => this.spillDirectory());
-    for (const name of WORKSPACE_ACTION_NAMES) this.validators.set(name, compileSchema(standardAction(name)!.input_schema));
+    for (const name of ACTIONS) this.validators.set(name, compileSchema(standardAction(name)!.input_schema));
   }
 
   /** Runs one standard action. Failures are thrown as the sdk's `WordError`. */
   async call(name: string, args: Args, opts: { signal?: AbortSignal } = {}): Promise<CallOutcome> {
     const validate = this.validators.get(name);
-    if (!validate) throw new WorkspaceError("not_found", `No such action: ${name}`);
+    if (!validate) throw new WordError("not_found", `No such action: ${name}`);
     if (!validate(args)) {
       const first = validate.errors?.[0];
-      throw new WorkspaceError("bad_request", `Input does not match ${name}: ${first ? `${first.instancePath || "input"} ${first.message}` : "invalid"}`);
+      throw new WordError("bad_request", `Input does not match ${name}: ${first ? `${first.instancePath || "input"} ${first.message}` : "invalid"}`);
     }
     try {
       opts.signal?.throwIfAborted();
@@ -178,7 +173,7 @@ export class Workspace {
     switch (name) {
       case "workspace.bash": {
         const info = await stat(cwd).catch((error) => { throw asWorkspaceError(error); });
-        if (!info.isDirectory()) throw new WorkspaceError("bad_request", "The working directory is not a directory");
+        if (!info.isDirectory()) throw new WordError("bad_request", "The working directory is not a directory");
         return this.job(await this.jobs.start(a.command, { cwd: this.shownDir(cwd), hostCwd: cwd }, { timeout: a.timeout, yield_ms: a.yield_ms ?? 10000 }, signal));
       }
       case "workspace.ls": return this.ls(await this.target(a, cwd), a.limit ?? 1000);
@@ -212,7 +207,7 @@ export class Workspace {
 
   private async read(file: string, a: Args, signal?: AbortSignal): Promise<CallOutcome> {
     const info = await stat(file);
-    if (info.isDirectory()) throw new WorkspaceError("bad_request", "That is a directory; use workspace.ls");
+    if (info.isDirectory()) throw new WordError("bad_request", "That is a directory; use workspace.ls");
     const explicitRange = a.offset !== undefined || a.limit !== undefined;
     if (await this.isBinary(file, info.size) || (info.size > MAX_TEXT_BYTES && !explicitRange)) return this.stream(file, info.size);
     const offset: number = a.offset ?? 1, limit: number = a.limit ?? 2000;
@@ -228,7 +223,7 @@ export class Workspace {
         n++;
         if (n < offset) continue;
         const size = Buffer.byteLength(line);
-        if (size > MAX_TEXT_BYTES && out.length === 0) throw new WorkspaceError("too_large", "A single line exceeds 4 MiB; use workspace.grep or workspace.bash to read a smaller part");
+        if (size > MAX_TEXT_BYTES && out.length === 0) throw new WordError("too_large", "A single line exceeds 4 MiB; use workspace.grep or workspace.bash to read a smaller part");
         if (out.length >= limit || bytes + size > MAX_TEXT_BYTES) { truncated = true; break; }
         out.push(line);
         bytes += size + 1;
@@ -252,8 +247,8 @@ export class Workspace {
   }
 
   private async stream(file: string, size: number): Promise<CallOutcome> {
-    if (!this.o.streams) throw new WorkspaceError("unavailable", "This body cannot send a binary or large file: no stream is available");
-    if (size > MAX_STREAM_BYTES) throw new WorkspaceError("too_large", `The file is ${size} bytes; at most ${MAX_STREAM_BYTES} can be sent`);
+    if (!this.o.streams) throw new WordError("unavailable", "This body cannot send a binary or large file: no stream is available");
+    if (size > MAX_STREAM_BYTES) throw new WordError("too_large", `The file is ${size} bytes; at most ${MAX_STREAM_BYTES} can be sent`);
     const mime = IMAGE_TYPES[extname(file).toLowerCase()] ?? ((await this.isBinary(file, size)) ? "application/octet-stream" : "text/plain");
     const bytes = await readFile(file);
     const sid = await this.o.streams(bytes, { mime });
@@ -263,7 +258,7 @@ export class Workspace {
 
   private async write(file: string, content: string): Promise<CallOutcome> {
     const bytes = Buffer.byteLength(content);
-    if (bytes > MAX_TEXT_BYTES) throw new WorkspaceError("too_large", "A file written in one call may be at most 4 MiB");
+    if (bytes > MAX_TEXT_BYTES) throw new WordError("too_large", "A file written in one call may be at most 4 MiB");
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, content);
     const data = { path: this.show(file), bytes };
@@ -273,15 +268,15 @@ export class Workspace {
   private async edit(file: string, edits: { oldText: string; newText: string }[]): Promise<CallOutcome> {
     const real = await realpath(file);
     const info = await stat(real);
-    if (info.size > MAX_TEXT_BYTES) throw new WorkspaceError("too_large", "A file larger than 4 MiB cannot be edited");
+    if (info.size > MAX_TEXT_BYTES) throw new WordError("too_large", "A file larger than 4 MiB cannot be edited");
     let text = await readFile(real, "utf8");
     edits.forEach(({ oldText, newText }, index) => {
       const at = text.indexOf(oldText);
-      if (at < 0) throw new WorkspaceError("bad_request", `edits[${index}].oldText was not found; nothing was saved`);
-      if (text.indexOf(oldText, at + 1) >= 0) throw new WorkspaceError("bad_request", `edits[${index}].oldText matches more than once; add context so it matches exactly once; nothing was saved`);
+      if (at < 0) throw new WordError("bad_request", `edits[${index}].oldText was not found; nothing was saved`);
+      if (text.indexOf(oldText, at + 1) >= 0) throw new WordError("bad_request", `edits[${index}].oldText matches more than once; add context so it matches exactly once; nothing was saved`);
       text = text.slice(0, at) + newText + text.slice(at + oldText.length);
     });
-    if (Buffer.byteLength(text) > MAX_TEXT_BYTES) throw new WorkspaceError("too_large", "The edited file would exceed 4 MiB; nothing was saved");
+    if (Buffer.byteLength(text) > MAX_TEXT_BYTES) throw new WordError("too_large", "The edited file would exceed 4 MiB; nothing was saved");
     const temp = `${real}.ash-${randomUUID()}`;
     await writeFile(temp, text, { mode: info.mode & 0o777 });
     await rename(temp, real);
@@ -308,7 +303,7 @@ export class Workspace {
   }
 
   private async find(dir: string, pattern: string, limit: number, signal?: AbortSignal): Promise<CallOutcome> {
-    if ((await stat(dir)).isDirectory() === false) throw new WorkspaceError("bad_request", "The search path is not a directory");
+    if ((await stat(dir)).isDirectory() === false) throw new WordError("bad_request", "The search path is not a directory");
     const matcher = globToRegExp(pattern.replace(/^\.\//, ""));
     const paths: string[] = [];
     let truncated = false;
@@ -327,7 +322,7 @@ export class Workspace {
     let regex: RegExp;
     try {
       regex = new RegExp(a.literal ? String(a.pattern).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : a.pattern, a.ignoreCase ? "i" : "");
-    } catch (error) { throw new WorkspaceError("bad_request", `The pattern is not a valid regular expression: ${(error as Error).message}`); }
+    } catch (error) { throw new WordError("bad_request", `The pattern is not a valid regular expression: ${(error as Error).message}`); }
     const glob = a.glob ? globToRegExp(a.glob) : null;
     const context: number = a.context ?? 0, limit: number = a.limit ?? 100;
     const matches: { path: string; line: number; text: string; context: boolean }[] = [];
@@ -364,4 +359,3 @@ export class Workspace {
   }
 }
 
-export { describeBody } from "./info";

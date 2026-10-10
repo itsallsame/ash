@@ -35,10 +35,7 @@ export interface ProotCommand { command: string; args: string[]; env: Record<str
 export function prootCommand(proot: ProotConfig, argv: string[], opts: ProotOptions = {}): ProotCommand {
   if (argv.length === 0) throw new Error("prootCommand: argv is empty");
   const inside = Object.entries({ ...DEFAULT_ENV, ...(opts.env ?? {}) }).map(([key, value]) => `${key}=${value}`);
-  const binds = (proot.storage_binds ?? []).flatMap((bind) => {
-    const host = bind.slice(0, bind.indexOf(":"));
-    return bind.includes(":") && host && existsSync(host) ? ["-b", bind] : [];
-  });
+  const binds = prootMounts(proot).flatMap((mount) => ["-b", `${mount.host}:${mount.guest}`]);
   return {
     command: proot.bin,
     args: ["--kill-on-exit", "--link2symlink", "-0", "-r", proot.rootfs, "-b", "/dev", "-b", "/proc", "-b", "/sys", ...binds,

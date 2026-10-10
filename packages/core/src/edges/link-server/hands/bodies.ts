@@ -38,24 +38,15 @@ export interface BodiesDeps {
   /** `router.send` as the service, for `body.info` on a body. Resolves with the member's `WordResult`. */
   call(to: string, word: string, body: unknown): Promise<WordResult | void>;
   now?: () => number;
-  /** `bodies.kind` of the main body, from the host's isolation kind. Default `proot-ubuntu`. */
+  /** `bodies.kind` of the main body: `mainBodyKind(isolation)` from edges/body/local.ts. Default `proot-ubuntu`. */
   mainKind?: string;
 }
-
-/** A request `service:bodies` refuses: the sdk's `WordError`. */
-export { WordError as BodiesError };
 
 export interface Bodies extends Member {
   /** True while the owner has this computer bound as a body. The hand registry asks this when it splits a manifest. */
   isBound(hand: string): boolean;
-  /** The hands bound as bodies now (not the main body). */
-  boundHands(): string[];
   /** The hand was revoked or deleted: its body binding ends too (no registry call: the hand is going away). */
   forget(hand: string): void;
-  /** The hand is connected now (updates `last_seen`). */
-  touch(hand: string): void;
-  /** Remember the latest error of a body, for `describe`. */
-  recordError(body: string, message: string): void;
 }
 
 export interface BodyCapabilities<C> {
@@ -102,8 +93,8 @@ export function createBodies(deps: BodiesDeps): Bodies {
   const row = (id: string): Row | undefined => get.get(id) as Row | undefined;
 
   // The main body is there from the first start and is always bound.
-  db.prepare(`INSERT INTO bodies (id, kind, ownership, provider, info, bound_at, unbound_at, last_seen) VALUES (?, ?, 'own', 'kernel', '{}', ?, NULL, ?)
-    ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, unbound_at = NULL`).run(MAIN_BODY_ID, deps.mainKind ?? "proot-ubuntu", now(), now());
+  db.prepare(`INSERT INTO bodies (id, kind, ownership, provider, info, bound_at, unbound_at) VALUES (?, ?, 'own', 'kernel', '{}', ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, unbound_at = NULL`).run(MAIN_BODY_ID, deps.mainKind ?? "proot-ubuntu", now());
 
   const online = (r: Row): boolean => r.id === MAIN_BODY_ID || (deps.hands.get(handOf(r.id))?.online ?? false);
   const summary = (r: Row) => ({
@@ -128,7 +119,7 @@ export function createBodies(deps: BodiesDeps): Bodies {
         const data = (await deps.call(r.id, "body.info", {}))?.data;
         if (data && typeof data === "object") {
           info = data;
-          db.prepare("UPDATE bodies SET info = ?, last_seen = ? WHERE id = ?").run(JSON.stringify(data), now(), r.id);
+          db.prepare("UPDATE bodies SET info = ? WHERE id = ?").run(JSON.stringify(data), r.id);
           errors.delete(r.id);
         }
       } catch (error) {
@@ -148,7 +139,7 @@ export function createBodies(deps: BodiesDeps): Bodies {
     const existing = row(id);
     if (existing && existing.unbound_at === null) return summary(existing);
     if (existing) db.prepare("UPDATE bodies SET unbound_at = NULL, bound_at = ?, kind = ?, provider = ? WHERE id = ?").run(now(), hand.kind, handId, id);
-    else db.prepare("INSERT INTO bodies (id, kind, ownership, provider, info, bound_at, unbound_at, last_seen) VALUES (?, ?, 'borrowed', ?, '{}', ?, NULL, ?)").run(id, hand.kind, handId, now(), hand.online ? now() : null);
+    else db.prepare("INSERT INTO bodies (id, kind, ownership, provider, info, bound_at, unbound_at) VALUES (?, ?, 'borrowed', ?, '{}', ?, NULL)").run(id, hand.kind, handId, now());
     deps.rebind(handId);
     return summary(row(id)!);
   }
@@ -178,15 +169,12 @@ export function createBodies(deps: BodiesDeps): Bodies {
       }
     },
     isBound: (hand) => { const r = row(bodyId(hand)); return !!r && r.unbound_at === null; },
-    boundHands: () => (bound.all() as unknown as Row[]).filter((r) => r.id !== MAIN_BODY_ID).map((r) => handOf(r.id)),
     forget(hand) {
       const id = bodyId(hand);
       const r = row(id);
       if (r && r.unbound_at === null) db.prepare("UPDATE bodies SET unbound_at = ? WHERE id = ?").run(now(), id);
       errors.delete(id);
     },
-    touch(hand) { db.prepare("UPDATE bodies SET last_seen = ? WHERE id = ?").run(now(), bodyId(hand)); },
-    recordError(body, message) { errors.set(body, message); },
   };
   return self;
 }

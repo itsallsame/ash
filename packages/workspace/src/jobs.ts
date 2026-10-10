@@ -4,10 +4,10 @@ import { closeSync, openSync, writeSync } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { WorkspaceError } from "./errors";
+import { WordError } from "../../sdk/src/message";
 
 /** Most output one poll returns; the rest stays in the output file and comes with the next poll. */
-export const POLL_BYTES = 50 * 1024;
+const POLL_BYTES = 50 * 1024;
 const MAX_RUNNING = 16;
 const KEEP_FINISHED_MS = 10 * 60 * 1000;
 const KILL_GRACE_MS = 3000;
@@ -64,7 +64,7 @@ export class Jobs {
   get running(): number { return [...this.jobs.values()].filter((job) => !job.done).length; }
 
   async start(command: string, place: CommandPlace, opts: { timeout?: number; yield_ms: number }, signal?: AbortSignal): Promise<JobSnapshot> {
-    if (this.running >= MAX_RUNNING) throw new WorkspaceError("unavailable", `At most ${MAX_RUNNING} commands may run at once`);
+    if (this.running >= MAX_RUNNING) throw new WordError("unavailable", `At most ${MAX_RUNNING} commands may run at once`);
     const folder = await this.spillDir();
     signal?.throwIfAborted();
     await mkdir(folder, { recursive: true, mode: 0o700 });
@@ -74,7 +74,7 @@ export class Jobs {
     let child: ChildProcess;
     try { child = this.exec(command, place); } catch (error) {
       closeSync(fd);
-      throw new WorkspaceError("failed", error instanceof Error ? error.message : String(error));
+      throw new WordError("failed", error instanceof Error ? error.message : String(error));
     }
     let finish!: () => void;
     const job: Job = { id, child, file, decoder: new StringDecoder("utf8"), bytes: 0, read: 0, done: false, code: null, settle: new Promise<void>((resolve) => { finish = resolve; }), onData: new Set() };
@@ -113,7 +113,7 @@ export class Jobs {
   private get(id: string): Job {
     for (const [key, job] of this.jobs) if (job.finished && Date.now() - job.finished > KEEP_FINISHED_MS) this.jobs.delete(key);
     const job = this.jobs.get(id);
-    if (!job) throw new WorkspaceError("not_found", "No such process; it may have finished long ago. Do not rerun it without checking what it already did");
+    if (!job) throw new WordError("not_found", "No such process; it may have finished long ago. Do not rerun it without checking what it already did");
     return job;
   }
 
@@ -133,7 +133,7 @@ export class Jobs {
     if (!job.done && waitMs > 0 && job.read >= job.bytes) {
       await new Promise<void>((resolve, reject) => {
         const done = () => { clearTimeout(timer); job.onData.delete(done); signal?.removeEventListener("abort", abort); resolve(); };
-        const abort = () => { clearTimeout(timer); job.onData.delete(done); reject(signal?.reason ?? new WorkspaceError("cancelled", "The call was cancelled")); };
+        const abort = () => { clearTimeout(timer); job.onData.delete(done); reject(signal?.reason ?? new WordError("cancelled", "The call was cancelled")); };
         const timer = setTimeout(done, waitMs);
         if (early) job.onData.add(done);
         signal?.addEventListener("abort", abort, { once: true });

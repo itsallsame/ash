@@ -81,7 +81,6 @@ withFixture("the bodies table is created and body:main is bound from the start; 
   await send(bodies, "bind", { hand: COMPUTER });
   const again = createBodies({ db, hands: { get: (id) => hands.hands.get(id) ?? null }, rebind: () => {}, call: async () => ({}) });
   assert.equal(again.isBound(COMPUTER), true);
-  assert.deepEqual(again.boundHands(), [COMPUTER]);
   assert.equal((await send(again, "list")).bodies.length, 2);
   assert.equal(db.prepare("SELECT count(*) AS n FROM bodies WHERE id = 'body:main'").get()!.n, 1);
 });
@@ -183,7 +182,6 @@ withFixture("forget: a revoked hand's body binding ends without a registry call"
   await send(bodies, "bind", { hand: COMPUTER });
   bodies.forget(COMPUTER);
   assert.equal(bodies.isBound(COMPUTER), false);
-  assert.deepEqual(bodies.boundHands(), []);
   bodies.forget(COMPUTER);
 });
 
@@ -214,8 +212,6 @@ test("describe: body.info from the body itself (from the WordResult), its disk, 
     assert.equal(offline.info.online, false);
     assert.equal(offline.info.workdir, "/Users/o/work");
     assert.equal(answers.length, 0);
-    f.bodies.recordError(`body:${COMPUTER}`, "disk full");
-    assert.equal((await send(f.bodies, "describe", { body: `body:${COMPUTER}` })).last_error, "disk full");
     await assert.rejects(send(f.bodies, "describe", { body: `body:${SECOND}` }), refused("not_found"));
     await assert.rejects(send(f.bodies, "describe", {}), refused("bad_request"));
   } finally { await rm(f.dir, { recursive: true, force: true }); }

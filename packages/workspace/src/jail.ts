@@ -1,7 +1,7 @@
 import { lstat, readlink } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { isAbsolute, join, parse, relative, sep } from "node:path";
-import { WorkspaceError } from "./errors";
+import { WordError } from "../../sdk/src/message";
 
 const MAX_LINKS = 40;
 
@@ -67,7 +67,7 @@ export class Jail {
         throw error;
       }
       if (!info.isSymbolicLink()) { stack.push(part); continue; }
-      if (++links > MAX_LINKS) throw new WorkspaceError("bad_request", "Too many levels of symbolic links");
+      if (++links > MAX_LINKS) throw new WordError("bad_request", "Too many levels of symbolic links");
       const target = await readlink(at);
       if (/^[\\/]/.test(target) || isAbsolute(target)) {
         // In a host path an absolute target starts from the machine's root; in a chroot, from the jail's root.
@@ -78,7 +78,7 @@ export class Jail {
       }
     }
     const host = this.hostOf(base, stack);
-    if (!this.chroot && !isWithin(this.root, host)) throw new WorkspaceError("forbidden", "The path is outside the work root");
+    if (!this.chroot && !isWithin(this.root, host)) throw new WordError("forbidden", "The path is outside the work root");
     return host;
   }
 

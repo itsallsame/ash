@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { HandleContext, Message } from "../../../../sdk/src/message";
 import { lintWords } from "../../../../sdk/src/word";
-import { createLocalBody, bodyWords, type LocalBody } from "../../../src/edges/body/local";
+import { createLocalBody, bodyWords, mainBodyKind, type LocalBody } from "../../../src/edges/body/local";
 import type { ProotConfig } from "../../../src/edges/body/proot";
 
 const caller = { member: "agent:cloud", via: "agent" as const, local: false };
@@ -28,7 +28,7 @@ async function fixture(): Promise<Fixture> {
   const streams: Fixture["streams"] = [];
   const ran: Fixture["ran"] = [];
   const body = createLocalBody({
-    proot, streams: (bytes, meta) => { streams.push({ bytes, mime: meta.mime }); return `st_${streams.length}`; },
+    isolation: { kind: "proot", proot }, streams: (bytes, meta) => { streams.push({ bytes, mime: meta.mime }); return `st_${streams.length}`; },
     exec: (command, place) => { ran.push({ command, cwd: place.cwd }); return spawn("sh", ["-c", command], { cwd: place.hostCwd, detached: true, stdio: ["ignore", "pipe", "pipe"] }); },
   });
   return { dir, rootfs, streams, body, ran };
@@ -119,7 +119,7 @@ withFixture("assess: a write inside /root/work is none, anywhere else in the con
 test("a container that is not installed yet: calls say unavailable; nothing is created", async () => {
   const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-"));
   try {
-    const body = createLocalBody({ proot: { root: join(dir, "main"), rootfs: join(dir, "main", "ubuntu"), bin: "x", loader: "x", lib: "x" } });
+    const body = createLocalBody({ isolation: { kind: "proot", proot: { root: join(dir, "main"), rootfs: join(dir, "main", "ubuntu"), bin: "x", loader: "x", lib: "x" } } });
     await assert.rejects(ask(body, "workspace.ls", {}), (e: any) => e.code === "unavailable");
     assert.equal(await body.assess({ word: "workspace.write", body: { path: "a", content: "" } }), null);
     await body.close();
@@ -131,4 +131,33 @@ withFixture("a cancelled request aborts the call", async ({ body }) => {
   const pending = ask(body, "workspace.bash", { command: "sleep 30", yield_ms: 30000 }, abort.signal);
   abort.abort();
   await assert.rejects(pending, (e: any) => e.code === "cancelled");
+});
+
+test("isolation native (development machine, fake host): body:main is a directory and the machine's own shell", async () => {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-"));
+  const workspace = join(dir, "ws");                       // not there yet: the body makes it
+  const streams: Uint8Array[] = [];
+  const body = createLocalBody({ isolation: { kind: "native", native: { workspace, dsh_bin: "dsh", dsh_home: join(dir, "dsh") } }, streams: (bytes) => { streams.push(bytes); return "st_1"; } });
+  try {
+    assert.equal(body.id, "body:main");
+    assert.equal(body.words().length, 10);
+    assert.equal(mainBodyKind({ kind: "native", native: { workspace, dsh_bin: "", dsh_home: "" } }), "native");
+    await ask(body, "workspace.write", { path: "a/run.sh", content: "echo native $((1+1)) > out.txt\n" });
+    assert.equal((await ask(body, "workspace.bash", { command: "sh run.sh && pwd", workdir: "a" })).data.exit_code, 0);
+    const read = await ask(body, "workspace.read", { path: "a/out.txt" });
+    assert.equal(read.data.text, "native 2");
+    assert.equal(read.data.path, join(await realpath(workspace), "a", "out.txt"));
+    await writeFile(join(workspace, "blob.bin"), Buffer.from([0, 1, 2]));
+    assert.equal((await ask(body, "workspace.read", { path: "blob.bin" })).data.stream, "st_1");
+    assert.equal((await ask(body, "body.info", {})).data.ownership, "own");
+    await assert.rejects(ask(body, "workspace.read", { path: "../escape" }), (e: any) => e.code === "forbidden");
+    assert.equal(await body.assess({ word: "workspace.write", body: { path: "n.txt", content: "" } }), "none");
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("isolation container is not supported yet: unavailable", async () => {
+  const body = createLocalBody({ isolation: { kind: "container", container: { engine: "docker", image: "x" } } });
+  await assert.rejects(ask(body, "body.info", {}), (e: any) => e.code === "unavailable");
+  assert.equal(mainBodyKind({ kind: "container", container: { engine: "docker", image: "x" } }), "container");
+  await body.close();
 });

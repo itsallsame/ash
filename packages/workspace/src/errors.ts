@@ -1,9 +1,6 @@
 import { isErrorCode, WordError } from "../../sdk/src/message";
 
-/** A refusal or failure with one of the shared error codes (SPEC-02 §7): the sdk's `WordError`. */
-export { WordError as WorkspaceError };
-
-/** Turns anything thrown into a WorkspaceError: file system codes become shared codes. */
+/** Turns anything thrown into a WordError: file system codes become shared codes. */
 export function asWorkspaceError(error: unknown, signal?: AbortSignal): WordError {
   if (error instanceof WordError) return error;
   const code = (error as NodeJS.ErrnoException | undefined)?.code;

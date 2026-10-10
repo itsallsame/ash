@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { standardAction } from "../../sdk/src/namespaces";
+import { STANDARD_NAMESPACES, standardAction } from "../../sdk/src/namespaces";
 import { compileSchema } from "../../sdk/src/word";
-import { Workspace, WorkspaceError, MAX_TEXT_BYTES, WORKSPACE_ACTION_NAMES, type WorkspaceOptions } from "../src";
+import { WordError } from "../../sdk/src/message";
+import { MAX_TEXT_BYTES, Workspace, type WorkspaceOptions } from "../src";
 
 interface Fixture { dir: string; root: string; outside: string; sent: { bytes: Uint8Array; mime: string }[]; ws: Workspace }
 
@@ -23,12 +24,18 @@ const withFixture = (name: string, fn: (f: Fixture) => Promise<void>, extra: Par
     const f = await fixture(extra);
     try { await fn(f); } finally { await f.ws.close(); await rm(f.dir, { recursive: true, force: true }); }
   });
-const refused = (code: string) => (error: unknown) => error instanceof WorkspaceError && error.code === code;
+const refused = (code: string) => (error: unknown) => error instanceof WordError && error.code === code;
 
-test("the ten actions are exactly the standard workspace.* and body.info actions", () => {
-  for (const name of WORKSPACE_ACTION_NAMES) assert.ok(standardAction(name), name);
-  const standard = ["workspace.ls", "workspace.read", "workspace.find", "workspace.grep", "workspace.write", "workspace.edit", "workspace.bash", "workspace.poll", "workspace.signal", "body.info"];
-  assert.deepEqual([...WORKSPACE_ACTION_NAMES], standard);
+test("a workspace serves the ten standard actions: workspace.* and body.info", async () => {
+  const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "ws-"));
+  const ws = new Workspace({ root: dir });
+  try {
+    const names = ["workspace.ls", "workspace.read", "workspace.find", "workspace.grep", "workspace.write", "workspace.edit", "workspace.bash", "workspace.poll", "workspace.signal", "body.info"];
+    assert.deepEqual([...STANDARD_NAMESPACES.workspace!, ...STANDARD_NAMESPACES.body!].map((a) => a.name), names);
+    for (const name of names) assert.ok(standardAction(name), name);
+    // none of them is "no such action" (a bad input is bad_request, not not_found)
+    for (const name of names) await assert.rejects(ws.call(name, { nonsense: true }), (e: unknown) => e instanceof WordError && e.code === "bad_request");
+  } finally { await ws.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
 withFixture("bad input and unknown actions are refused with the shared codes", async ({ ws }) => {
