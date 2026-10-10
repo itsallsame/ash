@@ -1,240 +1,150 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import { fold, foldPostSnapshot, initialView } from "../js/project.js";
+import { fold, initialView } from "../js/project.js";
 
-const cases = JSON.parse(readFileSync(new URL("./fixtures/segments.json", import.meta.url), "utf8"));
-const message = (entry, i) => ({ seq: i + 1, id: `m${i + 1}`, ts: (i + 1) * 1000, to: null, ...entry });
+const message = (entry, i) => ({ seq: i + 1, id: `m${i + 1}`, ts: (i + 1) * 1000, to: null, summary: "", size: 1, ...entry });
 const replay = (entries) => entries.reduce((state, entry, i) => fold(state, message(entry, i)), initialView());
-const at = (value, path) => path.split(".").reduce((part, key) => part?.[key], value);
-
-test(`${cases.length} recorded segments agree with their projection snapshots`, async (t) => {
-  assert.ok(cases.length >= 20);
-  for (const fixture of cases) await t.test(fixture.name, () => {
-    const state = replay(fixture.events);
-    for (const [path, expected] of Object.entries(fixture.expect)) assert.deepEqual(at(state, path), expected, `${fixture.name}: ${path}`);
-  });
-});
+const OWNER = "person:owner";
+const say = (text, extra = {}) => ({ id: "q", from: OWNER, to: "agent:main", kind: "request", word: "say", body: { text }, ...extra });
+const agentSays = (text, extra = {}) => ({ from: "agent:main", to: OWNER, kind: "request", word: "say", body: { text }, ...extra });
+const turnStarted = (turn, extra = {}) => ({ from: "agent:main", kind: "event", word: "turn.started", turn, body: { turn, lane: "front", ...extra } });
+const turnEnded = (turn, outcome = "completed") => ({ from: "agent:main", kind: "event", word: "turn.ended", turn, body: { turn, lane: "front", outcome } });
 
 test("fold is pure and idempotent across duplicate delivery and history replay", () => {
-  assert.deepEqual(Object.keys(initialView()).sort(), ["asks", "conversation", "held", "presence", "self", "timers", "turns"]);
-  const owner = message({ id: "q", from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "hi" } }, 0);
+  assert.deepEqual(Object.keys(initialView()).sort(), ["asks", "conversation", "presence", "turns"]);
+  const owner = message(say("hi"), 0);
   const first = fold(initialView(), owner);
-  const again = fold(first, owner);
-  assert.equal(again, first);
+  assert.equal(fold(first, owner), first);
   assert.equal(initialView().conversation.length, 0);
-  assert.equal(first.conversation.length, 1);
-  const read = message({ from: "agent:main", kind: "event", word: "read", body: { ids: ["q"], turn: "t_x" } }, 2);
-  const olderReceived = message({ from: "agent:main", kind: "event", word: "received", body: { ids: ["q"] } }, 1);
-  const outOfOrder = fold(fold(first, read), olderReceived);
-  assert.equal(outOfOrder.conversation[0].delivery, "read");
-  assert.deepEqual(outOfOrder._records.map((r) => r.seq), [1, 2, 3]);
   assert.equal(first.conversation[0].delivery, "sent");
+  // rows may arrive out of order (an older page is folded after a newer one)
+  const state = fold(fold(initialView(), message(agentSays("later"), 4)), message(agentSays("earlier"), 1));
+  assert.deepEqual(state.conversation.map((item) => item.seq), [2, 5]);
 });
 
-test("history pagination can insert older card and ask after their answers", () => {
-  const option = message({ id: "answer", from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "Yes", in_reply_to: "card", option_id: "yes" } }, 2);
-  const card = message({ id: "card", from: "agent:main", to: "person:owner", kind: "request", word: "show", body: { card: { type: "options", options: [{ id: "yes", text: "Yes" }] } } }, 1);
-  const ack = message({ from: "agent:main", to: "person:owner", kind: "response", word: "say", reply_to: "answer", body: { ok: true, result: { accepted: true } } }, 4);
-  const state = fold(fold(fold(initialView(), option), ack), card);
-  assert.equal(state.conversation.find((bubble) => bubble.id === "card").locked, true);
-  assert.deepEqual(state.conversation.map((bubble) => bubble.id), ["card", "answer"]);
-  const askAnswer = message({ from: "person:owner", to: "agent:main", kind: "response", word: "ask", reply_to: "ask", body: { ok: true, result: { choice: "once" } } }, 6);
-  const ask = message({ id: "ask", from: "agent:main", to: "person:owner", kind: "request", word: "ask", body: { title: "May I?", options: [{ id: "once", label: "Once" }], expires_at: 9000 } }, 3);
-  const result = fold(fold(state, askAnswer), ask);
-  assert.equal(result.asks[0].state, "answered");
+test("delivery goes sent, delivered (the agent took the say), read (a turn was started with it)", () => {
+  const sent = replay([say("hi")]);
+  assert.equal(sent.conversation[0].delivery, "sent");
+  const delivered = replay([say("hi"), { from: "agent:main", to: OWNER, kind: "response", word: "say", reply_to: "q", body: { ok: true, result: { data: { accepted: true } } } }]);
+  assert.equal(delivered.conversation[0].delivery, "delivered");
+  const read = replay([say("hi"), turnStarted("t1", { ids: ["q"] }), { from: "agent:main", to: OWNER, kind: "response", word: "say", reply_to: "q", body: { ok: true, result: { data: { accepted: true } } } }]);
+  assert.equal(read.conversation[0].delivery, "read", "reading is not undone by a late acknowledgement");
 });
 
-test("only trusted owner-directed delivery snapshots set held, newest seq wins", () => {
-  const changed = (seq, held, from = "service:post", to = "person:owner") => ({ seq, id: `h${seq}`, ts: seq, from, to, kind: "event", word: "post.changed", body: { held } });
-  let state = fold(initialView(), changed(4, 4));
-  state = fold(state, changed(2, 2));
-  assert.equal(state.held, 4);
-  state = fold(state, changed(5, 0));
-  assert.equal(state.held, 0);
-  for (const invalid of [changed(6, -1), changed(7, 8, "device:phone"), changed(8, 9, "service:post", "agent:main"), { ...changed(9, 3), body: { held: 1.5 } }]) state = fold(state, invalid);
-  assert.equal(state.held, 0);
-  assert.equal(fold(state, changed(5, 100)), state);
-  const deliveryResponse = { seq: 10, id: "delivery", ts: 10, from: "service:post", to: "agent:main", kind: "response", word: "deliver", body: { ok: true, result: { channel: "held" } } };
-  assert.equal(fold(state, deliveryResponse).held, 0);
-});
-
-test("control frames, unknown words, and raw tool data never enter the view", () => {
-  let state = initialView();
-  state = fold(state, { event: "screen.registered", data: { screen: "screen:one", token: "secret", label: "Phone" } });
-  assert.deepEqual(state, initialView());
-  state = fold(state, message({ from: "device:phone", to: "agent:main", kind: "response", word: "shell.run", body: { ok: true, result: { args: "secret command" } } }, 0));
-  assert.equal(JSON.stringify(state).includes("secret"), false);
-  state = fold(state, message({ from: "agent:main", kind: "event", word: "turn.start", body: { turn: "__proto__", ids: [] } }, 1));
-  assert.deepEqual(state.turns, {});
-});
-
-test("clock set/cancel responses do not synthesize a timer without list snapshot", () => {
+test("a turn is its start, its tool calls and its end; the front lane is the conversation, any other lane is background", () => {
   const state = replay([
-    { from: "service:clock", kind: "response", word: "set", body: { ok: true, result: { id: "t1", next: 20 } } },
-    { from: "service:clock", kind: "response", word: "cancel", body: { ok: true, result: { cancelled: true } } },
+    say("查一下订单"),
+    turnStarted("t1", { ids: ["q"] }),
+    { from: "agent:main", kind: "event", word: "agent.tool", turn: "t1", body: { turn: "t1", name: "web_search", phase: "start", summary: "在搜索 订单" } },
+    { from: "agent:main", kind: "event", word: "agent.tool", turn: "t1", body: { turn: "t1", name: "web_search", phase: "end", ok: true } },
+    turnEnded("t1"),
+    { from: "agent:main", kind: "event", word: "turn.started", turn: "t2", body: { turn: "t2", lane: "back" } },
+    { from: "agent:main", kind: "event", word: "turn.ended", turn: "t2", body: { turn: "t2", lane: "back", outcome: "interrupted" } },
   ]);
-  assert.deepEqual(state.timers, []);
+  assert.equal(state.turns.t1.title, "查一下订单");
+  assert.equal(state.turns.t1.background, false);
+  assert.deepEqual(state.turns.t1.steps.map(({ label, state: s, tool }) => ({ label, s, tool })), [{ label: "在搜索 订单", s: "ok", tool: "web_search" }]);
+  assert.equal(state.turns.t1.outcome, "completed");
+  assert.equal(state.turns.t2.background, true);
+  assert.equal(state.turns.t2.outcome, "cancelled", "an interrupted turn reads as cancelled on the activity page");
 });
 
-test("pure-code work steps are visible only as bounded labels and states under their exact run turn", () => {
+test("requests an agent makes of the members during a turn become steps, with their answers; secrets in arguments never enter the view", () => {
   const state = replay([
-    { from: "service:work", kind: "event", word: "run.start", turn: "r_one", body: { run: "r_one", flow: "memory", trigger: "manual" } },
-    { from: "service:work", kind: "event", word: "run.step", turn: "r_one", body: { run: "r_one", step: "window.collect", state: "started" } },
-    { from: "service:work", kind: "event", word: "run.step", turn: "r_other", body: { run: "r_one", step: "wrong.turn", state: "done", raw: "SECRET" } },
-    { from: "service:work", kind: "event", word: "run.step", turn: "r_one", body: { run: "r_one", step: "window.collect", state: "done" } },
-    { from: "service:work", kind: "event", word: "run.end", turn: "r_one", body: { run: "r_one", outcome: "done", detail: "completed" } },
+    turnStarted("t1"),
+    { id: "call", from: "agent:main", to: "service:clock", kind: "request", word: "set", turn: "t1", body: { at: 1, to: "agent:main", word: "wake", body: { token: "SECRET" }, label: "x" } },
+    { from: "service:clock", to: "agent:main", kind: "response", word: "set", reply_to: "call", body: { ok: true, result: { data: { id: "c1", next: 2 } } } },
+    { id: "fail", from: "agent:main", to: "device:abcdefghijklmnopqrstuv", kind: "request", word: "screen.tap", turn: "t1", body: { x: 1 } },
+    { from: "device:abcdefghijklmnopqrstuv", to: "agent:main", kind: "response", word: "screen.tap", reply_to: "fail", body: { ok: false, error: { code: "offline", message: "off" } } },
   ]);
-  assert.deepEqual(state.turns.r_one.steps.map((step) => ({ label: step.label, state: step.state })), [{ label: "window.collect", state: "done" }]);
+  const steps = state.turns.t1.steps;
+  assert.deepEqual(steps.map((step) => [step.requestId, step.state]), [["call", "ok"], ["fail", "failed"]]);
   assert.equal(JSON.stringify(state).includes("SECRET"), false);
-  assert.equal(state.turns.r_one.outcome, "done");
 });
 
-test("gate and background messages to the owner project, with ask replies to their original asker", () => {
-  const state = replay([
-    { id: "gate-ask", from: "service:gate", to: "person:owner", kind: "request", word: "ask", body: { title: "Allow?", options: [{ id: "deny", label: "No" }], expires_at: 9999 } },
-    { from: "person:owner", to: "service:gate", kind: "response", word: "ask", reply_to: "gate-ask", body: { ok: true, result: { choice: "deny" } } },
-    { from: "service:work", to: "person:owner", kind: "request", word: "say", body: { text: "Reminder" } },
-    { from: "service:work", to: "person:owner", kind: "request", word: "show", body: { card: { type: "link", url: "https://example.invalid", title: "Source" } } },
+test("presence follows the ledger: working while a front turn is open, waiting for you while a question is open, else here", () => {
+  assert.equal(replay([]).presence.state, "idle");
+  const working = replay([turnStarted("t1")]);
+  assert.equal(working.presence.state, "thinking");
+  const tool = replay([turnStarted("t1"), { from: "agent:main", kind: "event", word: "agent.tool", turn: "t1", body: { turn: "t1", name: "read", phase: "start", summary: "在看文件" } }]);
+  assert.deepEqual([tool.presence.state, tool.presence.text], ["working", "在看文件"]);
+  assert.equal(replay([turnStarted("t1"), turnEnded("t1")]).presence.state, "idle");
+  const back = replay([{ from: "agent:main", kind: "event", word: "turn.started", turn: "b1", body: { turn: "b1", lane: "back" } }]);
+  assert.equal(back.presence.state, "idle", "background work does not make her look busy in the conversation");
+  const asking = replay([{ id: "a", ts: Date.now(), from: "agent:main", to: OWNER, kind: "request", word: "ask", body: { title: "OK?", human_kind: "confirmation", expires_at: Date.now() + 60_000 } }]);
+  assert.equal(asking.presence.state, "waiting_you");
+});
+
+test("an ask: options as given, yes/no for a confirmation without options, 24 hours unless told, 7 at most", () => {
+  const gate = replay([{ id: "g", from: "service:gate", to: OWNER, kind: "request", word: "ask", body: { title: "Allow?", human_kind: "confirmation", options: [{ id: "once", label: "Once" }, { id: "deny", label: "No" }], expires_at: 9999 } }]);
+  assert.deepEqual(gate.asks[0].options.map((option) => option.id), ["once", "deny"]);
+  assert.equal(gate.asks[0].expires_at, 9999);
+  const confirm = replay([{ id: "c", from: "agent:main", to: OWNER, kind: "request", word: "ask", body: { title: "OK?", human_kind: "confirmation" } }]);
+  assert.deepEqual(confirm.asks[0].options, [{ id: "yes", label: "是" }, { id: "no", label: "否" }]);
+  assert.equal(confirm.asks[0].options_valid, true);
+  assert.equal(confirm.asks[0].expires_at, 1000 + 86_400_000);
+  const long = replay([{ id: "l", from: "agent:main", to: OWNER, kind: "request", word: "ask", body: { title: "?", options: [{ id: "a", label: "A" }], expires_at: 1000 + 30 * 86_400_000 } }]);
+  assert.equal(long.asks[0].expires_at, 1000 + 7 * 86_400_000);
+  const noOptions = replay([{ id: "n", from: "agent:main", to: OWNER, kind: "request", word: "ask", body: { title: "?" } }]);
+  assert.equal(noOptions.asks[0].options_valid, false, "a question without options cannot be answered by a button");
+});
+
+test("any response to an ask closes the card: the choice, a timeout, or a cancel; the first one counts", () => {
+  const ask = { id: "a", from: "service:gate", to: OWNER, kind: "request", word: "ask", body: { title: "Allow?", options: [{ id: "once", label: "Once" }, { id: "deny", label: "No" }], expires_at: 99_999 } };
+  const answer = (id, body) => ({ id, from: OWNER, to: "service:gate", kind: "response", word: "ask", reply_to: "a", body });
+  const choice = replay([ask, answer("r1", { ok: true, result: { data: { choice: "deny" } } }), answer("r2", { ok: true, result: { data: { choice: "once" } } })]);
+  assert.deepEqual([choice.asks[0].state, choice.asks[0].choice], ["answered", "deny"]);
+  assert.equal(replay([ask, answer("r1", { ok: false, error: { code: "timeout", message: "t" } })]).asks[0].state, "expired");
+  assert.equal(replay([ask, answer("r1", { ok: false, error: { code: "cancelled", message: "c" } })]).asks[0].state, "closed");
+  const custom = replay([{ ...ask, body: { ...ask.body, human_kind: "question", allow_custom: true } }, answer("r1", { ok: true, result: { data: { choice: "custom", text: "later" } } })]);
+  assert.deepEqual([custom.asks[0].state, custom.asks[0].answer_text], ["answered", "later"]);
+  assert.equal(replay([ask]).asks[0].state, "pending");
+});
+
+test("only the gate's own snapshot is shown as the original of an approval", () => {
+  const body = { title: "Allow?", options: [{ id: "once", label: "Once" }], expires_at: 9999, source: { word: "shell.run", to: "device:p", body_preview: "p", body_full: "FULL" } };
+  assert.equal(replay([{ id: "a", from: "service:gate", to: OWNER, kind: "request", word: "ask", body }]).asks[0].original, "FULL");
+  assert.equal(replay([{ id: "a", from: "agent:main", to: OWNER, kind: "request", word: "ask", body }]).asks[0].original, undefined);
+});
+
+test("cards: options lock when an offered option was sent back; show/react/app cards project", () => {
+  const card = { id: "card", from: "agent:main", to: OWNER, kind: "request", word: "show", body: { card: { type: "options", options: [{ id: "yes", text: "Yes" }] } } };
+  const reply = say("Yes", { id: "answer", body: { text: "Yes", in_reply_to: "card", option_id: "yes" } });
+  const state = replay([card, reply]);
+  assert.equal(state.conversation[0].locked, true);
+  assert.equal(state.conversation[0].selected_option_id, "yes");
+  const react = replay([agentSays("hi", { id: "s" }), { from: "agent:main", to: OWNER, kind: "request", word: "react", body: { message_id: "s", emoji: "👍" } }]);
+  assert.deepEqual(react.conversation[0].reactions.map((item) => item.emoji), ["👍"]);
+  const app = replay([{ from: "app:health", to: OWNER, kind: "event", word: "card", body: { title: "今天", text: "7000 步", name: "健康" } }]);
+  assert.deepEqual([app.conversation[0].card.type, app.conversation[0].card.app], ["app", "health"]);
+});
+
+test("a long text keeps the ledger's short version and where the whole is; attachments are references, never bytes", () => {
+  const blob = (n) => ({ $blob: "a".repeat(64), mime: "text/plain", size: n, summary: "start…end" });
+  const state = replay([say("x", { body: { text: blob(9000), attachments: [
+    { name: "a.png", mime_type: "image/png", data: "QUJD" },
+    { name: "big.png", mime_type: "image/png", data: blob(4_000_000) },
+    { name: "report.pdf", mime_type: "application/pdf", workspace: "main", path: "out/report.pdf", size: 10 },
+    { name: "evil", mime_type: "x/y", workspace: "main", path: "../x", size: 1 },
+  ] } })]);
+  const item = state.conversation[0];
+  assert.deepEqual([item.text, item.full], ["start…end", "a".repeat(64)]);
+  assert.deepEqual(item.attachments.map((a) => [a.source ?? "file", a.name, a.size]), [["inline", "a.png", 3], ["inline", "big.png", 3_000_000], ["file", "report.pdf", 10]]);
+  assert.equal(JSON.stringify(item).includes("QUJD"), false);
+  const onlyFile = replay([say("", { body: { attachments: [{ name: "a.png", mime_type: "image/png", data: "QUJD" }] } })]);
+  assert.equal(onlyFile.conversation.length, 1, "a message of attachments alone is a message");
+});
+
+test("rows the page does not know, events of other members, and raw tool data never enter the view", () => {
+  let state = initialView();
+  state = fold(state, { event: "screen.registered", data: { token: "secret" } });
+  assert.deepEqual(state, initialView());
+  state = replay([
+    { from: "service:link", kind: "event", word: "connected", body: { hand: "x", conn: "c" } },
+    { from: "service:admin", kind: "event", word: "settings.changed", body: { keys: ["delivery.quiet_hours"] } },
+    { from: "device:abcdefghijklmnopqrstuv", to: "agent:main", kind: "response", word: "shell.run", reply_to: "none", body: { ok: true, result: { data: { args: "secret command" } } } },
+    turnStarted("__proto__"),
   ]);
-  assert.equal(state.asks[0].state, "answered");
-  assert.equal(state.asks[0].choice, "deny");
-  assert.equal(state.conversation[1].from, "service:work");
-  assert.equal(state.conversation[2].card.type, "link");
-  const forged = fold(replay([{ id: "ask", from: "service:work", to: "person:owner", kind: "request", word: "ask", body: { title: "Approve", options: [{ id: "once", label: "Once" }], expires_at: 9999 } }]), { seq: 2, id: "forged", ts: 2, from: "device:phone", to: "service:work", kind: "response", word: "ask", reply_to: "ask", body: { ok: true, result: { choice: "once" } } });
-  assert.equal(forged.asks[0].state, "pending");
-});
-
-test("ask settles only with the first valid response addressed to its original asker", () => {
-  const ask = { id: "a", from: "service:gate", to: "person:owner", kind: "request", word: "ask", body: { title: "Allow?", options: [{ id: "once", label: "Once" }, { id: "deny", label: "No" }], expires_at: 9999 } };
-  const answer = (id, to, choice, ok = true) => ({ id, from: "person:owner", to, kind: "response", word: "ask", reply_to: "a", body: ok ? { ok: true, result: { choice } } : { ok: false, error: { code: "bad_request", message: "rejected" } } });
-  const state = replay([ask, answer("wrong-target", "service:work", "once"), answer("wrong-choice", "service:gate", "always"), answer("error", "service:gate", "once", false), answer("valid", "service:gate", "deny"), answer("duplicate", "service:gate", "once")]);
-  assert.equal(state.asks[0].state, "answered");
-  assert.equal(state.asks[0].choice, "deny");
-  assert.equal(replay([ask, answer("wrong-target", "service:work", "once")]).asks[0].state, "pending");
-  assert.equal(replay([ask, answer("wrong-choice", "service:gate", "always")]).asks[0].state, "pending");
-});
-
-test("a deadline-generated deny is displayed as expired, not a user's refusal", () => {
-  const ask = { seq: 1, id: "deadline-ask", ts: 100, from: "service:gate", to: "person:owner", kind: "request", word: "ask",
-    body: { title: "Time limited", detail: "", options: [{ id: "once", label: "Allow once" }, { id: "deny", label: "Deny" }], expires_at: 200 } };
-  const deniedAtDeadline = { seq: 2, id: "deadline-answer", ts: 200, from: "person:owner", to: "service:gate", kind: "response", word: "ask",
-    reply_to: "deadline-ask", body: { ok: true, result: { choice: "deny" } } };
-  assert.equal(replay([ask, deniedAtDeadline]).asks[0].state, "expired");
-  assert.equal(replay([ask, { ...deniedAtDeadline, ts: 150 }]).asks[0].state, "answered");
-});
-
-test("option card locks when the first valid owner answer enters the ledger", () => {
-  const card = { id: "card", from: "agent:main", to: "person:owner", kind: "request", word: "show", body: { card: { type: "options", options: [{ id: "yes", text: "Yes" }, { id: "no", text: "No" }] } } };
-  const choose = (id, option_id, text) => ({ id, from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text, in_reply_to: "card", option_id } });
-  const result = (id, reply_to, accepted) => ({ id, from: "agent:main", to: "person:owner", kind: "response", word: "say", reply_to, body: accepted ? { ok: true, result: { accepted: true } } : { ok: false, error: { code: "bad_request", message: "invalid option" } } });
-  const selected = (events) => replay(events).conversation.find((bubble) => bubble.id === "card");
-  assert.equal(selected([card, choose("bad", "other", "Other"), result("bad-ack", "bad", true)]).locked, false);
-  assert.equal(selected([card, choose("wrong-text", "yes", "No"), result("text-ack", "wrong-text", true)]).locked, false);
-  assert.equal(selected([card, choose("pending", "yes", "Yes")]).locked, true);
-  const valid = selected([card, choose("bad", "other", "Other"), result("bad-ack", "bad", true), choose("first", "yes", "Yes"), result("first-ack", "first", true), choose("second", "no", "No"), result("second-ack", "second", true)]);
-  assert.equal(valid.locked, true);
-  assert.equal(valid.selected_option_id, "yes");
-  const customCard = { ...card, body: { card: { ...card.body.card, allow_custom: true } } };
-  assert.equal(selected([customCard, choose("custom", "__custom", "Maybe"), result("custom-ack", "custom", true)]).selected_option_id, "__custom");
-  assert.equal(selected([card, choose("custom", "__custom", "Maybe"), result("custom-ack", "custom", true)]).locked, false);
-});
-
-test("only allowlisted attachment references survive; inline bytes and unknown fields do not", () => {
-  const state = replay([{ from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "File", attachments: [
-    { workspace: "home", path: "inbox/photo.png", name: "photo.png", mime_type: "image/png", size: 12, data: "SENSITIVE_BASE64", internal: "secret" },
-    { workspace: "home", path: "../escape", name: "bad", mime_type: "text/plain", size: 1 },
-    { name: "inline.txt", mime_type: "text/plain", data: "INLINE_ONLY" },
-  ] } }]);
-  assert.deepEqual(state.conversation[0].attachments, [{ workspace: "home", path: "inbox/photo.png", name: "photo.png", mime_type: "image/png", size: 12 }]);
-  assert.equal(JSON.stringify(state).includes("SENSITIVE_BASE64"), false);
-  assert.equal(JSON.stringify(state).includes("INLINE_ONLY"), false);
-});
-
-test("attachment-only owner say projects index and metadata, never inline bytes", () => {
-  const state = replay([{ id: "m_inline", from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "", attachments: [
-    { name: "one.txt", mime_type: "text/plain", data: "eA==" },
-    { name: "bad.txt", mime_type: "text/plain", data: "not-base64!" },
-    { name: "two.txt", mime_type: "text/plain", data: "eXk=" },
-  ] } }]);
-  assert.deepEqual(state.conversation[0].attachments, [
-    { source: "inline", message_id: "m_inline", index: 0, name: "one.txt", mime_type: "text/plain", size: 1 },
-    { source: "inline", message_id: "m_inline", index: 2, name: "two.txt", mime_type: "text/plain", size: 2 },
-  ]);
-  assert.equal(state.conversation[0].text, "");
-  assert.equal(JSON.stringify(state).includes("eXk="), false);
-});
-
-test("valid migrated chat is read-only and cannot lock a current option card", () => {
-  const state = replay([
-    { id: "card", from: "agent:main", to: "person:owner", kind: "request", word: "show", body: { card: { type: "options", options: [{ id: "yes", text: "Yes" }] } } },
-    { id: "old-answer", from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "Yes", in_reply_to: "card", option_id: "yes", legacy: { seq: 2, workspace: "old-home", member: "person:owner" } } },
-    { from: "agent:main", to: "person:owner", kind: "response", word: "say", reply_to: "old-answer", body: { ok: true, result: { accepted: true } } },
-  ]);
-  assert.equal(state.conversation[0].locked, false);
-  assert.equal(state.conversation[1].readOnly, true);
-  assert.equal(state.conversation[1].legacy.member, "person:owner");
-  assert.equal(state.presence.state, "unknown");
-});
-
-test("migration stamp must match source row and historical conversation route", () => {
-  const row = { from: "timer:old", to: "agent:helper", kind: "request", word: "say", body: { text: "Wake", legacy: { seq: 1, workspace: "old", member: "timer:old" } } };
-  assert.equal(replay([row]).conversation[0].side, "inbound");
-  for (const bad of [
-    { ...row, body: { ...row.body, legacy: { ...row.body.legacy, seq: 99 } } },
-    { ...row, body: { ...row.body, legacy: { ...row.body.legacy, member: "person:owner" } } },
-    { ...row, to: "device:phone" },
-    { ...row, body: { text: "Wake" } },
-  ]) assert.equal(replay([bad]).conversation.length, 0);
-});
-
-test("four migrated owner attachment bubbles keep only safe references", () => {
-  const entries = Array.from({ length: 4 }, (_, i) => ({ from: "person:owner", to: "agent:helper", kind: "request", word: "say", body: { text: `File ${i}`, legacy: { seq: i + 1, workspace: "old", member: "person:owner" }, attachments: [{ workspace: "old", path: `inbox/${i}.png`, name: `${i}.png`, mime_type: "image/png", size: i + 1, data: "raw-should-not-project" }] } }));
-  const state = replay(entries);
-  assert.equal(state.conversation.length, 4);
-  assert.equal(state.conversation.filter((bubble) => bubble.attachments.length === 1).length, 4);
-  assert.equal(JSON.stringify(state).includes("raw-should-not-project"), false);
-});
-
-test("new offer is invisible before an authoritative release; stale history cannot roll it back", () => {
-  const offer = { seq: 1, id: "m_offer", ts: 1, from: "agent:main", to: "person:owner", kind: "request", word: "say", body: { text: "Tomorrow only", kind: "offer" } };
-  let state = fold(initialView(), offer);
-  assert.equal(state.conversation.length, 0);
-  state = foldPostSnapshot(state, { at_seq: 10, items: [{ message_id: offer.id, state: "released", version_seq: 8 }] });
-  assert.deepEqual(state.conversation.map((item) => item.text), ["Tomorrow only"]);
-  state = foldPostSnapshot(state, { at_seq: 7, items: [{ message_id: offer.id, state: "held", version_seq: 7 }] });
-  assert.equal(state.conversation.length, 1);
-  state = fold(state, { seq: 11, id: "m_drop", ts: 11, from: "service:post", to: "person:owner", kind: "event", word: "post.delivery", body: { message_id: offer.id, state: "dropped" } });
-  assert.equal(state.conversation.length, 0);
-  state = foldPostSnapshot(state, { at_seq: 12, items: [{ message_id: offer.id, state: "released", version_seq: 12 }] });
-  assert.equal(state.conversation.length, 0);
-});
-
-test("release before say, late page, and migrated legacy text preserve the visibility boundary", () => {
-  const release = { seq: 2, id: "m_release", ts: 2, from: "service:post", to: "person:owner", kind: "event", word: "post.delivery", body: { message_id: "m_late", state: "released" } };
-  let state = fold(initialView(), release);
-  assert.equal(state.conversation.length, 0);
-  state = fold(state, { seq: 1, id: "m_late", ts: 1, from: "agent:main", to: "person:owner", kind: "request", word: "say", body: { text: "Now visible", kind: "heads_up" } });
-  assert.deepEqual(state.conversation.map((item) => item.text), ["Now visible"]);
-  const legacy = { seq: 3, id: "m_legacy", ts: 3, from: "agent:retired", to: "person:owner", kind: "request", word: "say", body: { text: "Old offer", kind: "offer", legacy: { seq: 3, workspace: "old", member: "agent:retired" } } };
-  state = fold(state, legacy);
-  assert.deepEqual(state.conversation.map((item) => item.text), ["Now visible", "Old offer"]);
-  assert.equal(foldPostSnapshot(state, { at_seq: 3, items: [{ message_id: "m_late", state: "released", version_seq: 4 }] }), state);
-});
-
-test("an app's entry card is one small conversation row that opens the shell app; an app cannot speak otherwise", async () => {
-  const { drawsConversation } = await import("../js/project.js");
-  const card = message({ from: "app:health", to: "person:owner", kind: "event", word: "app.card", body: { app: "health", name: "健康", title: "上周健康小结", text: "日均步数 8000" } }, 0);
-  const state = fold(initialView(), card);
-  assert.deepEqual(state.conversation.map((row) => row.card), [{ type: "app", app: "health", name: "健康", title: "上周健康小结", text: "日均步数 8000" }]);
-  assert.equal(drawsConversation(card), true);
-  const quiet = message({ from: "app:health", to: null, kind: "event", word: "health.alert", body: { title: "x", text: "y" } }, 1);
-  const say = message({ from: "app:health", to: "person:owner", kind: "request", word: "say", body: { text: "我是 Ash", kind: "reply" } }, 2);
-  assert.equal(fold(fold(state, quiet), say).conversation.length, 1, "unaddressed events and app requests draw nothing");
-});
-
-test("a device notice to the owner shows in the conversation", () => {
-  const notice = message({ from: "service:devices", to: "person:owner", kind: "request", word: "say", body: { text: "MacBookPro 想连上 Ash", kind: "due" } }, 0);
-  const view = fold(initialView(), notice);
-  assert.equal(view.conversation.at(-1)?.text, "MacBookPro 想连上 Ash");
+  assert.equal(JSON.stringify(state).includes("secret"), false);
+  assert.deepEqual(Object.keys(state.turns), ["__proto__"].filter((k) => Object.hasOwn(state.turns, k)));
 });

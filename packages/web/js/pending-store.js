@@ -1,31 +1,23 @@
-const DB_NAME = "ash-v2-owner-pending-say";
+const DB_NAME = "ash-pending-say";
 const STORE = "pending";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LEASE_MS = 45_000;
 const MAX_ITEMS = 24;
 const MAX_BYTES = 96 * 1024 * 1024;
+/** A frame is at most 4 MiB (SPEC-03 §1); the wire message of a queued say has to fit in one with room for the envelope. */
+export const MAX_WIRE_BYTES = 4 * 1024 * 1024 - 8 * 1024;
 const encodedBytes = (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-const keyFor = (endpoint, scope, clientId) => JSON.stringify([endpoint, scope, clientId]);
-const namespaceFor = (endpoint, scope) => JSON.stringify([endpoint, scope]);
+// One page origin keeps one queue: [space] names it (the app and each browser origin have their own database anyway).
+const keyFor = (space, clientId) => JSON.stringify([space, clientId]);
 
 export function openPendingStore(indexedDb = globalThis.indexedDB) {
   if (!indexedDb) return Promise.reject(new Error("pending storage unavailable"));
   return new Promise((resolve, reject) => {
-    const opening = indexedDb.open(DB_NAME, 2);
-    opening.onupgradeneeded = (event) => {
-      const store = opening.result.objectStoreNames.contains(STORE) ? opening.transaction.objectStore(STORE) : opening.result.createObjectStore(STORE, { keyPath: "key" });
-      if (!store.indexNames.contains("namespace")) store.createIndex("namespace", "namespace");
-      if (!store.indexNames.contains("createdAt")) store.createIndex("createdAt", "createdAt");
-      if (event.oldVersion === 1) {
-        const cursor = store.openCursor();
-        cursor.onsuccess = () => {
-          const entry = cursor.result;
-          if (!entry) return;
-          const item = entry.value;
-          if (typeof item.endpoint === "string" && typeof item.scope === "string" && !item.namespace) entry.update({ ...item, namespace: namespaceFor(item.endpoint, item.scope) });
-          entry.continue();
-        };
-      }
+    const opening = indexedDb.open(DB_NAME, 1);
+    opening.onupgradeneeded = () => {
+      const store = opening.result.createObjectStore(STORE, { keyPath: "key" });
+      store.createIndex("space", "space");
+      store.createIndex("createdAt", "createdAt");
     };
     opening.onsuccess = () => resolve(new PendingStore(opening.result));
     opening.onerror = () => reject(new Error("pending storage unavailable"));
@@ -48,11 +40,11 @@ export class PendingStore {
       catch { tx.abort(); }
     });
   }
-  async list(endpoint, scope, now = Date.now()) {
+  async list(space, now = Date.now()) {
     return this.transaction("readwrite", (store, set) => {
       const expiry = store.index("createdAt").openKeyCursor(IDBKeyRange.upperBound(now - TTL_MS));
       expiry.onsuccess = () => { const cursor = expiry.result; if (cursor) { store.delete(cursor.primaryKey); cursor.continue(); } };
-      const all = store.index("namespace").getAll(IDBKeyRange.only(namespaceFor(endpoint, scope)));
+      const all = store.index("space").getAll(IDBKeyRange.only(space));
       all.onsuccess = () => {
         const items = [];
         for (const item of all.result) {
@@ -64,26 +56,26 @@ export class PendingStore {
       };
     });
   }
-  async enqueue(endpoint, scope, wire, now = Date.now()) {
+  async enqueue(space, wire, now = Date.now()) {
     const size = encodedBytes(wire);
-    if (size > 28 * 1024 * 1024) throw new Error("message exceeds request limit");
-    const key = keyFor(endpoint, scope, wire.client_id);
+    if (size > MAX_WIRE_BYTES) throw new Error("message exceeds request limit");
+    const key = keyFor(space, wire.client_id);
     return this.transaction("readwrite", (store, set, tx) => {
-      const all = store.index("namespace").getAll(IDBKeyRange.only(namespaceFor(endpoint, scope)));
+      const all = store.index("space").getAll(IDBKeyRange.only(space));
       all.onsuccess = () => {
         const retained = all.result.filter((item) => now - item.createdAt < TTL_MS);
         for (const expired of all.result) if (now - expired.createdAt >= TTL_MS) store.delete(expired.key);
         if (retained.some((item) => item.key === key) || retained.length >= MAX_ITEMS || retained.reduce((total, item) => total + (item.bytes || 0), size) > MAX_BYTES) { tx.abort(); return; }
-        const item = { key, endpoint, scope, namespace: namespaceFor(endpoint, scope), client_id: wire.client_id, text: wire.body.text, attachments: wire.body.attachments?.map(({ name, mime_type, data }) => ({ name, mime_type, size: Math.floor(data.length * 3 / 4) })) || [], wire, bytes: size, status: "unsent", id: null, seq: null, createdAt: now, updatedAt: now, leaseOwner: null, leaseUntil: 0 };
+        const item = { key, space, client_id: wire.client_id, text: wire.body.text, attachments: wire.body.attachments?.map(({ name, mime_type, data }) => ({ name, mime_type, size: Math.floor(data.length * 3 / 4) })) || [], wire, bytes: size, status: "unsent", id: null, seq: null, createdAt: now, updatedAt: now, leaseOwner: null, leaseUntil: 0 };
         store.add(item); set(item);
       };
     }).catch(() => { throw new Error("pending storage full or unavailable"); });
   }
-  async claim(endpoint, scope, owner, now = Date.now()) {
+  async claim(space, owner, now = Date.now()) {
     return this.transaction("readwrite", (store, set) => {
-      const all = store.index("namespace").getAll(IDBKeyRange.only(namespaceFor(endpoint, scope)));
+      const all = store.index("space").getAll(IDBKeyRange.only(space));
       all.onsuccess = () => {
-        const eligible = all.result.filter((item) => item.endpoint === endpoint && item.scope === scope && item.wire && !item.id && item.status !== "rejected" && now - item.createdAt < TTL_MS)
+        const eligible = all.result.filter((item) => item.wire && !item.id && item.status !== "rejected" && now - item.createdAt < TTL_MS)
           .sort((a, b) => a.createdAt - b.createdAt)[0];
         if (!eligible) { set(null); return; }
         if (eligible.leaseOwner && eligible.leaseUntil > now && eligible.leaseOwner !== owner) { set({ blockedUntil: eligible.leaseUntil }); return; }
@@ -129,9 +121,9 @@ export class PendingStore {
       };
     });
   }
-  async removeAccepted(endpoint, scope, id) {
+  async removeAccepted(space, id) {
     return this.transaction("readwrite", (store) => {
-      const all = store.index("namespace").getAll(IDBKeyRange.only(namespaceFor(endpoint, scope)));
+      const all = store.index("space").getAll(IDBKeyRange.only(space));
       all.onsuccess = () => { for (const item of all.result) if (item.id === id) store.delete(item.key); };
     });
   }

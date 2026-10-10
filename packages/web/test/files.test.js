@@ -1,17 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveFileLink, fileContentUrl } from "../js/files.js";
+import { resolveFileLink } from "../js/files.js";
+import { bodyOf } from "../js/body.js";
 
-const roots = [{ id: "home", directory: "/root/work" }, { id: "agent_writer", directory: "/root/agents/writer" }];
-test("Markdown links and the file list use the same workspace/path, including helper files and relative references", () => {
-  assert.deepEqual(resolveFileLink("/root/work/报告%20一.md", roots), { workspace: "home", path: "报告 一.md" });
-  assert.deepEqual(resolveFileLink("/root/agents/writer/page.html", roots), { workspace: "agent_writer", path: "page.html" });
-  assert.deepEqual(resolveFileLink("../guide.md", roots, { workspace: "home", path: "docs/chapter/a.md" }), { workspace: "home", path: "docs/guide.md" });
-  assert.deepEqual(resolveFileLink("./report.html#result", roots), { workspace: "home", path: "report.html" });
-  assert.equal(fileContentUrl({ workspace: "home", path: "报告 一/page.html" }), "/api/workspaces/home/content/%E6%8A%A5%E5%91%8A%20%E4%B8%80/page.html");
-  assert.ok(fileContentUrl({ workspace: "home", path: "page.html" }, true).startsWith("https://ash-files.invalid/"));
+test("Markdown links resolve against the file they are in, on the same body", () => {
+  const base = { workspace: "main", path: "docs/chapter/a.md" };
+  assert.deepEqual(resolveFileLink("/root/work/报告%20一.md", base), { workspace: "main", path: "/root/work/报告 一.md" });
+  assert.deepEqual(resolveFileLink("../guide.md", base), { workspace: "main", path: "docs/guide.md" });
+  assert.deepEqual(resolveFileLink("./report.html#result", base), { workspace: "main", path: "docs/chapter/report.html" });
+  assert.deepEqual(resolveFileLink("page.html", { workspace: "body:" + "A".repeat(22), path: "" }), { workspace: "body:" + "A".repeat(22), path: "page.html" });
 });
-test("file links never widen filesystem roots or become arbitrary URL/native API requests", () => {
-  for (const path of ["/root/work-other/secret", "/etc/passwd", "../../private", "/root/work/../secret", "file:///etc/passwd", "javascript:alert(1)", "https://example.com/x", "//host/a", "%00.md", "a\\b", "#local", "%GG"])
-    assert.equal(resolveFileLink(path, roots), null, path);
+
+test("file links never climb out of the directory or become arbitrary URLs", () => {
+  for (const href of ["../../private", "/root/work/../secret", "file:///etc/passwd", "javascript:alert(1)", "https://example.com/x", "//host/a", "%00.md", "a\\b", "#local", "%GG"])
+    assert.equal(resolveFileLink(href, { workspace: "main", path: "a.md" }), null, href);
+});
+
+test("a card names its body as main, a computer's id, or the full body id; anything else means the main body", () => {
+  assert.equal(bodyOf("main"), "body:main");
+  assert.equal(bodyOf("home"), "body:main");
+  assert.equal(bodyOf("A".repeat(22)), `body:${"A".repeat(22)}`);
+  assert.equal(bodyOf(`body:${"B".repeat(22)}`), `body:${"B".repeat(22)}`);
+  assert.equal(bodyOf(undefined), "body:main");
 });

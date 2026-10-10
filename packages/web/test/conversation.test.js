@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendConversation, workspaceFileUrl } from "../js/conversation.js";
+import { appendConversation, fileRef } from "../js/conversation.js";
 import { fold, initialView } from "../js/project.js";
 
 class Node {
@@ -72,19 +72,34 @@ test("three first-meeting replies are visible as three conversation bubbles", ()
     .map((item) => item.textContent), ["FIRST_MEETING_1", "FIRST_MEETING_2", "FIRST_MEETING_3"]);
 });
 
-test("legacy text remains inert and only bounded workspace references get download links", () => {
-  assert.equal(workspaceFileUrl({ workspace: "home", path: "inbox/a b.png" }), "/api/workspaces/home/files?path=inbox%2Fa%20b.png");
+test("only bounded file references become buttons, and they open through the viewer", async () => {
+  assert.deepEqual(fileRef({ workspace: "main", path: "inbox/a b.png" }), { workspace: "main", path: "inbox/a b.png" });
   for (const ref of [
-    { workspace: "home", path: "../secret" }, { workspace: "home", path: "/secret" },
-    { workspace: "home", path: "a\\b" }, { workspace: "home", path: "a//b" },
-    { workspace: "home?x", path: "a" }, { workspace: "home", path: "a/./b" },
-  ]) assert.equal(workspaceFileUrl(ref), null);
-  const fragment = draw([{ id: "old", seq: 7, type: "say", side: "inbound", from: "agent:old", text: "<script>", legacy: { workspace: "old", member: "agent:old" }, attachments: [{ workspace: "home", path: "inbox/a b.png", name: "picture.png" }, { workspace: "home", path: "../nope", name: "bad" }] }]);
+    { workspace: "home", path: "../secret" }, { workspace: "home", path: "a\\b" }, { workspace: "home", path: "a//b" },
+    { workspace: "home?x", path: "a" }, { workspace: "home", path: "a/./b" }, { workspace: "home", path: "" },
+  ]) assert.equal(fileRef(ref), null);
+  const opened = [];
+  const fragment = draw([{ id: "m", seq: 7, type: "say", side: "agent", from: "agent:main", text: "<script>", attachments: [{ workspace: "main", path: "inbox/a b.png", name: "picture.png" }, { workspace: "main", path: "../nope", name: "bad" }] }],
+    { onOpenFile: (ref) => opened.push(ref.path) });
   const bubble = fragment.children.find((node) => node.className?.startsWith("msg "));
-  assert.equal(bubble.dataset.readonly, "true");
-  assert.match(bubble.textContent, /<script>/);
-  assert.equal(bubble.children[0].children.length, 1);
-  assert.equal(bubble.children[0].children[0].href, "/api/workspaces/home/files?path=inbox%2Fa%20b.png");
+  const atts = bubble.children.find((node) => node.className === "atts");
+  assert.equal(atts.children.length, 1, "the unsafe reference is not drawn");
+  await atts.children[0].listeners.click();
+  assert.deepEqual(opened, ["inbox/a b.png"]);
+});
+
+test("a long text shows the ledger's short version and reads the rest on demand", async () => {
+  const asked = [];
+  const entry = { id: "m", seq: 1, type: "say", side: "owner", text: "start…end（共9000字）", full: "a".repeat(64), delivery: "sent", reactions: [] };
+  let fragment = draw([entry], { onExpand: async (hash) => asked.push(hash), fullTexts: new Map() });
+  const bubble = fragment.children.find((node) => node.className?.startsWith("msg "));
+  const more = bubble.children.find((node) => node.className === "expand");
+  await more.listeners.click();
+  assert.deepEqual(asked, ["a".repeat(64)]);
+  fragment = draw([entry], { onExpand: async () => {}, fullTexts: new Map([["a".repeat(64), "the whole text"]]) });
+  const shown = fragment.children.find((node) => node.className?.startsWith("msg "));
+  assert.equal(shown.textContent, "the whole text");
+  assert.equal(shown.children.some((node) => node.className === "expand"), false);
 });
 
 test("option card sends one selected action, locks locally, and shows authoritative cross-screen lock", async () => {
@@ -112,11 +127,13 @@ test("custom option uses the reserved id only when the card allows it", async ()
 });
 
 test("file, image, and link cards open safe references and approval buttons expire", async () => {
-  const files = draw([{ type: "card", card: { type: "file", workspace: "home", path: "a.pdf", name: "a.pdf" } },
-    { type: "card", card: { type: "image", workspace: "home", path: "a.png", alt: "a" } },
-    { type: "card", card: { type: "link", url: "https://example.com/a", title: "Example" } }]);
-  assert.equal(files.children[0].children[0].href, "/api/workspaces/home/files?path=a.pdf");
-  assert.equal(files.children[1].children[0].src, "/api/workspaces/home/files?path=a.png");
+  const opened = [];
+  const files = draw([{ type: "card", card: { type: "file", workspace: "main", path: "a.pdf", name: "a.pdf" } },
+    { type: "card", card: { type: "image", workspace: "main", path: "a.png", alt: "a" } },
+    { type: "card", card: { type: "link", url: "https://example.com/a", title: "Example" } }], { onOpenFile: (ref) => opened.push(ref.path) });
+  await files.children[0].children[0].listeners.click();
+  await files.children[1].children[0].listeners.click();
+  assert.deepEqual(opened, ["a.pdf", "a.png"]);
   assert.equal(files.children[2].children[0].href, "https://example.com/a");
   const ask = { id: "ask-1", seq: 1, from: "service:gate", title: "Confirm", detail: "Do it?", state: "pending",
     expires_at: Date.now() + 60_000, options: ["once", "always", "deny"].map((id) => ({ id, label: id })) };

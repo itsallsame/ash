@@ -1,15 +1,15 @@
-// Managed Markdown editor. Every mutation is a service:self request, never a file PUT.
-import { SCREEN_TOKEN_HEADER } from "../../sdk/src/api.ts";
+// Managed Markdown editor. The editor knows no transport: a store adapter reads and writes the file
+// (`store.read(path)` -> {content, truncated?} or null when the file is missing; `store.write(path, content, clientId)`;
+// both throw a WordFailure when the word did not succeed). The memory sheet builds a store on the main body's files,
+// the identity sheet one on the persona member.
+import { retryable } from "./link.js";
+
 const paths = new Set(["SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md"]);
-const sha = (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
-const safeVersion = (value) => value === undefined || Number.isSafeInteger(value) && value >= 1;
-const safeTs = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 8_640_000_000_000_000;
-const userHeader = /^---\nversion: ([1-9][0-9]*)\nupdated: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z\n---\n/;
-const userBody = (content) => content.replace(userHeader, "");
 const STALE = "这段内容刚在别处改过，未覆盖。你的修改还在；请重新读取后再改。";
-const errorText = (body) => body?.error?.code === "bad_request" && body.error.message === "stale" ? STALE
-  : body?.error?.message === "gate unavailable" ? "现在没法确认这次恢复，什么都没改；请稍后再试。"
-  : body?.error?.code === "forbidden" || body?.error?.code === "denied" ? "这次没有得到允许，什么都没改。"
+const UNSURE = "还不确定有没有保存上。再点一次「保存」会原样重试。";
+const failText = (error) => typeof error?.userMessage === "string" ? error.userMessage
+  : error?.code === "forbidden" || error?.code === "denied" ? "这次没有得到允许，什么都没改。"
+  : error?.code === "too_large" ? "内容太长，没能保存，什么都没改。"
   : "没有完成，什么都没改；可以再试一次。";
 /** Her name inside a Chinese sentence: Latin names get spaces around them, Chinese names do not. */
 export const named = (name, before = true, after = true) =>
@@ -31,46 +31,12 @@ export function when(ts, now = Date.now()) {
   return `${year}${at.getMonth() + 1}月${at.getDate()}日 ${time}`;
 }
 
-/** Bind managed requests to the existing live ScreenNet registration. */
-export function createSelfScreenSender(net) {
-  if (!net || typeof net.request !== "function") throw new TypeError("screen network required");
-  return async (request) => {
-    if (request?.to !== "service:self" || request.kind !== "request" || request.wait !== true ||
-      !["read", "write", "history", "rollback"].includes(request.word)) throw new TypeError("unsupported managed request");
-    const token = net.token;
-    const scope = net.currentScope;
-    const screen = net.screen;
-    const generation = net.generation;
-    if (!token || !scope || !screen) throw new Error("还没连上，暂时不能读取。");
-    if (["write", "rollback"].includes(request.word) && net.localManagement !== true)
-      throw new Error("只有在她所在的手机上才能修改。");
-    const response = await net.request("/api/send", { method: "POST", credentials: "same-origin",
-      headers: { "content-type": "application/json", [SCREEN_TOKEN_HEADER]: token }, body: JSON.stringify(request) });
-    const current = () => token === net.token && scope === net.currentScope && screen === net.screen && generation === net.generation &&
-      (!["write", "rollback"].includes(request.word) || net.localManagement === true);
-    if (!current()) throw new Error("连接已经换过，这次的结果没有采用。");
-    if (!response.ok) throw new Error(response.status === 403 ? "这台设备不能修改这些内容。" : "没能连上，请再试一次。");
-    const accepted = await response.json();
-    if (!current()) throw new Error("连接已经换过，这次的结果没有采用。");
-    if (typeof accepted?.id !== "string" || accepted.reply?.kind !== "response" || accepted.reply.reply_to !== accepted.id ||
-      accepted.reply.from !== "service:self" || accepted.reply.to !== "person:owner" || accepted.reply.word !== request.word)
-      throw new Error("没有收到确认，可以再试一次。");
-    return accepted;
-  };
-}
-
 function node(parent, tag, value, className = "") {
   const element = document.createElement(tag);
   if (className) element.className = className;
   element.textContent = String(value ?? "");
   parent.append(element);
   return element;
-}
-
-function resultBody(response) {
-  const body = response?.reply?.body;
-  if (!body || typeof body.ok !== "boolean") throw new Error("没有收到确认，可以再试一次。");
-  return body;
 }
 
 /** Plain reading view of a Markdown file: headings, bullets and paragraphs; never parsed as HTML. */
@@ -96,39 +62,36 @@ export function renderReadable(parent, text) {
   }
 }
 
-const updatedAt = (content) => {
-  const match = /^---\nversion: [1-9][0-9]*\nupdated: ([0-9T:.\-]+Z)\n---\n/.exec(content);
-  const ts = match ? Date.parse(match[1]) : NaN;
-  return Number.isFinite(ts) ? ts : null;
-};
-
-/** A caller must provide a registered-screen send function; the server remains the authority. */
+/**
+ * One managed file. [store] reads and writes it; [onSaved](path) runs after the owner's change went through. A save is
+ * guarded by reading the file again first: if it no longer reads as it did when the editor loaded it, nothing is written.
+ */
 export class ManagedMarkdownEditor {
-  constructor(root, { path, send, canEdit = true, confirmRollback = () => false, idFactory = () => crypto.randomUUID() } = {}) {
-    if (!paths.has(path) || typeof send !== "function") throw new TypeError("unsupported managed editor path or transport");
+  constructor(root, { path, store, canEdit = true, onSaved = () => {}, idFactory = () => crypto.randomUUID() } = {}) {
+    if (!paths.has(path) || typeof store?.read !== "function" || typeof store?.write !== "function") throw new TypeError("unsupported managed editor path or store");
     this.root = root;
     this.path = path;
     this.label = FILE_LABELS[path];
-    this.send = send;
+    this.store = store;
     this.canEdit = canEdit;
+    this.onSaved = onSaved;
     this.idFactory = idFactory;
-    this.confirmRollback = confirmRollback;
     this.loaded = false;
     this.missing = false;
+    this.truncated = false;
     this.content = "";
     this.draft = "";
-    this.hash = null;
-    this.version = null;
     this.conflict = false;
     this.unverified = false;
     this.pending = null;
-    this.pendingRollback = null;
     this.editing = false;
     this.status = "正在读取…";
-    this.snapshots = null;
     this.disposed = false;
     this.render();
   }
+
+  /** Whether the owner may change the file here: only from the machine she lives on, and never from a partial read. */
+  get editable() { return this.canEdit && !this.truncated; }
 
   dispose() {
     this.disposed = true;
@@ -136,194 +99,143 @@ export class ManagedMarkdownEditor {
     this.content = "";
     this.draft = "";
     this.pending = null;
-    this.pendingRollback = null;
-    this.snapshots = null;
     this.editing = false;
     this.root.replaceChildren();
   }
 
-  async request(word, body, client_id) {
+  async read() {
     if (this.disposed) throw new Error("已经关闭。");
-    const result = await this.send({ to: "service:self", kind: "request", word, body, wait: true, ...(client_id ? { client_id } : {}) });
+    const found = await this.store.read(this.path);
     if (this.disposed) throw new Error("已经关闭。");
-    return result;
+    if (found !== null && typeof found?.content !== "string") throw new Error("读到的内容不完整，请再试一次。");
+    return found;
   }
 
   /** Reload discards a local draft only when explicitly requested by the caller. */
   async load({ discardDraft = false } = {}) {
-    if (this.pending || this.pendingRollback) throw new Error("上次的改动还没确认；请先再点一次同一个按钮。" );
-    if (this.loaded && this.draft !== this.content && !discardDraft) throw new Error("还有没保存的修改；先保存或取消。" );
-    const body = resultBody(await this.request("read", { path: this.path }));
-    if (!body.ok && body.error?.code !== "not_found") throw new Error(errorText(body));
-    const found = body.ok;
-    const content = found ? body.result?.content : "";
-    const hash = found ? body.result?.hash : null;
-    const version = found ? body.result?.version : undefined;
-    if (typeof content !== "string" || found && !sha(hash) || !safeVersion(version)) throw new Error("读到的内容不完整，请再试一次。" );
+    if (this.pending) throw new Error("上次的改动还没确认；请先再点一次同一个按钮。");
+    if (this.loaded && this.draft !== this.content && !discardDraft) throw new Error("还有没保存的修改；先保存或取消。");
+    let found;
+    try { found = await this.read(); }
+    catch (error) {
+      if (this.disposed) throw error;
+      throw new Error(error instanceof Error && /不完整/.test(error.message) ? error.message : "没能读取，请再试一次。");
+    }
+    const content = found?.content ?? "";
     this.content = content;
     this.draft = content;
-    this.hash = hash;
-    this.version = version ?? null;
     this.loaded = true;
-    this.missing = !found;
+    this.missing = found === null;
+    this.truncated = found?.truncated === true;
     this.conflict = false;
     this.unverified = false;
     this.pending = null;
-    this.pendingRollback = null;
-    this.status = "";
+    this.status = this.truncated ? "内容太长，这里只显示了一部分，不能在这里修改。" : "";
     this.render();
-    return { content, hash, version: this.version };
+    return { content };
   }
 
   setDraft(content) {
-    if (!this.loaded || !this.canEdit || typeof content !== "string") throw new Error("还不能修改。" );
+    if (!this.loaded || !this.editable || typeof content !== "string") throw new Error("还不能修改。");
     this.draft = content;
     this.render();
   }
 
   /** Editing always starts from what is on disk now, so a quiet background change is not overwritten later. */
   async edit() {
-    if (!this.loaded || !this.canEdit || this.editing) return;
-    if (!this.pending && !this.pendingRollback && !this.conflict && !this.unverified && this.draft === this.content) {
+    if (!this.loaded || !this.editable || this.editing) return;
+    if (!this.pending && !this.conflict && !this.unverified && this.draft === this.content) {
       try { await this.load(); }
       catch (error) { this.status = error instanceof Error ? error.message : "没能读取，请再试一次。"; this.render(); return; }
+      if (!this.editable) return;
     }
     this.editing = true;
     this.render();
   }
 
   cancelEdit() {
-    if (this.pending || this.pendingRollback) return;
+    if (this.pending) return;
     this.draft = this.content;
     this.editing = false;
-    this.status = "";
+    this.status = this.truncated ? this.status : "";
     this.render();
   }
 
   async save() {
-    if (!this.loaded || !this.canEdit) throw new Error("现在不能修改。" );
-    if (this.pendingRollback) throw new Error("上次的恢复还没确认；请先再点一次同一个按钮。" );
-    if (this.conflict || this.unverified) throw new Error("请先重新读取，再保存，以免覆盖别处的修改。" );
+    if (!this.loaded || !this.editable) throw new Error("现在不能修改。");
+    if (this.conflict || this.unverified) throw new Error("请先重新读取，再保存，以免覆盖别处的修改。");
     if (this.draft === this.content && !this.pending) {
       this.editing = false;
       this.render();
       return { unchanged: true };
     }
-    if (this.pending && this.draft !== this.pending.content) throw new Error("上次保存还没确认；只能原样再试一次。" );
-    this.pending ??= { content: this.draft, expected_hash: this.hash, client_id: this.idFactory() };
+    if (this.pending && this.draft !== this.pending.content) throw new Error("上次保存还没确认；只能原样再试一次。");
+    this.pending ??= { content: this.draft, base: this.content, client_id: this.idFactory(), sent: false };
     const pending = this.pending;
     this.status = "正在保存…";
     this.render();
-    let body;
-    try {
-      body = resultBody(await this.request("write", { path: this.path, content: pending.content,
-        why: "Owner edited managed Markdown", expected_hash: pending.expected_hash }, pending.client_id));
-    } catch (error) {
-      this.status = "还不确定有没有保存上。再点一次「保存」会原样重试。";
+
+    // The file must still read as it did when it was loaded (or already as the owner's text, after a lost answer).
+    let current;
+    try { current = await this.read(); }
+    catch (error) {
+      if (this.disposed) throw error;
+      if (!pending.sent) this.pending = null;
+      this.status = pending.sent ? UNSURE : "没能确认文件现在的内容，什么都没改；可以再点一次「保存」。";
       this.render();
-      throw error;
+      throw error instanceof Error ? error : new Error(this.status);
     }
-    if (!body.ok) {
+    const now = current?.content ?? "";
+    if (current?.truncated === true || (now !== pending.base && !(pending.sent && now === pending.content))) {
       this.pending = null;
-      this.conflict = body.error?.code === "bad_request" && body.error?.message === "stale";
-      this.status = errorText(body);
+      this.conflict = true;
+      this.status = STALE;
       this.render();
       throw new Error(this.status);
     }
-    if (!sha(body.result?.hash) || !safeVersion(body.result?.version) || this.path === "USER.md" && !Number.isSafeInteger(body.result?.version)) {
-      this.status = "还不确定有没有保存上。再点一次「保存」会原样重试。";
-      this.render();
-      throw new Error(this.status);
+    if (now !== pending.content) {
+      pending.sent = true;
+      try { await this.store.write(this.path, pending.content, pending.client_id); }
+      catch (error) {
+        if (this.disposed) throw error;
+        if (retryable(error)) {
+          this.status = UNSURE;
+          this.render();
+          throw error instanceof Error ? error : new Error(this.status);
+        }
+        this.pending = null;
+        this.status = failText(error);
+        this.render();
+        throw new Error(this.status);
+      }
+      if (this.disposed) throw new Error("已经关闭。");
     }
     this.pending = null;
-    this.hash = body.result.hash;
     this.content = pending.content;
-    this.version = body.result.version ?? null;
     this.unverified = true;
     this.status = "正在保存…";
     this.render();
+    try { this.onSaved(this.path); } catch { /* the owner's change is saved either way */ }
     try {
-      const current = resultBody(await this.request("read", { path: this.path }));
-      if (!current.ok || !sha(current.result?.hash) || typeof current.result?.content !== "string") throw new Error("保存后没能重新读取。" );
-      const canonical = current.result.content;
-      const userMatches = this.path === "USER.md" && userHeader.test(canonical) &&
-        Number(userHeader.exec(canonical)[1]) === body.result.version && current.result.version === body.result.version &&
-        userBody(canonical) === userBody(pending.content);
-      if (current.result.hash !== body.result.hash || !(this.path === "USER.md" ? userMatches : canonical === pending.content)) {
+      const saved = await this.read();
+      if (saved === null || saved.truncated === true || saved.content !== pending.content) {
         this.conflict = true;
         this.status = "保存后这段内容又在别处被改过。你的修改还在；请重新读取后再看。";
       } else {
-        this.content = canonical;
-        this.draft = canonical;
-        this.version = current.result.version ?? null;
+        this.content = saved.content;
+        this.draft = saved.content;
         this.missing = false;
         this.editing = false;
         this.status = "已保存。";
       }
       this.unverified = false;
     } catch {
+      if (this.disposed) return { conflict: false };
       this.unverified = true;
       this.status = "已保存，但没能重新读取；请点「重新读取」看看现在的内容。";
     }
     this.render();
-    return { hash: body.result.hash, version: this.version, conflict: this.conflict };
-  }
-
-  async rollback(to_ts) {
-    if (!this.loaded || !this.canEdit || !sha(this.hash) || this.conflict || this.unverified || this.pending) throw new Error("请先重新读取，再恢复。" );
-    if (this.draft !== this.content) throw new Error("先保存或取消正在改的内容，再恢复。" );
-    if (!this.snapshots?.some((item) => item.ts === to_ts)) throw new Error("找不到这条记录，请重新打开改动记录。" );
-    if (this.pendingRollback && this.pendingRollback.to_ts !== to_ts) throw new Error("上次的恢复还没确认；只能原样再试一次。" );
-    if (!this.pendingRollback) {
-      if (!await this.confirmRollback({ path: this.path, label: this.label, to_ts, expected_hash: this.hash })) return { cancelled: true };
-      if (this.disposed) throw new Error("已经关闭。");
-      this.pendingRollback = { to_ts, expected_hash: this.hash, client_id: this.idFactory() };
-    }
-    const pending = this.pendingRollback;
-    this.status = "正在恢复…";
-    this.render();
-    let body;
-    try {
-      body = resultBody(await this.request("rollback", { path: this.path, to_ts: pending.to_ts,
-        expected_hash: pending.expected_hash }, pending.client_id));
-    } catch (error) {
-      this.status = "还不确定有没有恢复。再点一次同一条「恢复」会原样重试。";
-      this.render();
-      throw error;
-    }
-    if (!body.ok) {
-      this.pendingRollback = null;
-      this.conflict = body.error?.code === "bad_request" && body.error?.message === "stale";
-      this.status = errorText(body);
-      this.render();
-      throw new Error(this.status);
-    }
-    this.pendingRollback = null;
-    this.loaded = false;
-    this.status = "已恢复，正在读取…";
-    this.render();
-    try {
-      const result = await this.load({ discardDraft: true });
-      this.status = `已恢复成 ${when(to_ts)} 改动之前的样子。`;
-      this.render();
-      return result;
-    } catch (error) {
-      this.unverified = true;
-      this.status = "已恢复，但没能重新读取；请点「重新读取」看看现在的内容。";
-      this.render();
-      throw error;
-    }
-  }
-
-  async history() {
-    const body = resultBody(await this.request("history", { path: this.path }));
-    if (!body.ok) throw new Error(errorText(body));
-    const versions = body.result?.versions;
-    if (!Array.isArray(versions) || !versions.every((item) => item && safeTs(item.ts) && sha(item.hash)) ||
-      new Set(versions.map((item) => item.ts)).size !== versions.length) throw new Error("改动记录读不全，请再试一次。" );
-    this.snapshots = versions.map((item) => ({ ts: item.ts, hash: item.hash }));
-    this.render();
-    return this.snapshots;
+    return { conflict: this.conflict };
   }
 
   render() {
@@ -334,18 +246,14 @@ export class ManagedMarkdownEditor {
     const reading = node(card, "div", "", "doc-body");
     reading.hidden = this.editing;
     if (!this.loaded) node(reading, "p", "", "doc-empty");
-    else if (!userBody(this.content).trim()) node(reading, "p", this.canEdit ? "还没有写下什么。点「编辑」写几句。" : "还没有写下什么。", "doc-empty");
-    else renderReadable(reading, this.path === "USER.md" ? userBody(this.content) : this.content);
-    const header = this.path === "USER.md" ? userHeader.exec(this.draft)?.[0] ?? "" : "";
+    else if (!this.content.trim()) node(reading, "p", this.editable ? "还没有写下什么。点「编辑」写几句。" : "还没有写下什么。", "doc-empty");
+    else renderReadable(reading, this.content);
     const source = node(card, "textarea", "", "markdown-source");
-    source.value = header ? this.draft.slice(header.length) : this.draft;
+    source.value = this.draft;
     source.hidden = !this.editing;
-    source.disabled = !this.loaded || !this.canEdit || !!this.pending || this.unverified;
-    source.addEventListener("input", () => { this.draft = `${header}${source.value}`; });
-    const updated = this.path === "USER.md" && this.loaded ? updatedAt(this.content) : null;
-    node(card, "p", this.path === "USER.md" && this.loaded && this.version !== null
-      ? `${updated ? `更新于 ${when(updated)} · ` : ""}第 ${this.version} 版` : "", "editor-version");
-    const warning = this.conflict || this.unverified || !!this.pending || !!this.pendingRollback;
+    source.disabled = !this.loaded || !this.editable || !!this.pending || this.unverified;
+    source.addEventListener("input", () => { this.draft = source.value; });
+    const warning = this.conflict || this.unverified || !!this.pending;
     node(card, "p", this.status, warning ? "editor-warning" : "editor-status");
     const actions = node(card, "div", "", "set-actions");
     const action = (label, className, run) => {
@@ -358,12 +266,12 @@ export class ManagedMarkdownEditor {
       return button;
     };
     const edit = action("编辑", "btn editor-edit", () => this.edit());
-    edit.hidden = this.editing || !this.canEdit || !this.loaded;
-    edit.disabled = !!this.pending || !!this.pendingRollback;
+    edit.hidden = this.editing || !this.editable || !this.loaded;
+    edit.disabled = !!this.pending;
     const save = node(actions, "button", this.pending ? "再试一次保存" : "保存", "btn editor-save");
     save.type = "button";
     save.hidden = !this.editing;
-    save.disabled = !this.loaded || !this.canEdit || this.conflict || this.unverified || !!this.pendingRollback;
+    save.disabled = !this.loaded || !this.editable || this.conflict || this.unverified;
     save.addEventListener("click", async () => { try { await this.save(); } catch { /* status is visible; draft remains */ } });
     const cancel = action("取消", "btn gray editor-cancel", () => this.cancelEdit());
     cancel.hidden = !this.editing || !!this.pending || this.conflict || this.unverified;
@@ -371,27 +279,7 @@ export class ManagedMarkdownEditor {
       await this.load({ discardDraft: true });
     });
     refresh.hidden = !(this.conflict || this.unverified);
-    const history = action("改动记录", "sheet-link editor-history", () => this.history());
-    history.hidden = this.editing || !this.loaded || this.missing;
     if (!this.canEdit && this.loaded) node(card, "p", "只能在她所在的那台手机上修改。", "set-sub");
-    if (this.snapshots && !this.editing) {
-      node(fragment, "h3", "改动记录", "set-header");
-      if (!this.snapshots.length) node(fragment, "p", "还没有改动记录。", "sheet-empty");
-      else {
-        const list = node(fragment, "div", "", "set-group editor-snapshots");
-        for (const item of [...this.snapshots].sort((a, b) => b.ts - a.ts)) {
-          const row = node(list, "div", "", "set-item");
-          const text = node(row, "span", "", "set-text");
-          node(text, "span", when(item.ts), "set-title");
-          node(text, "span", "这次改动之前的内容", "set-sub");
-          const rollback = node(row, "button", this.pendingRollback?.to_ts === item.ts ? "再试一次恢复" : "恢复", "sheet-link editor-rollback");
-          rollback.type = "button";
-          rollback.hidden = !this.canEdit;
-          rollback.disabled = !this.canEdit || !this.loaded || this.conflict || this.unverified || !!this.pending || this.draft !== this.content || !!this.pendingRollback && this.pendingRollback.to_ts !== item.ts;
-          rollback.addEventListener("click", async () => { try { await this.rollback(item.ts); } catch (error) { if (!this.disposed) { this.status = error instanceof Error ? error.message : "没能恢复，可以再试一次。"; this.render(); } } });
-        }
-      }
-    }
     this.root.replaceChildren(fragment);
   }
 }
@@ -418,13 +306,13 @@ export class ManagedFilesSheet {
   }
 
   busy() {
-    return Boolean(this.editor && (this.editor.pending || this.editor.pendingRollback || this.editor.editing ||
+    return Boolean(this.editor && (this.editor.pending || this.editor.editing ||
       this.editor.loaded && this.editor.draft !== this.editor.content));
   }
 
   async open(path = this.files[0]) {
     if (!this.files.includes(path)) throw new TypeError("unknown managed file");
-    if (this.editor?.pending || this.editor?.pendingRollback ||
+    if (this.editor?.pending ||
       this.editor?.loaded && this.editor.draft !== this.editor.content) throw new Error("先保存或取消正在改的内容，再切换。");
     const epoch = ++this.epoch;
     const panel = document.createElement("section");

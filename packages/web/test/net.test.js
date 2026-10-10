@@ -1,0 +1,238 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { startKernel } from "./kernel.js";
+import { nativeBridgeFor, netFor, until } from "./support.js";
+
+const ready = async (kernel, options) => {
+  const handle = netFor(kernel, options);
+  handle.net.start();
+  await until(() => handle.net.status === "online" && handle.events.ready > 0, 2000, "online with history");
+  return handle;
+};
+const say = (n, text = `text ${n}`) => ({ from: "person:owner", to: "agent:main", word: "say", body: { text } });
+
+test("the page connects as a browser hand, opens a sync and shows an empty conversation as ready", async () => {
+  const kernel = startKernel();
+  const { net, events } = await ready(kernel);
+  assert.equal(net.local, true);
+  assert.match(net.client, /^client:/);
+  assert.equal(kernel.sessions[0].hello.hand.kind, "browser");
+  assert.deepEqual(Object.keys(kernel.sessions[0].hello.channels), ["human"]);
+  assert.equal(kernel.sessions[0].hello.hand.public_key, undefined, "a browser proves nothing itself; the relay vouches for it");
+  assert.equal(events.ready, 1);
+  assert.deepEqual(kernel.synced[0], { t: "sync", ch: "human", sid: kernel.synced[0].sid, limit: 200, follow: true, summary: true });
+  net.stop(); kernel.close();
+});
+
+test("history is the newest page, then live messages follow without repeats", async () => {
+  const kernel = startKernel();
+  for (let n = 1; n <= 3; n++) kernel.append(say(n));
+  const { net, events } = await ready(kernel);
+  assert.deepEqual(events.histories.flat().map((m) => m.seq), [1, 2, 3]);
+  kernel.append(say(4));
+  await until(() => events.messages.length === 1);
+  assert.equal(events.messages[0].message.seq, 4);
+  assert.equal(events.messages[0].historical, false);
+  net.stop(); kernel.close();
+});
+
+test("older history pages back from the first seq and says when the start is reached", async () => {
+  const kernel = startKernel();
+  for (let n = 1; n <= 250; n++) kernel.append(say(n));
+  const { net, events } = await ready(kernel);
+  assert.equal(events.histories.flat().length, 200);
+  const first = Math.min(...events.histories.flat().map((m) => m.seq));
+  assert.equal(first, 51);
+  const page = await net.page(first);
+  assert.equal(page.messages.length, 50);
+  assert.equal(page.end.has_more, false, "fewer than a page means the start of the conversation");
+  assert.deepEqual(page.messages.map((m) => m.seq).slice(0, 2), [1, 2]);
+  net.stop(); kernel.close();
+});
+
+test("a message the owner types is kept, sent as `say` with one client_id, and leaves the outbox when the ledger has it", async () => {
+  const kernel = startKernel();
+  const { net, events } = await ready(kernel);
+  const clientId = await net.enqueueSay("hello");
+  await until(() => kernel.requests.some((r) => r.word === "say"));
+  assert.deepEqual(kernel.requests.find((r) => r.word === "say"), { to: "agent:main", kind: "request", word: "say", body: { text: "hello" }, client_id: clientId });
+  await until(() => events.messages.some((entry) => entry.message.word === "say" && entry.message.from === "person:owner"));
+  await until(() => net.outbox.length === 0, 2000, "outbox drained");
+  assert.equal(net.queue.length, 0);
+  net.stop(); kernel.close();
+});
+
+test("sends go to the primary agent the hub names, and to another agent when picked", async () => {
+  const kernel = startKernel();
+  kernel.on("service:agents", "list", { agents: [{ id: "agent:ash", name: "Ash", summary: "", state: "idle", primary: true }, { id: "agent:other", name: "O", summary: "", state: "idle" }] });
+  const { net } = await ready(kernel);
+  await until(() => net.primary === "agent:ash");
+  await net.enqueueSay("to primary");
+  await net.enqueueSay("to other", [], null, "agent:other");
+  await until(() => kernel.requests.filter((r) => r.word === "say").length === 2);
+  assert.deepEqual(kernel.requests.filter((r) => r.word === "say").map((r) => r.to), ["agent:ash", "agent:other"]);
+  net.stop(); kernel.close();
+});
+
+test("a lost connection keeps the queue; the retry has the same client_id and the sync resumes after the cursor", async () => {
+  const kernel = startKernel();
+  kernel.append(say(1));
+  const { net, events } = await ready(kernel);
+  kernel.drop();
+  await until(() => events.states.includes("offline"));
+  kernel.append(say(2, "while away"));
+  const clientId = await net.enqueueSay("typed offline");
+  await until(() => net.status === "online", 3000, "reconnect");
+  await until(() => events.messages.some((entry) => entry.message.body.text === "while away") || events.histories.flat().some((m) => m.body.text === "while away"));
+  const resumed = kernel.synced.at(-1);
+  assert.equal(resumed.after, 1);
+  assert.equal(resumed.limit, 1000);
+  await until(() => kernel.requests.some((r) => r.client_id === clientId));
+  assert.equal(kernel.requests.filter((r) => r.client_id === clientId).length, 1);
+  await until(() => net.outbox.length === 0);
+  net.stop(); kernel.close();
+});
+
+test("the owner answers a question with a response to the ask, and the first answer counts", async () => {
+  const kernel = startKernel();
+  const { net } = await ready(kernel);
+  const ask = kernel.append({ from: "service:gate", to: "person:owner", word: "ask", body: { title: "send it?", human_kind: "confirmation", options: [{ id: "once", label: "允许这一次" }, { id: "deny", label: "不允许" }], expires_at: Date.now() + 1e6 } });
+  const answered = await net.answerAsk({ id: ask.id, from: "service:gate" }, { choice: "once" }, "c1");
+  assert.deepEqual(answered.error, undefined);
+  assert.equal(answered.ok, true);
+  const response = kernel.ledger.find((m) => m.kind === "response" && m.reply_to === ask.id);
+  assert.deepEqual([response.from, response.to, response.word, response.body], ["person:owner", "service:gate", "ask", { ok: true, result: { data: { choice: "once" } } }]);
+  const again = await net.answerAsk({ id: ask.id, from: "service:gate" }, { choice: "deny" }, "c2");
+  assert.equal(again.ok, false);
+  assert.equal(again.error.code, "conflict");
+  net.stop(); kernel.close();
+});
+
+test("a confirmation without options is answered yes or no", async () => {
+  const kernel = startKernel();
+  const { net } = await ready(kernel);
+  const ask = kernel.append({ from: "agent:main", to: "person:owner", word: "ask", body: { title: "ok?", human_kind: "confirmation" } });
+  assert.equal((await net.answerAsk({ id: ask.id, from: "agent:main" }, { choice: "yes" }, "c1")).ok, true);
+  net.stop(); kernel.close();
+});
+
+test("pause and resume are confirmed by the data, with one retry id until a definite answer", async () => {
+  const kernel = startKernel();
+  const { net } = await ready(kernel);
+  let paused = false;
+  kernel.on("service:admin", "pause", () => { paused = true; return { paused: true }; });
+  kernel.on("service:admin", "resume", () => ({ ok: false, error: { code: "unavailable", message: "later" } }));
+  assert.deepEqual(await net.sendAdmin("pause"), { ok: true, paused: true });
+  assert.equal(paused, true);
+  const first = await net.sendAdmin("resume");
+  const second = await net.sendAdmin("resume");
+  assert.equal(first.ok, false);
+  const resumes = kernel.requests.filter((r) => r.word === "resume");
+  assert.equal(resumes[0].client_id, resumes[1].client_id, "an answer that did not arrive may be retried as the same request");
+  assert.deepEqual(resumes[0].body, { confirmed: true });
+  net.stop(); kernel.close();
+});
+
+test("management is for the local page only", async () => {
+  const kernel = startKernel({ local: false });
+  const { net } = await ready(kernel);
+  assert.equal(net.local, false);
+  assert.equal((await net.sendAdmin("pause")).reason, "unregistered");
+  net.stop(); kernel.close();
+});
+
+test("the kernel's chat open is handed to the page, as a string target or an object", async () => {
+  const kernel = startKernel();
+  const { net, events } = await ready(kernel);
+  assert.deepEqual(await kernel.present("chat", "open", { target: "settings" }), { t: "present.result", id: (await kernel.present("chat", "focus")).id.replace(/\d+$/, (n) => String(Number(n) - 1)) , ok: true, data: { opened: true } });
+  const answer = await kernel.present("chat", "open", { target: { target: "turn", id: "t1", mode: "suggest" } });
+  assert.equal(answer.ok, true);
+  assert.deepEqual(events.presents, [{ target: "settings" }, { target: "turn", id: "t1", mode: "suggest" }]);
+  const other = await kernel.present("notification", "hide", { id: "x" });
+  assert.equal(other.ok, false);
+  net.stop(); kernel.close();
+});
+
+test("a browser tab says it is in view, and typing to an agent; the app says neither", async () => {
+  const kernel = startKernel();
+  const { net } = await ready(kernel);
+  net.setVisible(true);
+  net.setVisible(true);
+  net.setTyping(true, "agent:main");
+  await until(() => kernel.presence.length === 2);
+  assert.deepEqual(kernel.presence.map(({ t, ch, ...rest }) => rest), [{ visible: true }, { typing: true, agent: "agent:main" }]);
+  net.stop(); kernel.close();
+});
+
+test("a device the owner has not allowed to chat is told why, and does not retry", async () => {
+  const kernel = startKernel({ grant: { accepted: false, reason: "the owner has not allowed this device web access" } });
+  const handle = netFor(kernel);
+  handle.net.start();
+  await until(() => handle.net.status === "closed");
+  assert.deepEqual(handle.events.states.at(-1), ["closed", "the owner has not allowed this device web access"]);
+  kernel.close();
+});
+
+test("in the app the same page code runs over frames passed through AshNative", async () => {
+  const kernel = startKernel();
+  kernel.append(say(1));
+  const native = await nativeBridgeFor(kernel);
+  const { net, events } = netFor(kernel, { bridge: native.bridge, connector: undefined });
+  net.start();
+  await until(() => net.status === "online" && events.ready === 1);
+  assert.equal(net.embedded, true);
+  assert.deepEqual(events.histories.flat().map((m) => m.seq), [1]);
+  const clientId = await net.enqueueSay("from the app");
+  await until(() => kernel.requests.some((r) => r.client_id === clientId));
+  net.setVisible(true);
+  net.setTyping(true);
+  assert.deepEqual(native.sent.filter((f) => f.t === "presence").map(({ t, ch, ...rest }) => rest), [{ typing: true, agent: "agent:main" }], "the native layer reports visibility, not the page");
+  // a chat open comes to the page as a frame and is answered with present.result
+  const answered = await kernel.present("chat", "open", { target: "memory" });
+  assert.equal(answered.ok, true);
+  assert.deepEqual(events.presents, [{ target: "memory" }]);
+  // the channel closing ends the syncs; opening it again syncs after the cursor
+  native.close();
+  await until(() => net.status === "offline");
+  net.stop(); kernel.close();
+});
+
+test("an error frame for a send is the send's failure; a channel that closes mid-send is result_unknown", async () => {
+  const kernel = startKernel();
+  const native = await nativeBridgeFor(kernel);
+  const { net } = netFor(kernel, { bridge: native.bridge });
+  net.start();
+  await until(() => net.status === "online");
+  const result = net.port.send({ to: "agent:main", kind: "request", word: "say", body: { text: "x" } });
+  net.port.receive({ t: "error", id: [...net.port.requests.keys()][0], code: "offline", message: "not sent" });
+  assert.deepEqual(await result, { ok: false, error: { code: "offline", message: "not sent" } });
+  const pending = net.port.send({ to: "agent:main", kind: "request", word: "say", body: { text: "y" }, wait: true });
+  native.close();
+  assert.equal((await pending).error.code, "result_unknown");
+  net.stop(); kernel.close();
+});
+
+test("an option click keeps the card's identity in the same persisted say across an offline retry", async () => {
+  const kernel = startKernel();
+  const { net, events } = await ready(kernel);
+  kernel.drop();
+  await until(() => events.states.includes("offline"));
+  const id = await net.enqueueSay("Yes", [], { in_reply_to: "card", option_id: "yes" });
+  assert.equal(net.outbox[0].in_reply_to, "card");
+  await until(() => kernel.requests.some((r) => r.client_id === id), 3000);
+  const sent = kernel.requests.filter((r) => r.client_id === id);
+  assert.deepEqual(sent.map((r) => r.body), [{ text: "Yes", in_reply_to: "card", option_id: "yes" }]);
+  net.stop(); kernel.close();
+});
+
+test("an answer without a message id cannot drop a pending message", async () => {
+  const kernel = startKernel();
+  kernel.on("agent:main", "say", () => ({ accepted: true }));
+  const { net } = await ready(kernel);
+  const original = net.port.send.bind(net.port);
+  net.port.send = async (request) => (request.word === "say" ? { t: "send.result", id: "x", ok: true, message: {} } : original(request));
+  const id = await net.enqueueSay("must retry");
+  await until(() => net.outbox[0]?.status === "unsent");
+  assert.equal(net.queue[0].client_id, id);
+  net.stop(); kernel.close();
+});

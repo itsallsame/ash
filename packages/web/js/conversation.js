@@ -1,9 +1,8 @@
 // Render selected conversation facts; gate originals appear only in an explicit plain-text disclosure.
-import { renderCard, workspaceFileUrl } from "./cards.js";
+import { fileRef, renderCard } from "./cards.js";
 import { appendApprovalOriginal } from "./approval-original.js";
-import { humanPendingOutcome } from "./human-pending.js";
 import { appendMarkdown } from "./markdown.js";
-export { workspaceFileUrl } from "./cards.js";
+export { fileRef } from "./cards.js";
 const text = (parent, tag, value, className = "") => {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -13,10 +12,10 @@ const text = (parent, tag, value, className = "") => {
 };
 
 const say = (item) => item?.type === "say";
-const grouped = (item, neighbor) => say(item) && say(neighbor) && item.side === "agent" && neighbor.side === "agent" && !!item.group && item.group === neighbor.group && !item.legacy && !neighbor.legacy;
+const grouped = (item, neighbor) => say(item) && say(neighbor) && item.side === "agent" && neighbor.side === "agent" && !!item.group && item.group === neighbor.group;
 const deliveryText = { sent: "发送中", delivered: "已送达", read: "已读" };
 
-function attachment(parent, item, openInline, openWorkspaceFile, onOpenFile) {
+function attachment(parent, item, openInline, onOpenFile) {
   const name = typeof item?.name === "string" ? item.name : "附件";
   if (item?.source === "inline" && Number.isSafeInteger(item.index) && item.index >= 0) {
     const button = text(parent, "button", name, "attachment");
@@ -49,81 +48,52 @@ function attachment(parent, item, openInline, openWorkspaceFile, onOpenFile) {
     });
     return;
   }
-  const url = workspaceFileUrl(item);
-  if (!url) return;
-  if (onOpenFile) {
-    const button = text(parent, "button", name, "attachment");
-    button.type = "button"; button.onclick = () => onOpenFile(item); return;
-  }
-  if (openWorkspaceFile) {
-    const button = text(parent, "button", name, "attachment");
-    button.type = "button";
-    button.addEventListener("click", async () => {
-      button.disabled = true;
-      try {
-        const blob = await openWorkspaceFile(item);
-        const objectUrl = URL.createObjectURL(blob);
-        const download = document.createElement("a");
-        download.href = objectUrl;
-        download.download = name;
-        download.click();
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      } catch { button.title = "附件无法打开"; }
-      finally { button.disabled = false; }
-    });
-    return;
-  }
-  const link = text(parent, "a", name, "attachment");
-  link.href = url;
-  link.download = name;
-  link.rel = "noopener";
+  if (!fileRef(item)) return;
+  const button = text(parent, "button", name, "attachment");
+  button.type = "button";
+  button.disabled = typeof onOpenFile !== "function";
+  button.addEventListener("click", () => onOpenFile?.(item));
 }
 
 /** Append a stable ledger conversation without inventing an approval or option action. */
-export function appendConversation(fragment, entries, { openInline, openWorkspaceFile, onOpenFile, onFileLink, onSelect, onAnswerAsk, onPermission, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), onStopThread, loading = false } = {}) {
+export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = "agent:main", loading = false } = {}) {
   if (!entries.length) text(fragment, "div", loading ? "正在载入对话…" : "还没有对话。", "hello");
   for (let index = 0; index < entries.length; index++) {
     const item = entries[index];
-    if (item.type === "work") {
-      const card = text(fragment, "details", "", "work-thread"); card.dataset.thread = item.thread;
-      text(card, "summary", `交给 ${agentName(item.to)} · ${{ pending: "排队中", running: "进行中", completed: "已完成", cancelled: "已停止", error: "未完成" }[item.state] || item.state}`);
-      text(card, "p", item.text);
-      const steps = text(card, "ul", "", "steps"); for (const step of item.steps) text(steps, "li", step.label);
-      if (item.answer) { const reply = text(card, "div", ""); appendMarkdown(reply, item.answer, { onFileLink }); }
-      if (item.asks?.length) appendConversation(card, item.asks, { onAnswerAsk, askIntents, onFileLink });
-      if (["pending", "running"].includes(item.state) && onStopThread) {
-        const stop = text(card, "button", "停止这件事"); stop.type = "button";
-        stop.onclick = async () => { stop.disabled = true; try { await onStopThread(item.thread); stop.textContent = "已请求停止"; } catch { stop.textContent = "停止失败，重试"; stop.disabled = false; } };
-      }
-      continue;
-    }
     if (item.type === "say") {
       const side = item.side === "owner" ? "me" : "ai";
-      if (item.legacy) text(fragment, "small", `历史记录 · ${item.legacy.workspace} · ${item.legacy.member} · 只读`, `from ${side === "me" ? "r" : "l"}`);
-      else if (item.side === "owner" && item.origin?.label) text(fragment, "small", `来自 ${item.origin.label}`, "from r");
-      else if (item.side === "inbound") text(fragment, "small", `来自 ${item.from || "未知来源"}`, "from l");
+      if (item.side === "owner" && item.origin?.label) text(fragment, "small", `来自 ${item.origin.label}`, "from r");
       const previous = grouped(item, entries[index - 1]);
-      if (item.side === "agent" && item.from?.startsWith("agent:") && item.from !== "agent:main" && !previous && !item.legacy) {
+      if (item.side === "agent" && item.from?.startsWith("agent:") && item.from !== primary && !previous) {
         const byline = text(fragment, "div", "", "agent-byline");
         text(byline, "span", agentName(item.from).slice(0, 1), "agent-avatar"); text(byline, "span", agentName(item.from));
       }
-      if (item.side === "owner" && item.to && item.to !== "agent:main") text(fragment, "small", `@ ${agentName(item.to)}`, "from r");
+      if (item.side === "owner" && item.to && item.to !== primary) text(fragment, "small", `@ ${agentName(item.to)}`, "from r");
       const next = grouped(item, entries[index + 1]);
       const group = item.side === "agent" && item.group ? ` group-${previous ? next ? "middle" : "last" : next ? "first" : "single"}` : "";
       const rich = item.side === "agent";
-      const bubble = text(fragment, "div", rich ? "" : item.text, `msg ${side}${group}`);
-      if (rich) appendMarkdown(bubble, item.text, { onFileLink });
+      const shown = item.full && fullTexts?.has(item.full) ? fullTexts.get(item.full) : item.text;
+      const bubble = text(fragment, "div", rich ? "" : shown, `msg ${side}${group}`);
+      if (rich) appendMarkdown(bubble, shown, { onFileLink });
       bubble.dataset.seq = String(item.seq);
-      if (item.legacy) bubble.dataset.readonly = "true";
+      if (item.full && !fullTexts?.has(item.full) && onExpand) {
+        // The ledger holds only the start and the end of a long text; the page reads the rest on demand and draws again.
+        const more = text(bubble, "button", "显示全文", "expand");
+        more.type = "button";
+        more.addEventListener("click", async () => {
+          more.disabled = true;
+          try { await onExpand(item.full); } catch { more.disabled = false; more.title = "全文暂时读不到"; }
+        });
+      }
       if (Array.isArray(item.attachments) && item.attachments.length) {
         const attachments = text(bubble, "div", "", "atts");
-        for (const ref of item.attachments) attachment(attachments, ref, openInline, openWorkspaceFile, onOpenFile);
+        for (const ref of item.attachments) attachment(attachments, ref, openInline, onOpenFile);
       }
       if (Array.isArray(item.reactions) && item.reactions.length) {
         const reactions = text(bubble, "span", "", "reactions");
         for (const reaction of item.reactions) if (typeof reaction?.emoji === "string" && reaction.emoji) text(reactions, "span", reaction.emoji, "reaction");
       }
-      if (item.side === "owner" && !item.legacy) text(fragment, "span", deliveryText[item.delivery] || deliveryText.sent, "delivery r");
+      if (item.side === "owner") text(fragment, "span", deliveryText[item.delivery] || deliveryText.sent, "delivery r");
     } else if (item.type === "ask") {
       const card = text(fragment, "div", "", "card ask");
       text(card, "b", item.ask.title, "ask-title");
@@ -134,8 +104,8 @@ export function appendConversation(fragment, entries, { openInline, openWorkspac
       // A decided card says how it ended instead of keeping buttons that look live but do nothing.
       if (expired || item.ask.state !== "pending") {
         const chosen = (item.ask.options || []).find((option) => option.id === item.ask.choice);
-        const outcome = expired ? "已过期，未执行" : humanPendingOutcome(item.ask.human) ||
-          (item.ask.choice === "deny" ? "已拒绝" : item.ask.choice === "once" ? "已允许这一次" : chosen ? `已选择：${chosen.label}` : item.ask.answer_text ? `已回答：${item.ask.answer_text}` : "已结束");
+        const outcome = expired ? "已过期，未执行" :
+          item.ask.choice === "deny" ? "已拒绝" : item.ask.choice === "once" ? "已允许这一次" : chosen ? `已选择：${chosen.label}` : item.ask.answer_text ? `已回答：${item.ask.answer_text}` : "已结束";
         text(card, "small", outcome, "ask-outcome");
         continue;
       }
@@ -144,7 +114,7 @@ export function appendConversation(fragment, entries, { openInline, openWorkspac
       for (const option of item.ask.options || []) {
         const button = text(actions, "button", option.label, "btn gray");
         button.type = "button";
-        button.disabled = expired || item.ask.state !== "pending" || item.ask.from !== "service:gate" || typeof onAnswerAsk !== "function" ||
+        button.disabled = expired || item.ask.state !== "pending" || typeof onAnswerAsk !== "function" ||
           answer?.status === "pending" || answer?.status === "confirmed" || answer?.status === "rejected" || Boolean(answer?.choice && answer.choice !== option.id);
         button.addEventListener("click", async () => {
           if (button.disabled) return;
@@ -170,7 +140,7 @@ export function appendConversation(fragment, entries, { openInline, openWorkspac
       }
       if (answer?.status === "uncertain") text(card, "small", "结果尚未确认；只能原样重试");
     } else if (item.type === "card") {
-      renderCard(fragment, item, { onSelect, onPermission, optionPending, openWorkspaceFile, onOpenFile });
+      renderCard(fragment, item, { onSelect, onPermission, optionPending, onOpenFile });
     }
   }
 }

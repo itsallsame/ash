@@ -1,5 +1,5 @@
-import { drawsConversation, fold, foldPostSnapshot, initialView } from "./project.js";
-import { ScreenNet } from "./net.js";
+import { drawsConversation, fold, initialView, OWNER } from "./project.js";
+import { Net } from "./net.js";
 import { appendConversation, appendOutbox } from "./conversation.js";
 import { renderProgress } from "./progress.js";
 import { presentUiOpen } from "./suggestions.js";
@@ -9,9 +9,8 @@ import { addPicked, attachMenu } from "./attach-menu.js";
 import { SettingsControls } from "./settings.js";
 import { PresenceBar } from "./presence.js";
 import { AgentSheet } from "./sheet-agent.js";
-import { answerGateAsk, approvalSections } from "./sheet-approvals.js";
+import { answerGateAsk } from "./sheet-approvals.js";
 import { IdentityName } from "./identity-name.js";
-import { embeddedUiTransport, readWorkspaceFile } from "./ui-transport.js";
 import { Files } from "./files.js";
 import { framePainter } from "./frame-painter.js";
 import { agentPicker } from "./agent-picker.js";
@@ -47,7 +46,7 @@ export class Timeline {
     this.view = fold(this.view, message);
     this.onChange(this.view, drawsConversation(message));
   }
-  addMany(messages, snapshots = []) {
+  addMany(messages) {
     let changed = false;
     let conversation = false;
     for (const message of messages.sort((a, b) => a.seq - b.seq)) {
@@ -58,15 +57,7 @@ export class Timeline {
       changed = true;
       if (!conversation && drawsConversation(message)) conversation = true;
     }
-    for (const snapshot of snapshots) {
-      const next = foldPostSnapshot(this.view, snapshot);
-      if (next !== this.view) { this.view = next; changed = true; conversation = true; }
-    }
     if (changed) this.onChange(this.view, conversation);
-  }
-  snapshot(snapshot) {
-    const next = foldPostSnapshot(this.view, snapshot);
-    if (next !== this.view) { this.view = next; this.onChange(this.view, true); }
   }
   async older() {
     if (this.loading || this.exhausted || !this.records.size) return 0;
@@ -79,22 +70,22 @@ export class Timeline {
       const page = await this.net.page(before, controller.signal);
       if (epoch !== this.epoch) return 0;
       if (!page.end?.has_more) this.exhausted = true;
-      this.addMany(page.messages, page.snapshots);
+      this.addMany(page.messages);
       return page.messages.length;
     } finally {
       if (epoch === this.epoch) this.loading = false;
     }
   }
 
+  /** The attachment [index] of a message of the owner's conversation: its bytes in the row, or the blob that holds them. */
   inlineAttachment(messageId, index) {
     const message = this.byId.get(messageId);
-    if (!message || message.kind !== "request" || message.word !== "say" || !((message.from === "person:owner" && message.to === "agent:main") || (message.from === "agent:main" && message.to === "person:owner")) || Object.hasOwn(message.body_summary || message.body || {}, "legacy") || !Number.isSafeInteger(index) || index < 0) return null;
-    if (message.summary === true) {
-      const descriptor = message.inline_attachments?.find((item) => item.index === index);
-      return descriptor ? { summary: message, descriptor } : null;
-    }
+    const agent = /^agent:[a-z][a-z0-9_-]*$/;
+    if (!message || message.kind !== "request" || message.word !== "say" || !((message.from === OWNER && agent.test(message.to)) || (message.to === OWNER && agent.test(message.from))) || !Number.isSafeInteger(index) || index < 0) return null;
     const item = message.body?.attachments?.[index];
-    return item && typeof item.name === "string" && typeof item.mime_type === "string" && typeof item.data === "string" ? { item } : null;
+    if (!item || typeof item.name !== "string" || typeof item.mime_type !== "string") return null;
+    if (typeof item.data === "string") return { item };
+    return typeof item.data?.$blob === "string" ? { blob: item.data.$blob, name: item.name, mime_type: item.mime_type } : null;
   }
 }
 
@@ -106,24 +97,21 @@ function text(parent, tag, value, className = "") {
   return node;
 }
 
-export function render(view, outbox = [], openInline, presenceBar, openWorkspaceFile, cardActions) {
+export function render(view, outbox = [], openInline, presenceBar, cardActions) {
   const log = document.querySelector("#log");
-  const progressRoot = document.querySelector("#progress");
   const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
   const oldHeight = log.scrollHeight;
   const oldTop = log.scrollTop;
   const fragment = document.createDocumentFragment();
-  const expanded = new Set([...(log.querySelectorAll?.("details.work-thread[open]") ?? [])].map(node => node.dataset.thread));
-  appendConversation(fragment, view.conversation, { openInline, openWorkspaceFile, ...cardActions, loading: cardActions?.loading?.() === true });
+  appendConversation(fragment, view.conversation, { openInline, ...cardActions, loading: cardActions?.loading?.() === true });
   appendOutbox(fragment, outbox);
   log.replaceChildren(fragment);
-  for (const node of log.querySelectorAll?.("details.work-thread") ?? []) if (expanded.has(node.dataset.thread)) node.open = true;
   if (nearEnd) log.scrollTop = log.scrollHeight;
   else log.scrollTop = oldTop + Math.max(0, log.scrollHeight - oldHeight);
-  presenceBar?.render(view.presence);
+  presenceBar?.render(cardActions?.loading?.() === true ? { state: "unknown" } : view.presence);
 }
 
-export function boot({ uiTransport } = {}) {
+export function boot({ bridge } = {}) {
   performance.mark("shell.boot");
   const form = document.querySelector("#f");
   const input = document.querySelector("#t");
@@ -157,20 +145,23 @@ export function boot({ uiTransport } = {}) {
     clear.addEventListener("click", () => { picked = []; showPicked(); });
     selected.append(clear);
   };
-  let presenceProblem = "";
-  let lastTyping = 0;
   let timeline;
   let settings;
   let recipient;
   let files;
   const askIntents = new Map();
   const optionPending = new Set();
+  /** Long texts read from the ledger on demand, by blob hash. */
+  const fullTexts = new Map();
+  const redraw = () => { if (timeline) render(timeline.view, net.outbox, openInline, presenceBar, cardActions); };
   const cardActions = {
     agentName: id => recipient?.name(id) ?? id.replace(/^agent:/, ""),
+    get primary() { return net.primary; },
     loading: () => !timeline?.ready,
-    onStopThread: async id => net.agentRequest("thread.stop", { thread: id }),
     onOpenFile: (ref) => files.open(ref),
     onFileLink: (href) => files.openLink(href),
+    fullTexts,
+    onExpand: async (hash) => { fullTexts.set(hash, await net.readBlobText(hash)); redraw(); },
     optionPending,
     askIntents,
     onPermission: /\bAshApp\//.test(navigator.userAgent) ? (permission) => {
@@ -184,35 +175,41 @@ export function boot({ uiTransport } = {}) {
       catch (error) { optionPending.delete(item.id); throw error; }
     },
     onAnswerAsk: async (ask, choice, answerText) => {
-      const fresh = approvalSections(timeline.view).pending.find((item) => item.id === ask.id);
-      if (!fresh || fresh.seq !== ask.seq) throw new Error("待批请求已失效。");
+      const fresh = timeline.view.asks.find((item) => item.id === ask.id);
+      if (!fresh || fresh.seq !== ask.seq || fresh.state !== "pending") throw new Error("待批请求已失效。");
       let intent = askIntents.get(ask.id);
       if (intent?.choice && (intent.choice !== choice || intent.answerText !== answerText || intent.status === "pending" || intent.status === "confirmed" || intent.status === "rejected")) return;
       if (!intent?.choice) { intent = { choice, answerText, customDraft: intent?.customDraft, clientId: crypto.randomUUID(), status: "pending" }; askIntents.set(ask.id, intent); }
       else intent.status = "pending";
-      const binding = { token: net.token, screen: net.screen, scope: net.currentScope, generation: net.generation };
-      const current = () => binding.token === net.token && binding.screen === net.screen && binding.scope === net.currentScope && binding.generation === net.generation;
+      const binding = net.binding();
       try {
-        await answerGateAsk(net, current, fresh, choice, intent.clientId, (id) => timeline.byId.get(id), { answerText });
+        if (!net.same(binding)) throw new Error("连接已经换过，回答没有送出。");
+        await answerAsk(net, fresh, choice, intent.clientId, { answerText });
         intent.status = "confirmed";
       } catch (error) {
         intent.status = /无权|被拒绝|已失效|不可用/.test(error?.message || "") ? "rejected" : "uncertain";
         connection.textContent = error instanceof Error ? error.message : "审批结果未知；只能原样重试。";
       }
-      render(timeline.view, net.outbox, openInline, presenceBar, openWorkspaceFile, cardActions);
+      redraw();
     },
   };
   const clearContext = context.clear;
   const progress = () => renderProgress(progressRoot, timeline?.view, { onOpen: () => {
     if (agentSheet?.open()) void agentSheet.show("activity");
   } });
-  const openUiTarget = async (target) => {
-    if (!net.token || !net.screen) return false;
+  /** The kernel (or the agent) asks the page to open a page: settings, the activity of a turn, a file... */
+  const openUiTarget = async (target, request = {}) => {
+    if (!net.session) return false;
     if (target === "settings") {
-      if (!net.localManagement) return false;
+      if (!net.local) return false;
       if (!agentSheet.close()) return false;
       document.querySelector("#drawer").classList.add("open");
       settings.opened();
+      return true;
+    }
+    if (target === "file") {
+      if (typeof request.id !== "string" || !request.id) return false;
+      void files.open({ workspace: "main", path: request.id });
       return true;
     }
     const tab = target === "turn" ? "activity" : target;
@@ -225,46 +222,43 @@ export function boot({ uiTransport } = {}) {
     const ref = timeline.inlineAttachment(messageId, index);
     if (!ref) return null;
     if (ref.item) return openInlineBlob(ref.item);
-    const item = await net.fetchOriginalAttachment(ref.summary, ref.descriptor);
-    return openInlineBlob(item, ref.descriptor);
+    // A large attachment is held as a blob whose text is the file's base64.
+    const { data } = await net.readBlob(ref.blob);
+    return openInlineBlob({ name: ref.name, mime_type: ref.mime_type, data: new TextDecoder().decode(data) });
   };
-  const openWorkspaceFile = uiTransport?.embedded ? (ref) => readWorkspaceFile(uiTransport, ref) : undefined;
-  const net = new ScreenNet({
-    uiTransport,
-    label: sessionStorage.getItem("ash.screen.label.v2")?.trim().slice(0, 80) || (/Android|iPhone|iPad/i.test(navigator.userAgent) ? "手机浏览器" : "电脑浏览器"),
-    onMessage: (message, context) => {
-      timeline.add(message);
-      identityName?.changed(message, context?.historical);
-      if (context?.historical || message.kind !== "request" || message.word !== "ui.open" || message.to !== net.screen) return;
-      void presentUiOpen(suggestions, message, { open: openUiTarget,
-        respond: async (request, opened) => {
-          if (!await net.respondOpen(request, opened)) connection.textContent = "页面请求回执未送达";
-        } }).catch(() => { connection.textContent = "页面请求回执未送达"; });
-    },
-    onHistory: (messages, snapshots) => { timeline.addMany(messages, snapshots); performance.mark("shell.history-rendered"); },
+  const net = new Net({
+    bridge,
+    label: sessionStorage.getItem("ash.web.label")?.trim().slice(0, 80) || (/Android|iPhone|iPad/i.test(navigator.userAgent) ? "手机浏览器" : "电脑浏览器"),
+    onMessage: (message) => { timeline.add(message); },
+    onHistory: (messages) => { timeline.addMany(messages); performance.mark("shell.history-rendered"); },
     onHistoryReady: () => { timeline.historyReady(); },
-    onSnapshot: (snapshot) => { timeline.snapshot(snapshot); },
-    onReset: () => { files?.root.close(); askIntents.clear(); optionPending.clear(); timeline.reset(); suggestions.replaceChildren(); clearContext(); settings?.reset(); agentSheet?.reset(); identityName?.reset(); },
-    onState: (status, error) => {
+    onPresent: async (request) => {
+      const opened = await presentUiOpen(suggestions, request, openUiTarget).catch(() => false);
+      return { ok: true, data: { opened } };
+    },
+    onState: (status, detail) => {
       settings?.network(status);
       agentSheet?.network(status);
       if (status !== "online") identityName?.reset();
-      presenceBar.network(status, status === "online" ? presenceProblem : "");
-      if (error) connection.title = String(error.message || error);
+      presenceBar.network(status, status === "closed" ? detail : "");
+      if (status === "send-error" && detail) connection.title = String(detail.message || detail);
     },
-    onRegistered: (frame) => { settings?.registration(frame); agentSheet?.registration(frame); void identityName?.refresh(); void recipient?.refresh(); if (!document.hidden) void visible(); },
+    onOpen: () => {
+      settings?.connected();
+      agentSheet?.connected();
+      void identityName?.refresh();
+      void recipient?.refresh();
+      net.setVisible(!document.hidden);
+    },
     onQueue: (count, outbox) => {
       pending.textContent = count ? `${count} 条消息等待送达` : "";
       pendingNote.hidden = !count; // the storage notice matters only while something waits to be sent
       for (const item of outbox) if (item.in_reply_to && item.status === "rejected") optionPending.delete(item.in_reply_to);
       for (const item of outbox) if (item.in_reply_to && item.status !== "rejected") optionPending.add(item.in_reply_to);
-      if (timeline) render(timeline.view, outbox, openInline, presenceBar, openWorkspaceFile, cardActions);
+      if (timeline) render(timeline.view, outbox, openInline, presenceBar, cardActions);
     },
   });
-  files = new Files({ request: (path, options) => net.request(path, options) }, {
-    embedded: uiTransport?.embedded === true,
-    save: uiTransport?.embedded ? (ref) => globalThis.__ashFileSave(ref) : null,
-  });
+  files = new Files(net, { save: net.embedded ? (file) => globalThis.__ashFileSave(file) : null });
   document.querySelector("#files").onclick = () => files.browse();
   // Pages are counted in ledger records, and a page of background events can hold no conversation at all. Older pages
   // otherwise load only by scrolling to the top, which a short page cannot do: keep reading back until the conversation
@@ -282,8 +276,8 @@ export function boot({ uiTransport } = {}) {
     finally { filling = false; }
   };
   const paintView = framePainter((view, conversation) => {
-    if (conversation) render(view, net.outbox, openInline, presenceBar, openWorkspaceFile, cardActions);
-    else presenceBar?.render(view.presence);
+    if (conversation) render(view, net.outbox, openInline, presenceBar, cardActions);
+    else presenceBar?.render(timeline?.ready ? view.presence : { state: "unknown" });
     progress();
     agentSheet?.update();
     setTimeout(fillScreen, 0);
@@ -298,7 +292,7 @@ export function boot({ uiTransport } = {}) {
   settings = new SettingsControls(document.querySelector("#panel"), net,
     { onClose: () => document.querySelector("#drawer").classList.remove("open") });
   agentSheet = new AgentSheet(document.querySelector("#agentSheet"), net, { getView: () => timeline.view,
-    getLedgerMessage: (id) => timeline.byId.get(id), onAskAbout: ({ turn, text: prefill }) => {
+    onAskAbout: ({ turn, text: prefill }) => {
       if (!agentSheet.close()) return;
       context.askAbout({ turn, text: prefill });
     }, onPrefill: (prefill) => {
@@ -306,23 +300,25 @@ export function boot({ uiTransport } = {}) {
       clearContext();
       input.value = prefill;
       input.focus();
-    } });
+    }, onIdentityChanged: () => { void identityName.refresh(); } });
   pending.textContent = net.queue.length ? `${net.queue.length} 条消息等待送达` : "";
   pendingNote.hidden = !net.queue.length;
 
-  async function visible() {
-    if (document.hidden || !net.token) return;
-    const result = await net.sendEvent("service:post", "visible");
-    // A missing service is a pending integration, not proof of presence.
-    presenceProblem = result.ok ? "" : result.reason === "HTTP 404" ? "在场服务未就绪" : "在场更新未送达";
-    if (net.token) presenceBar.network("online", presenceProblem);
-  }
-  async function typing() {
-    if (document.hidden || !net.token || !input.value.trim()) return;
+  // The owner is typing to an agent: said while there is text, every few seconds, and unsaid when it is sent or cleared.
+  let lastTyping = 0;
+  let typingTo = null;
+  function typing() {
+    if (document.hidden || !input.value.trim()) { stopTyping(); return; }
     const now = Date.now();
-    if (now - lastTyping < 3000) return;
+    if (typingTo && now - lastTyping < 3000) return;
     lastTyping = now;
-    await net.sendEvent("agent:main", "typing");
+    typingTo = recipient.target();
+    net.setTyping(true, typingTo);
+  }
+  function stopTyping() {
+    if (!typingTo) return;
+    net.setTyping(false, typingTo);
+    typingTo = null;
   }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -334,6 +330,7 @@ export function boot({ uiTransport } = {}) {
       const attachments = await prepareUploads(files, value);
       await net.enqueueSay(value, attachments, null, recipient.target());
       input.value = "";
+      stopTyping();
       clearContext();
       fileInput.value = "";
       picked = [];
@@ -342,20 +339,17 @@ export function boot({ uiTransport } = {}) {
     } catch (error) { connection.textContent = `未发送：${error.message || "无法保存待发送消息"}`; }
     finally { sendButton.disabled = false; }
   });
-  input.addEventListener("input", () => { void typing(); });
-  recipient = agentPicker(form, input, net, () => { if (timeline) render(timeline.view, net.outbox, openInline, presenceBar, openWorkspaceFile, cardActions); });
+  input.addEventListener("input", typing);
+  recipient = agentPicker(form, input, net, redraw);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) { void visible(); void typing(); }
-    // Leaving the app must not keep deliveries in-app for the rest of the presence window.
-    else if (net.token) void net.sendEvent("service:post", "hidden");
+    net.setVisible(!document.hidden);
+    if (!document.hidden) typing(); else stopTyping();
   });
-  const visibleTimer = setInterval(() => { if (!document.hidden) void visible(); }, 30_000);
-  const typingTimer = setInterval(() => { if (!document.hidden) void typing(); }, 3_000);
+  const typingTimer = setInterval(() => { if (!document.hidden && typingTo) typing(); }, 3_000);
   const progressTimer = setInterval(() => {
     if (document.hidden) return;
     if (!progressRoot.hidden) progress();
-    if (timeline.view.asks.some((ask) => ask.state === "pending" && ask.expires_at <= Date.now()))
-      render(timeline.view, net.outbox, openInline, presenceBar, openWorkspaceFile, cardActions);
+    if (timeline.view.asks.some((ask) => ask.state === "pending" && ask.expires_at <= Date.now())) redraw();
   }, 1_000);
   log.addEventListener("scroll", async () => {
     if (log.scrollTop > 80 || timeline.loading) return;
@@ -374,21 +368,30 @@ export function boot({ uiTransport } = {}) {
     if (!agentSheet.close()) return;
     if (document.querySelector("#drawer").classList.toggle("open")) settings.opened();
   });
-  window.addEventListener("pagehide", () => { clearInterval(progressTimer); net.stop(); });
+  window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); net.stop(); });
   window.addEventListener("offline", () => agentSheet.reset());
   window.addEventListener("online", () => net.reconnect());
-  window.addEventListener("pageshow", (event) => { if (event.persisted) void net.start(); });
-  void net.start();
+  window.addEventListener("pageshow", (event) => { if (event.persisted) net.start(); });
+  net.start();
   return { net, timeline };
 }
 
-// A packaged asset page must wait for an explicitly injected native transport.
-if (typeof document !== "undefined" && globalThis.location?.origin !== "https://appassets.androidplatform.net" &&
-    !document.documentElement?.hasAttribute("data-native-transport")) boot();
-else if (typeof document !== "undefined" && globalThis.location?.origin === "https://appassets.androidplatform.net") {
-  globalThis.__ashNativeBoot = (request, endpoint) => {
-    const transport = embeddedUiTransport({ request, endpoint });
-    transport.authorizeReady();
-    return boot({ uiTransport: transport });
-  };
+/**
+ * The owner answers a question card. Approval cards (from the gate) are checked as approvals; any other question is answered
+ * with one of its options, or with free text when the card allows it.
+ */
+async function answerAsk(net, ask, choice, clientId, { answerText } = {}) {
+  if (ask.from === "service:gate") return answerGateAsk(net, ask, choice, clientId, { answerText });
+  const custom = ask.allow_custom && choice === "custom" && typeof answerText === "string" && answerText.trim();
+  if (!custom && !ask.options.some((option) => option.id === choice)) throw new Error("待批请求已失效或选项不可用。");
+  const result = await net.answerAsk(ask, { choice: custom ? "custom" : choice, ...(custom ? { text: answerText } : {}) }, clientId);
+  if (result.ok) return result.message;
+  throw new Error(["offline", "unavailable", "timeout", "result_unknown", "internal"].includes(result.error.code)
+    ? "回答的回执未知；只能用同一选项原样重试。" : "回答被拒绝；请刷新记录。");
+}
+
+// In the app the page waits for the native bridge; in a browser it opens its own connection.
+if (typeof document !== "undefined") {
+  if (globalThis.location?.origin === "https://appassets.androidplatform.net") globalThis.__ashNativeBoot = (bridge) => boot({ bridge });
+  else boot();
 }

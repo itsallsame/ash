@@ -1,42 +1,45 @@
 import { appendMarkdown } from "./markdown.js";
-import { readWorkspaceFile } from "./ui-transport.js";
-import { workspaceFileUrl } from "./cards.js";
+import { bodyOf, listBodies, listDirectory, readBytes } from "./body.js";
+import { fileRef } from "./cards.js";
 
-/** Resolve an ordinary Markdown path against the known Ubuntu workspaces, not the web app's URL. */
-export function resolveFileLink(href, roots, base = { workspace: "home", path: "" }) {
+const MAX_READ_BYTES = 20 * 1024 * 1024;
+const IMAGES = ["png", "jpg", "jpeg", "gif", "webp"];
+const TEXTS = ["md", "markdown", "txt", "json", "csv", "log", "js", "ts", "css", "py", "yaml", "yml", "xml"];
+
+/**
+ * Where a link in a message points: a path on a body, resolved against the file the link is in. A path that climbs out of
+ * the directory, or anything that is not a plain path (a URL, a script, a fragment), is nothing to open.
+ */
+export function resolveFileLink(href, base = { workspace: "main", path: "" }) {
   if (typeof href !== "string" || /[\\\x00-\x1f\x7f]/.test(href) || href.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("#")) return null;
   let path;
   try { path = decodeURIComponent(href.split("#")[0]); } catch { return null; }
-  let workspace = base.workspace;
-  if (path.startsWith("/")) {
-    const root = [...roots].sort((a, b) => b.directory.length - a.directory.length)
-      .find((root) => path.startsWith(root.directory.replace(/\/$/, "") + "/"));
-    if (!root) return null;
-    workspace = root.id; path = path.slice(root.directory.replace(/\/$/, "").length + 1);
-  } else path = `${base.path.includes("/") ? base.path.slice(0, base.path.lastIndexOf("/") + 1) : ""}${path}`;
+  const absolute = path.startsWith("/");
+  if (!absolute) path = `${base.path.includes("/") ? base.path.slice(0, base.path.lastIndexOf("/") + 1) : ""}${path}`;
   const parts = [];
   for (const part of path.split("/")) {
     if (!part || part === ".") continue;
-    if (part === "..") { if (!parts.length) return null; parts.pop(); }
+    if (part === "..") { if (absolute || !parts.length) return null; parts.pop(); }
     else parts.push(part);
   }
-  const ref = { workspace, path: parts.join("/") };
-  return workspaceFileUrl(ref) ? ref : null;
+  return fileRef({ workspace: base.workspace, path: `${absolute ? "/" : ""}${parts.join("/")}` });
 }
 
-export function fileContentUrl(ref, embedded = false) {
-  if (!workspaceFileUrl(ref)) throw new Error("文件路径无效");
-  return `${embedded ? "https://ash-files.invalid" : ""}/api/workspaces/${ref.workspace}/content/${ref.path.split("/").map(encodeURIComponent).join("/")}`;
-}
 const add = (parent, tag, text, cls) => {
   const el = document.createElement(tag); if (text !== undefined) el.textContent = text;
   if (cls) el.className = cls; parent.append(el); return el;
 };
+const base64 = (bytes) => {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 16_384) binary += String.fromCharCode(...bytes.subarray(offset, offset + 16_384));
+  return btoa(binary);
+};
 
-/** The file list and conversation links share this one viewer and the same live filesystem reads. */
+/** The file list and the links in the conversation share this one viewer and the same live reads from the bodies. */
 export class Files {
-  constructor(transport, { save = null, embedded = false } = {}) {
-    this.transport = transport; this.save = save; this.embedded = embedded; this.generation = 0;
+  /** [save]: in the app, `({name, mime, b64}) -> {ok, cancelled}` through the system file picker; absent in a browser. */
+  constructor(net, { save = null } = {}) {
+    this.net = net; this.save = save; this.generation = 0;
     this.root = add(document.body, "dialog", undefined, "files-view");
     this.root.setAttribute("aria-label", "文件");
     this.root.addEventListener("close", () => { this.generation++; this.release(); this.body?.replaceChildren(); });
@@ -53,99 +56,90 @@ export class Files {
     if (!this.root.open) this.root.showModal();
     return this.generation;
   }
-  async roots() {
-    const response = await this.transport.request("/api/workspaces", { method: "GET" });
-    if (!response.ok) throw new Error("无法读取文件目录");
-    return response.json();
-  }
-  async browse(workspace = null, path = "") {
+  async browse(body = null, path = "") {
     const generation = this.shell(path || "文件");
     this.note.textContent = "正在读取…";
     try {
-      const roots = await this.roots();
+      const bodies = await listBodies(this.net);
       if (generation !== this.generation) return;
-      if (!workspace) workspace = roots.find((r) => r.id === "home")?.id ?? roots[0]?.id;
-      if (!workspace) { this.note.textContent = "暂无工作区"; return; }
-      const select = add(this.actions, "select"); select.setAttribute("aria-label", "工作区");
-      for (const root of roots) { const option = add(select, "option", root.directory); option.value = root.id; }
-      select.value = workspace; select.onchange = () => this.browse(select.value);
-      const refresh = add(this.actions, "button", "刷新", "btn gray"); refresh.onclick = () => this.browse(workspace, path);
-      if (path) { const back = add(this.body, "button", "← 上一级", "files-row"); back.onclick = () => this.browse(workspace, path.split("/").slice(0, -1).join("/")); }
-      const response = await this.transport.request(`/api/workspaces/${workspace}/files?path=${encodeURIComponent(path)}`, { method: "GET" });
-      if (!response.ok) throw new Error(response.status === 404 ? "目录不存在" : "目录无法读取");
-      const entries = await response.json();
+      if (!body) body = bodies[0]?.body;
+      if (!body) { this.note.textContent = "暂无可浏览的文件"; return; }
+      const select = add(this.actions, "select"); select.setAttribute("aria-label", "文件所在的设备");
+      for (const item of bodies) { const option = add(select, "option", item.body === "body:main" ? "Ash 的容器" : item.name || item.body); option.value = item.body; }
+      select.value = body; select.onchange = () => this.browse(select.value);
+      const refresh = add(this.actions, "button", "刷新", "btn gray"); refresh.onclick = () => this.browse(body, path);
+      if (path) { const back = add(this.body, "button", "← 上一级", "files-row"); back.onclick = () => this.browse(body, path.split("/").slice(0, -1).join("/")); }
+      const listing = await listDirectory(this.net, body, path);
       if (generation !== this.generation) return;
-      this.note.textContent = roots.find(r => r.id === workspace)?.directory + (path ? `/${path}` : "");
-      if (!entries.length) add(this.body, "p", "此目录为空", "muted");
-      for (const file of entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.path.localeCompare(b.path))) {
+      this.note.textContent = listing.path || path || "/";
+      if (!listing.entries.length) add(this.body, "p", "此目录为空", "muted");
+      const entries = [...listing.entries].sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const child = path ? `${path}/${entry.name}` : entry.name;
+        const dir = entry.type === "directory";
         const row = add(this.body, "button", undefined, "files-row"); row.type = "button";
-        add(row, "span", `${file.dir ? "▸ " : ""}${file.path.split("/").pop()}`);
-        if (!file.dir) add(row, "small", `${Math.ceil(file.size / 1024)} KB`);
-        row.onclick = () => file.dir ? this.browse(workspace, file.path) : this.open({ workspace, path: file.path });
+        add(row, "span", `${dir ? "▸ " : ""}${entry.name}`);
+        if (!dir && Number.isFinite(entry.size)) add(row, "small", `${Math.ceil(entry.size / 1024)} KB`);
+        row.onclick = () => dir ? this.browse(body, child) : this.open({ workspace: body, path: child });
       }
+      if (listing.truncated) add(this.body, "p", "只显示了前面一部分", "muted");
     } catch (error) { if (generation === this.generation) this.note.textContent = error.message || "文件无法读取"; }
   }
   async openLink(href, base) {
-    try {
-      const ref = resolveFileLink(href, await this.roots(), base);
-      if (!ref) throw new Error("这个路径不在可读取的工作区内");
-      await this.open(ref);
-    } catch (error) { this.shell("打开文件"); this.note.textContent = error.message || "文件无法读取"; }
+    const ref = resolveFileLink(href, base);
+    if (!ref) { this.shell("打开文件"); this.note.textContent = "这个路径不能打开"; return; }
+    await this.open(ref);
   }
   async open(ref) {
-    const generation = this.shell(ref.name || ref.path.split("/").pop());
+    const valid = fileRef(ref);
+    const generation = this.shell(ref?.name || ref?.path?.split("/").pop() || "文件");
+    if (!valid) { this.note.textContent = "文件路径无效"; return; }
+    const body = bodyOf(ref.workspace);
     this.note.textContent = ref.path;
     const directory = ref.path.split("/").slice(0, -1).join("/");
-    const folder = add(this.actions, "button", "所在文件夹", "btn gray"); folder.onclick = () => this.browse(ref.workspace, directory);
+    const folder = add(this.actions, "button", "所在文件夹", "btn gray"); folder.onclick = () => this.browse(body, directory);
     const download = add(this.actions, "button", "下载", "btn gray");
+    const fetchFile = async () => {
+      const file = await readBytes(this.net, body, ref.path);
+      if (file.data.length > MAX_READ_BYTES) throw new Error("文件超过当前 20 MiB 的限制");
+      return file;
+    };
     download.onclick = async () => {
       download.disabled = true;
       try {
+        const file = await fetchFile();
+        const name = ref.path.split("/").pop();
         if (this.save) {
-          const result = await this.save(ref);
+          const result = await this.save({ name, mime: file.mime, b64: base64(file.data) });
           if (!result.ok && !result.cancelled) throw new Error("保存失败");
           if (generation === this.generation) this.note.textContent = result.cancelled ? "已取消保存" : "文件已保存";
         } else {
-          const blob = await readWorkspaceFile(this.transport, ref);
-          const url = URL.createObjectURL(blob), link = document.createElement("a");
-          link.href = url; link.download = ref.path.split("/").pop(); link.click();
+          const url = URL.createObjectURL(new Blob([file.data], { type: file.mime || "application/octet-stream" })), link = document.createElement("a");
+          link.href = url; link.download = name; link.click();
           setTimeout(() => URL.revokeObjectURL(url), 60_000);
         }
       } catch (error) { if (generation === this.generation) this.note.textContent = error.message || "下载失败"; }
       finally { download.disabled = false; }
     };
     try {
-      if (!workspaceFileUrl(ref)) throw new Error("文件路径无效");
       const ext = ref.path.split(".").pop().toLowerCase();
-      // Stat via the same directory API before embedding; missing HTML must not look like an empty successful reader.
-      const listing = await this.transport.request(`/api/workspaces/${ref.workspace}/files?path=${encodeURIComponent(directory)}`, { method: "GET" });
-      if (!listing.ok) throw new Error("文件目录无法读取");
-      const file = (await listing.json()).find((item) => item.path === ref.path && !item.dir);
-      if (!file) throw new Error("文件不存在或已被移动");
-      if (file.size > 20 * 1024 * 1024) throw new Error("文件超过当前 20 MiB 阅读限制，仍可尝试下载");
+      if (!["html", "htm", ...TEXTS, ...IMAGES].includes(ext)) { add(this.body, "p", "这种格式暂未接入内置阅读器，请下载后打开。", "muted"); return; }
+      const file = await fetchFile();
       if (generation !== this.generation) return;
-      if (["html", "htm"].includes(ext)) {
-        this.note.textContent = `${ref.path} · HTML 阅读模式（不运行脚本）`;
-        const frame = add(this.body, "iframe", undefined, "files-html");
-        // Keep same-site file credentials for relative CSS/images; NEVER allow scripts alongside this.
-        frame.title = ref.path.split("/").pop(); frame.setAttribute("sandbox", "allow-same-origin"); frame.referrerPolicy = "no-referrer";
-        frame.src = fileContentUrl(ref, this.embedded);
+      if (IMAGES.includes(ext)) {
+        this.objectUrl = URL.createObjectURL(new Blob([file.data], { type: file.mime || `image/${ext}` }));
+        const img = add(this.body, "img", undefined, "files-image"); img.alt = ref.path; img.src = this.objectUrl;
         return;
       }
-      if (!["md", "markdown", "txt", "json", "csv", "log", "js", "ts", "css", "py", "yaml", "yml", "xml", "png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-        add(this.body, "p", "这种格式暂未接入内置阅读器，请下载后打开。", "muted"); return;
-      }
-      const blob = await readWorkspaceFile(this.transport, ref);
-      if (generation !== this.generation) return;
-      if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-        this.objectUrl = URL.createObjectURL(blob);
-        const img = add(this.body, "img", undefined, "files-image"); img.alt = ref.path; img.src = this.objectUrl;
-      } else {
-        const source = await blob.text();
-        if (generation !== this.generation) return;
-        if (["md", "markdown"].includes(ext)) appendMarkdown(this.body, source, { onFileLink: (href) => this.openLink(href, ref) });
-        else add(this.body, "pre", source, "files-text");
-      }
+      const source = new TextDecoder().decode(file.data);
+      if (["html", "htm"].includes(ext)) {
+        this.note.textContent = `${ref.path} · HTML 阅读模式（不运行脚本，不加载其中的图片和样式表）`;
+        // The page is shown from its text in a frame that may run nothing and reach nothing.
+        const frame = add(this.body, "iframe", undefined, "files-html");
+        frame.title = ref.path.split("/").pop(); frame.setAttribute("sandbox", ""); frame.referrerPolicy = "no-referrer";
+        frame.srcdoc = source;
+      } else if (["md", "markdown"].includes(ext)) appendMarkdown(this.body, source, { onFileLink: (href) => this.openLink(href, { workspace: ref.workspace, path: ref.path }) });
+      else add(this.body, "pre", source, "files-text");
     } catch (error) { if (generation === this.generation) this.note.textContent = error.message || "文件无法打开"; }
   }
 }

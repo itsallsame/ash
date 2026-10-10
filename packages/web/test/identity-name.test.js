@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { IdentityName, nameFromIdentity } from "../js/identity-name.js";
+import { startKernel } from "./kernel.js";
+import { netFor, tick, until } from "./support.js";
 
-const reply = (content, id = "read-a") => ({ ok: true, json: async () => ({ id, reply: {
-  kind: "response", reply_to: id, from: "service:self", to: "person:owner", word: "read",
-  body: { ok: true, result: { path: "IDENTITY.md", content, hash: "a".repeat(64) } },
-} }) });
-const net = (request) => ({ token: "token-a", screen: "screen:a", currentScope: "scope-a", generation: 1,
-  localManagement: false, request });
+const identity = (content) => ({ files: [{ file: "IDENTITY.md", content, version: "v1" }] });
+const online = async () => {
+  const kernel = startKernel();
+  const handle = netFor(kernel);
+  handle.net.start();
+  await until(() => handle.net.status === "online", 2000, "online");
+  return { kernel, ...handle, stop: () => { handle.net.stop(); kernel.close(); } };
+};
 
 test("identity name parser keeps only one short visible field", () => {
   assert.equal(nameFromIdentity("# 我的名片\n- 名字：ash（初次见面时可以换成你喜欢的名字）\n- 签名表情：🌿\n"), "ash");
@@ -23,85 +27,116 @@ test("identity name parser keeps only one short visible field", () => {
   assert.equal(nameFromIdentity("plain prose"), null);
 });
 
-test("registered screen reads canonical identity and refreshes only on trusted change", async () => {
-  let content = "- 名字：小舟\n";
-  const calls = [];
-  const screen = net(async (path, options) => {
-    calls.push({ path, wire: JSON.parse(options.body), token: options.headers["Ash-Screen"] });
-    return reply(content);
-  });
-  const visible = [];
-  const name = new IdentityName(screen, (value) => visible.push(value));
-  await name.refresh();
-  assert.equal(visible.at(-1), "小舟");
-  assert.equal(calls[0].path, "/api/send");
-  assert.deepEqual(calls[0].wire, { to: "service:self", kind: "request", word: "read", body: { path: "IDENTITY.md" }, wait: true });
-  assert.equal(calls[0].token, "token-a");
-  name.changed({ kind: "event", from: "agent:main", word: "self.changed", body: { path: "IDENTITY.md" } });
-  name.changed({ kind: "event", from: "service:self", word: "self.changed", body: { path: "USER.md" } });
-  name.changed({ kind: "event", from: "service:self", word: "self.changed", body_summary: { path: "IDENTITY.md" } }, true);
-  assert.equal(calls.length, 1);
-  content = "- Name: River\n";
-  name.changed({ kind: "event", from: "service:self", word: "self.changed", summary: true,
-    body_summary: { path: "IDENTITY.md", summary: "forged name" } });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(calls.length, 2);
-  assert.equal(visible.at(-1), "River");
+test("the page reads the name from IDENTITY.md through the persona member, and again only when asked", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    let content = "- 名字：小舟\n";
+    kernel.on("service:persona", "get", () => identity(content));
+    const visible = [];
+    const name = new IdentityName(net, (value) => visible.push(value));
+    await name.refresh();
+    assert.equal(visible.at(-1), "小舟");
+    const reads = kernel.requests.filter((r) => r.to === "service:persona");
+    assert.deepEqual(reads.map((r) => [r.word, r.body]), [["get", { file: "IDENTITY.md" }]]);
+    content = "- Name: River\n";
+    assert.equal(visible.at(-1), "小舟", "nothing changes until refresh is called");
+    await name.refresh();
+    assert.equal(visible.at(-1), "River");
+    assert.equal(kernel.requests.filter((r) => r.to === "service:persona").length, 2);
+  } finally { stop(); }
 });
 
-test("same-screen change keeps the previous verified name until read-back, then fails closed", async () => {
-  let release;
-  const screen = net(async () => release ? new Promise((resolve) => { release = resolve; }) : reply("- 名字：小舟\n"));
-  const visible = [];
-  const name = new IdentityName(screen, (value) => visible.push(value));
-  await name.refresh();
-  assert.equal(visible.at(-1), "小舟");
-  release = () => {};
-  name.changed({ kind: "event", from: "service:self", word: "self.changed", body_summary: { path: "IDENTITY.md" } });
-  assert.equal(visible.at(-1), "小舟");
-  release(reply("- 名字：小舟（副本）\n", "read-new"));
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(visible.at(-1), "小舟（副本）");
-  name.changed({ kind: "event", from: "service:self", word: "self.changed", body_summary: { path: "IDENTITY.md" } });
-  assert.equal(visible.at(-1), "小舟（副本）");
-  release({ ok: false, status: 503 });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(visible.at(-1), "Ash");
+test("a refresh on the same connection keeps the name shown until the new one is read, then fails closed", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    let release = null;
+    let answer = identity("- 名字：小舟\n");
+    kernel.on("service:persona", "get", () => release ? new Promise((resolve) => { release = () => resolve(answer); }) : answer);
+    const visible = [];
+    const name = new IdentityName(net, (value) => visible.push(value));
+    await name.refresh();
+    assert.equal(visible.at(-1), "小舟");
+    release = () => {};
+    answer = identity("- 名字：小舟（副本）\n");
+    const pending = name.refresh();
+    await until(() => kernel.requests.filter((r) => r.to === "service:persona").length === 2);
+    assert.equal(visible.at(-1), "小舟", "the previous verified name stays while reading");
+    release();
+    await pending;
+    assert.equal(visible.at(-1), "小舟（副本）");
+    release = null;
+    kernel.on("service:persona", "get", { ok: false, error: { code: "internal", message: "down" } });
+    await name.refresh();
+    assert.equal(visible.at(-1), "Ash");
+  } finally { stop(); }
 });
 
-test("newer canonical read wins over an older same-screen response", async () => {
-  let releaseOld;
-  let calls = 0;
-  const screen = net(async () => {
-    calls++;
-    if (calls === 1) return new Promise((resolve) => { releaseOld = resolve; });
-    return reply("- 名字：新名字\n", "read-new");
-  });
-  const visible = [];
-  const name = new IdentityName(screen, (value) => visible.push(value));
-  const old = name.refresh();
-  await name.refresh();
-  assert.equal(visible.at(-1), "新名字");
-  releaseOld(reply("- 名字：旧名字\n", "read-old"));
-  await old;
-  assert.equal(visible.at(-1), "新名字");
+test("the newer read wins over an older answer that arrives late", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    let calls = 0;
+    kernel.on("service:persona", "get", async () => {
+      const mine = ++calls;
+      if (mine === 1) await new Promise((resolve) => setTimeout(resolve, 60));
+      return identity(mine === 1 ? "- 名字：旧名字\n" : "- 名字：新名字\n");
+    });
+    const visible = [];
+    const name = new IdentityName(net, (value) => visible.push(value));
+    const old = name.refresh();
+    await until(() => calls === 1);
+    await name.refresh();
+    assert.equal(visible.at(-1), "新名字");
+    await old;
+    assert.equal(visible.at(-1), "新名字");
+  } finally { stop(); }
 });
 
-test("missing, malformed, changed scope and delayed reply never preserve old name", async () => {
-  let release;
-  const screen = net(async () => new Promise((resolve) => { release = resolve; }));
+test("a reset, a lost connection, a missing or malformed identity never keep the old name", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    let release;
+    kernel.on("service:persona", "get", () => new Promise((resolve) => { release = () => resolve(identity("- 名字：旧账户\n")); }));
+    const visible = [];
+    const name = new IdentityName(net, (value) => visible.push(value));
+    const pending = name.refresh();
+    await until(() => release);
+    name.reset();
+    release();
+    await pending;
+    assert.equal(visible.at(-1), "Ash", "an answer after reset is not shown");
+
+    kernel.on("service:persona", "get", identity("- 名字：小舟\n"));
+    await name.refresh();
+    assert.equal(visible.at(-1), "小舟");
+    kernel.on("service:persona", "get", identity("- 名字：\n"));
+    await name.refresh();
+    assert.equal(visible.at(-1), "Ash");
+    kernel.on("service:persona", "get", { files: [] });
+    await name.refresh();
+    assert.equal(visible.at(-1), "Ash");
+
+    kernel.on("service:persona", "get", identity("- 名字：小舟\n"));
+    await name.refresh();
+    assert.equal(visible.at(-1), "小舟");
+    kernel.on("service:persona", "get", async () => { await tick(40); return identity("- 名字：别的连接\n"); });
+    const lost = name.refresh();
+    kernel.drop();
+    await lost;
+    assert.equal(visible.at(-1), "小舟", "the late answer of the old connection is not shown (the app resets on the state change)");
+    await name.refresh();
+    kernel.on("service:persona", "get", { files: [] });
+    await name.refresh();
+    assert.equal(visible.at(-1), "Ash", "a refresh on another connection starts from the default name");
+  } finally { stop(); }
+});
+
+test("without a connection nothing is asked", async () => {
+  const kernel = startKernel();
+  const { net } = netFor(kernel);
   const visible = [];
-  const name = new IdentityName(screen, (value) => visible.push(value));
-  const pending = name.refresh();
-  screen.currentScope = "scope-b";
-  name.reset();
-  release(reply("- 名字：旧账户\n"));
-  await pending;
-  assert.equal(visible.at(-1), "Ash");
-  screen.request = async () => reply("- 名字：\n");
+  const name = new IdentityName(net, (value) => visible.push(value));
   await name.refresh();
-  assert.equal(visible.at(-1), "Ash");
-  screen.request = async () => ({ ok: true, json: async () => ({ id: "read-a", reply: { kind: "response", reply_to: "wrong", from: "service:self", to: "person:owner", word: "read", body: { ok: true, result: { content: "- 名字：假名" } } } }) });
-  await name.refresh();
-  assert.equal(visible.at(-1), "Ash");
+  assert.deepEqual(visible, ["Ash", "Ash"]);
+  assert.equal(kernel.requests.length, 0);
+  kernel.close();
 });

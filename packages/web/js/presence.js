@@ -11,7 +11,7 @@ const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidpl
 
 export function faceForStatus(state) { return Object.hasOwn(FACE, state) ? FACE[state] : null; }
 
-/** The state and avatar come only from the projected agent status event. Connectivity is separate. */
+/** The state and avatar come from the projected ledger (a turn open, a question waiting). Connectivity is separate. */
 export class PresenceBar {
   constructor(root = document, { onOpen } = {}) {
     this.bar = root.querySelector("#presence");
@@ -66,6 +66,6 @@ export class PresenceBar {
 
   network(status, detail = "") {
     this.connection.dataset.transport = status;
-    this.connection.textContent = detail || (status === "online" ? "已连接" : status === "connecting" ? "连接中…" : status === "send-error" ? "消息未送达，等待重试" : "离线，正在重连…");
+    this.connection.textContent = detail || (status === "online" ? "已连接" : status === "connecting" ? "连接中…" : status === "send-error" ? "消息未送达，等待重试" : status === "closed" ? "连不上 Ash" : "离线，正在重连…");
   }
 }

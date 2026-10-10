@@ -1,502 +1,512 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { deviceDiagnosis, SettingsControls } from "../js/settings.js";
+import { balanceSentence, deviceDiagnosis, relayText, renderUsage, setupText, SettingsControls } from "../js/settings.js";
+import { startKernel } from "./kernel.js";
+import { connect, FakeElement, until } from "./support.js";
 
-class Element {
-  constructor(tag) { this.tag = tag; this.children = []; this.hidden = false; this.listeners = new Map(); }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = nodes; }
-  addEventListener(name, callback) { this.listeners.set(name, callback); }
-  setAttribute(name, value) { this[name] = value; }
-  click() { this.listeners.get("click")?.(); }
-  find(id) { return this.id === id ? this : this.children.map((child) => child.find(id)).find(Boolean); }
+const fail = (code, message = code) => ({ ok: false, error: { code, message } });
+const dev = (letter) => `device:${letter.repeat(22)}`;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The settings drawer on a real Net connected to the test kernel; `setup(kernel)` scripts the hub's answers. */
+async function drawer({ local = true, setup } = {}) {
+  globalThis.document = { createElement: (tag) => new FakeElement(tag) };
+  const kernel = startKernel({ local });
+  setup?.(kernel);
+  const { net } = await connect(kernel);
+  const panel = new FakeElement("div");
+  const settings = new SettingsControls(panel, net);
+  settings.network("online");
+  settings.connected();
+  const sent = (member, word) => kernel.requests.filter((request) => request.to === member && (word === undefined || request.word === word));
+  const close = () => { settings.reset(); delete globalThis.document; delete globalThis.location; net.stop(); kernel.close(); };
+  return { kernel, net, panel, settings, sent, close };
 }
 
-test("Android settings configure the gateway privately and clear the one-time secret", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
-  globalThis.location = { origin: "https://appassets.androidplatform.net" };
-  const calls = [];
-  globalThis.__ashGatewayConfig = async (operation, url, secret) => {
-    calls.push({ operation, url, secret });
-    return { ok: true, configured: true, url: "https://ash.example.test" };
-  };
+/** A net with no hub behind it, for the parts of the drawer that never speak. */
+function stubNet({ local = true } = {}) {
+  const state = { generation: 1 };
+  return { local, session: "s1", binding: () => ({ session: "s1", generation: state.generation }), same: (binding) => binding.generation === state.generation,
+    call: async () => fail("not_found", "stub"), sendAdmin: async () => ({ ok: false }), state };
+}
+
+test("management is shown only while connected to a hub on this machine", async () => {
+  const remote = await drawer({ local: false });
   try {
-    const panel = new Element("div");
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request() { throw new Error("Gateway bootstrap secret must not use /api/send"); } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    const url = panel.find("settingsGatewayUrl");
-    const secret = panel.find("settingsGatewaySecret");
-    url.value = " https://ash.example.test ";
-    secret.value = " one-time-test-secret ";
-    panel.find("settingsGatewaySave").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(secret.value, "");
-    assert.deepEqual(calls, [{ operation: "save", url: "https://ash.example.test", secret: "one-time-test-secret" }]);
-    assert.match(panel.find("settingsGatewayConfigStatus").textContent, /网关已保存/);
-    settings.network("offline");
-    assert.equal(panel.find("settingsGatewayUrl"), undefined);
-  } finally {
-    delete globalThis.document; delete globalThis.location; delete globalThis.__ashGatewayConfig;
-  }
+    assert.equal(remote.net.local, false);
+    assert.equal(remote.panel.find("settingsAdmin"), undefined);
+    assert.match(remote.panel.text, /连上 Ash 所在的这台手机后/);
+  } finally { remote.close(); }
+  const local = await drawer();
+  try {
+    assert.ok(local.panel.find("settingsAdmin"));
+    const first = local.panel.find("settingsAdmin");
+    local.settings.connected();
+    assert.equal(local.panel.find("settingsAdmin"), first, "the same connection keeps the same drawer");
+    local.settings.network("offline");
+    assert.equal(local.panel.find("settingsAdmin"), undefined);
+    local.settings.network("online");
+    assert.ok(local.panel.find("settingsAdmin"));
+  } finally { local.close(); }
 });
 
-test("settings hide management on old, remote, malformed, or disconnected registration", () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("a new connection draws the drawer afresh and an old section's late answers are dropped", async () => {
+  let release;
+  const f = await drawer({ setup: (kernel) => kernel.on("service:admin", "settings.get", () => new Promise((resolve) => { release = () => resolve({ settings: { "delivery.quiet_hours": "05:00-06:00" } }); })) });
   try {
-    const panel = new Element("div");
-    const net = { token: "screen-token", localManagement: false, sendAdmin: async () => ({ ok: false }) };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({}); settings.network("online");
-    assert.equal(panel.find("settingsAdmin"), undefined);
-    settings.registration({ local_management: false });
-    assert.equal(panel.find("settingsAdmin"), undefined);
-    settings.registration({ local_management: "true" });
-    assert.equal(panel.find("settingsAdmin"), undefined);
-    net.localManagement = true;
-    settings.registration({ local_management: true });
-    assert.ok(panel.find("settingsAdmin"));
-    settings.network("offline");
-    assert.equal(panel.find("settingsAdmin"), undefined);
-  } finally { delete globalThis.document; }
+    const old = f.panel.find("settingsAdmin");
+    f.panel.find("settingsQuietRow").click();
+    await until(() => release);
+    const generation = f.net.generation;
+    f.kernel.drop();
+    await until(() => f.net.generation >= generation + 2 && f.net.status === "online", 3000, "the connection to come back");
+    f.settings.network("online");
+    f.settings.connected();
+    assert.notEqual(f.panel.find("settingsAdmin"), old);
+    release();
+    await sleep(50);
+    assert.equal(f.panel.find("settingsQuietRow").sub.textContent, "这段时间不主动找你", "the new drawer was not touched by the old answer");
+  } finally { f.close(); }
 });
 
-test("resume requires a second explicit click and never labels an unpaired result as success", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("resume requires a second explicit tap and never labels an unconfirmed result as success", async () => {
+  let answer = fail("failed", "refused");
+  const f = await drawer({ setup: (kernel) => kernel.on("service:admin", "resume", () => answer) });
   try {
-    const panel = new Element("div");
-    let calls = 0;
-    let result = { ok: false, reason: "HTTP 403" };
-    const net = { token: "screen-token", localManagement: true, async sendAdmin(word) { calls++; assert.equal(word, "resume"); return result; } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsResume").click();
-    assert.equal(calls, 0);
-    assert.equal(panel.find("settingsResumeConfirmation").hidden, false);
-    panel.find("settingsResumeYes").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(calls, 1);
-    assert.match(panel.find("settingsFeedback").textContent, /未确认/);
-    result = { ok: true, paused: false };
-    panel.find("settingsResume").click();
-    panel.find("settingsResumeYes").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsFeedback").textContent, "已恢复 Ash");
-  } finally { delete globalThis.document; }
+    f.panel.find("settingsResume").click();
+    assert.equal(f.sent("service:admin", "resume").length, 0);
+    assert.equal(f.panel.find("settingsResumeConfirmation").hidden, false);
+    f.panel.find("settingsResumeYes").click();
+    await until(() => /未确认/.test(f.panel.find("settingsFeedback").textContent));
+    assert.equal(f.sent("service:admin", "resume").length, 1);
+    assert.deepEqual(f.sent("service:admin", "resume")[0].body, { confirmed: true });
+    answer = { paused: false };
+    f.panel.find("settingsResume").click();
+    f.panel.find("settingsResumeYes").click();
+    await until(() => f.panel.find("settingsFeedback").textContent === "已恢复 Ash");
+    assert.equal(f.panel.find("settingsResume").hidden, true);
+  } finally { f.close(); }
 });
 
-test("quiet hours load and save only after a paired local settings reply", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("quiet hours load from and save to delivery.quiet_hours, a missing key means the default, an empty one means none", async () => {
+  const store = {};
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:admin", "settings.get", (body) => ({ settings: Object.fromEntries(body.keys.filter((key) => key in store).map((key) => [key, store[key]])) }));
+    kernel.on("service:admin", "settings.set", (body) => { Object.assign(store, body); return body; });
+  } });
   try {
-    const panel = new Element("div");
-    const sent = [];
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request(_path, init) {
-        const wire = JSON.parse(init.body);
-        sent.push(wire);
-        return new Response(JSON.stringify({ id: "request-1", reply: { kind: "response", reply_to: "request-1",
-          from: "service:admin", to: "person:owner", word: wire.word,
-          body: { ok: true, result: { delivery: { quiet: wire.word === "settings.get" ? "22:00-08:00" : wire.body.delivery.quiet } } } } }), { status: 200 });
-      } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsQuietRow").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsQuietStart").value, "22:00");
-    assert.equal(panel.find("settingsQuietEnd").value, "08:00");
-    panel.find("settingsQuietStart").value = "23:00";
-    panel.find("settingsQuietSave").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(sent.map((item) => [item.word, item.body]), [
-      ["settings.get", {}], ["settings.set", { delivery: { quiet: "23:00-08:00" } }]]);
-    assert.equal(panel.find("settingsQuietStatus").textContent, "已保存免打扰时段。");
-    assert.equal(panel.find("settingsQuietRow").sub.textContent, "每天 23:00 到 08:00 不主动找你");
-    settings.network("offline");
-    assert.equal(panel.find("settingsQuiet"), undefined);
-  } finally { delete globalThis.document; }
+    f.panel.find("settingsQuietRow").click();
+    await until(() => f.panel.find("settingsQuietRow").sub.textContent === "每天 21:30 到 09:00 不主动找你");
+    assert.equal(f.panel.find("settingsQuietStart").value, "21:30");
+    assert.deepEqual(f.sent("service:admin", "settings.get")[0].body, { keys: ["delivery.quiet_hours"] });
+    f.panel.find("settingsQuietStart").value = "23:00";
+    f.panel.find("settingsQuietEnd").value = "08:00";
+    f.panel.find("settingsQuietSave").click();
+    await until(() => f.panel.find("settingsQuietStatus").textContent === "已保存免打扰时段。");
+    assert.deepEqual(f.sent("service:admin", "settings.set")[0].body, { "delivery.quiet_hours": "23:00-08:00" });
+    assert.equal(store["delivery.quiet_hours"], "23:00-08:00");
+    assert.equal(f.panel.find("settingsQuietRow").sub.textContent, "每天 23:00 到 08:00 不主动找你");
+    f.panel.find("settingsQuietOff").click();
+    await until(() => f.panel.find("settingsQuietStatus").textContent === "已关闭免打扰。");
+    assert.equal(store["delivery.quiet_hours"], "");
+    assert.equal(f.panel.find("settingsQuietRow").sub.textContent, "没有设置免打扰");
+    f.panel.find("settingsQuietStart").value = "";
+    f.panel.find("settingsQuietSave").click();
+    await until(() => f.panel.find("settingsQuietStatus").textContent === "保存未确认，请重试。");
+    assert.equal(f.sent("service:admin", "settings.set").length, 2, "an unusable time is not sent");
+  } finally { f.close(); }
 });
 
-test("the approval page shows the two modes, saves a choice only after a paired reply, and the row says which is on", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("the approval page shows the two modes, saves a choice only after the hub echoes it, and the row says which is on", async () => {
+  let mode = "auto", echo = true;
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:gate", "rules.list", () => ({ rules: [], mode }));
+    kernel.on("service:gate", "mode.set", (body) => { if (echo) mode = body.mode; return { mode: echo ? body.mode : "auto" }; });
+  } });
   try {
-    const panel = new Element("div");
-    const sent = [];
-    let confirm = true;
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request(_path, init) {
-        const wire = JSON.parse(init.body);
-        sent.push(wire);
-        const result = wire.word === "settings.get" ? { delivery: { quiet: "22:00-08:00" }, approval: { mode: "auto" } }
-          : { approval: { mode: confirm ? wire.body.approval.mode : "auto" } };
-        return new Response(JSON.stringify({ id: "request-1", reply: { kind: "response", reply_to: "request-1",
-          from: "service:admin", to: "person:owner", word: wire.word, body: { ok: true, result } } }), { status: 200 });
-      } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsApprovalRow").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsApproval_auto").children[1].textContent, "✓");
-    assert.equal(panel.find("settingsApproval_always").children[1].textContent, "");
-    assert.match(panel.find("settingsApproval_auto").children[0].children[1].textContent, /先问你/);
-    panel.find("settingsApproval_always").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(sent.map((item) => [item.word, item.body]), [["settings.get", {}], ["settings.set", { approval: { mode: "always" } }]]);
-    assert.equal(panel.find("settingsApproval_always").children[1].textContent, "✓");
-    assert.equal(panel.find("settingsApprovalRow").sub.textContent, "每次都问");
-    assert.equal(panel.find("settingsApprovalStatus").textContent, "已保存。");
-    confirm = false;
-    panel.find("settingsApproval_always").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsApprovalStatus").textContent, "保存未确认，请重试。");
-  } finally { delete globalThis.document; }
+    f.panel.find("settingsApprovalRow").click();
+    await until(() => f.panel.find("settingsApproval_auto").children[1].textContent === "✓");
+    assert.equal(f.panel.find("settingsApproval_always").children[1].textContent, "");
+    assert.match(f.panel.find("settingsApproval_auto").children[0].children[1].textContent, /先问你/);
+    f.panel.find("settingsApproval_always").click();
+    await until(() => f.panel.find("settingsApprovalStatus").textContent === "已保存。");
+    assert.deepEqual(f.sent("service:gate", "mode.set").map((request) => request.body), [{ mode: "always" }]);
+    assert.equal(f.panel.find("settingsApproval_always").children[1].textContent, "✓");
+    assert.equal(f.panel.find("settingsApprovalRow").sub.textContent, "每次都问");
+    echo = false;
+    f.panel.find("settingsApproval_always").click();
+    await until(() => f.panel.find("settingsApprovalStatus").textContent === "保存未确认，请重试。");
+  } finally { f.close(); }
 });
 
-test("local settings switches an installed DSH plugin and refreshes its actual state", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("developer options switch a DSH plugin and refresh its actual state", async () => {
+  let enabled = false;
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:admin", "plugins.list", () => ({ plugins: [{ entryId: "include:sample", moduleName: "sample", enabled }, { entryId: "builtin:core", moduleName: "core", enabled: true, readOnlyReason: "built in" }] }));
+    kernel.on("service:admin", "plugins.op", (body) => { enabled = body.enabled; return { application: "applied", changed: true }; });
+    kernel.on("service:agents", "list", { agents: [{ id: "agent:main", primary: true, runtime: { kind: "dsh", model: "deepseek-chat" } }] });
+  } });
   try {
-    const panel = new Element("div");
-    let enabled = false;
-    const sent = [];
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request(_path, init) {
-        const wire = JSON.parse(init.body);
-        sent.push(wire);
-        if (wire.word === "plugins.op") enabled = wire.body.enabled;
-        const result = wire.word === "plugins.list"
-          ? { plugins: [{ entryId: "include:sample", moduleName: "sample", enabled }] }
-          : { application: "applied", changed: true };
-        return new Response(JSON.stringify({ id: "request-1", reply: { kind: "response", reply_to: "request-1",
-          from: "service:admin", to: "person:owner", word: wire.word, body: { ok: true, result } } }), { status: 200 });
-      } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsDevRow").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    const state = () => panel.find("settingsPluginsList").children[0].children[0].children.map((item) => item.textContent).join(" · ");
+    f.panel.find("settingsDevRow").click();
+    const row = () => f.panel.find("settingsPluginsList").children[0];
+    await until(() => row());
+    const state = () => row().children[0].children.map((item) => item.textContent).join(" · ");
     assert.equal(state(), "sample · 已停用");
-    panel.find("settingsPluginsList").children[0].children[1].click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(state(), "sample · 已启用");
-    assert.deepEqual(sent.filter((item) => item.word !== "settings.get").map((item) => [item.word, item.body]), [
-      ["plugins.list", {}], ["plugins.op", { op: "plugin", id: "include:sample", enabled: true }], ["plugins.list", {}]]);
-    settings.network("offline");
-    assert.equal(panel.find("settingsPlugins"), undefined);
-  } finally { delete globalThis.document; }
+    assert.equal(f.panel.find("settingsPluginsList").children[1].children.length, 1, "a read-only plugin has no switch");
+    row().children[1].click();
+    await until(() => state() === "sample · 已启用");
+    assert.deepEqual(f.sent("service:admin", "plugins.op").map((request) => request.body), [{ op: "plugin", id: "include:sample", enabled: true }]);
+    assert.equal(f.panel.find("settingsPluginsStatus").textContent, "已更新插件。");
+  } finally { f.close(); }
 });
 
-test("local settings saves the DSH main-model choice and reports restart", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("developer options show the primary agent's model and save a new one, saying when a restart is needed", async () => {
+  let restart = true;
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:agents", "list", { agents: [{ id: "agent:other", runtime: { kind: "x", model: "other" } }, { id: "agent:main", primary: true, runtime: { kind: "dsh", model: "deepseek-chat" } }] });
+    kernel.on("service:admin", "plugins.list", { plugins: [] });
+    kernel.on("service:admin", "model.set", (body) => ({ ...body, restart_required: restart }));
+  } });
   try {
-    const panel = new Element("div");
-    const sent = [];
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request(_path, init) {
-        const wire = JSON.parse(init.body);
-        sent.push(wire);
-        const result = wire.word === "settings.get"
-          ? { model: { provider: "deepseek", model: "deepseek-chat" } }
-          : { ...wire.body, restart_required: true };
-        return new Response(JSON.stringify({ id: "request-1", reply: { kind: "response", reply_to: "request-1",
-          from: "service:admin", to: "person:owner", word: wire.word, body: { ok: true, result } } }), { status: 200 });
-      } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsDevRow").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsModelName").value, "deepseek-chat");
-    panel.find("settingsModelName").value = "deepseek-reasoner";
-    panel.find("settingsModelSave").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(sent.filter((item) => item.word !== "plugins.list").map((item) => [item.word, item.body]), [
-      ["settings.get", {}], ["model.set", { provider: "deepseek", model: "deepseek-reasoner" }]]);
-    assert.equal(panel.find("settingsModelStatus").textContent, "已保存；重启 Ash 后主模型生效。");
-  } finally { delete globalThis.document; }
+    f.panel.find("settingsDevRow").click();
+    await until(() => f.panel.find("settingsModelName").value === "deepseek-chat");
+    assert.equal(f.panel.find("settingsModelProvider").value, "", "the provider is not known to the page, so it is not guessed");
+    f.panel.find("settingsModelName").value = "deepseek-reasoner";
+    f.panel.find("settingsModelSave").click();
+    assert.equal(f.sent("service:admin", "model.set").length, 0);
+    await until(() => f.panel.find("settingsModelStatus").textContent === "Provider 和 Model 都要填。");
+    f.panel.find("settingsModelProvider").value = "deepseek";
+    f.panel.find("settingsModelSave").click();
+    await until(() => /重启 Ash 后主模型生效/.test(f.panel.find("settingsModelStatus").textContent));
+    assert.deepEqual(f.sent("service:admin", "model.set").map((request) => request.body), [{ provider: "deepseek", model: "deepseek-reasoner" }]);
+    restart = false;
+    f.panel.find("settingsModelSave").click();
+    await until(() => f.panel.find("settingsModelStatus").textContent === "已保存，下一条消息起就用它。");
+  } finally { f.close(); }
 });
 
-test("local gateway controls approve a pending device and revoke an existing device", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+/** The hub side of the devices page: a device list, the requests waiting, and the pairing in progress. */
+function devicesHub(kernel, world) {
+  kernel.on("service:devices", "list", () => ({ devices: world.devices }));
+  kernel.on("service:devices", "pair_pending", () => ({ pairs: world.pairs }));
+  kernel.on("service:devices", "pair_start", (body) => { world.started = body; return { pair_id: "pair-1", expires_at: world.expires }; });
+  kernel.on("service:devices", "pair_code", () => ({ code: "pair-XYZ-123", url: "https://relay.example.test/p/pair-XYZ-123", expires_at: world.expires }));
+  kernel.on("service:devices", "pair_status", () => ({ pair_id: "pair-1", state: world.state }));
+  kernel.on("service:devices", "pair_approve", (body) => {
+    world.pairs = world.pairs.filter((pair) => pair.pair_id !== body.pair_id);
+    world.devices.push({ device: dev("N"), name: "New", kind: "computer", online: true, tier: body.tier, lend: body.lend, body: body.body, local_agents: body.local_agents, web_ui: body.web_ui });
+    world.state = "approved";
+    return { pair_id: body.pair_id, state: "approved" };
+  });
+  kernel.on("service:devices", "revoke", (body) => { world.devices = world.devices.filter((device) => device.device !== body.device); return { revoked: true }; });
+  kernel.on("service:devices", "rename", (body) => { world.devices.find((device) => device.device === body.device).name = body.name; return body; });
+  kernel.on("service:devices", "access_set", (body) => { Object.assign(world.devices.find((device) => device.device === body.device), body); return {}; });
+  kernel.on("service:devices", "restore", (body) => { delete world.devices.find((device) => device.device === body.device).revoked_at; return { restored: true }; });
+}
+
+test("the devices page lists devices, approves a request with the chosen permissions, and removes a device after a second tap", async () => {
+  const world = { devices: [{ device: dev("L"), name: "Laptop", kind: "computer", online: true, tier: "ask", lend: true, via: "gateway" },
+    { device: dev("B"), name: "Old tablet", kind: "browser", online: false, last_seen: new Date(2026, 9, 9, 18, 5).getTime(), revoked_at: 1 }],
+  pairs: [{ pair_id: "pair-9", state: "requested", name: "MacBook", kind: "computer", expires_at: 1 }, { pair_id: "pair-8", state: "waiting", kind: "server", expires_at: 1 }] };
+  const f = await drawer({ setup: (kernel) => devicesHub(kernel, world) });
   try {
-    const panel = new Element("div");
-    const sent = [];
-    let pending = true, device = true;
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request(_path, init) {
-        const wire = JSON.parse(init.body);
-        sent.push(wire);
-        assert.equal(wire.to, "service:devices");
-        if (wire.word === "pair_approve") pending = false;
-        if (wire.word === "revoke") device = false;
-        const result = wire.word === "gateway_status"
-          ? { configured: true, connected: true,
-            pending: pending ? [{ request_id: "request-1", name: "Phone", fingerprint: "abc" }] : [],
-            devices: device ? [{ id: "device:laptop", name: "Laptop", online: true, lends: true, capabilities: 10 }, { id: "device:new", name: "New", online: true }] : [] }
-          : { approved: true, revoked: true };
-        return new Response(JSON.stringify({ id: "request-1", reply: { kind: "response", reply_to: "request-1",
-          from: wire.to, to: "person:owner", word: wire.word, body: { ok: true, result } } }), { status: 200 });
-      } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsGatewayRow").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsGatewayList").children.length, 3);
-    const subtitle = (index) => panel.find("settingsGatewayList").children[index].children[0].children[1].textContent;
-    assert.match(subtitle(1), /^电脑 · 10 个能力 · 在线/);
-    assert.match(subtitle(2), /^电脑 · 正在读取能力 · 在线/, "a computer whose list is not read yet does not claim zero capabilities");
-    panel.find("settingsPending-request-1Approve").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsGatewayList").children.length, 2);
-    const revoke = panel.find("settingsDevice-device:laptopRevoke");
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => f.panel.find("settingsGatewayList").children.length === 3);
+    const list = f.panel.find("settingsGatewayList");
+    const subtitle = (index) => list.children[index].children[0].children[1].textContent;
+    assert.match(subtitle(0), /^等你批准 · 电脑/);
+    assert.equal(subtitle(1), "电脑 · 在线 · 经中转站 · 按规则审批");
+    assert.equal(subtitle(2), "浏览器 · 已移除，连不上了");
+    assert.equal(f.panel.find("settingsPending-pair-9Approve") !== undefined, true);
+    assert.equal(f.panel.find("settingsPending-pair-8Approve"), undefined, "a code that nobody used yet is not a request");
+    f.panel.find("settingsPending-pair-9Lend").checked = false;
+    f.panel.find("settingsPending-pair-9Body").checked = true;
+    f.panel.find("settingsPending-pair-9Access").value = "full";
+    f.panel.find("settingsPending-pair-9Approve").click();
+    await until(() => f.sent("service:devices", "pair_approve").length === 1);
+    assert.deepEqual(f.sent("service:devices", "pair_approve")[0].body, { pair_id: "pair-9", tier: "full", lend: false, body: true, local_agents: false, web_ui: false });
+    await until(() => list.children.length === 3 && list.children.some((row) => row.children[0].children[0].textContent === "New"));
+    const revoke = f.panel.find(`settingsDevice-${dev("L")}Revoke`);
     revoke.click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(sent.filter((item) => item.word === "revoke").length, 0, "one tap only says what removing does");
-    assert.match(panel.find("settingsGatewayStatus").textContent, /重新配对/);
+    await sleep(30);
+    assert.equal(f.sent("service:devices", "revoke").length, 0, "one tap only says what removing does");
+    assert.match(f.panel.find("settingsGatewayStatus").textContent, /重新配对/);
     revoke.click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsGatewayList").children.length, 0);
-    assert.deepEqual(sent.map((item) => [item.word, item.body]), [
-      ["gateway_status", {}],
-      ["pair_approve", { request_id: "request-1", kind: "laptop", access: "approval", local_agents: false, web_ui: false }],
-      ["gateway_status", {}], ["revoke", { device: "device:laptop" }], ["gateway_status", {}]]);
-  } finally { delete globalThis.document; }
+    await until(() => f.sent("service:devices", "revoke").length === 1);
+    assert.deepEqual(f.sent("service:devices", "revoke")[0].body, { device: dev("L") });
+    await until(() => !f.panel.find(`settingsDevice-${dev("L")}Revoke`));
+    f.panel.find(`settingsDevice-${dev("B")}Restore`).click();
+    await until(() => f.sent("service:devices", "restore").length === 1);
+    assert.deepEqual(f.sent("service:devices", "restore")[0].body, { device: dev("B") });
+  } finally { f.close(); }
 });
 
-test("the devices page says in plain words why the gateway cannot be used", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("a device can be renamed, given other permissions, and diagnosed in plain words", async () => {
+  const world = { devices: [{ device: dev("L"), name: "Laptop", kind: "computer", online: false, tier: "ask", lend: true, via: "local", last_seen: new Date(2026, 9, 9, 18, 5).getTime() }], pairs: [] };
+  const f = await drawer({ setup: (kernel) => {
+    devicesHub(kernel, world);
+    // The data itself has an `ok`, so it is given as a whole reply.
+    kernel.on("service:link", "diagnose", { ok: true, result: { data: { ok: false, findings: [{ code: "heartbeat", message: "它已经三分钟没有回应心跳。" }] } } });
+    kernel.on("service:link", "list", { connections: [{ conn: "c1", hand: "L".repeat(22) }, { conn: "c2", hand: "other".padEnd(22, "x") }] });
+  } });
   try {
-    const panel = new Element("div");
-    let error = "claimed_by_other";
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request(_path, init) {
-        const wire = JSON.parse(init.body);
-        const body = wire.word === "gateway_status" ? { ok: true, result: { configured: true, connected: false, error, pending: [], devices: [] } }
-          : { ok: false, error: { code: "failed", message: "not under test" } };
-        return new Response(JSON.stringify({ id: "request-1", reply: { kind: "response", reply_to: "request-1",
-          from: wire.to, to: "person:owner", word: wire.word, body } }), { status: 200 });
-      } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    settings.opened();
-    for (let i = 0; i < 50 && panel.find("settingsGatewayRow").sub.textContent === "其他电脑和浏览器"; i++) await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsGatewayRow").sub.textContent, "网关连不上，点开看原因");
-    for (const [code, text] of [["claimed_by_other", /另一台手机认领/], ["bad_secret", /认领密钥不对/], ["unreachable", /连不上网关/]]) {
-      error = code;
-      panel.find("settingsGatewayRow").click();
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.match(panel.find("settingsGatewayStatus").textContent, text);
-    }
-  } finally { delete globalThis.document; }
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => f.panel.find("settingsGatewayList").children.length === 1);
+    const details = f.panel.find("settingsGatewayList").children[0].children.find((child) => child.tag === "details");
+    const input = details.children.find((child) => child.tag === "input");
+    const buttons = (label) => details.children.find((child) => child.textContent === label);
+    input.value = "  Work laptop ";
+    buttons("保存名称").click();
+    await until(() => f.sent("service:devices", "rename").length === 1);
+    assert.deepEqual(f.sent("service:devices", "rename")[0].body, { device: dev("L"), name: "Work laptop" });
+    await until(() => f.panel.find("settingsGatewayList").children[0].children[0].children[0].textContent === "Work laptop");
+    const oldWeb = f.panel.find(`settingsDevice-${dev("L")}Web`);
+    f.panel.find(`settingsDevice-${dev("L")}Access`).value = "full";
+    oldWeb.checked = true;
+    f.panel.find("settingsGatewayList").children[0].all().find((item) => item.textContent === "保存权限").click();
+    await until(() => f.sent("service:devices", "access_set").length === 1);
+    assert.deepEqual(f.sent("service:devices", "access_set")[0].body, { device: dev("L"), tier: "full", lend: true, body: false, local_agents: false, web_ui: true });
+    await until(() => f.panel.find(`settingsDevice-${dev("L")}Web`) !== oldWeb, 2000, "the list to be drawn again");
+    assert.equal(f.panel.find(`settingsDevice-${dev("L")}Web`).checked, true, "the saved permission is what the hub now reports");
+    const info = f.panel.find("settingsGatewayList").children[0].all().find((item) => item.className === "set-status" && item.tag === "pre");
+    f.panel.find("settingsGatewayList").children[0].all().find((item) => item.textContent === "诊断").click();
+    await until(() => /心跳/.test(info.textContent));
+    assert.deepEqual(f.sent("service:link", "diagnose")[0].body, { hand: "L".repeat(22) });
+    assert.equal(info.textContent, "离线（和这台手机直连）。\n上次在线：10月9日 18:05。\n现在有 1 条连接。\n发现这些问题：\n· 它已经三分钟没有回应心跳。");
+  } finally { f.close(); }
 });
 
-test("the pairing code is read from the owner-only route, with the install command, and is cleared once used", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("a browser device can only be given the chat and page", async () => {
+  const world = { devices: [], pairs: [{ pair_id: "pair-b", state: "requested", name: "Chrome", kind: "browser", expires_at: 1 }] };
+  const f = await drawer({ setup: (kernel) => devicesHub(kernel, world) });
+  try {
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => f.panel.find("settingsPending-pair-bApprove"));
+    assert.equal(f.panel.find("settingsPending-pair-bLend").disabled, true);
+    assert.equal(f.panel.find("settingsPending-pair-bWeb").checked, true);
+    f.panel.find("settingsPending-pair-bApprove").click();
+    await until(() => f.sent("service:devices", "pair_approve").length === 1);
+    assert.deepEqual(f.sent("service:devices", "pair_approve")[0].body, { pair_id: "pair-b", tier: "ask", lend: false, body: false, local_agents: false, web_ui: true });
+  } finally { f.close(); }
+});
+
+test("the pairing code is shown only on the page, with the install address, and goes away once the request is handled", async () => {
   const copied = [];
   Object.defineProperty(globalThis.navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { copied.push(text); } } });
+  const world = { devices: [], pairs: [], state: "waiting", expires: Date.now() + 299_000 };
+  const f = await drawer({ setup: (kernel) => devicesHub(kernel, world) });
   try {
-    const panel = new Element("div");
-    const sent = [], answers = [];
-    let fail = false, view = { revision: "r1", code: null }, pending = [];
-    const command = "curl -fsSL https://github.com/wanpengxie/ash/releases/download/device-v0.1.1/install.sh | sh -s -- 'https://gw.example' 'pair-XYZ-123'";
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request(path, init) {
-        if (path === "/api/devices/pairing") {
-          assert.equal(init.method, "GET"); assert.equal(init.body, undefined);
-          return new Response(JSON.stringify(view), { status: 200 });
-        }
-        const wire = JSON.parse(init.body);
-        sent.push(wire);
-        if (wire.word === "pair_start" && !fail) view = { revision: "r2", code: { state: "active", kind: "laptop", gateway: "https://gw.example",
-          expires_in_ms: 299_000, ticket: "pair-XYZ-123", install_command: command } };
-        const body = wire.word === "gateway_status" ? { ok: true, result: { configured: true, connected: true, pending, devices: [] } }
-          : fail ? { ok: false, error: { code: "failed", message: "gateway operation failed" } }
-          : { ok: true, result: { issued: true, kind: "laptop", expires_in: 300, gateway: "https://gw.example", code_shown_to: "owner" } };
-        answers.push(body);
-        return new Response(JSON.stringify({ id: "request-1", reply: { kind: "response", reply_to: "request-1",
-          from: wire.to, to: "person:owner", word: wire.word, body } }), { status: 200 });
-      } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsGatewayRow").click();
-    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsGatewayPairCode").hidden, true);
-    // No code: no empty box holding only a copy button — and the page's styles really hide a hidden card.
-    assert.equal(panel.find("settingsGatewayPairCopy").hidden, true); assert.equal(panel.find("settingsGatewayPairCommand").hidden, true);
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => /还没有连接其他设备/.test(f.panel.find("settingsGatewayStatus").textContent));
+    assert.equal(f.panel.find("settingsGatewayPairCode").hidden, true);
+    // No code: no empty box holding only a copy button, and the page's styles really hide a hidden card.
+    assert.equal(f.panel.find("settingsGatewayPairCopy").hidden, true);
     assert.match(readFileSync(new URL("../index.html", import.meta.url), "utf8"), /[,}]\.set-card\[hidden\][,{][^}]*display:none/);
-    panel.find("settingsGatewayPair").click();
-    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(sent.filter((item) => item.word === "pair_start").map((item) => item.body), [{ kind: "laptop" }]);
-    assert.doesNotMatch(JSON.stringify(answers), /pair-XYZ-123/, "no message answer carries the code");
-    const shown = panel.find("settingsGatewayPairCodeText").textContent;
+    f.panel.find("settingsGatewayPair").click();
+    await until(() => f.panel.find("settingsGatewayPairCode").hidden === false);
+    assert.deepEqual(world.started, { kind: "computer" });
+    assert.deepEqual(f.sent("service:devices", "pair_code").map((request) => request.body), [{ pair_id: "pair-1" }]);
+    const shown = f.panel.find("settingsGatewayPairCodeText").textContent;
     assert.match(shown, /pair-XYZ-123/);
-    assert.match(shown, /还剩 4:59/);
-    assert.match(shown, /终端/);
-    assert.equal(panel.find("settingsGatewayPairCommand").textContent, command);
-    assert.doesNotMatch(shown + panel.find("settingsGatewayPairResult").textContent, /setup_command|尚未发布/);
-    panel.find("settingsGatewayPairCopy").click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(copied, [command]);
-    assert.equal(panel.find("settingsGatewayPairCopy").textContent, "已复制");
+    assert.match(shown, /还剩 [45]:\d\d/);
+    assert.match(shown, /浏览器打开下面的地址/);
+    assert.equal(f.panel.find("settingsGatewayPairCommand").textContent, "https://relay.example.test/p/pair-XYZ-123");
+    assert.doesNotMatch(JSON.stringify(f.kernel.ledger), /pair-XYZ-123/, "no message of the ledger carries the code");
+    f.panel.find("settingsGatewayPairCopy").click();
+    await until(() => copied.length === 1);
+    assert.deepEqual(copied, ["https://relay.example.test/p/pair-XYZ-123"]);
+    assert.equal(f.panel.find("settingsGatewayPairCopy").textContent, "已复制");
     // A computer used the code: the page notices by itself, shows the request and no longer shows the code.
-    const statusReads = sent.filter((item) => item.word === "gateway_status").length;
-    pending = [{ request_id: "request-9", name: "MacBookPro", fingerprint: "ab12" }];
-    view = { revision: "r3", code: { state: "used", kind: "laptop", gateway: "https://gw.example", expires_in_ms: 200_000 } };
-    for (let i = 0; i < 40 && !/已使用/.test(panel.find("settingsGatewayPairCodeText").textContent); i++) await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.match(panel.find("settingsGatewayPairCodeText").textContent, /已使用/);
-    assert.doesNotMatch(panel.find("settingsGatewayPairCodeText").textContent, /pair-XYZ-123/);
-    assert.equal(panel.find("settingsGatewayPairCommand").hidden, true);
-    assert.ok(sent.filter((item) => item.word === "gateway_status").length > statusReads, "a new revision reads the list again");
-    assert.ok(panel.find("settingsPending-request-9Approve"), "the new request is shown without reopening the page");
-    assert.equal(panel.find("settingsGatewayPairCode").hidden, false);
-    // Once that request is settled, the spent code no longer hangs on the page.
-    pending = [];
-    panel.find("settingsPending-request-9Approve").click();
-    for (let i = 0; i < 40 && !panel.find("settingsGatewayPairCode").hidden; i++) await new Promise((resolve) => setTimeout(resolve, 25));
-    assert.equal(panel.find("settingsGatewayPairCode").hidden, true);
-    fail = true;
-    panel.find("settingsGatewayPair").click();
-    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
-    assert.match(panel.find("settingsGatewayPairResult").textContent, /生成失败/);
-    assert.equal(panel.find("settingsGatewayPairCode").hidden, true);
-    settings.network("offline");
-  } finally { delete globalThis.document; delete globalThis.navigator.clipboard; }
+    world.pairs = [{ pair_id: "pair-1", state: "requested", name: "MacBookPro", kind: "computer", expires_at: world.expires }];
+    world.state = "requested";
+    await until(() => /已使用/.test(f.panel.find("settingsGatewayPairCodeText").textContent), 6000, "the request to show");
+    assert.doesNotMatch(f.panel.find("settingsGatewayPairCodeText").textContent, /pair-XYZ-123/);
+    assert.equal(f.panel.find("settingsGatewayPairCommand").hidden, true);
+    await until(() => f.panel.find("settingsPending-pair-1Approve"));
+    assert.equal(f.panel.find("settingsGatewayPairCode").hidden, false);
+    f.panel.find("settingsPending-pair-1Approve").click();
+    await until(() => f.panel.find("settingsGatewayPairCode").hidden === true, 6000, "the spent code to leave");
+    assert.equal(f.panel.find("settingsGatewayList").children[0].children[0].children[0].textContent, "New");
+    // The hub cannot make a code: say so, and show no box.
+    f.kernel.on("service:devices", "pair_start", fail("unavailable", "no relay"));
+    f.panel.find("settingsGatewayPair").click();
+    await until(() => /生成失败/.test(f.panel.find("settingsGatewayPairResult").textContent));
+    assert.equal(f.panel.find("settingsGatewayPairCode").hidden, true);
+  } finally { delete globalThis.navigator.clipboard; f.close(); }
+});
+
+test("the relay status reads in words, an address can be used, and a Cloudflare setup is walked through", async () => {
+  let status = { configured: false, connected: false };
+  let setup = { setup_id: "setup-1", state: "waiting_login" };
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:devices", "list", { devices: [] });
+    kernel.on("service:devices", "pair_pending", { pairs: [] });
+    kernel.on("service:link", "gateway.status", () => status);
+    kernel.on("service:link", "gateway.use", (body) => { status = { configured: true, connected: false, url: body.url, last_error: "unreachable" }; return { url: body.url }; });
+    kernel.on("service:link", "gateway.setup.start", () => setup);
+    kernel.on("service:link", "gateway.setup.status", () => setup);
+    kernel.on("service:link", "gateway.setup.deploy", (body) => { setup = { setup_id: body.setup_id, state: "deploying" }; return setup; });
+    kernel.on("service:link", "gateway.setup.cancel", (body) => { setup = { setup_id: body.setup_id, state: "failed", reason: "cancelled" }; return setup; });
+  } });
+  try {
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => /还没有设置中转站/.test(f.panel.find("settingsRelayStatus").textContent));
+    assert.equal(f.panel.find("settingsGatewaySecret"), undefined, "no claim secret is handled on this page any more");
+    f.panel.find("settingsGatewayUse").click();
+    await sleep(20);
+    assert.equal(f.sent("service:link", "gateway.use").length, 0);
+    f.panel.find("settingsGatewayUrl").value = " https://relay.example.test ";
+    f.panel.find("settingsGatewayUse").click();
+    await until(() => /已设置中转站/.test(f.panel.find("settingsGatewayConfigStatus").textContent));
+    assert.deepEqual(f.sent("service:link", "gateway.use")[0].body, { url: "https://relay.example.test" });
+    await until(() => /暂时连不上.*unreachable/.test(f.panel.find("settingsRelayStatus").textContent));
+    f.panel.find("settingsGatewaySetup").click();
+    await until(() => /等你在 Cloudflare 登录/.test(f.panel.find("settingsGatewaySetupState").textContent));
+    assert.deepEqual(f.sent("service:link", "gateway.setup.start")[0].body, { provider: "cloudflare" });
+    assert.equal(f.panel.find("settingsGatewaySetup").hidden, true);
+    assert.equal(f.panel.find("settingsGatewayDeploy").hidden, true);
+    setup = { setup_id: "setup-1", state: "authorized" };
+    f.panel.find("settingsGatewaySetupCheck").click();
+    await until(() => f.panel.find("settingsGatewayDeploy").hidden === false);
+    f.panel.find("settingsGatewaySetupName").value = "ash-relay";
+    f.panel.find("settingsGatewayDeploy").click();
+    await until(() => /正在搭建/.test(f.panel.find("settingsGatewaySetupState").textContent));
+    assert.deepEqual(f.sent("service:link", "gateway.setup.deploy")[0].body, { setup_id: "setup-1", name: "ash-relay" });
+    const cancel = f.panel.find("settingsGatewaySetupCancel");
+    cancel.click();
+    await sleep(20);
+    assert.equal(f.sent("service:link", "gateway.setup.cancel").length, 0, "giving up takes a second tap");
+    cancel.click();
+    await until(() => f.panel.find("settingsGatewaySetupState").textContent === "已放弃搭建。");
+    assert.equal(f.panel.find("settingsGatewaySetup").hidden, false);
+  } finally { f.close(); }
+});
+
+test("a Cloudflare setup that finishes refreshes the relay and the devices", async () => {
+  let status = { configured: false, connected: false };
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:devices", "list", { devices: [] });
+    kernel.on("service:devices", "pair_pending", { pairs: [] });
+    kernel.on("service:link", "gateway.status", () => status);
+    kernel.on("service:link", "gateway.setup.start", { setup_id: "s", state: "deploying" });
+    kernel.on("service:link", "gateway.setup.status", () => { status = { configured: true, connected: true, url: "https://r.example.test", account_email: "me@example.test" }; return { setup_id: "s", state: "connected" }; });
+  } });
+  try {
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => /还没有设置中转站/.test(f.panel.find("settingsRelayStatus").textContent));
+    f.panel.find("settingsGatewaySetup").click();
+    await until(() => f.panel.find("settingsGatewaySetupCheck").hidden === false);
+    f.panel.find("settingsGatewaySetupCheck").click();
+    await until(() => /中转站已连接（https:\/\/r.example.test），账号 me@example.test/.test(f.panel.find("settingsRelayStatus").textContent));
+    assert.equal(f.panel.find("settingsGatewaySetupState").textContent, "中转站已搭好，也连上了。");
+    assert.equal(f.panel.find("settingsGatewayUrl").value, "https://r.example.test");
+  } finally { f.close(); }
 });
 
 test("Android settings clear every browser login only after a second tap", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+  globalThis.document = { createElement: (tag) => new FakeElement(tag) };
   globalThis.location = { origin: "https://appassets.androidplatform.net" };
   let cleared = 0, ok = true;
   globalThis.__ashBrowserLogins = async () => { cleared++; return { ok }; };
   try {
-    const panel = new Element("div");
-    const net = { token: "screen-token", screen: "screen:local", currentScope: "owner-scope", localManagement: true,
-      async request() { throw new Error("browser logins must not use /api/send"); } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    const button = panel.find("settingsBrowserClear");
-    button.click();
-    await new Promise((resolve) => setImmediate(resolve));
+    const panel = new FakeElement("div");
+    const settings = new SettingsControls(panel, stubNet());
+    settings.network("online");
+    const clear = panel.find("settingsBrowserClear");
+    clear.click();
+    await sleep(10);
     assert.equal(cleared, 0, "one tap only asks");
-    assert.match(button.textContent, /再点一次/);
-    button.click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(cleared, 1);
-    assert.match(panel.find("settingsBrowserStatus").textContent, /已清除/);
+    assert.match(clear.textContent, /再点一次/);
+    clear.click();
+    await until(() => cleared === 1);
+    await until(() => /已清除/.test(panel.find("settingsBrowserStatus").textContent));
     ok = false;
-    button.click(); button.click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(cleared, 2);
-    assert.match(panel.find("settingsBrowserStatus").textContent, /清除失败/);
+    clear.click(); clear.click();
+    await until(() => cleared === 2);
+    await until(() => /清除失败/.test(panel.find("settingsBrowserStatus").textContent));
   } finally { delete globalThis.document; delete globalThis.location; delete globalThis.__ashBrowserLogins; }
 });
 
-test("outside the Android app there is no browser-login control", () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("outside the Android app there is no browser-login control, and the old native gateway config is gone", () => {
+  globalThis.document = { createElement: (tag) => new FakeElement(tag) };
   try {
-    const panel = new Element("div");
-    const settings = new SettingsControls(panel, { token: "t", screen: "screen:local", currentScope: "s", localManagement: true, async request() { return new Response("{}"); } });
-    settings.registration({ local_management: true }); settings.network("online");
+    const panel = new FakeElement("div");
+    const settings = new SettingsControls(panel, stubNet());
+    settings.network("online");
     assert.equal(panel.find("settingsBrowserClear"), undefined);
+    assert.equal(panel.find("settingsGatewaySave"), undefined);
+    assert.doesNotMatch(readFileSync(new URL("../js/settings.js", import.meta.url), "utf8"), /__ashGatewayConfig|SCREEN_TOKEN_HEADER|localManagement|net\.request|\/api\//);
   } finally { delete globalThis.document; }
 });
 
-test("settings show usage by period and part of Ash, and an unreadable balance is not shown as zero", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
-  globalThis.location = { origin: "http://127.0.0.1" };
-  const zero = { calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cost_usd: 0, unpriced_calls: 0 };
+test("settings show usage by period and by caller, and an unreadable balance is not shown as zero", async () => {
+  const zero = { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0, unpriced_calls: 0 };
   const summary = { estimated: true, periods: { today: { ...zero, calls: 3, cost_usd: 0.0042, input_tokens: 12000, unpriced_calls: 1 }, "7d": { ...zero, calls: 9, cost_usd: 1.5 }, "30d": zero },
-    by_scope: [{ ...zero, scope: "chat", calls: 7, cost_usd: 1.2 }, { ...zero, scope: "background", calls: 2, cost_usd: 0.3 }] };
-  const seen = [];
-  const net = { token: "t", screen: "screen:local", currentScope: "s", localManagement: true,
-    async request(_path, init) {
-      const sent = JSON.parse(init.body); seen.push(sent.word);
-      const body = sent.word === "usage.get" ? { ok: true, result: summary } : { ok: false, error: { code: "failed", message: "HTTP 401" } };
-      return { ok: true, json: async () => ({ id: "m1", reply: { kind: "response", reply_to: "m1", from: sent.to, to: "person:owner", word: sent.word, body } }) };
-    } };
+    by_caller: [{ ...zero, caller: "chat", calls: 7, cost_usd: 1.2 }, { ...zero, caller: "service:reflex", calls: 2, cost_usd: 0.3 }] };
+  let balance = fail("failed", "HTTP 401");
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:cost", "usage.get", summary);
+    kernel.on("service:cost", "balance.get", () => balance);
+  } });
   try {
-    const panel = new Element("div");
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    panel.find("settingsUsageCard").click();
-    for (let i = 0; i < 50 && !panel.find("settingsUsageBalance")?.textContent; i++) await new Promise((resolve) => setImmediate(resolve));
-    const text = (item) => item.children.length ? item.children.map(text).join("|") : item.textContent ?? "";
-    const table = panel.find("settingsUsageTable").children.flatMap((box) => box.children.at(-1).children.map(text));
-    assert.match(table[0], /^今天\|3 次调用 · 输入 12\.0k.*另有 1 次没有价格\|¥0\.03$/);
-    assert.match(table[1], /^近 7 天\|9 次调用.*\|¥10\.11$/);
+    f.panel.find("settingsUsageCard").click();
+    await until(() => f.panel.find("settingsUsageBalance").textContent);
+    const table = f.panel.find("settingsUsageTable").children.flatMap((box) => box.children.at(-1).children.map((row) => row.text));
+    assert.match(table[0], /^今天3 次调用 · 输入 12\.0k.*另有 1 次没有价格¥0\.03$/);
+    assert.match(table[1], /^近 7 天9 次调用.*¥10\.11$/);
     assert.match(table[2], /¥0\.00$/);
-    assert.ok(table.some((row) => /^对话\|.*¥8\.09$/.test(row)) && table.some((row) => /^后台任务\|.*¥2\.02$/.test(row)));
-    assert.equal(panel.find("settingsUsageCard").children[1].textContent, "¥0.03");
-    assert.deepEqual(seen.slice(0, 2), ["usage.get", "balance.get"]);
-    assert.match(panel.find("settingsUsageBalance").textContent, /读不到（不是零）/);
-    assert.match(panel.find("settingsUsageStatus").textContent, /估算/);
-    assert.match(panel.find("settingsUsageStatus").textContent, /1 美元 ≈ 6\.74 元固定换算/);
-  } finally { delete globalThis.document; delete globalThis.location; }
+    assert.ok(table.some((row) => /^对话.*¥8\.09$/.test(row)) && table.some((row) => /^service:reflex.*¥2\.02$/.test(row)));
+    assert.equal(f.panel.find("settingsUsageCard").children[1].textContent, "¥0.03");
+    assert.deepEqual(f.sent("service:cost").map((request) => [request.word, request.body]).slice(-2), [["usage.get", { days: 7 }], ["balance.get", {}]]);
+    assert.match(f.panel.find("settingsUsageBalance").textContent, /读不到（不是零）/);
+    assert.match(f.panel.find("settingsUsageStatus").textContent, /估算/);
+    assert.match(f.panel.find("settingsUsageStatus").textContent, /1 美元 ≈ 6\.74 元固定换算/);
+    balance = { balances: [{ provider: "deepseek", at: 1, balance: { available: true, balances: [{ currency: "CNY", total: "12.30" }] } }], errors: { openrouter: "HTTP 401" } };
+    f.panel.find("settingsUsageRefresh").click();
+    await until(() => /^账户余额：DeepSeek ¥12\.30（OpenRouter 暂时读不到）$/.test(f.panel.find("settingsUsageBalance").textContent));
+  } finally { f.close(); }
 });
 
-
-test("the vault section saves and removes keys through the owner route, clears the field, and shows only saved or not", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
-  globalThis.location = { origin: "http://127.0.0.1" };
-  const calls = [];
+test("the vault section saves and removes keys through the vault words, clears the field, and shows only saved or not", async () => {
   const saved = new Set();
-  const net = { token: "t", screen: "screen:local", currentScope: "s", localManagement: true,
-    async request(path, init) {
-      calls.push({ path, method: init.method, body: init.body ? JSON.parse(init.body) : undefined, token: init.headers["x-ash-screen"] ?? init.headers["X-Ash-Screen"] });
-      if (init.method === "PUT") saved.add(path.split("/").pop());
-      if (init.method === "DELETE") saved.delete(path.split("/").pop());
-      const body = init.method === "GET" ? { entries: ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"].map((ref) => ({ ref, label: ref, kind: "model", configured: saved.has(ref) })) } : { ok: true };
-      return { ok: true, json: async () => body };
-    } };
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:vault", "list", () => ({ entries: ["DEEPSEEK_API_KEY"].filter((ref) => saved.has(ref)).map((ref) => ({ ref, label: ref, kind: "model", configured: true })) }));
+    kernel.on("service:vault", "set", (body) => { saved.add(body.ref); return { ref: body.ref, configured: true }; });
+    kernel.on("service:vault", "delete", (body) => ({ deleted: saved.delete(body.ref) }));
+  } });
   try {
-    const panel = new Element("div");
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    const wait = async (check) => { for (let i = 0; i < 50 && !check(); i++) await new Promise((resolve) => setImmediate(resolve)); };
-    const status = () => panel.find("settingsVault_DEEPSEEK_API_KEY_status").textContent;
-    panel.find("settingsVaultRow").click();
-    await wait(() => /还没有保存/.test(status()));
-    assert.match(status(), /还没有保存.*无法对话/);
-    const row = panel.find("settingsVault_DEEPSEEK_API_KEY");
-    const field = panel.find("settingsVault_DEEPSEEK_API_KEY_value");
+    const status = () => f.panel.find("settingsVault_DEEPSEEK_API_KEY_status").textContent;
+    f.panel.find("settingsVaultRow").click();
+    await until(() => /还没有保存/.test(status()));
+    assert.match(status(), /还没有保存.*无法对话/, "a key the hub does not list is simply not saved");
+    const field = f.panel.find("settingsVault_DEEPSEEK_API_KEY_value");
+    const actions = f.panel.find("settingsVault_DEEPSEEK_API_KEY").children.at(-1);
     field.value = "  sk-vault-test  ";
-    const actions = row.children.at(-1);
     actions.children.find((item) => item.textContent === "保存").click();
-    await wait(() => /^已保存/.test(status()));
+    await until(() => /^已保存/.test(status()));
     assert.equal(field.value, "");
-    assert.match(status(), /^已保存/);
-    const put = calls.find((call) => call.method === "PUT");
-    assert.deepEqual([put.path, put.body], ["/api/vault/DEEPSEEK_API_KEY", { value: "sk-vault-test" }]);
-    assert.doesNotMatch(JSON.stringify(panel), /sk-vault-test/);
+    assert.deepEqual(f.sent("service:vault", "set")[0].body, { ref: "DEEPSEEK_API_KEY", value: "sk-vault-test", label: "DeepSeek Key", kind: "model" });
+    assert.doesNotMatch(JSON.stringify(f.panel), /sk-vault-test/);
     const remove = actions.children.find((item) => item.textContent === "移除");
     assert.equal(remove.hidden, false);
     remove.click();
     assert.match(status(), /^移除后，Ash 无法对话/);
-    assert.ok(!calls.some((call) => call.method === "DELETE"), "one tap only says what removing does");
+    assert.equal(f.sent("service:vault", "delete").length, 0, "one tap only says what removing does");
     remove.click();
-    await wait(() => /还没有保存/.test(status()));
-    assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/api/vault/DEEPSEEK_API_KEY"));
-  } finally { delete globalThis.document; delete globalThis.location; }
+    await until(() => /还没有保存/.test(status()));
+    assert.deepEqual(f.sent("service:vault", "delete")[0].body, { ref: "DEEPSEEK_API_KEY" });
+  } finally { f.close(); }
 });
 
-test("an unavailable Android vault is explained and cannot be changed from settings", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
-  globalThis.location = { origin: "http://127.0.0.1" };
-  const calls = [];
-  const net = { token: "t", screen: "screen:local", currentScope: "s", localManagement: true,
-    async request(path, init) {
-      calls.push({ path, method: init.method });
-      return { ok: true, json: async () => ({ entries: [], available: false }) };
-    } };
+test("a locked secure storage is explained and cannot be changed from settings", async () => {
+  const f = await drawer({ setup: (kernel) => kernel.on("service:vault", "list", fail("unavailable", "locked")) });
   try {
-    const panel = new Element("div");
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    const wait = async (check) => { for (let i = 0; i < 50 && !check(); i++) await new Promise((resolve) => setImmediate(resolve)); };
-    panel.find("settingsVaultRow").click();
-    const status = panel.find("settingsVault_DEEPSEEK_API_KEY_status");
-    await wait(() => /安全存储暂时不可用/.test(status.textContent));
-    const field = panel.find("settingsVault_DEEPSEEK_API_KEY_value");
-    const actions = panel.find("settingsVault_DEEPSEEK_API_KEY").children.at(-1);
+    f.panel.find("settingsVaultRow").click();
+    const status = f.panel.find("settingsVault_DEEPSEEK_API_KEY_status");
+    await until(() => /安全存储暂时不可用/.test(status.textContent));
+    const field = f.panel.find("settingsVault_DEEPSEEK_API_KEY_value");
+    const actions = f.panel.find("settingsVault_DEEPSEEK_API_KEY").children.at(-1);
     const save = actions.children.find((item) => item.textContent === "保存");
     const remove = actions.children.find((item) => item.textContent === "移除");
     assert.match(status.textContent, /原有密钥未被读取或修改/);
@@ -505,55 +515,83 @@ test("an unavailable Android vault is explained and cannot be changed from setti
     assert.equal(remove.disabled, true);
     field.value = "sk-must-not-save";
     save.click(); remove.click();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(calls.filter((call) => call.method !== "GET").length, 0);
-  } finally { delete globalThis.document; delete globalThis.location; }
+    await sleep(30);
+    assert.equal(f.sent("service:vault", "set").length + f.sent("service:vault", "delete").length, 0);
+  } finally { f.close(); }
+});
+
+test("the vault locking when a save is refused as unavailable", async () => {
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:vault", "list", { entries: [] });
+    kernel.on("service:vault", "set", fail("unavailable", "locked"));
+  } });
+  try {
+    f.panel.find("settingsVaultRow").click();
+    const status = f.panel.find("settingsVault_OPENROUTER_API_KEY_status");
+    await until(() => /还没有保存/.test(status.textContent));
+    f.panel.find("settingsVault_OPENROUTER_API_KEY_value").value = "sk-x";
+    f.panel.find("settingsVault_OPENROUTER_API_KEY").children.at(-1).children.find((item) => item.textContent === "保存").click();
+    await until(() => /安全存储暂时不可用/.test(status.textContent));
+    assert.equal(f.panel.find("settingsVault_DEEPSEEK_API_KEY_value").disabled, true);
+  } finally { f.close(); }
 });
 
 test("opening settings reads what each row should say: quiet hours, pause, keys, devices and today's spend", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
-  globalThis.location = { origin: "http://127.0.0.1" };
-  const zero = { calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cost_usd: 0, unpriced_calls: 0 };
-  const results = {
-    "settings.get": { delivery: { quiet: "22:00-07:30" }, paused: true },
-    "usage.get": { periods: { today: { ...zero, cost_usd: 0.12 }, "7d": { ...zero, cost_usd: 1.5 }, "30d": { ...zero, cost_usd: 4 } }, by_scope: [] },
-    "gateway_status": { configured: true, connected: true, devices: [{ id: "device:a", name: "A" }], pending: [{ request_id: "r", name: "B" }] },
-  };
-  const net = { token: "t", screen: "screen:local", currentScope: "s", localManagement: true,
-    async request(path, init) {
-      if (path === "/api/vault") return { ok: true, json: async () => ({ entries: [{ ref: "DEEPSEEK_API_KEY", configured: false }, { ref: "OPENROUTER_API_KEY", configured: true }] }) };
-      const sent = JSON.parse(init.body);
-      return { ok: true, json: async () => ({ id: "m1", reply: { kind: "response", reply_to: "m1", from: sent.to, to: "person:owner", word: sent.word, body: { ok: true, result: results[sent.word] } } }) };
-    } };
+  const zero = { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0, unpriced_calls: 0 };
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:admin", "status", { now: 1, paused: true });
+    kernel.on("service:admin", "settings.get", { settings: { "delivery.quiet_hours": "22:00-07:30" } });
+    kernel.on("service:gate", "rules.list", { rules: [], mode: "always" });
+    kernel.on("service:cost", "usage.get", { periods: { today: { ...zero, cost_usd: 0.12 }, "7d": { ...zero, cost_usd: 1.5 }, "30d": { ...zero, cost_usd: 4 } }, by_caller: [] });
+    kernel.on("service:vault", "list", { entries: [{ ref: "DEEPSEEK_API_KEY", label: "DeepSeek", kind: "model", configured: false }, { ref: "OPENROUTER_API_KEY", label: "OpenRouter", kind: "model", configured: true }] });
+    kernel.on("service:devices", "list", { devices: [{ device: dev("A"), name: "A", online: true }, { device: dev("R"), name: "R", online: false, revoked_at: 5 }] });
+    kernel.on("service:devices", "pair_pending", { pairs: [{ pair_id: "p", state: "requested", kind: "computer" }] });
+    kernel.on("service:link", "gateway.status", { configured: true, connected: true, url: "https://r.example.test" });
+    kernel.on("service:apps", "apps.list", { apps: [] });
+  } });
   try {
-    const panel = new Element("div");
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
-    settings.opened();
-    for (let i = 0; i < 50 && panel.find("settingsUsageCard").children[1].textContent === "—"; i++) await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(panel.find("settingsQuietRow").sub.textContent, "每天 22:00 到 07:30 不主动找你");
-    assert.equal(panel.find("settingsPause").hidden, true);
-    assert.equal(panel.find("settingsResume").hidden, false);
-    assert.equal(panel.find("settingsVaultRow").sub.textContent, "DeepSeek Key 未设置 · OpenRouter Key 已保存");
-    assert.equal(panel.find("settingsVaultRow").sub.className, "set-sub warn");
-    assert.equal(panel.find("settingsGatewayRow").sub.textContent, "1 台设备 · 1 个等你批准");
-    assert.equal(panel.find("settingsUsageCard").children[1].textContent, "¥0.81");
-    settings.setName("小灰");
-    assert.equal(panel.find("settingsPause").textContent, "暂停 小灰");
-  } finally { delete globalThis.document; delete globalThis.location; }
+    f.settings.opened();
+    await until(() => f.panel.find("settingsUsageCard").children[1].textContent !== "—");
+    await until(() => f.panel.find("settingsGatewayRow").sub.textContent.startsWith("1 台"));
+    assert.equal(f.panel.find("settingsQuietRow").sub.textContent, "每天 22:00 到 07:30 不主动找你");
+    assert.equal(f.panel.find("settingsPause").hidden, true);
+    assert.equal(f.panel.find("settingsResume").hidden, false);
+    assert.equal(f.panel.find("settingsApprovalRow").sub.textContent, "每次都问");
+    assert.equal(f.panel.find("settingsVaultRow").sub.textContent, "DeepSeek Key 未设置 · OpenRouter Key 已保存");
+    assert.equal(f.panel.find("settingsVaultRow").sub.className, "set-sub warn");
+    assert.equal(f.panel.find("settingsGatewayRow").sub.textContent, "1 台设备 · 1 个等你批准");
+    assert.equal(f.panel.find("settingsUsageCard").children[1].textContent, "¥0.81");
+    f.settings.setName("小灰");
+    assert.equal(f.panel.find("settingsPause").textContent, "暂停 小灰");
+  } finally { f.close(); }
 });
 
-test("re-opening the drawer starts at the settings root and takes back a half-done destructive tap", async () => {
-  globalThis.document = { createElement: (tag) => new Element(tag) };
+test("the gateway row says when the relay is missing or cannot be reached", async () => {
+  let status = { configured: false, connected: false };
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:devices", "list", { devices: [] });
+    kernel.on("service:devices", "pair_pending", { pairs: [] });
+    kernel.on("service:link", "gateway.status", () => status);
+  } });
+  try {
+    f.settings.opened();
+    await until(() => f.panel.find("settingsGatewayRow").sub.textContent === "还没有设置中转站");
+    status = { configured: true, connected: false, last_error: "unreachable" };
+    f.settings.opened();
+    await until(() => f.panel.find("settingsGatewayRow").sub.textContent === "中转站连不上，点开看原因");
+    assert.equal(f.panel.find("settingsGatewayRow").sub.className, "set-sub warn");
+  } finally { f.close(); }
+});
+
+test("re-opening the drawer starts at the settings root and takes back a half-done destructive tap", () => {
+  globalThis.document = { createElement: (tag) => new FakeElement(tag) };
   globalThis.location = { origin: "https://appassets.androidplatform.net" };
   globalThis.__ashBrowserLogins = async () => ({ ok: true });
-  const all = (root) => [root, ...root.children.flatMap(all)];
-  Element.prototype.querySelectorAll = function (selector) { return selector === "[data-armed]" ? all(this).filter((item) => "data-armed" in item) : []; };
+  FakeElement.prototype.querySelectorAll = function querySelectorAll(selector) { return selector === "[data-armed]" ? this.all().filter((item) => "data-armed" in item.attributes) : []; };
   try {
-    const panel = new Element("div");
-    const net = { token: "t", screen: "screen:local", currentScope: "s", localManagement: true, async request() { return { ok: false }; } };
-    const settings = new SettingsControls(panel, net);
-    settings.registration({ local_management: true }); settings.network("online");
+    const panel = new FakeElement("div");
+    const settings = new SettingsControls(panel, stubNet());
+    settings.network("online");
     panel.find("settingsBrowserRow").click();
     assert.equal(panel.find("settingsBrowser").hidden, false);
     assert.equal(panel.find("settingsHome").hidden, true);
@@ -565,16 +603,27 @@ test("re-opening the drawer starts at the settings root and takes back a half-do
     assert.equal(panel.find("settingsBrowser").hidden, true);
     assert.equal(clear.textContent, "清除浏览器里的所有登录");
   } finally {
-    delete Element.prototype.querySelectorAll;
+    delete FakeElement.prototype.querySelectorAll;
     delete globalThis.document; delete globalThis.location; delete globalThis.__ashBrowserLogins;
   }
 });
 
 test("a device's diagnosis reads as plain words, not a raw record", () => {
-  const text = deviceDiagnosis({ id: "device:pc", online: true, version: "0.1.0", gateway_connected: true, capabilities: 9, workdir: "/Users/me/ash-shared",
-    recent_calls: [{ id: "m1", at: new Date(2026, 9, 9, 18, 5).getTime(), from: "agent:main", word: "workspace.write", status: "ok" },
-      { id: "m2", at: new Date(2026, 9, 9, 18, 6).getTime(), from: "agent:main", word: "workspace.bash", status: "denied" }] });
-  assert.equal(text, "在线，设备端版本 0.1.0。\n网关已连接。\n借出 9 项能力。\n工作目录：/Users/me/ash-shared\n最近的调用：\n10月9日 18:05 workspace.write · 成功\n10月9日 18:06 workspace.bash · 被拒绝");
-  assert.doesNotMatch(deviceDiagnosis({ online: false }), /[{}"]|undefined/);
-  assert.match(deviceDiagnosis({ online: false }), /^离线。\n网关没有连上。\n最近没有调用。$/);
+  const device = { device: dev("P"), name: "PC", online: true, via: "gateway" };
+  assert.equal(deviceDiagnosis({ device, connections: [{}, {}], diagnosis: { ok: true, findings: [] } }), "在线（经中转站）。\n现在有 2 条连接。\n没有发现问题。");
+  assert.equal(deviceDiagnosis({ device, diagnosis: { ok: false, findings: [{ code: "a", message: "没有回应" }, { code: "b", message: "版本太旧" }] } }), "在线（经中转站）。\n发现这些问题：\n· 没有回应\n· 版本太旧");
+  assert.doesNotMatch(deviceDiagnosis({}), /[{}"]|undefined/);
+  assert.equal(deviceDiagnosis({}), "离线。");
+});
+
+test("the relay, the setup state and the balances read in plain words", () => {
+  globalThis.document = { createElement: (tag) => new FakeElement(tag) };
+  assert.equal(relayText({ configured: false, connected: false }), "还没有设置中转站，其他设备暂时连不上。");
+  assert.equal(relayText({ configured: true, connected: true, url: "https://r.test" }), "中转站已连接（https://r.test）。");
+  assert.match(relayText({ configured: true, connected: false, last_error: "timed out" }), /暂时连不上：timed out/);
+  assert.equal(setupText(null), "");
+  assert.match(setupText({ state: "failed", reason: "no account" }), /没有成功：no account/);
+  assert.equal(balanceSentence({ balances: [] }), "账户余额：无数据");
+  assert.equal(balanceSentence({ balances: [{ provider: "openrouter", balance: { available: false, total: "3", currency: "USD" } }] }), "账户余额：OpenRouter 约 ¥20.22（账户当前不可用）");
+  try { assert.match(renderUsage({ periods: {}, by_caller: [] })[0].text, /今天0 次调用/); } finally { delete globalThis.document; }
 });

@@ -1,8 +1,7 @@
-// All approval-page operations use the current registered screen and gate member.
-import { SCREEN_TOKEN_HEADER } from "../../sdk/src/api.ts";
+// All approval-page operations go to the gate member over the page's one connection.
 import { named } from "./editor.js";
 import { appendApprovalOriginal } from "./approval-original.js";
-import { humanPendingOutcome } from "./human-pending.js";
+import { retryable, unwrap } from "./link.js";
 const safeText = (value, max = 240) => typeof value === "string" ? value.slice(0, max) : "";
 const validId = (value) => typeof value === "string" && value.length > 0 && value.length <= 256;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 8_640_000_000_000_000;
@@ -60,11 +59,11 @@ const at = (value, now) => {
 };
 const HISTORY_SHOWN = 20;
 const EFFECTS = { read: "读", act: "操作", write: "改数据", send: "对外发送", execute: "执行命令", structure: "改结构" };
-const DECIDED_BY = { device_full: "设备完全放开", rule: "你定的规则", review: "裁判（模型判断）", carry: "沿用你几分钟前的允许", owner: "你", timeout: "没人回答，过期", cancelled: "取消了", waiting: "还在等" };
+const DECIDED_BY = { hand_full: "设备完全放开", device_full: "设备完全放开", declared_none: "本来就不需要审批", assessed_none: "评估后无影响，直接放行", rule: "你定的规则", review: "裁判（模型判断）", carry: "沿用你几分钟前的允许", owner: "你", timeout: "没人回答，过期", cancelled: "取消了", waiting: "还在等" };
 const ANSWERS = { once: "允许这一次", always: "以后都允许", deny: "不允许" };
 
 /** One record's evidence: what was asked, what the reviewer saw and said, the card, the answer, and whether it ran. */
-export function renderEvidence(parent, entry, { now = Date.now(), name = "Ash" } = {}) {
+export function renderEvidence(parent, entry, { now = Date.now(), name = "Ash", primary = "agent:main" } = {}) {
   const box = text(parent, "div", "", "sheet-evidence");
   const row = (label, value) => {
     if (!value) return;
@@ -73,7 +72,7 @@ export function renderEvidence(parent, entry, { now = Date.now(), name = "Ash" }
     text(line, "span", value, "sheet-evidence-value");
   };
   const effect = EFFECTS[entry.effect] ?? safeText(entry.effect, 40);
-  row("谁要做", entry.requester === "agent:main" ? name : safeText(entry.requester, 80));
+  row("谁要做", entry.requester === primary ? name : safeText(entry.requester, 80));
   // The gate's own words carry English contract labels; the owner reads them by what they do.
   const what = entry.member === "service:gate" ? actionLabel(entry) : safeText(entry.label, 120) || safeText(entry.word, 80);
   row("要做什么", `${what}${effect ? `（${effect}）` : ""}`);
@@ -101,7 +100,8 @@ export function renderEvidence(parent, entry, { now = Date.now(), name = "Ash" }
   row("谁做的决定", DECIDED_BY[entry.decided_by] ?? safeText(entry.decided_by, 40));
   if (entry.decided_by !== "review" && entry.decided_by !== "carry" && safeText(entry.reason, 400) && !review) row("理由", safeText(entry.reason, 400));
   const executed = entry.executed && typeof entry.executed === "object" ? entry.executed : null;
-  row("最后", humanPendingOutcome(entry.human_pending) || (executed ? executed.ok ? "做成了" : entry.decision === "deny" ? "没有做" : `没做成（${safeText(executed.message, 200) || safeText(executed.error, 60)}）` : "还没有结果"));
+  row("最后", executed ? executed.ok ? "做成了" : entry.decision === "deny" ? "没有做" : `没做成（${safeText(executed.message, 200) || safeText(executed.error, 60)}）` :
+    ["deny", "timeout", "cancelled"].includes(entry.decision) ? "没有做" : "还没有结果");
   return box;
 }
 
@@ -113,7 +113,7 @@ function group(parent, header, intro = "") {
 
 /** Only authenticated ledger projections are shown; no optimistic approval or fake rule rows. */
 export function renderApprovalsSheet(root, view, { now = Date.now(), onAnswer, answerState = new Map(),
-  history, rules, onRevoke, status = "", onRetry, name = "Ash", armedRule = null, onArm, loading = false,
+  history, rules, onRevoke, status = "", onRetry, name = "Ash", primary = "agent:main", armedRule = null, onArm, loading = false,
   evidence = new Map(), onEvidence } = {}) {
   const sections = approvalSections(view, now);
   const fragment = document.createDocumentFragment();
@@ -145,16 +145,6 @@ export function renderApprovalsSheet(root, view, { now = Date.now(), onAnswer, a
     else if (state?.status === "rejected") text(card, "p", "这次回答没有被接受；它可能已经过期，或这台设备不能回答。", "set-status warn sheet-warning");
   }
 
-  const recent = (view?.asks || []).filter((ask) => ask.human && ask.human.state !== "waiting").slice(-20).reverse();
-  if (recent.length) {
-    const recentBox = group(fragment, "回答后的进展");
-    for (const ask of recent) {
-      const card = text(recentBox, "article", "", "set-card sheet-approval resolved");
-      text(card, "h4", ask.title);
-      text(card, "p", humanPendingOutcome(ask.human), "approval-outcome");
-      appendApprovalOriginal(card, ask);
-    }
-  }
   const rulesBox = group(fragment, "以后都允许", `在「有影响时才问」档位，${named(name, false)}会按这些有效规则直接去做；「每次都问」会暂时忽略它们。`);
   const live = Array.isArray(rules) ? rules.filter((rule) => rule && validId(rule.id) && !rule.revoked_at &&
     validTime(rule.expires_at) && rule.expires_at > now) : [];
@@ -189,16 +179,17 @@ export function renderApprovalsSheet(root, view, { now = Date.now(), onAnswer, a
   else if (!history) text(historyBox, "p", "暂时读不到审批记录（不代表没有）。", "set-line sheet-unavailable");
   else if (!items.length) text(historyBox, "p", "还没有审批记录。", "set-line sheet-empty");
   else for (const item of items.slice(0, HISTORY_SHOWN)) {
-    const label = item.source === "current" ? safeText(item.label, 80) || actionLabel(item) : "较早的审批";
+    const label = safeText(item.label, 80) || actionLabel(item);
     const decision = { once: "仅这一次", always: "以后都允许", deny: "已拒绝", timeout: "过期没回答",
-      cancelled: "已取消", rule: "按规则放行", review: "由她判断后放行", carry: "刚允许过，沿用", device_full: "设备完全放开放行" }[item.decision] || "已记录";
+      cancelled: "已取消", rule: "按规则放行", review: "由她判断后放行", carry: "刚允许过，沿用", hand_full: "设备完全放开放行",
+      declared_none: "无影响，直接放行", assessed_none: "评估无影响，直接放行" }[item.decision] || "已记录";
     const row = text(historyBox, "div", "", "set-line sheet-history");
     const body = text(row, "span", "", "set-text");
     text(body, "span", safeText(label, 80), "set-title");
     text(body, "span", `${decision} · ${at(item.at, now)}`, "set-sub");
     if ((item.decision === "review" || item.decision === "carry") && safeText(item.reason, 200))
       text(body, "span", safeText(item.reason, 200), "set-sub sheet-reason");
-    if (item.source !== "current" || !validId(item.request_id) || typeof onEvidence !== "function") continue;
+    if (!validId(item.request_id) || typeof onEvidence !== "function") continue;
     const shown = evidence.get(item.request_id);
     const toggle = text(row, "button", shown ? "收起" : "查看依据", "sheet-link");
     toggle.type = "button";
@@ -207,7 +198,7 @@ export function renderApprovalsSheet(root, view, { now = Date.now(), onAnswer, a
     if (shown.status === "loading") text(body, "span", "正在读取…", "set-sub");
     else if (shown.status === "missing") text(body, "span", "这条没有留下依据（多半是证据记录上线之前的）。", "set-sub");
     else if (shown.status === "failed") text(body, "span", "暂时读不到依据（不代表没有），稍后再点一次。", "set-sub warn");
-    else renderEvidence(body, shown.entry, { now, name });
+    else renderEvidence(body, shown.entry, { now, name, primary });
   }
   if (items.length > HISTORY_SHOWN) text(fragment, "p", `只显示最近 ${HISTORY_SHOWN} 条。`, "sheet-empty");
   if (!loading && (!history || !rules) && typeof onRetry === "function") {
@@ -219,71 +210,33 @@ export function renderApprovalsSheet(root, view, { now = Date.now(), onAnswer, a
   return sections;
 }
 
-/** Current-screen request with a paired gate response; callers never trust a bare HTTP 200. */
-export async function gatePageRequest(net, current, word, body, clientId = crypto.randomUUID()) {
-  const binding = { token: net.token, screen: net.screen, scope: net.currentScope, generation: net.generation };
-  const same = () => current() && binding.token && binding.screen && binding.scope &&
-    binding.token === net.token && binding.screen === net.screen && binding.scope === net.currentScope &&
-    binding.generation === net.generation;
-  if (!same()) throw new Error("屏幕未连接。");
-  const response = await net.request("/api/send", { method: "POST", credentials: "same-origin",
-    headers: { "content-type": "application/json", [SCREEN_TOKEN_HEADER]: binding.token },
-    body: JSON.stringify({ to: "service:gate", kind: "request", word, body, client_id: clientId, wait: true }) });
-  if (!same()) throw new Error("屏幕身份已变化。");
-  if (!response.ok) throw new Error("审批服务未确认操作。");
-  const accepted = await response.json();
-  const reply = accepted?.reply;
-  if (!same() || typeof accepted?.id !== "string" || reply?.kind !== "response" || reply.reply_to !== accepted.id ||
-    reply.from !== "service:gate" || reply.to !== "person:owner" || reply.word !== word || reply.body?.ok !== true)
-    throw new Error("审批服务回执未配对。");
-  return reply.body.result;
+/** A word of the gate, called on the connection [binding] stands for; an answer that arrives on another one is dropped. */
+export async function gateRequest(net, binding, word, body, clientId) {
+  if (!net.same(binding)) throw new Error("连接已经换过，这次的结果没有采用。");
+  const reply = await net.call("service:gate", word, body, clientId ? { clientId } : undefined);
+  if (!net.same(binding)) throw new Error("连接已经换过，这次的结果没有采用。");
+  return unwrap(reply);
 }
 
-/** An HTTP ACK alone is not displayed as an answered approval. The matching ledger response must be seen. */
-export async function answerGateAsk(net, current, ask, choice, clientId, lookup, { now = Date.now, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxWaitMs = 3000, answerText } = {}) {
+/**
+ * The owner answers an approval or question card. The kernel's `send.result` is the confirmation: the first answer counts,
+ * a later one is a conflict. Resolves `{id, seq}` of the recorded response.
+ */
+export async function answerGateAsk(net, ask, choice, clientId, { now = Date.now, answerText } = {}) {
   if (!ask || approvalSections({ asks: [ask] }, now()).pending[0]?.id !== ask.id ||
     !(ask.options.some((option) => option.id === choice) || ask.human_kind === "question" && ask.allow_custom && choice === "custom" && typeof answerText === "string" && answerText.trim()) || typeof clientId !== "string" || !clientId)
     throw new Error("待批请求已失效或选项不可用。");
-  const token = net.token;
-  const screen = net.screen;
-  const scope = net.currentScope;
-  const generation = net.generation;
-  const same = () => current() && token && screen && scope && token === net.token && screen === net.screen &&
-    scope === net.currentScope && generation === net.generation;
-  if (!same()) throw new Error("屏幕身份已变化，不能回答审批。");
-  let response;
-  try {
-    response = await net.request("/api/send", { method: "POST", credentials: "same-origin",
-      headers: { "content-type": "application/json", [SCREEN_TOKEN_HEADER]: token },
-      body: JSON.stringify({ to: "service:gate", kind: "response", word: "ask", reply_to: ask.id,
-        body: { ok: true, result: { choice, ...(answerText ? { text: answerText } : {}) } }, client_id: clientId }) });
-  } catch {
-    if (!same()) throw new Error("屏幕身份已变化，回答结果已丢弃。");
-    throw new Error("审批回执未知；只能用同一选项原样重试。");
-  }
-  if (!same()) throw new Error("屏幕身份已变化，回答结果已丢弃。");
-  if (!response.ok) {
-    if (response.status === 403) throw new Error("当前屏幕无权回答审批。");
-    if (!Number.isInteger(response.status) || response.status >= 500 || response.status === 408 || response.status === 429)
-      throw new Error("审批回执未知；只能用同一选项原样重试。");
+  const binding = net.binding();
+  if (!net.same(binding)) throw new Error("还没连上，不能回答审批。");
+  const result = await net.answerAsk(ask, { choice, ...(answerText ? { text: answerText } : {}) }, clientId);
+  if (!net.same(binding)) throw new Error("连接已经换过，回答结果已丢弃。");
+  if (!result.ok) {
+    if (result.error?.code === "forbidden") throw new Error("当前设备无权回答审批。");
+    if (retryable(result.error)) throw new Error("审批回执未知；只能用同一选项原样重试。");
     throw new Error("审批回答被拒绝；请刷新记录。");
   }
-  let accepted;
-  try { accepted = await response.json(); }
-  catch { throw new Error("审批回执无法读取；只能原样重试。"); }
-  if (!same()) throw new Error("屏幕身份已变化，回答结果已丢弃。");
-  if (typeof accepted?.id !== "string" || !accepted.id || !Number.isSafeInteger(accepted.seq) || accepted.seq <= ask.seq)
+  const message = result.message;
+  if (typeof message?.id !== "string" || !message.id || !Number.isSafeInteger(message.seq) || message.seq <= ask.seq)
     throw new Error("审批回执无法配对；只能原样重试。");
-  const matches = (message) => message?.id === accepted.id && message.seq === accepted.seq &&
-    message.from === "person:owner" && message.to === "service:gate" && message.kind === "response" &&
-    message.word === "ask" && message.reply_to === ask.id && message.origin?.screen === screen &&
-    message.body_summary?.ok === true && message.body_summary.result?.choice === choice;
-  const deadline = now() + maxWaitMs;
-  do {
-    if (!same()) throw new Error("屏幕身份已变化，回答结果已丢弃。");
-    if (matches(lookup(accepted.id))) return { id: accepted.id, seq: accepted.seq };
-    if (now() >= deadline) break;
-    await delay(50);
-  } while (true);
-  throw new Error("回答尚未在权威记录中出现；只能用同一选项原样重试。");
+  return { id: message.id, seq: message.seq };
 }

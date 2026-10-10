@@ -6,13 +6,18 @@ const text = (parent, tag, value, className = "") => {
   return element;
 };
 
-export function workspaceFileUrl(ref) {
-  if (!ref || typeof ref.workspace !== "string" || !/^[a-z0-9_-]+$/.test(ref.workspace) || typeof ref.path !== "string" || !ref.path || ref.path.startsWith("/") || ref.path.includes("\\") || ref.path.includes("\0") || ref.path.includes("//") || ref.path.split("/").some((part) => !part || part === "." || part === "..")) return null;
-  return `/api/workspaces/${ref.workspace}/files?path=${encodeURIComponent(ref.path)}`;
+/**
+ * A file the kernel names: {workspace, path} where `workspace` says which body (see body.js) and `path` is a path on it,
+ * relative to its work directory (an absolute path is fine for a link in a message). Null when it is not a plain path.
+ */
+export function fileRef(ref) {
+  if (!ref || typeof ref.workspace !== "string" || !/^[A-Za-z0-9:_-]+$/.test(ref.workspace) || typeof ref.path !== "string" || !ref.path || ref.path.includes("\\") || ref.path.includes("\0") || ref.path.includes("//")) return null;
+  if (ref.path.split("/").slice(ref.path.startsWith("/") ? 1 : 0).some((part) => !part || part === "." || part === "..")) return null;
+  return { workspace: ref.workspace, path: ref.path };
 }
 
 /** Every action is a normal owner message or link; the card creates no private channel. */
-export function renderCard(parent, item, { onSelect, onPermission, optionPending, openWorkspaceFile, onOpenFile } = {}) {
+export function renderCard(parent, item, { onSelect, onPermission, optionPending, onOpenFile } = {}) {
   const card = item.card;
   const root = text(parent, "div", "", "card");
   if (card.type === "options") {
@@ -50,51 +55,11 @@ export function renderCard(parent, item, { onSelect, onPermission, optionPending
     return root;
   }
   if (card.type === "file" || card.type === "image") {
-    const url = workspaceFileUrl(card);
-    if (!url) return root;
-    if (onOpenFile) {
-      const button = text(root, "button", card.name || card.path.split("/").pop(), "btn gray");
-      button.type = "button"; button.onclick = () => onOpenFile(card); return root;
-    }
-    if (openWorkspaceFile) {
-      const button = text(root, "button", card.type === "image" ? "查看图片" : card.name || "打开文件", "btn gray");
-      button.type = "button";
-      button.addEventListener("click", async () => {
-        button.disabled = true;
-        try {
-          const blob = await openWorkspaceFile(card);
-          const objectUrl = URL.createObjectURL(blob);
-          if (card.type === "image") {
-            const image = document.createElement("img");
-            image.src = objectUrl;
-            image.alt = card.alt || "图片";
-            image.className = "card-image";
-            image.addEventListener("load", () => setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000), { once: true });
-            image.addEventListener("error", () => URL.revokeObjectURL(objectUrl), { once: true });
-            root.append(image);
-          } else {
-            const download = document.createElement("a");
-            download.href = objectUrl;
-            download.download = card.name || "file";
-            download.click();
-            setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-          }
-        } catch { button.title = "文件无法打开"; }
-        finally { button.disabled = false; }
-      });
-      return root;
-    }
-    if (card.type === "image") {
-      const image = document.createElement("img");
-      image.src = url;
-      image.alt = card.alt || "图片";
-      image.className = "card-image";
-      root.append(image);
-    } else {
-      const link = text(root, "a", card.name || "打开文件");
-      link.href = url;
-      link.download = card.name || "file";
-    }
+    if (!fileRef(card)) return root;
+    const button = text(root, "button", card.type === "image" ? "查看图片" : card.name || card.path.split("/").pop() || "打开文件", "btn gray");
+    button.type = "button";
+    button.disabled = typeof onOpenFile !== "function";
+    button.addEventListener("click", () => onOpenFile?.(card));
     return root;
   }
   if (card.type === "link") {

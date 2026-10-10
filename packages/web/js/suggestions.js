@@ -1,10 +1,14 @@
-const labels = Object.freeze({ activity: "活动", upcoming: "接下来", approvals: "审批", identity: "身份", memory: "记忆", settings: "设置", turn: "当前任务" });
+const labels = Object.freeze({ activity: "活动", upcoming: "接下来", approvals: "审批", identity: "身份", memory: "记忆", settings: "设置", turn: "当前任务", file: "文件" });
 
-export async function presentUiOpen(root, request, { open, respond }) {
-  const target = request?.body_summary?.target ?? request?.body?.target;
-  const mode = request?.body_summary?.mode ?? request?.body?.mode;
+/**
+ * The kernel asks this page to open a page (`chat open`, SPEC-03 §5.4). [request] is `{target, id?, mode?}`; without a mode
+ * it is an order ("perform"). A suggestion shows a small chip and answers `false` at once: the answer describes this
+ * request, not a later click. Resolves with whether the page was opened.
+ */
+export async function presentUiOpen(root, request, open) {
+  const { target, mode = "perform" } = request ?? {};
   if (!Object.hasOwn(labels, target) || !["perform", "suggest"].includes(mode)) return false;
-  if (mode === "perform") { const opened = await open(target, request); await respond(request, opened); return true; }
+  if (mode === "perform") return (await open(target, request)) === true;
   const chip = document.createElement("div");
   chip.className = "suggestion";
   const label = document.createElement("span");
@@ -19,7 +23,5 @@ export async function presentUiOpen(root, request, { open, respond }) {
   close.addEventListener("click", () => chip.remove());
   chip.append(label, show, close);
   root.replaceChildren(chip);
-  // F-S29: acknowledgement describes this request, not a future local click.
-  await respond(request, false);
-  return true;
+  return false;
 }

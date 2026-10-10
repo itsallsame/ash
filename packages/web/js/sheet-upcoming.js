@@ -11,8 +11,9 @@ const text = (parent, tag, value, className = "") => {
 const rawRoute = /\b(?:agent|worker|device|service|person):[A-Za-z0-9_-]+\b|\b[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+\b/i;
 const human = (value) => value == null || typeof value === "string" && value.length <= 160 && !rawRoute.test(value);
 
-export function normalizeClockList(reply) {
-  const timers = reply?.body?.ok === true ? reply.body.result?.timers : null;
+/** The timers of a `service:clock/list` answer (its data), checked; a malformed one is an error, never an empty list. */
+export function normalizeClockList(data) {
+  const timers = data?.timers;
   if (!Array.isArray(timers)) throw new Error("暂时读不到计划（不代表没有）。");
   if (timers.some((item) => !item || typeof item.id !== "string" || !item.id ||
     !Number.isSafeInteger(item.next) || item.next < 0 || item.next > 8_640_000_000_000_000 ||
@@ -34,7 +35,7 @@ export function repeatText(every) {
   return `每 ${every} 秒`;
 }
 
-/** Render timers returned by service:clock/list, grouped by day. onCancel must await the paired cancel response. */
+/** Render timers returned by service:clock/list, grouped by day. onCancel must await the cancel's answer. */
 export function renderUpcomingSheet(root, timers, { onCancel, now = Date.now(), name = "Ash" } = {}) {
   root.replaceChildren();
   if (!Array.isArray(timers) || !timers.length)
@@ -89,28 +90,4 @@ export function renderUpcomingSheet(root, timers, { onCancel, now = Date.now(), 
     }
   }
   return root;
-}
-
-/** A registered screen supplies send(request); transport and authorization remain in the edge. */
-export class UpcomingSheet {
-  constructor(root, send) { this.root = root; this.send = send; this.timers = []; }
-  async load() {
-    try {
-      const reply = await this.send({ to: "service:clock", kind: "request", word: "list", body: {}, wait: true });
-      this.timers = normalizeClockList(reply?.reply);
-      this.render();
-      return this.timers;
-    } catch (error) {
-      this.root.replaceChildren();
-      text(this.root, "p", error instanceof Error ? error.message : "暂时读不到计划（不代表没有）。", "sheet-error");
-      throw error;
-    }
-  }
-  async cancel(id) {
-    if (!this.timers.some((item) => item.id === id)) throw new Error("这条计划已经不在了。");
-    const reply = await this.send({ to: "service:clock", kind: "request", word: "cancel", body: { id }, wait: true });
-    if (reply?.reply?.body?.ok !== true || reply.reply.body.result?.cancelled !== true) throw new Error("没能删除，可以再试一次。");
-    return this.load();
-  }
-  render() { return renderUpcomingSheet(this.root, this.timers, { onCancel: (id) => this.cancel(id) }); }
 }
