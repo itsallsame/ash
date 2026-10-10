@@ -141,11 +141,12 @@ test("management is for the local page only", async () => {
   net.stop(); kernel.close();
 });
 
-test("the kernel's chat open is handed to the page, as a string target or an object", async () => {
+test("the kernel's chat open is handed to the page with its target, id and mode", async () => {
   const kernel = startKernel();
   const { net, events } = await ready(kernel);
-  assert.deepEqual(await kernel.present("chat", "open", { target: "settings" }), { t: "present.result", id: (await kernel.present("chat", "focus")).id.replace(/\d+$/, (n) => String(Number(n) - 1)) , ok: true, data: { opened: true } });
-  const answer = await kernel.present("chat", "open", { target: { target: "turn", id: "t1", mode: "suggest" } });
+  const first = await kernel.present("chat", "open", { target: "settings" });
+  assert.deepEqual([first.ok, first.data], [true, { opened: true }]);
+  const answer = await kernel.present("chat", "open", { target: "turn", id: "t1", mode: "suggest" });
   assert.equal(answer.ok, true);
   assert.deepEqual(events.presents, [{ target: "settings" }, { target: "turn", id: "t1", mode: "suggest" }]);
   const other = await kernel.present("notification", "hide", { id: "x" });

@@ -341,10 +341,10 @@ export class Net {
     if (frame.surface !== "chat") return { ok: false, error: { code: "unavailable", message: `${frame.surface} is not shown on this page` } };
     if (frame.op === "focus") { globalThis.focus?.(); return { ok: true, data: {} }; }
     if (frame.op !== "open") return { ok: false, error: { code: "unavailable", message: `chat ${frame.op} is not shown on this page` } };
-    // `{target}` is the string alone, or an object when there is an id or a mode as well (SPEC-03 §5.4).
-    const target = typeof frame.body.target === "string" ? { target: frame.body.target } : frame.body.target;
-    if (typeof target?.target !== "string") return { ok: false, error: { code: "bad_request", message: "no target" } };
-    return this.onPresent(target);
+    // The body is `{target, id?, mode?}` (SPEC-03 §5.4).
+    const { target, id, mode } = frame.body;
+    if (typeof target !== "string") return { ok: false, error: { code: "bad_request", message: "no target" } };
+    return this.onPresent({ target, ...(id !== undefined ? { id } : {}), ...(mode !== undefined ? { mode } : {}) });
   }
 }
 

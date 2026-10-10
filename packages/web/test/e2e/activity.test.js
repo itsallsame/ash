@@ -80,7 +80,7 @@ test(...withBrowser("the plans page lists the clock's timers and removes one onl
 
 test(...withBrowser("the kernel opens a page on the chat: an order opens it, a suggestion shows a chip that opens only when accepted", async ({ kernel, browser }) => {
   const { page } = await openPage(browser, kernel);
-  const suggested = await kernel.present("chat", "open", { target: { target: "activity", mode: "suggest" } });
+  const suggested = await kernel.present("chat", "open", { target: "activity", mode: "suggest" });
   assert.deepEqual(suggested.data, { opened: false }, "the answer describes the suggestion, not a later click");
   const chip = page.locator("#suggestions .suggestion");
   await chip.getByText("Ash 建议查看活动").waitFor();
