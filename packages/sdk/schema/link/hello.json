@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 hello frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "hello"
+    },
+    "protocol": {
+      "type": "string"
+    },
+    "hand": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "phone",
+            "computer",
+            "browser",
+            "im"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "public_key": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "version",
+        "platform"
+      ],
+      "additionalProperties": false
+    },
+    "channels": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "object",
+          "properties": {}
+        },
+        "human": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "surfaces": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "chat",
+                  "notification",
+                  "island",
+                  "widget",
+                  "status"
+                ]
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "agent": {
+          "type": "object",
+          "properties": {
+            "runtimes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "sig": {
+      "type": "string",
+      "minLength": 1
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "t",
+    "protocol",
+    "hand",
+    "channels"
+  ],
+  "additionalProperties": false,
+  "if": {
+    "required": [
+      "hand"
+    ],
+    "properties": {
+      "hand": {
+        "required": [
+          "public_key"
+        ]
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "sig"
+    ]
+  }
+}

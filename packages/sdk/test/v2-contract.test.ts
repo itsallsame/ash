@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { API_VERSION, API_VERSION_V2, AUTH_SCOPE_EVENT, MESSAGE_SUMMARY_EVENT, POST_DELIVERY_SNAPSHOT_EVENT, SCREEN_REGISTRATION_EVENT, SCREEN_REGISTRATION_TTL_MS, SCREEN_TOKEN_HEADER, STREAM_ERROR_EVENT, STREAM_PAGE_END_EVENT, STREAM_RAW_PAGE_BYTES, STREAM_SUMMARY_CONTROL_RESERVE_BYTES, STREAM_SUMMARY_ITEM_BYTES, STREAM_SUMMARY_PAGE_BYTES, SummaryPageBudgetV2, isAuthScopeControlV2, isMessageSummaryV2, isScreenRegistration, isStreamErrorV2, isStreamPageEndV2, type ClockFiredBodyV2, type JsonSchema, type Message, type MessageSummaryV2, type PostDeliveryBodyV2, type PostDeliverySnapshotV2, type ScreenUiOpenAnswerV2, type SendRequestV2, type StreamQueryV2 } from "../src/api";
 import { DEFAULT_WORLD_CONFIG_V2, resolveWorldConfigV2, WORLD_CONFIG_SCHEMA_V2 } from "../src/config";
-import { HOST_ROUTES_V2 } from "../src/host";
+import { HOST_ROUTES_V2 } from "../src/legacy/host";
 import { RUNTIME_CONTRACT_V2 } from "../src/runtime-contract";
 import { matchesSchema } from "../src/schema";
 import { workerResultErrors } from "../src/worker-validation";

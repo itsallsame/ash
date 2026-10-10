@@ -1,0 +1,9 @@
+{
+  "name": "clipboard.read",
+  "description": "Read the clipboard",
+  "input_schema": {
+    "type": "object"
+  },
+  "effect": "read",
+  "risk": "none"
+}

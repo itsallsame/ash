@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 assessed frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "assessed"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "none",
+        "outward",
+        "structure"
+      ]
+    },
+    "why": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "t",
+    "id",
+    "risk"
+  ],
+  "additionalProperties": false
+}

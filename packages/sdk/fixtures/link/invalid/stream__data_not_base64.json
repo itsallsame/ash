@@ -1,0 +1,7 @@
+{
+  "t": "stream",
+  "sid": "st1",
+  "op": "data",
+  "seq": 0,
+  "b64": "not base64 !!"
+}

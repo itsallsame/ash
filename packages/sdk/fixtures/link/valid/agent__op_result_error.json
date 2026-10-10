@@ -1,0 +1,10 @@
+{
+  "t": "agent",
+  "id": "g1",
+  "op_result": "send",
+  "ok": false,
+  "error": {
+    "code": "conflict",
+    "message": "busy"
+  }
+}

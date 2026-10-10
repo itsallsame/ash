@@ -1,0 +1,9 @@
+{
+  "t": "sync",
+  "ch": "human",
+  "sid": "y1",
+  "after": 100,
+  "limit": 50,
+  "follow": true,
+  "summary": true
+}

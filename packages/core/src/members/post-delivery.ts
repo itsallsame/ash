@@ -1,6 +1,6 @@
 import type { Message, ResponseBody, WordSpec } from "../../../sdk/src/api";
 import type { WorldConfigV2 } from "../../../sdk/src/config";
-import { hostPresentationErrors, type HostAlertV2, type HostPresentationV2 } from "../../../sdk/src/host";
+import { hostPresentationErrors, type HostAlertV2, type HostPresentationV2 } from "../../../sdk/src/legacy/host";
 import { wordContract } from "../../../sdk/src/words";
 import type { Member } from "../world/member";
 import type { Ledger } from "../world/ledger";

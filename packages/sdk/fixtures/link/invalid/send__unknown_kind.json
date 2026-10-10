@@ -1,0 +1,11 @@
+{
+  "t": "send",
+  "ch": "human",
+  "id": "s1",
+  "request": {
+    "to": "agent:main",
+    "kind": "shout",
+    "word": "say",
+    "body": {}
+  }
+}

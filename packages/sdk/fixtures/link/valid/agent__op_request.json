@@ -1,0 +1,6 @@
+{
+  "t": "agent",
+  "id": "g1",
+  "op": "session.new",
+  "key": "front"
+}

@@ -1,0 +1,15 @@
+{
+  "t": "send",
+  "ch": "human",
+  "id": "s1",
+  "request": {
+    "to": "agent:main",
+    "kind": "request",
+    "word": "say",
+    "body": {
+      "text": "hi"
+    },
+    "client_id": "c-1",
+    "wait": false
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "protocol": "ash-link/1",
+  "limits": {
+    "frameBytes": 4194304,
+    "streamChunkBytes": 262144,
+    "inflightCalls": 16,
+    "heartbeatMs": 30000,
+    "silenceMs": 90000,
+    "assessMs": 10000
+  },
+  "close_codes": {
+    "normal": 1000,
+    "unauthenticated": 4001,
+    "revoked": 4003,
+    "unsupported": 4008,
+    "superseded": 4009,
+    "badFrame": 4400,
+    "internal": 4500
+  },
+  "no_reconnect": [
+    4003,
+    4008,
+    4009
+  ],
+  "agent_ops": [
+    "agent.start",
+    "agent.stop",
+    "agent.list",
+    "session.get",
+    "session.set",
+    "session.new",
+    "session.reload",
+    "session.compact",
+    "send",
+    "followup",
+    "steer",
+    "inject",
+    "interrupt",
+    "restart",
+    "configure",
+    "config.get",
+    "plugins"
+  ],
+  "frames": {
+    "challenge": {
+      "file": "challenge.json",
+      "channel": null,
+      "from": "kernel"
+    },
+    "hello": {
+      "file": "hello.json",
+      "channel": null,
+      "from": "hand"
+    },
+    "welcome": {
+      "file": "welcome.json",
+      "channel": null,
+      "from": "kernel"
+    },
+    "ping": {
+      "file": "ping.json",
+      "channel": null,
+      "from": "both"
+    },
+    "pong": {
+      "file": "pong.json",
+      "channel": null,
+      "from": "both"
+    },
+    "error": {
+      "file": "error.json",
+      "channel": null,
+      "from": "both"
+    },
+    "stream": {
+      "file": "stream.json",
+      "channel": null,
+      "from": "both"
+    },
+    "manifest": {
+      "file": "manifest.json",
+      "channel": "device",
+      "from": "hand"
+    },
+    "manifest.ack": {
+      "file": "manifest.ack.json",
+      "channel": "device",
+      "from": "kernel"
+    },
+    "event": {
+      "file": "event.json",
+      "channel": "device",
+      "from": "hand"
+    },
+    "event.ack": {
+      "file": "event.ack.json",
+      "channel": "device",
+      "from": "kernel"
+    },
+    "call": {
+      "file": "call.json",
+      "channel": "device",
+      "from": "kernel"
+    },
+    "progress": {
+      "file": "progress.json",
+      "channel": "device",
+      "from": "hand"
+    },
+    "result": {
+      "file": "result.json",
+      "channel": "device",
+      "from": "hand"
+    },
+    "cancel": {
+      "file": "cancel.json",
+      "channel": "device",
+      "from": "kernel"
+    },
+    "assess": {
+      "file": "assess.json",
+      "channel": "device",
+      "from": "kernel"
+    },
+    "assessed": {
+      "file": "assessed.json",
+      "channel": "device",
+      "from": "hand"
+    },
+    "send": {
+      "file": "send.json",
+      "channel": "human",
+      "from": "hand"
+    },
+    "send.result": {
+      "file": "send.result.json",
+      "channel": "human",
+      "from": "kernel"
+    },
+    "sync": {
+      "file": "sync.json",
+      "channel": "human",
+      "from": "hand"
+    },
+    "sync.page": {
+      "file": "sync.page.json",
+      "channel": "human",
+      "from": "kernel"
+    },
+    "sync.msg": {
+      "file": "sync.msg.json",
+      "channel": "human",
+      "from": "kernel"
+    },
+    "sync.close": {
+      "file": "sync.close.json",
+      "channel": "human",
+      "from": "hand"
+    },
+    "presence": {
+      "file": "presence.json",
+      "channel": "human",
+      "from": "hand"
+    },
+    "present": {
+      "file": "present.json",
+      "channel": "human",
+      "from": "kernel"
+    },
+    "present.result": {
+      "file": "present.result.json",
+      "channel": "human",
+      "from": "hand"
+    },
+    "agent": {
+      "file": "agent.json",
+      "channel": "agent",
+      "from": "both"
+    }
+  }
+}

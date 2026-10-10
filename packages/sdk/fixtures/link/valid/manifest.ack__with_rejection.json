@@ -1,0 +1,11 @@
+{
+  "t": "manifest.ack",
+  "rev": 7,
+  "accepted": true,
+  "rejected": [
+    {
+      "name": "bad",
+      "reason": "name must be <namespace>.<action>"
+    }
+  ]
+}

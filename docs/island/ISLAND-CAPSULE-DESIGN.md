@@ -8,7 +8,7 @@
 |---|---|
 | `island.html` | **可运行的参考实现**（纯 HTML/CSS/JS，无依赖）。浏览器打开即可点完整流程。上半部分是组件（`mountIsland` / `renderIsland`），下半部分是演示用手机框，接入时删掉。样式、尺寸、动效、交互以它为准。 |
 | `island-tokens.json` | 尺寸、颜色、字号、动效、头像映射的单一来源，原生实现直接照抄。 |
-| `avatars/` | 同 `packages/core/ui/avatars`，`island.html` 用相对路径 `./avatars/` 引用。 |
+| `avatars/` | 同 `packages/web/avatars`，`island.html` 用相对路径 `./avatars/` 引用。 |
 
 两种复用路线，由实现方选：
 
@@ -79,7 +79,7 @@
 停止任务（仅执行中，红色，左对齐）      回到 Ash    关闭
 ```
 
-- 头像用 `packages/core/ui/avatars/*.webp`，按状态换脸：listening→listening，thinking→thinking，working/approval→focused，result→success，其余→default。
+- 头像用 `packages/web/avatars/*.webp`，按状态换脸：listening→listening，thinking→thinking，working/approval→focused，result→success，其余→default。
 - 输入框发送 = 给 agent:main 发普通消息；回答 ask 的选项 = 回复对应请求（reply_to），Agent 再继续。
 - 所有可点元素 ≥ 44dp；图标按钮带 contentDescription。
 

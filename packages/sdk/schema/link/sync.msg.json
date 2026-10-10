@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 sync.msg frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "sync.msg"
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "message": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "t",
+    "sid",
+    "message"
+  ],
+  "additionalProperties": false
+}

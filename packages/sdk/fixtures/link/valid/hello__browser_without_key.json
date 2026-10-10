@@ -1,0 +1,17 @@
+{
+  "t": "hello",
+  "protocol": "ash-link/1",
+  "hand": {
+    "kind": "browser",
+    "name": "Browser",
+    "version": "1",
+    "platform": "web"
+  },
+  "channels": {
+    "human": {
+      "surfaces": [
+        "chat"
+      ]
+    }
+  }
+}

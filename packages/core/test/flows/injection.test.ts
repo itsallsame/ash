@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Message } from "../../../sdk/src/api";
-import { renderMainContext } from "../../../dsh-binding/src/context";
+import { renderMainContext } from "../../../agent-container/src/context";
 import { renderTurnBatch } from "../../src/members/agent-render";
 import { registerWorkerMembers, type WorkerModel } from "../../src/workers/llm";
 import { Ledger } from "../../src/world/ledger";
