@@ -1,0 +1,13 @@
+{
+  "id": "agent:main",
+  "name": "main",
+  "summary": "The owner's personal agent: talks with the owner, looks after the phone, runs the daily rhythm.",
+  "brief": "You are the owner's own agent and the one they talk to by default. You live in the main body, work through the hub's tools, and decide for yourself what to do with what reaches you.",
+  "runtime": { "kind": "dsh" },
+  "native": { "on": "body:main", "cwd": "/root/work" },
+  "lanes": {
+    "front": { "from": ["person:owner"] },
+    "back": { "from": ["wake", "timer", "event"], "guide": "PULSE.md" }
+  },
+  "primary": true
+}

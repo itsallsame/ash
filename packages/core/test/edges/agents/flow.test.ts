@@ -1,0 +1,308 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { WordError } from "../../../../sdk/src/message";
+import { caller, fixture, OWNER, settle, waitFor, type FakeDriver } from "./helpers";
+
+const M = "agent:main";
+const sends = (d: FakeDriver, key?: string) => d.of("send").filter((c) => !key || c[2] === key);
+const texts = (call: unknown[]) => (call[3] as { text: string }[]).map((m) => m.text);
+
+test("first start of an empty table plants the main declaration (primary), starts it, and registers its words", async () => {
+  const f = fixture();
+  await f.start();
+  const runs = f.agents.manager.runs.list();
+  assert.deepEqual(runs.map((r) => [r.id, r.spec.decl.primary]), [[M, true]]);
+  const started = f.driver().of("start")[0]!;
+  assert.equal(started[1], M);
+  const spec = started[2] as any;
+  assert.deepEqual(spec.lanes, ["front", "back"]);
+  assert.deepEqual(spec.native, { on: "body:main", cwd: "/root/work" });
+  assert.deepEqual(spec.tools, { mcp_url: "http://hub/mcp", token: `tok-${M}`, allowed: ["*"] });
+  assert.deepEqual(spec.modules.static.map((m: any) => m.id), ["identity", "rules"]);
+  assert.match(spec.modules.static[0].content, /soul v1/);
+  assert.match(spec.modules.static[1].content, /rules v1[\s\S]*You are main\./);
+  assert.deepEqual(f.registry.find(M, "say")?.member.words().filter((w) => w.kind === "request").map((w) => w.word).sort(), ["ask", "say", "tell", "wake"]);
+  assert.equal(f.registry.members.get(M)?.kind, "agent");
+  // the handles the driver reports are kept, and a restart of the hub does not plant a second one and resumes them
+  const handles = f.agents.manager.runs.get(M)!.spec.sessions;
+  assert.deepEqual(Object.keys(handles), ["front", "back"]);
+  const g = fixture({ from: f });
+  await g.start();
+  assert.equal(g.agents.manager.runs.list().length, 1);
+  assert.deepEqual((g.driver().of("start")[0]![2] as any).sessions, handles);
+});
+
+test("without the main template the module refuses to start rather than plant nothing", async () => {
+  const f = fixture({ templates: { main: null } });
+  await assert.rejects(f.agents.startAll(), /main template/);
+});
+
+test("the owner's words go to the front lane and a wake to the back lane; the two run at once, a lane takes one batch at a time", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "say", { text: "hello" });
+  await f.call(M, "wake", { reason: "pulse", context: { why: 1 } }, caller("service:pulse", "service"));
+  await waitFor(() => sends(d).length === 2);
+  assert.deepEqual(sends(d, "front").map(texts), [["hello"]]);
+  assert.match(texts(sends(d, "back")[0]!)[0]!, /^Wake · pulse\n\{"why":1\}$/);
+  assert.equal(sends(d, "front")[0]![3] && (sends(d, "front")[0]![3] as any)[0].from, "person:owner");
+  // a second wake on the busy back lane is queued behind the turn, not a second send
+  await f.call(M, "tell", { text: "news" }, caller("agent:other"));
+  await settle();
+  assert.equal(sends(d).length, 2);
+  assert.equal(d.of("followup").length, 1);
+  assert.equal((d.of("followup")[0]![3] as any)[0].text, "news");
+  assert.equal(f.router.to("service:reflex", "conversation.control").length, 0); // not the owner: no judgement needed
+});
+
+test("a wake can name its lane; an unknown lane falls to back; the sender and timers pick lanes by the declaration", async () => {
+  const f = fixture();
+  await f.start();
+  const decl = f.agents.manager.run(M).spec.decl;
+  const m = f.agents.manager;
+  assert.equal(m.laneFor(decl, "person:owner", "say", "request"), "front");
+  assert.equal(m.laneFor(decl, "service:clock", "tell", "request"), "back");
+  assert.equal(m.laneFor(decl, "app:health", "wake", "request", "front"), "front");
+  assert.equal(m.laneFor(decl, "app:health", "wake", "request", "nope"), "back");
+  assert.equal(m.laneFor(decl, "agent:x", "tell", "request"), "back");
+});
+
+test("the owner speaks while the lane is busy: the reflex judgement decides", async () => {
+  for (const [action, steered, check] of [
+    ["steer", true, (d: FakeDriver) => assert.deepEqual(d.of("steer").map((c) => c[3]), ["second"])],
+    ["steer", false, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
+    ["followup", true, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
+    ["pause", true, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
+    [undefined, true, (d: FakeDriver) => assert.equal(d.of("followup").length, 1)],
+  ] as const) {
+    const f = fixture();
+    await f.start();
+    const d = f.driver();
+    d.steerResult = steered;
+    if (action) f.router.on("service:reflex/conversation.control", () => ({ ok: true, result: { data: { action } } }));
+    await f.call(M, "say", { text: "first" });
+    await waitFor(() => sends(d).length === 1);
+    const second = await f.call(M, "say", { text: "second" });
+    assert.deepEqual(second, { data: { accepted: true } });
+    await settle();
+    check(d);
+    const asked = f.router.to("service:reflex", "conversation.control");
+    assert.equal(asked.length, 1);
+    assert.deepEqual(asked[0]!.msg.body, { message_id: f.agents.manager.inbox.pending(M, "front").concat(f.ledger.db().prepare("SELECT id FROM agent_inbox WHERE text='second'").all().map((r: any) => ({ id: r.id }) as any))[0]!.id, agent: M, lane: "front" });
+    assert.equal(sends(d).length, 1);
+  }
+});
+
+test("interrupt: the new words wait, the cancelled turn ends, and they open the next turn", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  f.router.on("service:reflex/conversation.control", () => ({ ok: true, result: { data: { action: "interrupt" } } }));
+  await f.call(M, "say", { text: "first" });
+  await waitFor(() => sends(d).length === 1);
+  await f.call(M, "say", { text: "stop that, do this" });
+  await waitFor(() => d.of("interrupt").length === 1);
+  assert.equal(sends(d).length, 1);
+  d.finish(M, "front", "cancelled");
+  await waitFor(() => sends(d).length === 2);
+  assert.deepEqual(texts(sends(d)[1]!), ["stop that, do this"]);
+});
+
+test("what an agent says: front speech goes to the owner as that agent, back speech does not; tools and turns become events; thoughts none", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "say", { text: "hi" });
+  await waitFor(() => sends(d).length === 1);
+  d.say(M, "front", "hello owner");
+  d.tool(M, "front", "read_file");
+  d.report({ event: "thought", agent: M, key: "front", turn: "x", text: "thinking" });
+  d.finish(M, "front");
+  await f.call(M, "wake", { reason: "r" }, caller("service:pulse", "service"));
+  await waitFor(() => sends(d).length === 2);
+  d.say(M, "back", "quiet words");
+  d.finish(M, "back");
+  await settle();
+  assert.deepEqual(f.router.says(), [{ from: M, text: "hello owner" }]);
+  assert.equal(f.router.to("person:owner", "say")[0]!.caller.via, "agent");
+  assert.equal(f.router.events("agent.tool").length, 1);
+  assert.deepEqual(f.router.events("agent.tool")[0]!.msg.body, { turn: f.router.events("agent.tool")[0]!.caller.turn, name: "read_file", phase: "start", summary: "s" });
+  assert.equal(f.router.events("turn.started").length, 2);
+  assert.deepEqual(f.router.events("turn.ended").map((e) => (e.msg.body as any).lane), ["front", "back"]);
+  assert.ok(f.router.sent.every((s) => s.msg.word !== "thought"));
+});
+
+test("a lane with on: [front:turn.ended] and speak: false runs after the front turn, and its words stay private", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  await f.service("declare", { id: "agent:r", name: "r", summary: "reflective", brief: "reflect",
+    lanes: { front: { from: ["person:owner"] }, reflect: { on: ["front:turn.ended"], guide: "REFLECT.md", speak: false } } });
+  await settle();
+  await f.call("agent:r", "say", { text: "hi" });
+  await waitFor(() => sends(d, "front").length === 1);
+  d.say("agent:r", "front", "answer");
+  d.finish("agent:r", "front");
+  await waitFor(() => sends(d, "reflect").length === 1);
+  assert.match(texts(sends(d, "reflect")[0]!)[0]!, /Lane front finished a turn \(completed\)/);
+  d.say("agent:r", "reflect", "private thought");
+  d.finish("agent:r", "reflect"); // ending a lane started by `on` does not start another
+  await settle();
+  assert.deepEqual(f.router.says(), [{ from: "agent:r", text: "answer" }]);
+  assert.equal(sends(d, "reflect").length, 1);
+});
+
+test("front and back run at the same time while each lane is one turn at a time", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  await f.call(M, "say", { text: "a" });
+  await f.call(M, "wake", { reason: "b" }, caller("service:pulse", "service"));
+  await waitFor(() => sends(d).length === 2);
+  assert.ok(d.running.has(`${M}/front`) && d.running.has(`${M}/back`));
+  d.finish(M, "front");
+  await settle();
+  assert.ok(!d.running.has(`${M}/front`) && d.running.has(`${M}/back`));
+  await f.call(M, "say", { text: "c" });
+  await waitFor(() => sends(d, "front").length === 2);
+});
+
+test("quota: over the limit no turn opens and the owner hears once; offline cost lets it through; a later poll opens the turn", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  let allowed = false;
+  f.router.on("service:cost/quota.check", () => ({ ok: true, result: { data: { allowed, reason: "今天的额度用完了", used: 5, limit: 5 } } }));
+  await f.call(M, "say", { text: "one" });
+  await settle();
+  await f.call(M, "say", { text: "two" });
+  await settle();
+  assert.equal(sends(d).length, 0);
+  assert.deepEqual(f.router.says().filter((s) => s.from === "service:agents").map((s) => s.text), ["今天的额度用完了"]);
+  allowed = true;
+  f.timers.everies[0]!.fn(); // the poll: numbers may have changed, so waiting lanes try again
+  await waitFor(() => sends(d).length === 1);
+  assert.deepEqual(texts(sends(d)[0]!), ["one", "two"]); // both waited; one batch
+  // no cost service at all: go ahead
+  const g = fixture();
+  await g.start();
+  await g.call(M, "say", { text: "x" });
+  await waitFor(() => g.driver().of("send").length === 1);
+});
+
+test("a process that dies is started again and its sessions resumed; the third failure in a row stops it and tells the owner", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  const handles = f.agents.manager.runs.get(M)!.spec.sessions;
+  d.die(M);
+  await waitFor(() => d.of("start").length === 2);
+  assert.deepEqual((d.of("start")[1]![2] as any).sessions, handles);
+  assert.ok(f.registry.members.has(M));
+  d.die(M);
+  await waitFor(() => d.of("start").length === 3);
+  d.die(M);
+  await settle();
+  assert.equal(d.of("start").length, 3);
+  assert.ok(!f.registry.members.has(M));
+  assert.equal(f.agents.manager.stateOf(M), "error");
+  assert.match(f.router.says().at(-1)!.text, /起不来了/);
+  // a process that ran for a good while before it died does not count against the three
+  const g = fixture();
+  await g.start();
+  g.clock.t += 5 * 60_000;
+  g.driver().die(M);
+  await waitFor(() => g.driver().of("start").length === 2);
+  g.clock.t += 5 * 60_000;
+  g.driver().die(M);
+  await waitFor(() => g.driver().of("start").length === 3);
+  g.driver().die(M);
+  await waitFor(() => g.driver().of("start").length === 4);
+});
+
+test("a start that fails is tried again; three failures give up", async () => {
+  const f = fixture();
+  f.drivers; // created on first use
+  await f.agents.startAll().catch(() => {});
+  await f.agents.stopAll();
+  const g = fixture({ from: f });
+  await g.agents.startAll();
+  assert.equal(g.agents.manager.stateOf(M), "idle");
+  const h = fixture({ from: f });
+  h.agents.manager.driver("dsh");
+  (h.drivers[0] as FakeDriver).startFailures = 3;
+  await h.agents.startAll();
+  assert.equal(h.drivers[0]!.of("start").length, 3);
+  assert.equal(h.agents.manager.stateOf(M), "error");
+  assert.match(h.router.says().at(-1)!.text, /起不来了/);
+  const i = fixture({ from: f });
+  i.agents.manager.driver("dsh");
+  (i.drivers[0] as FakeDriver).startFailures = 2;
+  await i.agents.startAll();
+  assert.equal(i.agents.manager.stateOf(M), "idle");
+});
+
+test("the hub restarts in the middle of a turn: that batch is not sent again; the agent is told it was cut off; waiting messages still go", async () => {
+  const f = fixture();
+  await f.start();
+  await f.call(M, "say", { text: "do the long thing" });
+  await waitFor(() => sends(f.driver()).length === 1);
+  // "queued" was handed to the driver behind the turn but never started
+  const m = f.agents.manager;
+  m.inbox.add({ id: "m_q", agent: M, lane: "front", from: "person:owner", word: "say", text: "queued one", attachments: [], at: 1 });
+  m.inbox.mark(["m_q"], "sent");
+  m.inbox.add({ id: "m_w", agent: M, lane: "front", from: "person:owner", word: "say", text: "never delivered", attachments: [], at: 2 });
+  const g = fixture({ from: f });
+  await g.start();
+  const d = g.driver();
+  await waitFor(() => sends(d).length === 2);
+  const back = texts(sends(d, "back")[0]!)[0]!;
+  assert.match(back, /上一轮中断了（当时在处理：do the long thing）/);
+  assert.deepEqual(texts(sends(d, "front")[0]!), ["queued one", "never delivered"]);
+  assert.equal(g.agents.manager.inbox.get(f.agents.manager.inbox.pending(M, "front")[0]?.id ?? "x"), null);
+  const old = g.ledger.db().prepare("SELECT state FROM agent_inbox WHERE text='do the long thing'").get() as { state: string };
+  assert.equal(old.state, "interrupted");
+});
+
+test("ask: the answer is what the agent said in the turn that took the question; answer can give it earlier; tell's answer goes back to the sender", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  const pending = f.call(M, "ask", { text: "what time is it" }, caller("agent:other")) as Promise<any>;
+  await waitFor(() => sends(d, "back").length === 1);
+  d.say(M, "back", "noon");
+  d.say(M, "back", "sharp");
+  d.finish(M, "back");
+  assert.deepEqual(await pending, { data: { answer: "noon\n\nsharp" } });
+  assert.deepEqual(f.router.says(), []); // a back lane does not talk to the owner
+
+  const early = f.call(M, "ask", { text: "again?" }, caller("agent:other")) as Promise<any>;
+  await waitFor(() => sends(d, "back").length === 2);
+  const msgId = (sends(d, "back")[1]![3] as any)[0].id;
+  await f.service("answer", { in_reply_to: msgId, text: "yes now" }, caller(M));
+  assert.deepEqual(await early, { data: { answer: "yes now" } });
+  d.finish(M, "back");
+
+  await f.call(M, "tell", { text: "fyi" }, caller("agent:other"));
+  await waitFor(() => sends(d, "back").length === 3);
+  const tellId = (sends(d, "back")[2]![3] as any)[0].id;
+  await f.service("answer", { in_reply_to: tellId, text: "thanks" }, caller(M));
+  const back = f.router.to("agent:other", "tell");
+  assert.equal((back[0]!.msg.body as any).text, "thanks");
+  assert.equal(back[0]!.caller.member, M);
+  await assert.rejects(f.service("answer", { in_reply_to: tellId, text: "x" }, caller("agent:stranger")), (e: any) => e instanceof WordError && e.code === "not_found");
+});
+
+test("an ask whose turn is cancelled fails; asking a stopped agent is offline", async () => {
+  const f = fixture();
+  await f.start();
+  const d = f.driver();
+  const pending = f.call(M, "ask", { text: "q" }, caller("agent:other")) as Promise<any>;
+  await waitFor(() => sends(d, "back").length === 1);
+  d.finish(M, "back", "cancelled");
+  await assert.rejects(pending, (e: any) => e.code === "cancelled");
+  await f.service("stop", { agent: M });
+  assert.ok(!f.registry.members.has(M));
+  await assert.rejects(f.service("ask", { agent: M, text: "q" }, caller("agent:other")), (e: any) => e.code === "offline");
+});

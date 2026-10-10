@@ -111,3 +111,40 @@ test("usage reads the collector ash-cost provides through DSH's service registry
   const out = await createAshMethods(ctxWith(provided))["_ash/usage"]({ since: Date.now() + 1000 });
   assert.deepEqual(out.records, []);
 });
+
+/** The agents DSH holds (ctx.agents) and a compaction service shaped like dsh-compaction's. */
+function compactCtx(opts: { status?: string; result?: unknown; error?: unknown; noAgent?: boolean; noService?: boolean }) {
+  const calls: unknown[][] = [];
+  const agent = { status: opts.status ?? "idle" };
+  const compaction = { compactNow: async (...args: unknown[]) => { calls.push(args); if (opts.error) throw opts.error; return opts.result ?? null; } };
+  return { calls, agent, ctx: { agents: { get: (id: string) => (opts.noAgent || id !== "s1" ? undefined : agent) }, get: (name: string) => (name === "compaction" && !opts.noService ? compaction : undefined) } };
+}
+
+test("compact is declared as injected, and compacts an idle session the way /compact does", async () => {
+  assert.ok(inject.includes("compaction"));
+  const c = compactCtx({ result: { shadowedSeqs: [1, 2, 3], shadowedTokenCount: 900, summarySeq: 4 } });
+  const out = await createAshMethods(c.ctx)["_ash/compact"]({ sessionId: "s1" });
+  assert.deepEqual(out, { compacted: true, shadowed: 3, tokens: 900, detail: "compacted 3 history items (~900 tokens)" });
+  assert.equal(c.calls[0]![0], c.agent);
+  assert.ok(c.calls[0]![1] instanceof AbortSignal);
+});
+
+test("compact: nothing to compact is a normal answer", async () => {
+  const out = await createAshMethods(compactCtx({ result: null }).ctx)["_ash/compact"]({ sessionId: "s1" });
+  assert.equal(out.compacted, false);
+});
+
+test("compact: a session in a turn, or a compaction already running, answers busy (-32002) and compacts nothing", async () => {
+  const running = compactCtx({ status: "running" });
+  await assert.rejects(createAshMethods(running.ctx)["_ash/compact"]({ sessionId: "s1" }), fail(-32002));
+  assert.equal(running.calls.length, 0);
+  const racing = compactCtx({ error: Object.assign(new Error("x"), { code: "busy" }) });
+  await assert.rejects(createAshMethods(racing.ctx)["_ash/compact"]({ sessionId: "s1" }), fail(-32002));
+});
+
+test("compact: bad session, missing service and other failures", async () => {
+  await assert.rejects(createAshMethods(compactCtx({}).ctx)["_ash/compact"]({}), fail(-32602));
+  await assert.rejects(createAshMethods(compactCtx({}).ctx)["_ash/compact"]({ sessionId: "nope" }), fail(-32602));
+  await assert.rejects(createAshMethods(compactCtx({ noService: true }).ctx)["_ash/compact"]({ sessionId: "s1" }), fail(-32603));
+  await assert.rejects(createAshMethods(compactCtx({ error: Object.assign(new Error("m"), { code: "summary" }) }).ctx)["_ash/compact"]({ sessionId: "s1" }), (e: any) => e.code === -32603 && /summary/.test(e.message));
+});

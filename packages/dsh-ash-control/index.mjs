@@ -1,17 +1,19 @@
 // ACP superset for ash: the official ACP bridge keeps every standard method; this plugin owns stdin/stdout,
 // answers ash's extension methods (_ash/steer, _ash/inject, _ash/plugins, _ash/credentials.has, _ash/credentials.set,
-// _ash/usage) through the live Agent and DSH's own services, and passes everything else through.
+// _ash/usage, _ash/compact) through the live Agent and DSH's own services, and passes everything else through.
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 
 export const name = "dsh-ash-control";
-export const inject = ["agents", "llm", "sessionPersistence", "sessions", "acpAppStartup"];
+export const inject = ["agents", "llm", "sessionPersistence", "sessions", "acpAppStartup", "compaction"];
 
 const CREDENTIAL_REF = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_SECRET = 8192;
 const BALANCE_TIMEOUT_MS = 5000;
+/** Answered to `_ash/compact` when the session is not idle; ash waits for the turn to end and asks again. */
+const BUSY = -32002;
 
 class RpcError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -23,6 +25,7 @@ const unavailable = (message) => new RpcError(-32603, message);
  * The extension methods that need only DSH's services, not the ACP stream: ash asks whether DSH holds a key, hands it
  * one, and pulls the usage ash-cost recorded. Each takes the request params and returns the result, or throws RpcError.
  * No method ever returns a credential value, and none writes one to a log.
+ * `_ash/compact` is the same path as DSH's own /compact command: its `compaction` service's compactNow, on an idle agent.
  */
 export function createAshMethods(ctx) {
   // Looked up per call, like the plugin manager: a missing service fails that one method, never the ACP bridge.
@@ -37,6 +40,25 @@ export function createAshMethods(ctx) {
     return ref;
   };
   return {
+    // {sessionId} -> {compacted, shadowed?, tokens?, detail?}: compact an idle session once. A session in a turn answers
+    // BUSY. Nothing worth compacting is a normal answer (compacted: false), not an error.
+    "_ash/compact": async (params) => {
+      const sessionId = params?.sessionId;
+      if (typeof sessionId !== "string" || !sessionId) throw invalid("sessionId is required");
+      const agent = ctx.agents?.get?.(sessionId);
+      if (!agent) throw invalid(`unknown session: ${sessionId}`);
+      const compaction = ctx.get?.("compaction") ?? ctx.compaction;
+      if (!compaction || typeof compaction.compactNow !== "function") throw unavailable("compaction service unavailable");
+      if (agent.status === "running") throw new RpcError(BUSY, "busy: the session is in a turn");
+      let result;
+      try { result = await compaction.compactNow(agent, new AbortController().signal); } catch (error) {
+        if (error?.code === "busy") throw new RpcError(BUSY, "busy: compaction is already running or the agent is not idle");
+        throw unavailable(`compaction failed: ${String(error?.code ?? error?.message ?? error).replace(/\s+/g, " ").slice(0, 120)}`);
+      }
+      if (!result) return { compacted: false, detail: "nothing to compact yet" };
+      return { compacted: true, shadowed: result.shadowedSeqs?.length ?? 0, tokens: result.shadowedTokenCount ?? 0,
+        detail: `compacted ${result.shadowedSeqs?.length ?? 0} history items (~${result.shadowedTokenCount ?? 0} tokens)` };
+    },
     // {ref} -> {has, source?, writable?}: whether DSH has this key, which source supplies it, and whether ash may
     // replace it. DSH's describe() answers from metadata, so the value is never read.
     "_ash/credentials.has": async (params) => {
