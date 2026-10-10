@@ -1,7 +1,7 @@
 package ai.ash.apps
 
-import ai.ash.host.apps.AppPins
 import ai.ash.host.apps.AppsHost
+import ai.ash.ui.HomeActivity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -47,8 +47,6 @@ class AshUnavailable(message: String) : Exception(message)
  */
 object Ash {
     private const val TAG = "ash.apps"
-
-    fun installed(ctx: Context): Boolean = true
 
     class Reply(val status: Int, val type: String, val body: String, val bytes: ByteArray?) {
         val ok get() = status in 200..299
@@ -105,19 +103,8 @@ object Ash {
         }
     }
 
-    /**
-     * 「添加到桌面」 as a shortcut of the app itself (see [AppPins]): PIN_ASKED, PIN_UNSUPPORTED or PIN_FAILED. 0 never
-     * comes back now; Pin still reads it as "Ash cannot do it".
-     */
-    fun requestPin(ctx: Context, id: String, name: String, icon: Bitmap?, result: android.content.IntentSender): Int =
-        AppPins.request(ctx.applicationContext, id, name, icon?.takeIf { it.width in 1..1024 && it.height in 1..1024 }, result)
-
-    /** Whether the app's shortcut is on the home screen (false when it cannot be told). */
-    fun pinned(ctx: Context, id: String): Boolean = AppPins.pinned(ctx.applicationContext, id)
-
     /** Ash's own screen: where the owner approves an app. */
     fun open(ctx: Context) {
-        val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return
-        ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        ctx.startActivity(Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }

@@ -169,9 +169,6 @@
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
             </intent-filter>
         </activity>
-        <!-- Ash's home-screen shortcut for one of the owner's apps (the second way to pin one): hands it to the apps shell. -->
-        <activity android:name=".host.apps.AppShortcutActivity" android:exported="true"
-            android:theme="@android:style/Theme.NoDisplay" android:taskAffinity="" android:excludeFromRecents="true" android:noHistory="true" />
 
         <!-- Brings Ash's task back as it was left (after the keep-alive switches), or opens Ash if it had no task. -->
         <activity android:name=".host.screen.ReturnActivity" android:exported="false"
@@ -273,6 +270,7 @@
             android:name=".apps.MainActivity"
             android:exported="true"
             android:label="Ash 应用"
+            android:taskAffinity="ai.ash.apps"
             android:theme="@style/AppsShell">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

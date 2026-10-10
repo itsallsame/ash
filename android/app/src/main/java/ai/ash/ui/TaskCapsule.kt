@@ -21,8 +21,8 @@ object TaskCapsule {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("resident", on).apply()
         TaskStatus.refresh()
     }
-    /** The resident entry is shown between tasks: kept, and the screen helper draws it (an older one does not). */
-    fun residentOn(ctx: Context): Boolean = residentKept(ctx) && ScreenBridge.islandResident()
+    /** The resident entry is shown between tasks: kept. */
+    fun residentOn(ctx: Context): Boolean = residentKept(ctx)
 
     internal fun update(ctx: Context, frame: TaskFrame, elapsed: Long, stale: Boolean, interactive: Boolean, canStop: Boolean, notice: String?) {
         check(Looper.myLooper() == Looper.getMainLooper())

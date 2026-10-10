@@ -61,7 +61,8 @@ android {
     defaultConfig {
         applicationId = "ai.ash.agent"
         minSdk = 26
-        // 35: the kernel (payload, container) moves to its own package that stays on 28; this app runs nothing from files/.
+        // 35, as SPEC-05 asks. The kernel classes still in this module (payload, container, node) cannot run from files/ at 35;
+        // they move to their own package, which stays on 28.
         targetSdk = 35
         versionCode = 12
         versionName = "0.4.0"

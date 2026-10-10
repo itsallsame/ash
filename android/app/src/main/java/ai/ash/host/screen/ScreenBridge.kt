@@ -45,8 +45,6 @@ object ScreenBridge {
     /** The island can be drawn (the accessibility service, or the overlay permission). */
     fun islandReady() = app?.let { NativeIsland.ready(it) } ?: false
     fun islandShown() = NativeIsland.showing()
-    /** The resident entry (island v2) is drawn by this app. */
-    fun islandResident() = true
 
     private val tools: List<Capability> by lazy { ScreenCapabilities.list.map { ScreenTool(it) } }
     fun tools(): List<Capability> = tools +

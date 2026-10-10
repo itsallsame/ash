@@ -56,14 +56,6 @@ internal object ScreenLink : NativeIsland.Ash {
 
     init { NativeIsland.ash = this }
 
-    /** {version, accessibility, screenshot, island_ready, island_shown, island_resident}. */
-    fun status(): JSONObject {
-        val ctx = app
-        return JSONObject().put("version", BuildConfig.VERSION_CODE).put("accessibility", A11yService.instance != null)
-            .put("screenshot", A11yService.instance != null && A11yService.canScreenshot)
-            .put("island_ready", ctx != null && NativeIsland.ready(ctx)).put("island_shown", NativeIsland.showing())
-            .put("island_resident", true)
-    }
     /** Tell Ash: the service came or went, the island appeared or left. */
     fun changed() { ScreenBridge.changed() }
     /**
