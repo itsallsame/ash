@@ -87,7 +87,7 @@ export function shapeSuccess(result: WordResult | undefined, recorded: () => Att
   const full = json(textual.length ? { data, content: textual } : { data });
   const preview = full.slice(0, PREVIEW_CHARS);
   const attachments = recorded();
-  const cut = { truncated: true, preview, ...(attachments.length ? { attachments: attachments.map((a) => ({ ...a, read_with: "service:blobs/read {hash, offset?, limit?}" })) } : {}),
+  const cut = { truncated: true, preview, ...(attachments.length ? { attachments } : {}),
     note: attachments.length ? "The result was too long to carry. Read the rest in pieces with service:blobs/read, using the hash of an attachment." : "The result was too long to carry and was not kept; ask for a smaller piece." };
   return { content: [text(json(cut)), ...images], structuredContent: cut };
 }
