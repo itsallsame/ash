@@ -118,6 +118,26 @@ test("a repeat of a reply with the same key inside the window is dropped; after 
   await eventually(() => shown(p).length === 5, "no dedupe when switched off");
 });
 
+test("the turn's end still rings strongly when its last quiet reply is not yet answered by the channel", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  // The channel holds its answer to the second reply until the turn has ended.
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let shows = 0;
+  const p = await phone(hub, { present: async (f) => { if (f.surface === "notification" && f.op === "show" && ++shows === 2) await held; return { ok: true }; } });
+  hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] });
+  const agentInTurn = { ...AGENT, turn: "t1" };
+  await tell(hub, { text: "先说一半" }, agentInTurn);
+  void tell(hub, { text: "结果出来了" }, agentInTurn);
+  await eventually(() => p.presented("notification", "show").length === 2, "two quiet replies shown");
+  hub.mini.announce("turn.ended", { turn: "t1", lane: "front", outcome: "completed" });
+  await new Promise((r) => setTimeout(r, 50));
+  release();
+  const alert = await p.present((f) => f.op === "alert", "the strong ring");
+  const last = p.presented("notification", "show")[1]!;
+  assert.deepEqual(alert.body, { id: (last.body as { id: string }).id });
+});
+
 test("a reply while its turn runs rings quietly; the turn's end rings strongly for the last one if the owner is still away", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const p = await phone(hub);

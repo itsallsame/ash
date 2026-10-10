@@ -17,7 +17,7 @@ test("first start of an empty table plants the main declaration (primary), start
   const spec = started[2] as any;
   assert.deepEqual(spec.lanes, ["front", "back"]);
   assert.deepEqual(spec.native, { on: "body:main", cwd: "/root/work" });
-  assert.deepEqual(spec.tools, { mcp_url: "http://hub/mcp", token: `tok-${M}`, allowed: ["*"] });
+  assert.deepEqual(spec.tools, { mcp_url: "http://hub/mcp", tokens: { front: `tok-${M}-front`, back: `tok-${M}-back` }, allowed: ["*"] });
   assert.deepEqual(spec.modules.static.map((m: any) => m.id), ["identity", "rules"]);
   assert.match(spec.modules.static[0].content, /soul v1/);
   assert.match(spec.modules.static[1].content, /rules v1[\s\S]*You are main\./);

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MAIN, accepted, byOwnerText, errorCode, extensionCapability, isApprovalAsk, resultOf, standardCapability, startScenario,
+  MAIN, OWNER, accepted, byOwnerText, errorCode, extensionCapability, isApprovalAsk, quiet, resultOf, standardCapability, startScenario,
   textResult, type ToolResult, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
@@ -169,5 +169,10 @@ test("设备 27: decision.* are for the hub's reflex only: neither the owner nor
   assert.ok(!mine.ok && mine.error.code === "forbidden");
   await eventually(() => state.agent, "the agent's attempt");
   assert.equal(errorCode(state.agent!), "forbidden");
-  assert.equal(phone.calls.length, 0);
+  // The one call the hand did get is the hub's own reflex (`screen.plan` asks for a surface once), never the owner's or the agent's.
+  await eventually(() => phone.calls.length >= 1, "the hub's own reflex asking for a surface");
+  await quiet();
+  assert.equal(phone.calls.length, 1);
+  assert.notEqual(phone.calls[0]!.caller.member, OWNER);
+  assert.notEqual(phone.calls[0]!.caller.member, MAIN);
 });

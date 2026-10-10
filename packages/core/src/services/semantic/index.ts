@@ -14,9 +14,10 @@ import type { Member } from "../../../../sdk/src/word";
 import type { Ledger } from "../../kernel/ledger";
 import { DailyReview } from "./daily";
 import { Entity } from "./entity";
-import { PersonaService, type PersonaFile } from "./persona";
+import { PersonaService } from "./persona";
 import { PulseService } from "./pulse";
 import { SemanticKv, type Sender } from "./shared";
+import { fileTemplates, type SemanticTemplates } from "./templates";
 
 export { PersonaService, PERSONA_ID, PERSONA_FILES, type PersonaFile } from "./persona";
 export { PulseService, PULSE_ID, DEFAULT_SCHEDULE } from "./pulse";
@@ -26,8 +27,10 @@ export { Entity, ENTITY_ID, DEFAULT_RELOAD_TIME, RELOAD_SETTING } from "./entity
 export interface SemanticOptions {
   ledger: Pick<Ledger, "db" | "tx">;
   router: Sender;
-  /** The starting text of the persona files and of PULSE.md (ash-skills/persona/*.template.md). */
-  templates: Record<PersonaFile, string> & { "PULSE.md": string };
+  /** `ash-skills/persona`: `<SOUL|IDENTITY|PULSE>.template.md`, read here. */
+  templatesDir?: string;
+  /** Tests: the starting texts already in memory, instead of `templatesDir`. */
+  templates?: SemanticTemplates;
   now?: () => number;
   /** Wakes a day for the pulse (default 16). */
   budget?: number;
@@ -51,12 +54,14 @@ export interface Semantic {
 
 export function createSemantic(options: SemanticOptions): Semantic {
   const { ledger, router, now, log } = options;
+  const templates = options.templates ?? (options.templatesDir ? fileTemplates(options.templatesDir) : null);
+  if (!templates) throw new Error("createSemantic needs templates or templatesDir");
   const kv = new SemanticKv(ledger);
-  const persona = new PersonaService({ ledger, router, templates: options.templates, ...(now ? { now } : {}), ...(log ? { log } : {}) });
+  const persona = new PersonaService({ ledger, router, templates, ...(now ? { now } : {}), ...(log ? { log } : {}) });
   const daily = new DailyReview({ ledger, router, kv, ...(now ? { now } : {}), ...(log ? { log } : {}) });
   const entity = new Entity({ ledger, router, kv, daily, ...(now ? { now } : {}), ...(log ? { log } : {}) });
   const pulse = new PulseService({
-    ledger, router, templates: { pulse: options.templates["PULSE.md"] }, ...(now ? { now } : {}), ...(log ? { log } : {}),
+    ledger, router, templates: { pulse: templates["PULSE.md"] }, ...(now ? { now } : {}), ...(log ? { log } : {}),
     ...(options.budget !== undefined ? { budget: options.budget } : {}), ...(options.tickMs !== undefined ? { tickMs: options.tickMs } : {}),
     onDue: (kind, at) => (kind === "daily" ? daily.due(at) : entity.reload(at).then(() => {})),
   });

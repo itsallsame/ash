@@ -5,9 +5,11 @@
  * router, body and persona are up, and `stopAll()` at shutdown. Drivers come in by runtime kind (`deps.drivers`).
  */
 import { AgentManager, type AgentsDeps } from "./manager";
+import { fileTemplates, type Templates } from "./runs";
 import { createAgentsService } from "./service";
 import { SERVICE_CALLER } from "./modules";
 import type { AgentPolicy } from "../../kernel/router";
+import type { Caller } from "../../../../sdk/src/message";
 import type { Router } from "../../kernel/types";
 import type { Member } from "../../../../sdk/src/word";
 
@@ -20,16 +22,30 @@ export interface Agents {
   primary(): string | null;
   /** What the agent's declaration lets it use (for the router and the tool surface), or null when there is no such agent. */
   policyOf(id: string): AgentPolicy | null;
-  /** The turn the agent is in now (on any of its lanes), or null. */
-  currentTurn(id: string): string | null;
-  /** Whether that turn of the agent is still running (on any of its lanes). */
+  /** The turn the agent is in now on that lane, or null. A lane never gets another lane's turn. */
+  currentTurn(id: string, lane: string): string | null;
+  /** Whether that turn of the agent is still running, on any of its lanes. */
   turnActive(id: string, turn: string): boolean;
+  /** Router rule: a sub-agent speaks to the owner only in a turn where the owner addressed it directly (judged on the caller's own lane's turn). */
+  mayTalkToOwner(caller: Caller, word: string): boolean;
+  /** Router rule: `service:agents/answer` only from the turn that took the message. */
+  mayAnswer(caller: Caller, body: unknown): boolean;
   /** Put changed files and environment into a running agent now (e.g. after MEMORY.md was written). */
   refreshModules(agent: string, lane?: string): Promise<void>;
 }
 
-export function createAgents(deps: AgentsDeps): Agents {
-  const manager = new AgentManager(deps);
+/** What `createAgents` takes: the module's dependencies, with the templates given as the directory they are files in. */
+export type AgentsOptions = Omit<AgentsDeps, "templates"> & {
+  /** `ash-skills/agents`: `<name>.json` templates, read here. */
+  templatesDir?: string;
+  /** Tests: templates already in memory, instead of `templatesDir`. */
+  templates?: Templates;
+};
+
+export function createAgents({ templatesDir, templates, ...rest }: AgentsOptions): Agents {
+  const source = templates ?? (templatesDir ? fileTemplates(templatesDir) : null);
+  if (!source) throw new Error("createAgents needs templatesDir");
+  const manager = new AgentManager({ ...rest, templates: source });
   const service = createAgentsService(manager);
   return { service, manager, startAll: () => manager.startAll(), stopAll: () => manager.stopAll(), primary: () => manager.runs.primary()?.id ?? null,
     refreshModules: (agent, lane) => manager.refreshModules(agent, lane),
@@ -37,10 +53,9 @@ export function createAgents(deps: AgentsDeps): Agents {
       const decl = manager.runs.get(id)?.spec.decl;
       return decl ? { tools: decl.tools ?? null, words: decl.words ?? null } : null;
     },
-    currentTurn(id) {
-      for (const lane of manager.liveOf(id)?.lanes.values() ?? []) if (lane.turn) return lane.turn;
-      return null;
-    },
+    mayTalkToOwner: (caller, word) => manager.mayTalkToOwner(caller, word),
+    mayAnswer: (caller, body) => manager.mayAnswer(caller, body),
+    currentTurn: (id, lane) => manager.liveOf(id)?.lanes.get(lane)?.turn ?? null,
     turnActive(id, turn) {
       for (const lane of manager.liveOf(id)?.lanes.values() ?? []) if (lane.turn === turn) return true;
       return false;
@@ -56,4 +71,4 @@ export function bodyFileWriter(router: Router): (path: string, content: string) 
 }
 
 export { AgentManager, type AgentsDeps } from "./manager";
-export { fileTemplates, type AgentDecl, type LaneDecl, type Templates } from "./runs";
+export type { AgentDecl, LaneDecl, Templates } from "./runs";

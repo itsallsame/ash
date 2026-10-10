@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "7b7cf1e26dc2c4d2de18501ab321c10a80c689d57e698d7163396d8b745ac483",
+ "hash": "af77a5cda5b2c222af2630afda9b796d6f74050213a06ced0b31c7320e5064b5",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -2512,7 +2512,10 @@
       }
      },
      "url": {
-      "type": "string"
+      "type": "string",
+      "x-ash-sensitive": {
+       "mask": "hidden"
+      }
      },
      "expires_at": {
       "type": "integer",
@@ -2974,7 +2977,7 @@
    "word": "gateway.status",
    "kind": "request",
    "direction": "in",
-   "description": "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error.",
+   "description": "The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error, and (setup_unavailable) why building a relay is not possible in this build.",
    "input_schema": {
     "type": "object",
     "properties": {},
@@ -3003,6 +3006,9 @@
       }
      },
      "last_error": {
+      "type": "string"
+     },
+     "setup_unavailable": {
       "type": "string"
      }
     },
@@ -8408,7 +8414,7 @@
    "word": "list",
    "kind": "request",
    "direction": "in",
-   "description": "The active timers, to look at before changing them; the result is a snapshot.",
+   "description": "The active timers, to look at before changing them; the result is a snapshot. An agent or an app sees the timers it set; the owner sees all.",
    "input_schema": {
     "type": "object",
     "properties": {},

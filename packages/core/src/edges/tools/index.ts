@@ -1,6 +1,7 @@
 /**
  * The tool surface (HUB-MODULES §2.4, SPEC-02 §3): the one door for an agent, an MCP server on `/mcp`. A tool call
- * becomes `router.send` as the agent whose bearer token it carries; nothing in the call can change who that is.
+ * becomes `router.send` as the agent whose bearer token it carries, and in the turn of the lane that token was issued for;
+ * nothing in the call can change either.
  *
  *   transport   Streamable HTTP (stateless), `Authorization: Bearer <token>`, no `Origin` header, calls only inside a turn
  *               (receipt tools excepted). The link server mounts `handler` at `/mcp`.
@@ -13,8 +14,9 @@
  *               the turn is over when the answer comes, else when `turn.ended` is heard. `waiting_owner` is not told (its
  *               answer comes from service:gate). Calls a restart interrupted are told by `recover()` (result_unknown).
  *
- * Wiring: `agentPolicy` and `currentTurn` come from the agents module (the agent's declaration; the turn it is running);
- * the agents module calls `issueToken` every time it starts an agent process and hands the token to the agent's driver.
+ * Wiring: `agentPolicy` and `currentTurn` come from the agents module (the agent's declaration; the turn it is running on
+ * a lane); the agents module calls `issueTokens` every time it starts an agent process and hands one token per lane to
+ * the agent's driver, which gives each lane's session its own.
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -46,10 +48,10 @@ export interface ToolsEdgeOptions {
   ledger: Pick<Ledger, "db" | "get">;
   /** The agent's declaration (its `tools` and `words`), or null when there is no such agent. Asked on every call. */
   agentPolicy(agentId: string): AgentPolicy | null;
-  /** The turn the agent is running now, or null. Asked on every call. */
-  currentTurn(agentId: string): string | null;
-  /** Whether that turn of the agent is still running, on any of its lanes. Default: it is the turn `currentTurn` names. */
-  turnActive?(agentId: string, turn: string): boolean;
+  /** The turn the agent is running now on that lane, or null. Asked on every call. */
+  currentTurn(agentId: string, lane: string): string | null;
+  /** Whether that turn of the agent is still running, on any of its lanes (the lane a turn belongs to is not known to a result). */
+  turnActive(agentId: string, turn: string): boolean;
   now?: () => number;
   /** How long a call is waited for before a receipt (default 15 s). */
   fastPathMs?: number;
@@ -63,9 +65,9 @@ export interface ToolsEdgeOptions {
 export interface ToolsEdge {
   /** For the link server to mount at `/mcp`. */
   handler(req: IncomingMessage, res: ServerResponse): void;
-  /** A new token for the agent; the one before stops working. Call on every start of the agent's process. The token lives in memory only. */
-  issueToken(agentId: string): string;
-  /** The agent's token stops working. */
+  /** A new token for each of the agent's lanes; every token it had before stops working. Call on every start of the agent's process. The tokens live in memory only. */
+  issueTokens(agentId: string, lanes: string[]): Record<string, string>;
+  /** All the agent's tokens stop working. */
   revoke(agentId: string): void;
   /**
    * Once at start, after `router.recover()`: the calls the last process left running answer `result_unknown`; tell their
@@ -136,27 +138,35 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
   const table = new JobTable(ledger.db(), now);
   let closed = false;
 
-  // ---- identity: a token per agent, in memory only. The key is the hash, so nothing compares the token itself.
-  const agentOfToken = new Map<string, string>();
-  const tokenOfAgent = new Map<string, string>();
+  // ---- identity: a token per (agent, lane), in memory only. The key is the hash, so nothing compares the token itself.
+  // The lane is the session the agent holds open for that kind of work (front, back...); its token is the only thing that
+  // says which turn a call belongs to, so a call can never be recorded in, or speak in, another lane's turn.
+  interface Identity { agent: string; lane: string }
+  const identityOfToken = new Map<string, Identity>();
+  const tokensOfAgent = new Map<string, string[]>();
   const hash = (token: string) => createHash("sha256").update(token).digest("hex");
 
   function revoke(agent: string): void {
-    const old = tokenOfAgent.get(agent);
-    if (old) agentOfToken.delete(old);
-    tokenOfAgent.delete(agent);
+    for (const old of tokensOfAgent.get(agent) ?? []) identityOfToken.delete(old);
+    tokensOfAgent.delete(agent);
   }
-  function issueToken(agent: string): string {
+  function issueTokens(agent: string, lanes: string[]): Record<string, string> {
     revoke(agent);
-    const token = randomBytes(24).toString("base64url");
-    agentOfToken.set(hash(token), agent);
-    tokenOfAgent.set(agent, hash(token));
-    return token;
+    const out: Record<string, string> = {};
+    const hashes: string[] = [];
+    for (const lane of lanes) {
+      const token = randomBytes(24).toString("base64url");
+      identityOfToken.set(hash(token), { agent, lane });
+      hashes.push(hash(token));
+      out[lane] = token;
+    }
+    tokensOfAgent.set(agent, hashes);
+    return out;
   }
-  const authenticate = (req: IncomingMessage): string | null => {
+  const authenticate = (req: IncomingMessage): Identity | null => {
     const header = req.headers.authorization ?? "";
     const match = /^Bearer (\S+)$/.exec(header);
-    return match ? agentOfToken.get(hash(match[1]!)) ?? null : null;
+    return match ? identityOfToken.get(hash(match[1]!)) ?? null : null;
   };
 
   // ---- calls in flight, and the receipts of the process's life
@@ -195,8 +205,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
 
   // ---- the result comes back by itself (SPEC-02 §3.4): a receipt's answer is told to its agent in a wake, once, when the
   // turn that made the call is over and the agent has not fetched the answer.
-  const turnActive = (agent: string, turn: string | null): boolean =>
-    turn !== null && (options.turnActive ? options.turnActive(agent, turn) : options.currentTurn(agent) === turn);
+  const turnActive = (agent: string, turn: string | null): boolean => turn !== null && options.turnActive(agent, turn);
 
   function wakeAgent(row: JobRow): void {
     const outcome = row.outcome ?? failure("result_unknown", "Ash restarted while this call was running; whether it was done is not known.");
@@ -311,7 +320,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
   }
   const refused = (value: object): value is Shaped => !("rest" in value);
 
-  async function callTool(agent: string, name: string, rawArgs: unknown, signal: AbortSignal): Promise<Shaped> {
+  async function callTool(agent: string, lane: string, name: string, rawArgs: unknown, signal: AbortSignal): Promise<Shaped> {
     const args = rawArgs === undefined || rawArgs === null ? {} : rawArgs;
     if (!isObject(args)) return failure("bad_request", "the arguments must be an object");
     if (!TOOL_NAMES.includes(name)) return failure("not_found", `no tool ${name}`, { recovery_hint: "Use one of the tools you were given." });
@@ -342,7 +351,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     }
 
     if (!toolAllowed(policy, name)) return failure("forbidden", `${name} is not one of your tools`, { recovery_hint: "Your declaration does not include this tool; use another way or ask the owner." });
-    const turn = options.currentTurn(agent);
+    const turn = options.currentTurn(agent, lane);
     if (!turn) return failure("forbidden", "no turn is running for you; Ash tools work only while you are handling a message or a wake", { recovery_hint: "Do this inside a turn." });
 
     try {
@@ -382,9 +391,10 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
   async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // A web page on the phone could reach a loopback port; only the agent runtime (no Origin) may talk here.
     if (req.headers.origin !== undefined) return reply(res, 403, "forbidden", "requests with an Origin header are refused");
-    const agent = authenticate(req);
-    if (!agent) return reply(res, 401, "unauthorized", "a valid bearer token is required", { "www-authenticate": "Bearer" });
+    const who = authenticate(req);
+    if (!who) return reply(res, 401, "unauthorized", "a valid bearer token is required", { "www-authenticate": "Bearer" });
     if (req.method !== "POST") return reply(res, 405, "bad_request", "POST only", { allow: "POST" });
+    const { agent, lane } = who;
     if (!options.agentPolicy(agent)) return reply(res, 403, "forbidden", `${agent} is not a declared agent`);
 
     let raw = "";
@@ -406,7 +416,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       const policy = options.agentPolicy(agent);
       return { tools: policy ? toolDefinitions().filter((tool) => toolAllowed(policy, tool.name)).map((tool) => ({ ...tool })) : [] };
     });
-    server.setRequestHandler(CallToolRequestSchema, async (call, extra) => await callTool(agent, call.params.name, call.params.arguments, extra.signal) as never);
+    server.setRequestHandler(CallToolRequestSchema, async (call, extra) => await callTool(agent, lane, call.params.name, call.params.arguments, extra.signal) as never);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { void transport.close(); void server.close(); });
     await server.connect(transport);
@@ -420,7 +430,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
         reply(res, 500, "internal", "the tool surface failed");
       });
     },
-    issueToken,
+    issueTokens,
     revoke,
     recover() {
       for (const id of table.unknown()) wakeIfDue(id);
@@ -429,8 +439,8 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       closed = true;
       stopListening?.();
       for (const job of live.values()) if (!job.shaped) job.controller.abort();
-      agentOfToken.clear();
-      tokenOfAgent.clear();
+      identityOfToken.clear();
+      tokensOfAgent.clear();
     },
   };
 }

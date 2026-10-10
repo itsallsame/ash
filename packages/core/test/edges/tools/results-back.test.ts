@@ -29,7 +29,7 @@ async function setup() {
     router: w.router, registry: w.registry, ledger: w.ledger, vault: { use: () => null },
     drivers: { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
     templates: { read: (name) => (name === "main" ? MAIN_TEMPLATE : null) },
-    tools: (agent) => ({ mcp_url: "http://hub/mcp", token: `tok-${agent}`, allowed: ["*"] }),
+    tools: (agent, lanes) => ({ mcp_url: "http://hub/mcp", tokens: Object.fromEntries(lanes.map((l) => [l, `tok-${agent}-${l}`])), allowed: ["*"] }),
     rules: () => "rules", now: () => Date.now(), newId: () => `n${++ids}`, log: (...a) => logs.push(a),
     timers: { every: () => () => {}, after: () => () => {} },
   });
@@ -44,7 +44,7 @@ type Setup = Awaited<ReturnType<typeof setup>>;
 
 const rigOver = (s: Setup, extra: Record<string, unknown> = {}) => startRig({
   router: s.w.router as never, registry: s.w.registry as never, ledger: s.w.ledger,
-  agentPolicy: (id) => s.agents.policyOf(id), currentTurn: (id) => s.agents.currentTurn(id), turnActive: (id, turn) => s.agents.turnActive(id, turn),
+  agentPolicy: (id) => s.agents.policyOf(id), currentTurn: (id, lane) => s.agents.currentTurn(id, lane), turnActive: (id, turn) => s.agents.turnActive(id, turn),
   log: (...a: unknown[]) => s.logs.push(a), ...extra,
 });
 
@@ -244,7 +244,7 @@ test("after a restart the calls that were running are told once as result_unknow
   assert.equal(backWakes(s).length, 0, "nothing is told while shutting down");
 
   // the hub starts again on the same database
-  const again = createToolsEdge({ router: s.w.router, registry: fakeRegistry(), ledger: s.w.ledger, agentPolicy: (a) => s.agents.policyOf(a), currentTurn: (a) => s.agents.currentTurn(a), turnActive: (a, t) => s.agents.turnActive(a, t), log: (...a) => s.logs.push(a) });
+  const again = createToolsEdge({ router: s.w.router, registry: fakeRegistry(), ledger: s.w.ledger, agentPolicy: (a) => s.agents.policyOf(a), currentTurn: (a, lane) => s.agents.currentTurn(a, lane), turnActive: (a, t) => s.agents.turnActive(a, t), log: (...a) => s.logs.push(a) });
   assert.equal(backWakes(s).length, 0, "not before the hub is up");
   again.recover();
   await waitFor(() => backWakes(s).length === 1, "the wake");

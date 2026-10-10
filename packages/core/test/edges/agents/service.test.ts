@@ -359,10 +359,16 @@ test("policyOf and currentTurn: the declaration's limits for the router and the 
   assert.deepEqual(f.agents.policyOf("agent:b"), { tools: ["human_say"], words: ["service:clock/*"] });
   assert.equal(f.agents.policyOf("agent:nobody"), null);
 
-  assert.equal(f.agents.currentTurn(M), null);
+  assert.equal(f.agents.currentTurn(M, "back"), null);
   f.driver().report({ event: "turn.started", agent: M, key: "back", turn: "t7", ids: [] });
-  assert.equal(f.agents.currentTurn(M), "t7");
-  assert.equal(f.agents.currentTurn("agent:b"), null);
+  assert.equal(f.agents.currentTurn(M, "back"), "t7");
+  assert.equal(f.agents.currentTurn(M, "front"), null, "a turn on the back lane is not the front lane's");
+  assert.equal(f.agents.currentTurn(M, "nope"), null);
+  assert.equal(f.agents.currentTurn("agent:b", "back"), null);
+  f.driver().report({ event: "turn.started", agent: M, key: "front", turn: "t8", ids: [] });
+  assert.equal(f.agents.currentTurn(M, "front"), "t8");
+  assert.equal(f.agents.currentTurn(M, "back"), "t7", "both lanes in a turn at once: each has its own");
   f.driver().report({ event: "turn.ended", agent: M, key: "back", turn: "t7", outcome: "completed" });
-  assert.equal(f.agents.currentTurn(M), null);
+  assert.equal(f.agents.currentTurn(M, "back"), null);
+  assert.equal(f.agents.currentTurn(M, "front"), "t8");
 });

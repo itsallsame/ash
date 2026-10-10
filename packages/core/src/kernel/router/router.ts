@@ -8,7 +8,7 @@
  * is answered in step 4, after authorization. Events go through 1 to 4 and 6, never the gate.
  */
 import { randomBytes } from "node:crypto";
-import { idKind, isAgentId, isMemberId, OWNER_ID } from "../../../../sdk/src/ids";
+import { idKind, isMemberId, OWNER_ID } from "../../../../sdk/src/ids";
 import { CALLER_VIAS, errorBody, WordError, type ErrorBody, type Outgoing, type Reply } from "../../../../sdk/src/message";
 import { compileSchema, WORD_NAME_PATTERN, type Member, type WordContract } from "../../../../sdk/src/word";
 import { DEFAULT_TTL_MINUTES, type GateStore, type PendingRecord } from "../gate";
@@ -37,7 +37,6 @@ export const waitingOwner = (pendingId: string, expiresAt: number): Reply => ({ 
 const READ_TIMEOUT_MS = 60_000;
 const OTHER_TIMEOUT_MS = 600_000;
 /** The caller of the messages the router itself sends (a restart note). */
-const ROUTER_CALLER: Caller = { member: "service:router", via: "service", local: true };
 const OUTGOING_KEYS = new Set(["to", "kind", "word", "body", "reply_to", "thread"]);
 
 const fail = (error: ErrorBody): Reply => ({ ok: false, error });
@@ -118,10 +117,8 @@ export class HubRouter implements Router {
       ledger.setRequest(r.id, "interrupted");
       const error = errorBody("result_unknown", "内核重启，结果不确定，请先查再决定要不要重做");
       ledger.append({ from: r.to, to: r.from, kind: "response", word: r.word, body: { ok: false, error }, reply_to: r.id });
-      if (isAgentId(r.from)) {
-        const text = `内核重启，你之前发给 ${r.to} 的 ${r.word} 请求（${r.id}）结果不确定，没有重放。请先查一下现状，再决定要不要重做。`;
-        void this.send({ to: r.from, kind: "request", word: "tell", body: { text }, reply_to: r.id }, ROUTER_CALLER).catch((e) => this.deps.onError?.("recover", e));
-      }
+      // Nobody is messaged: an agent's calls come through the tool surface, which tells it by itself (a `wake` with the request_id for
+      // a receipt it gave, SPEC-02 §3.4), and a turn the restart cut off is told by the agents module.
     }
   }
 

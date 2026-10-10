@@ -59,6 +59,8 @@ export interface SetupDeps {
   connected(timeoutMs: number): Promise<boolean>;
   /** The relay program packaged in this build, as one module (SPEC-03 §8.1 item 5). */
   bundle?(): Promise<string>;
+  /** Why the packaged relay program cannot be used right now, or null when it can; asked at every deploy. */
+  bundleMissing?(): string | null;
   cloudflare?: Partial<CloudflareEndpoints>;
   /** The listener's port. Default 8976, the one Cloudflare's sign-in was registered with; 0 = any (tests). */
   callbackPort?: number;
@@ -114,6 +116,7 @@ export class RelaySetup {
 
   /** Opens the listener, asks the owner to sign in, and returns at once. */
   async start(initiator: string): Promise<SetupInfo> {
+    this.requireBundle();                       // before the owner signs in to Cloudflare for nothing
     for (const row of this.rows()) {
       if (row.state === "waiting_login" || row.state === "deploying") {
         throw new WordError("conflict", `relay setup ${row.setup_id} is still ${row.state}`, { recovery_hint: "Wait for it, or cancel it with gateway.setup.cancel, then start again." });
@@ -156,6 +159,14 @@ export class RelaySetup {
 
   status(id: string): SetupInfo { return this.info(id); }
 
+  /** Why a relay cannot be built with this build right now (no packaged relay program), or null. */
+  unavailable(): string | null { return this.d.bundle ? this.d.bundleMissing?.() ?? null : "this build has no packaged relay program"; }
+
+  private requireBundle(): void {
+    const missing = this.unavailable();
+    if (missing) throw new WordError("unavailable", missing, { recovery_hint: "Update Ash, or use an existing relay with gateway.use." });
+  }
+
   /** Starts the deployment of an authorized setup; the result is `deploying` and the rest is told as it happens. */
   deploy(id: string, name?: string): SetupInfo {
     const row = this.row(id);
@@ -164,7 +175,7 @@ export class RelaySetup {
     }
     const script = name ?? DEFAULT_SCRIPT;
     if (!SCRIPT_NAME.test(script)) throw new WordError("bad_request", "name must be lowercase letters, digits and dashes");
-    if (!this.d.bundle) throw new WordError("unavailable", "this build has no packaged relay program", { recovery_hint: "Update Ash, or use an existing relay with gateway.use." });
+    this.requireBundle();
     this.move(id, "deploying");
     void this.runDeploy(id, script).catch((error) => this.fail(id, this.reason(error)));
     return this.info(id);

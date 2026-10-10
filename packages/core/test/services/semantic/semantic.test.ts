@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { WordError, type HandleContext, type Message } from "../../../../sdk/src/message";
-import { DONE_MARK } from "../../../src/services/semantic";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createSemantic, DONE_MARK } from "../../../src/services/semantic";
+import { fileTemplates } from "../../../src/services/semantic/templates";
 import { AGENT, contractOf, DAY1, local, OWNER, SERVICE, startedHub, TEMPLATES, newHub, type Hub } from "./helpers";
 
 const MON = (h: number, m = 0) => local(2026, 10, 12, h, m);
@@ -314,7 +318,7 @@ test("pulse: the budget, a pause and a timer that fired far too late each keep t
   paused.paused = true;
   await paused.advanceTo(MON(8));
   assert.equal(pulseWakes(paused).length, 1);                // only the one before the pause (the first card is at start)
-  const late = (await paused.send("service:pulse", "pulse.due", { kind: "wake", at: MON(1) }, SERVICE("service:clock")));
+  const late = (await paused.send("service:pulse", "pulse.due", { kind: "wake", at: MON(1) }, SERVICE("service:pulse")));
   assert.equal(late.ok, true);
   assert.equal(pulseWakes(paused).length, 1);
   assert.equal(await refused(paused, "pulse.due", { kind: "wake", at: MON(8) }, "agent:main"), "forbidden");
@@ -336,4 +340,17 @@ test("pulse: it hears no sensor (the organ judges those); feedback on a card is 
   assert.deepEqual((((await hub.send("service:pulse", "pulse.get")) as any).result.data.events), undefined);
   assert.equal(await refused(hub, "pulse.set", { events: [{ event: "geofence_exit" }], reason: "x" }), "bad_request");
   assert.deepEqual(hub.invalid, []);
+});
+
+test("templates: fileTemplates reads <NAME>.template.md from a directory, and createSemantic takes the directory itself", () => {
+  const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "semantic-templates-"));
+  try {
+    for (const name of ["SOUL", "IDENTITY", "PULSE"]) writeFileSync(join(dir, `${name}.template.md`), `# ${name}\n`);
+    assert.deepEqual(fileTemplates(dir), { "SOUL.md": "# SOUL\n", "IDENTITY.md": "# IDENTITY\n", "PULSE.md": "# PULSE\n" });
+    const send = async () => ({ ok: true as const, result: {} });
+    const ledger = { db: () => { throw new Error("not used"); }, tx: () => { throw new Error("not used"); } } as never;
+    assert.throws(() => createSemantic({ ledger, router: { send } as never }), /templates/);
+    rmSync(join(dir, "PULSE.template.md"));
+    assert.throws(() => createSemantic({ ledger, router: { send } as never, templatesDir: dir }), /PULSE/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

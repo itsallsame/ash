@@ -179,7 +179,7 @@ export function fixture(opts: Options = {}) {
     router, registry, ledger, vault: { use: (ref) => secrets[ref] ?? null },
     drivers: opts.drivers ?? { dsh: (report) => { const d = new FakeDriver(report); drivers.push(d); return d; } },
     templates: { read: (name) => templates[name] ?? null },
-    tools: (agent, allowed) => ({ mcp_url: "http://hub/mcp", token: `tok-${agent}`, allowed: allowed ?? ["*"] }),
+    tools: (agent, lanes, allowed) => ({ mcp_url: "http://hub/mcp", tokens: Object.fromEntries(lanes.map((lane) => [lane, `tok-${agent}-${lane}`])), allowed: allowed ?? ["*"] }),
     rules: () => "rules v1", now: () => clock.t, newId: () => `n${++ids}-${randomBytes(2).toString("hex")}`, log: (...a) => logs.push(a),
     timers: {
       every: (ms, fn) => { const e = { ms, fn }; timers.everies.push(e); return () => { timers.everies.splice(timers.everies.indexOf(e), 1); }; },

@@ -6,7 +6,12 @@
  *   list
  *   wake.fired (event, from the host module)       the phone's alarm went off: look for due timers
  *
- * A timer sends its stored word to its target as `service:clock` when it is due. `at` alone fires once; `every`
+ * A timer sends its stored word to its target as whoever set it, never as `service:clock`: `set` keeps the caller
+ * (member, via, local) and the word goes through the router, the callers check and the gate with that identity when it
+ * is due. An agent's timer therefore asks the owner at that time like any call of the agent; an app's timer needs the
+ * app's grant; the owner's timer is the owner's; a hub service's timer (the semantic layer's pulse) stays a service's.
+ * The turn is not kept: it is over by then. `cancel` takes back one's own timer; the owner may take back any.
+ * `at` alone fires once; `every`
  * repeats; both together fire first at `at` and then every period. A repeating timer that was missed (the phone
  * slept, the hub was down) fires once for the missed rounds and goes on from the next slot after now. Precision is
  * the scan period, not the second.
@@ -19,6 +24,7 @@
 import { randomBytes } from "node:crypto";
 import { WordError, type Caller, type HandleContext, type Message, type Outgoing, type Reply, type WordResult } from "../../../../sdk/src/message";
 import type { Member, WordContract } from "../../../../sdk/src/word";
+import { OWNER_ID } from "../../../../sdk/src/ids";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger } from "../../kernel/ledger";
 import type { Router } from "../../kernel/types";
@@ -56,9 +62,13 @@ const realTimer = (fn: () => void, ms: number): (() => void) => {
   return () => clearTimeout(handle);
 };
 
+/** The owner and the hub's services see every timer; an agent or an app only its own. */
+const seesAll = (caller: Caller): boolean => caller.member === OWNER_ID || caller.via === "service";
+
+/** The clock's own identity: only for its own calls to the host. */
 const SELF: Caller = { member: CLOCK_ID, via: "service", local: true };
 
-type Row = { id: string; next_at: number; every_s: number | null; target: string; word: string; body: string; label: string; created_by: string };
+type Row = { id: string; next_at: number; every_s: number | null; target: string; word: string; body: string; label: string; created_by: string; created_as: string };
 const info = (row: Row): TimerInfo => ({ id: row.id, next: row.next_at, every: row.every_s, to: row.target, word: row.word,
   body: JSON.parse(row.body), label: row.label, created_by: row.created_by });
 
@@ -80,7 +90,7 @@ export class ClockService implements Member {
     this.log = options.log ?? ((message, error) => console.error(`[clock] ${message}${error ? `: ${(error as Error).message}` : ""}`));
     this.db.exec(`CREATE TABLE IF NOT EXISTS timers (
       id TEXT PRIMARY KEY, next_at INTEGER NOT NULL, every_s INTEGER, target TEXT NOT NULL, word TEXT NOT NULL,
-      body TEXT NOT NULL, label TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
+      body TEXT NOT NULL, label TEXT NOT NULL, created_by TEXT NOT NULL, created_as TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS timers_next ON timers(next_at);`);
   }
 
@@ -97,20 +107,21 @@ export class ClockService implements Member {
 
   // ---- words ----
 
-  async handle(msg: Message, _ctx: HandleContext): Promise<WordResult | void> {
+  async handle(msg: Message, ctx: HandleContext): Promise<WordResult | void> {
     if (msg.word === "wake.fired") { this.check(); return; }
     const body = (msg.body ?? {}) as Record<string, unknown>;
     switch (msg.word) {
-      case "set": return { data: this.set(body, msg.from) };
-      case "cancel": return { data: this.remove(body) };
-      case "list": return { data: { timers: this.rows().map(info) } };
+      case "set": return { data: this.set(body, ctx.caller) };
+      case "cancel": return { data: this.remove(body, ctx.caller) };
+      // An agent or an app sees only the timers it set; the owner and the hub's services see all.
+      case "list": return { data: { timers: this.rows().filter((row) => seesAll(ctx.caller) || row.created_by === ctx.caller.member).map(info) } };
       default: throw new WordError("not_found", `service:clock has no word ${msg.word}`);
     }
   }
 
   private rows(): Row[] { return this.db.prepare("SELECT * FROM timers ORDER BY next_at, rowid").all() as Row[]; }
 
-  private set(body: Record<string, unknown>, from: string) {
+  private set(body: Record<string, unknown>, caller: Caller) {
     // The router has already checked the body against the contract; what the schema cannot say is left here.
     const at = body.at as number | undefined;
     const every = body.every as number | undefined;
@@ -119,13 +130,18 @@ export class ClockService implements Member {
     if (at !== undefined && at < now) throw new WordError("bad_request", "at is in the past");
     const next = at ?? now + every! * 1000;
     const id = `tmr_${randomBytes(9).toString("base64url")}`;
-    this.db.prepare("INSERT INTO timers (id,next_at,every_s,target,word,body,label,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-      .run(id, next, every ?? null, body.to as string, body.word as string, JSON.stringify(body.body), body.label as string, from, now);
+    this.db.prepare("INSERT INTO timers (id,next_at,every_s,target,word,body,label,created_by,created_as,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .run(id, next, every ?? null, body.to as string, body.word as string, JSON.stringify(body.body), body.label as string,
+        caller.member, JSON.stringify({ member: caller.member, via: caller.via, local: caller.local }), now);
     this.arm();
     return { id, next };
   }
 
-  private remove(body: Record<string, unknown>) {
+  private remove(body: Record<string, unknown>, caller: Caller) {
+    const row = this.db.prepare("SELECT created_by FROM timers WHERE id=?").get(body.id as string) as { created_by: string } | undefined;
+    if (row && row.created_by !== caller.member && caller.member !== OWNER_ID) {
+      throw new WordError("forbidden", "this timer was set by someone else; only its owner or the person:owner can cancel it");
+    }
     const removed = this.db.prepare("DELETE FROM timers WHERE id=?").run(body.id as string).changes > 0;
     this.arm();
     return { cancelled: removed };
@@ -156,7 +172,12 @@ export class ClockService implements Member {
   private async send(row: Row): Promise<void> {
     const msg: Outgoing = { to: row.target, kind: "request", word: row.word, body: JSON.parse(row.body) };
     try {
-      const reply: Reply = await this.options.router.send(msg, SELF);
+      // As the one who set it: the router, the callers check and the gate see that caller, not the clock.
+      // The one narrow case: the owner's reminder to the owner. The recipient is the setter, so nothing is raised,
+      // but `person:owner` words are not for an owner caller (they are for agents and apps), so it goes as the clock.
+      const stored = JSON.parse(row.created_as) as Caller;
+      const caller = stored.member === OWNER_ID && row.target === OWNER_ID ? SELF : stored;
+      const reply: Reply = await this.options.router.send(msg, caller);
       if (!reply.ok) this.log(`timer ${row.id} (${row.label}): ${row.target}/${row.word} answered ${reply.error.code}: ${reply.error.message}`);
     } catch (error) { this.log(`timer ${row.id} (${row.label}): sending to ${row.target}/${row.word} failed`, error); }
   }

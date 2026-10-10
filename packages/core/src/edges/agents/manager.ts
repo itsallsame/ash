@@ -37,8 +37,10 @@ export interface AgentsDeps {
   drivers: Record<string, AgentDriverFactory>;
   /** `ash-skills/agents`: the `main` template that plants the first declaration, and the templates for `spawn`. */
   templates: Templates;
-  /** The agent's own address and token on the tool surface; `allowed` is its declared tool list (already narrowed by delegation). */
-  tools(agent: string, allowed?: string[]): { mcp_url: string; token: string; allowed: string[] };
+  /** The agent's own address on the tool surface and one token for each of its lanes (a new set on every call; the one before stops working); `allowed` is its declared tool list (already narrowed by delegation). */
+  tools(agent: string, lanes: string[], allowed?: string[]): { mcp_url: string; tokens: Record<string, string>; allowed: string[] };
+  /** The agent's tokens stop working (it was stopped, removed, or its process ended). */
+  revokeTools?(agent: string): void;
   rules?(decl: AgentDecl): string | Promise<string>;
   channels?(): string[];
   now?(): number;
@@ -192,7 +194,7 @@ export class AgentManager {
     try {
       statics = await this.modules.static(decl);
       await live.driver.start(id, {
-        runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, decl.tools),
+        runtime: decl.runtime, ...(decl.native ? { native: decl.native } : {}), tools: this.deps.tools(id, Object.keys(lanes), decl.tools),
         modules: { static: statics }, lanes: Object.keys(lanes), sessions: run.spec.sessions,
       });
     } catch (error) {
@@ -216,6 +218,7 @@ export class AgentManager {
     live.state = "failed";
     live.stopping = true;
     this.live.set(id, live);
+    this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
     this.tellOwner(`${id} 起不来了：连着失败了三次（${reason}）。我先停下它，不再自动重试；你可以在设置里让它重启。`);
   }
@@ -223,6 +226,7 @@ export class AgentManager {
   async stopAgent(id: string, reason: string, off = false): Promise<void> {
     const live = this.live.get(id);
     if (off) this.runs.setDesired(id, "off");
+    this.deps.revokeTools?.(id);
     if (!live) return;
     live.stopping = true;
     this.deps.registry.remove(id);
@@ -250,6 +254,27 @@ export class AgentManager {
   }
 
   // ----------------------------------------------------------------------------------------------------------------
+  // the router's structural rules about turns (SPEC-01 §5.2). The turn in `caller.turn` is the one of the lane the tool
+  // token was issued for (or the one the manager itself reported), so a lane is judged by its own turn.
+  // ----------------------------------------------------------------------------------------------------------------
+
+  /** A sub-agent (made by another agent) speaks to the owner only in a turn where the owner addressed it directly. The primary agent (even one that `primary.set` made from a sub-agent) and the top-level ones are not held to a turn here. */
+  mayTalkToOwner(caller: Caller, _word: string): boolean {
+    const run = this.runs.get(caller.member);
+    if (!run || run.spec.decl.primary || run.spec.decl.depth === 0) return true;
+    if (!caller.turn) return false;
+    return this.inbox.byTurn(caller.turn).some((row) => row.agent === caller.member && row.from === OWNER_ID);
+  }
+
+  /** `service:agents/answer` is for the turn that took the message. A message that is not this agent's is left to the service to refuse. */
+  mayAnswer(caller: Caller, body: unknown): boolean {
+    const id = (body as { in_reply_to?: unknown } | null)?.in_reply_to;
+    const row = typeof id === "string" ? this.inbox.get(id) : null;
+    if (!row || row.agent !== caller.member) return true;
+    return row.turn !== undefined && row.turn === caller.turn;
+  }
+
+  // ----------------------------------------------------------------------------------------------------------------
   // members
   // ----------------------------------------------------------------------------------------------------------------
 
@@ -273,7 +298,7 @@ export class AgentManager {
     if (wanted && lanes[wanted]) return wanted;
     // Only the owner's `say` is the owner speaking to the agent; their tell and ask are like anyone's.
     const asOwner = from === OWNER_ID && word === "say";
-    const category = word === "wake" ? "wake" : asOwner ? OWNER_ID : from === "service:clock" ? "timer" : kind === "event" ? "event" : "";
+    const category = word === "wake" ? "wake" : asOwner ? OWNER_ID : kind === "event" ? "event" : "";
     const pick = (match: (f: string) => boolean) => Object.entries(lanes).find(([, l]) => l.from?.some(match))?.[0];
     return pick((f) => f === "*" || f === category || (word !== "wake" && from !== OWNER_ID && f === from)) ?? (lanes.back ? "back" : pick((f) => f === "wake")) ?? Object.keys(lanes)[0]!;
   }
@@ -555,6 +580,7 @@ export class AgentManager {
     const live = this.live.get(id);
     if (!live || live.stopping || live.state !== "running") return;
     this.live.delete(id);
+    this.deps.revokeTools?.(id);
     this.deps.registry.remove(id);
     this.rejectWaiters(id, new WordError("failed", `${id} stopped unexpectedly`));
     this.log(`agents: ${id} ended: ${reason ?? "?"}`);
