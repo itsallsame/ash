@@ -22,8 +22,8 @@ export type McpPart = { type: "text"; text: string } | { type: "image"; data: st
 /** The MCP `CallToolResult`. */
 export interface Shaped { content: McpPart[]; structuredContent?: Record<string, unknown>; isError?: boolean }
 
-/** Keeps `full` as an attachment and says where it is. Throws when it cannot. */
-export type KeepAttachment = (full: string) => { hash: string; size: number; mime: string };
+/** An attachment of the recorded response (the ledger moved long content out of the message). */
+export interface Attachment { hash: string; mime: string; size: number; path?: string }
 
 const text = (value: string): McpPart => ({ type: "text", text: value });
 const json = (value: unknown): string => JSON.stringify(value) ?? "null";
@@ -42,24 +42,22 @@ function sniffImage(bytes: Buffer): string | null {
 }
 
 export function failure(code: ErrorCode, message: string, extra: { detail?: unknown; recovery_hint?: string } = {}): Shaped {
-  return shapeError(errorBody(code, message.slice(0, 1000), extra), () => { throw new Error("no attachments for a refusal"); });
+  return shapeError(errorBody(code, message.slice(0, 1000), extra));
 }
 
-/** An error, with a recovery hint, in the shape every tool failure has. A code that is not one of the fourteen becomes `internal`. */
-export function shapeError(error: ErrorBody, keep: KeepAttachment): Shaped {
+/** An error, with a recovery hint, in the shape every tool failure has. A code that is not one of the fourteen becomes `internal`; a very long detail is cut. */
+export function shapeError(error: ErrorBody): Shaped {
   const code = isErrorCode(error.code) ? error.code : "internal";
   let body = errorBody(code, String(error.message ?? "").slice(0, 2000), { detail: error.detail, recovery_hint: error.recovery_hint || undefined });
-  const full = json({ error: body });
-  if (full.length > MAX_RESULT_CHARS) {
-    let detail: unknown = { truncated: true, preview: json(error.detail).slice(0, PREVIEW_CHARS) };
-    try { detail = { ...(detail as object), attachment: keep(json(error.detail)) }; } catch { /* the preview stands */ }
-    body = { ...body, detail };
-  }
+  if (json({ error: body }).length > MAX_RESULT_CHARS) body = { ...body, detail: { truncated: true, preview: json(error.detail).slice(0, PREVIEW_CHARS) } };
   return { isError: true, content: [text(json({ error: body }))], structuredContent: { error: body } };
 }
 
-/** A word's result: images taken out under the limits, an over-long result kept as an attachment. */
-export function shapeSuccess(result: WordResult | undefined, keep: KeepAttachment): Shaped {
+/**
+ * A word's result: images taken out under the limits. An over-long result is cut to a preview; `recorded` gives the
+ * pieces of it the ledger kept when it recorded the response (none when it was not recorded: then only the preview).
+ */
+export function shapeSuccess(result: WordResult | undefined, recorded: () => Attachment[] = () => []): Shaped {
   const data = result?.data;
   const parts: ContentPart[] | undefined = result?.content;
   const content: McpPart[] = [];
@@ -88,10 +86,9 @@ export function shapeSuccess(result: WordResult | undefined, keep: KeepAttachmen
 
   const full = json(textual.length ? { data, content: textual } : { data });
   const preview = full.slice(0, PREVIEW_CHARS);
-  let attachment: { hash: string; size: number; mime: string } | undefined;
-  try { attachment = keep(full); } catch { /* only the preview can be given */ }
-  const cut = { truncated: true, preview, ...(attachment ? { attachment: { ...attachment, read_with: "service:blobs/read {hash, offset?, limit?}" } } : {}),
-    note: attachment ? "The result was too long to carry. Read the rest in pieces with service:blobs/read, using attachment.hash." : "The result was too long to carry and could not be stored; ask for a smaller piece." };
+  const attachments = recorded();
+  const cut = { truncated: true, preview, ...(attachments.length ? { attachments: attachments.map((a) => ({ ...a, read_with: "service:blobs/read {hash, offset?, limit?}" })) } : {}),
+    note: attachments.length ? "The result was too long to carry. Read the rest in pieces with service:blobs/read, using the hash of an attachment." : "The result was too long to carry and was not kept; ask for a smaller piece." };
   return { content: [text(json(cut)), ...images], structuredContent: cut };
 }
 

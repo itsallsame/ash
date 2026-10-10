@@ -38,15 +38,18 @@ export function fakeRegistry(list: FakeMember[] = members()) {
   };
 }
 
-export interface Sent { msg: Outgoing; caller: Caller; opts: Parameters<ToolsRouter["send"]>[2] }
-export type RouterScript = (msg: Outgoing, caller: Caller, opts: NonNullable<Parameters<ToolsRouter["send"]>[2]>) => Reply | Promise<Reply>;
+/** The options the router takes from the tool surface: `approval` is T4's addition to the kernel type. */
+export interface SendOpts { signal?: AbortSignal; approval?: { ttl_minutes?: number; purpose?: string } }
+export type Replied = Reply & { ref?: string };
+export interface Sent { msg: Outgoing; caller: Caller; opts: SendOpts }
+export type RouterScript = (msg: Outgoing, caller: Caller, opts: SendOpts) => Replied | Promise<Replied>;
 
 /** A router that records what it is sent and answers by a script (default: ok, empty result). */
 export function fakeRouter(script: RouterScript = () => ({ ok: true, result: { data: { done: true } } })): ToolsRouter & { sent: Sent[]; script: RouterScript } {
   const router = {
     sent: [] as Sent[],
     script,
-    async send(msg: Outgoing, caller: Caller, opts: Parameters<ToolsRouter["send"]>[2] = {}): Promise<Reply> {
+    async send(msg: Outgoing, caller: Caller, opts: SendOpts = {}): Promise<Replied> {
       router.sent.push({ msg, caller, opts });
       return await router.script(msg, caller, opts);
     },

@@ -139,19 +139,22 @@ test("a bad envelope is bad_request and nothing is sent", async () => {
   assert.equal(rig.router.sent.length, before);
 });
 
-test("human_confirm is person:owner/ask with human_kind confirmation and the usual yes / no; human_ask passes its input through", async () => {
-  const rig = await startRig({ router: fakeRouter(() => new Promise<Reply>(() => {})) });
+test("human_confirm is person:owner/ask with human_kind confirmation; both tools fill expires_at from approval_ttl_minutes and nothing else", async () => {
+  const rig = await startRig({ router: fakeRouter(() => new Promise<Reply>(() => {})), now: () => 1_000_000 });
   const tools = await rig.client();
-  const asked = await tools.call("human_ask", { title: "晚饭?", options: [{ id: "a", label: "面" }, { id: "b", label: "饭" }], purpose: "dinner" });
+  const options = [{ id: "a", label: "面" }, { id: "b", label: "饭" }];
+  const asked = await tools.call("human_ask", { title: "晚饭?", options, purpose: "dinner", approval_ttl_minutes: 2 });
   assert.equal(asked.data.status, "waiting_owner");
-  assert.deepEqual(rig.router.sent.at(-1)!.msg, { to: "person:owner", kind: "request", word: "ask", body: { title: "晚饭?", options: [{ id: "a", label: "面" }, { id: "b", label: "饭" }] } });
+  assert.deepEqual(rig.router.sent.at(-1)!.msg, { to: "person:owner", kind: "request", word: "ask", body: { title: "晚饭?", options, expires_at: 1_000_000 + 120_000 } });
+  assert.equal(asked.data.expires_at, 1_000_000 + 120_000, "the receipt reads it from the body");
   assert.equal(rig.router.sent.at(-1)!.opts?.approval?.purpose, "dinner");
 
-  await tools.call("human_confirm", { title: "删掉吗" });
-  assert.deepEqual(rig.router.sent.at(-1)!.msg.body, { title: "删掉吗", human_kind: "confirmation", options: [{ id: "once", label: "确认" }, { id: "deny", label: "不确认" }] });
-  await tools.call("human_ask", { title: "删掉吗", human_kind: "confirmation" });
-  assert.equal((rig.router.sent.at(-1)!.msg.body as any).human_kind, "confirmation");
-  assert.equal((rig.router.sent.at(-1)!.msg.body as any).options.length, 2);
+  const confirmed = await tools.call("human_confirm", { title: "删掉吗" });
+  assert.deepEqual(rig.router.sent.at(-1)!.msg.body, { title: "删掉吗", human_kind: "confirmation", expires_at: 1_000_000 + 600_000 }, "no options are made up: the owner's side offers yes and no");
+  assert.equal(confirmed.data.expires_at, 1_000_000 + 600_000);
+  await tools.call("human_ask", { title: "删掉吗", human_kind: "confirmation", expires_at: 5 });
+  assert.deepEqual(rig.router.sent.at(-1)!.msg.body, { title: "删掉吗", human_kind: "confirmation", expires_at: 5 }, "what the agent gave stays");
+  assert.equal(((await tools.tools()).find((t) => t.name === "human_ask")!.description ?? "").includes("message later"), false);
 });
 
 // ---- receipts ------------------------------------------------------------------------------------------------------
@@ -266,6 +269,7 @@ test("human_ask returns waiting_owner + request_id at once; the owner's answer c
   assert.equal(receipt.data.status, "waiting_owner");
   assert.match(receipt.data.request_id, /^r_/);
   assert.ok(receipt.data.expires_at > Date.now() + 100_000 && receipt.data.expires_at < Date.now() + 130_000, "expires after approval_ttl_minutes");
+  assert.equal(receipt.data.expires_at, (rig.router.sent.at(-1)!.msg.body as any).expires_at);
   answer.resolve(ok({ choice: "rice" }));
   const done = await tools.call("await_result", { request_id: receipt.data.request_id });
   assert.deepEqual(done.data, { choice: "rice" });
@@ -358,28 +362,48 @@ test("a failure is isError with structuredContent {error}, a code from the one s
   assert.equal(JSON.stringify(crashed.data).includes("secret stack detail"), false);
 });
 
-test("a result over 60000 characters is kept as an attachment: a 40000 character preview and the reference", async () => {
+test("a result over 60000 characters: a 40000 character preview and the attachment the ledger made of the recorded response", async () => {
   const big = { text: "长".repeat(70_000), small: 1 };
-  const rig = await startRig({ router: fakeRouter(() => ok(big)) });
+  // what the router does: record the response, which the ledger moves out to an attachment, and name the message
+  const router = fakeRouter(() => ({ ...ok(big), ref: recorded.id }));
+  const rig = await startRig({ router });
+  const recorded = rig.ledger.append({ from: "service:clock", to: MAIN, kind: "response", word: "list", body: { ok: true, result: { data: big } } });
   const tools = await rig.client();
   const res = await tools.call("capability_call", { member: "service:clock", word: "list", wait: true });
   assert.equal(res.isError, false);
   assert.equal(res.data.truncated, true);
   assert.equal(res.data.preview.length, 40_000);
   assert.ok(res.text.length < 60_000 && res.text.length > 1000);
-  const { hash, mime, size } = res.data.attachment;
+  assert.equal(res.data.attachments.length, 1);
+  const { hash, mime, size, path } = res.data.attachments[0];
   assert.match(hash, /^[0-9a-f]{64}$/);
   assert.equal(mime, "text/plain");
-  // the full result is in the ledger as an attachment of a message the agent itself is party to
-  const blob = rig.ledger.blob.get(hash)!;
-  assert.equal(blob.bytes.byteLength, size);
-  assert.deepEqual(JSON.parse(Buffer.from(blob.bytes).toString("utf8")), { data: big });
-  const holder = rig.ledger.db().prepare("SELECT m.\"from\" AS who, m.word FROM message_blobs b JOIN messages m ON m.id=b.message_id WHERE b.hash=?").get(hash) as { who: string; word: string };
-  assert.deepEqual({ ...holder }, { who: MAIN, word: "tool.result" });
+  assert.equal(path, "/result/data/text");
+  assert.equal(Buffer.from(rig.ledger.blob.get(hash)!.bytes).toString("utf8"), big.text);
+  assert.equal(rig.ledger.blob.get(hash)!.bytes.byteLength, size);
   assert.match(res.data.note, /service:blobs\/read/);
+  // nothing else was written to the ledger by the tool surface
+  assert.equal((rig.ledger.db().prepare("SELECT COUNT(*) AS n FROM messages WHERE word='tool.result'").get() as { n: number }).n, 0);
+
+  // not recorded (no ref): the preview alone
+  rig.router.script = () => ok(big);
+  const bare = await tools.call("capability_call", { member: "service:clock", word: "list", wait: true });
+  assert.equal(bare.data.truncated, true);
+  assert.equal(bare.data.attachments, undefined);
+  assert.match(bare.data.note, /was not kept/);
   // a result just under the limit goes through whole
   rig.router.script = () => ok({ text: "x".repeat(59_000) });
   assert.equal((await tools.call("capability_call", { member: "service:clock", word: "list", wait: true })).data.text.length, 59_000);
+});
+
+test("a very long error detail is cut, not stored", async () => {
+  const rig = await startRig({ router: fakeRouter(() => fail("failed", "broke", { detail: { log: "z".repeat(80_000) } })) });
+  const tools = await rig.client();
+  const res = await tools.call("capability_call", { member: "service:clock", word: "list" });
+  assert.equal(res.isError, true);
+  assert.equal(res.data.error.detail.truncated, true);
+  assert.equal(res.data.error.detail.preview.length, 40_000);
+  assert.equal(res.data.error.detail.attachment, undefined);
 });
 
 test("at most 8 images; the bytes must be an image; too big is left out; a failed call carries none", async () => {

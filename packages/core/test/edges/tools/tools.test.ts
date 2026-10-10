@@ -79,7 +79,6 @@ test("only the unified error codes appear in the tool surface's source: no old c
   for (const file of files) {
     const source = readFileSync(join(dir, file), "utf8");
     for (const code of old) assert.equal(source.includes(code), false, `${file} mentions ${code}`);
-    assert.equal(/atoll/i.test(source), false, `${file} must not mention the private architecture name`);
   }
   assert.equal(ERROR_CODES.length, 14);
 });

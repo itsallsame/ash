@@ -18,26 +18,25 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListResourcesRequestSchema, ListResourceTemplatesRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from "../../../../sdk/src/versions";
-import { errorBody, type Caller, type Outgoing, type Reply } from "../../../../sdk/src/message";
+import { errorBody, type Caller, type Reply } from "../../../../sdk/src/message";
 import type { Ledger } from "../../kernel/ledger";
+import type { Router } from "../../kernel/types";
 import { capabilityDescribe, capabilityList, toolAllowed, type AgentPolicy, type CatalogRegistry } from "./catalog";
 import { JobTable } from "./jobs";
-import { failure, plain, shapeError, shapeSuccess, type KeepAttachment, type Shaped } from "./result";
+import { failure, plain, shapeError, shapeSuccess, type Attachment, type Shaped } from "./result";
 import { ENVELOPE_APPROVAL, ENVELOPE_WAIT, fixedTool, RECEIPT_TOOLS, toolDefinitions, TOOL_NAMES, type WaitMode } from "./tools";
 
 export { TOOL_NAMES, toolWords, toolDefinitions, FIXED_TOOLS, fixedTool } from "./tools";
 export type { AgentPolicy } from "./catalog";
 export type { Shaped } from "./result";
 
-/** What `router.send` accepts from here; the kernel `Router` fits (its options may be narrower: a method parameter is bivariant). */
-export interface ToolsRouter {
-  send(msg: Outgoing, caller: Caller, opts?: { signal?: AbortSignal; approval?: { ttl_minutes?: number; purpose?: string } }): Promise<Reply>;
-}
+/** All the tool surface needs of the router. Its options also carry `approval` ({ttl_minutes, purpose}, SPEC-02 §3.3) once the router takes it. */
+export type ToolsRouter = Pick<Router, "send">;
 
 export interface ToolsEdgeOptions {
   router: ToolsRouter;
   registry: CatalogRegistry;
-  ledger: Pick<Ledger, "db" | "append">;
+  ledger: Pick<Ledger, "db" | "get">;
   /** The agent's declaration (its `tools` and `words`), or null when there is no such agent. Asked on every call. */
   agentPolicy(agentId: string): AgentPolicy | null;
   /** The turn the agent is running now, or null. Asked on every call. */
@@ -150,13 +149,18 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     for (const [id, job] of live) { if (job.shaped) live.delete(id); if (live.size <= KEEP_SETTLED) break; }
   };
 
-  /** The text goes into a message the agent itself is party to, so the ledger keeps it as an attachment the agent may read with service:blobs/read. */
-  const keeper = (agent: string, turn: string | undefined, request: string): KeepAttachment => (full) => {
-    const message = ledger.append({ from: agent, to: null, kind: "event", word: "tool.result", body: { request, text: full }, ...(turn ? { turn } : {}) });
-    const ref = (message.body as { text?: { $blob?: string; size?: number; mime?: string } }).text;
-    if (!ref || typeof ref !== "object" || !ref.$blob) throw new Error("the ledger did not keep the result as an attachment");
-    return { hash: ref.$blob, size: Number(ref.size), mime: String(ref.mime) };
-  };
+  /** The attachments the ledger made of the recorded response: every `{$blob, mime, size}` reference in the message `ref` names. */
+  function attachmentsOf(ref: string | undefined): Attachment[] {
+    const found: Attachment[] = [];
+    const walk = (value: unknown, path: string) => {
+      if (!value || typeof value !== "object") return;
+      const item = value as Record<string, unknown>;
+      if (typeof item.$blob === "string") { found.push({ hash: item.$blob, mime: String(item.mime), size: Number(item.size), ...(path ? { path } : {}) }); return; }
+      for (const [key, child] of Object.entries(item)) walk(child, `${path}/${key}`);
+    };
+    if (ref) walk(ledger.get(ref)?.body, "");
+    return found;
+  }
 
   function receiptData(job: Job): Record<string, unknown> {
     return job.mode === "ask"
@@ -172,28 +176,27 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     job.persisted = true;
   }
 
-  function shapeReply(job: Job, turn: string, reply: Reply): Shaped {
-    const keep = keeper(job.agent, turn, job.id);
-    if (!reply.ok) return shapeError(reply.error, keep);
+  function shapeReply(job: Job, reply: Reply & { ref?: string }): Shaped {
+    if (!reply.ok) return shapeError(reply.error);
     const data = reply.result?.data;
     if (isObject(data) && data.status === "waiting_owner") {
       // The gate parked the call for the owner: the same receipt, with the id of this call next to the pending_id.
       return plain({ ...data, request_id: job.id, member: job.member, word: job.word,
         guidance: "The owner has been asked; do not poll. The answer arrives as a message. Then reassess whether the action is still wanted and redeem it with human_pending_redeem {id: pending_id}." });
     }
-    return shapeSuccess(reply.result, keep);
+    return shapeSuccess(reply.result, () => attachmentsOf(reply.ref));
   }
 
   function start(d: Dispatch): Job {
     const id = `r_${randomBytes(9).toString("base64url")}`;
     const controller = new AbortController();
     const job: Job = { id, agent: d.agent, member: d.to, word: d.word, label: d.label, at: now(), mode: d.mode, controller, shaped: null, done: undefined as unknown as Promise<Shaped>, persisted: false,
-      ...(d.mode === "ask" ? { expires_at: now() + (d.approval?.ttl_minutes ?? DEFAULT_APPROVAL_MINUTES) * 60_000 } : {}) };
+      ...(typeof d.body.expires_at === "number" ? { expires_at: d.body.expires_at } : {}) };
     const caller: Caller = { member: d.agent, via: "agent", local: true, turn: d.turn };
     const opts = { signal: controller.signal, ...(d.approval ? { approval: d.approval } : {}) };
     job.done = Promise.resolve()
       .then(() => router.send({ to: d.to, kind: "request", word: d.word, body: d.body }, caller, opts))
-      .then((reply) => shapeReply(job, d.turn, reply), (error) => { options.log?.("tool call failed", d.to, d.word, error); return failure("internal", "Ash failed while handling this call"); })
+      .then((reply) => shapeReply(job, reply), (error) => { options.log?.("tool call failed", d.to, d.word, error); return failure("internal", "Ash failed while handling this call"); })
       .then((shaped) => {
         job.shaped = shaped;
         // A call the gate parked is final for this call: keep the receipt so it can be found again.
@@ -309,7 +312,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       const tool = fixedTool(name)!;
       const taken = envelope(args, tool.approval, tool.wait);
       if (refused(taken)) return taken;
-      const body = tool.adapt ? tool.adapt(taken.rest) : taken.rest;
+      const body = tool.adapt ? tool.adapt(taken.rest, { now: now(), ttlMinutes: taken.approval?.ttl_minutes ?? DEFAULT_APPROVAL_MINUTES }) : taken.rest;
       return await dispatch({ agent, turn, to: tool.member, word: tool.word, body, label: tool.contract.label.doing, mode: tool.mode, wait: taken.wait,
         waitByDefault: tool.waitByDefault, approval: taken.approval }, signal);
     } catch (error) {

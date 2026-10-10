@@ -31,7 +31,7 @@ export interface FixedTool {
   /** With `wait` not given: wait as long as `wait: true` would (agent_ask: the answer is usually quick). */
   waitByDefault?: boolean;
   /** What the tool fills in so the word's own rules hold; never new meaning. */
-  adapt?: (body: Record<string, unknown>) => Record<string, unknown>;
+  adapt?: (body: Record<string, unknown>, ctx: { now: number; ttlMinutes: number }) => Record<string, unknown>;
   description: string;
   contract: WordContract;
 }
@@ -52,20 +52,20 @@ const WAIT_PROPERTY: JsonSchema = { type: "boolean", description: "true: wait up
 
 type Row = [name: string, member: string, word: string, mode: WaitMode, flags?: { approval?: boolean; wait?: boolean; waitByDefault?: boolean; adapt?: FixedTool["adapt"]; description?: string }];
 
-const YES_NO = [{ id: "once", label: "确认" }, { id: "deny", label: "不确认" }];
-/** A confirmation takes the usual yes / no when no options are given; `kind` is what the tool stands for when `human_kind` is left out. */
-const asking = (kind?: "confirmation"): FixedTool["adapt"] => (body) => {
-  const out = kind && body.human_kind === undefined ? { ...body, human_kind: kind } : body;
-  return out.human_kind === "confirmation" && out.options === undefined ? { ...out, options: YES_NO } : out;
-};
+/** `kind` is what the tool stands for when `human_kind` is left out; `expires_at` follows approval_ttl_minutes. Nothing else is filled in. */
+const asking = (kind?: "confirmation"): FixedTool["adapt"] => (body, { now, ttlMinutes }) => ({
+  ...body,
+  ...(kind && body.human_kind === undefined ? { human_kind: kind } : {}),
+  ...(body.expires_at === undefined ? { expires_at: now + ttlMinutes * 60_000 } : {}),
+});
 
 const FIXED_ROWS: Row[] = [
   ["human_say", "person:owner", "say", "sync"],
   ["human_show", "person:owner", "show", "sync"],
   ["human_ask", "person:owner", "ask", "ask", { approval: true, adapt: asking(),
-    description: "Ask the owner a question with options to tap (human_kind question, the default). Returns a receipt at once: the answer comes back through await_result with the receipt's request_id, or as a message later. Only title and options are needed." }],
+    description: "Ask the owner a question with options to tap (human_kind question, the default). Returns a receipt at once: the answer comes back through await_result with the receipt's request_id. Only title and options are needed." }],
   ["human_confirm", "person:owner", "ask", "ask", { approval: true, adapt: asking("confirmation"),
-    description: "Ask the owner for an explicit yes or no (the same word as human_ask with human_kind confirmation; options default to confirm / do not confirm). Returns a receipt at once; the answer comes back through await_result with the receipt's request_id. Nothing is done by the confirmation itself." }],
+    description: "Ask the owner for an explicit yes or no (the same word as human_ask with human_kind confirmation; without options the owner's side offers yes and no). Returns a receipt at once; the answer comes back through await_result with the receipt's request_id. Nothing is done by the confirmation itself." }],
   ["human_pending", "service:gate", "pending.list", "sync"],
   ["human_pending_get", "service:gate", "pending.get", "sync"],
   ["human_pending_redeem", "service:gate", "pending.redeem", "receipt"],
