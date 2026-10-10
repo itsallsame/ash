@@ -83,7 +83,7 @@ export async function prepareUploads(files, text = "") {
     attachments.push({ name: safeName(name), mime_type: typeof selected.type === "string" && selected.type ? selected.type : "application/octet-stream", data: base64(new Uint8Array(await selected.arrayBuffer())) });
   }
   const body = { text, ...(attachments.length ? { attachments } : {}) };
-  const wire = { to: "agent:main", kind: "request", word: "say", body, client_id: "0".repeat(36) };
+  const wire = { to: "agent:placeholder", kind: "request", word: "say", body, client_id: "0".repeat(36) };
   if (new TextEncoder().encode(JSON.stringify(wire)).byteLength > MAX_WIRE_BYTES) throw new Error("附件太大：一条消息最多带约 3 MB");
   return attachments;
 }

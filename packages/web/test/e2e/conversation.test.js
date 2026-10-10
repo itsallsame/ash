@@ -7,14 +7,14 @@ test(...withBrowser("the owner sends from the page, the agent answers, and a rel
   const { page } = await openPage(browser, kernel);
   await page.locator("#t").fill("e2e hello");
   await page.locator("#send").click();
-  await page.locator("#log .msg.me", { hasText: "e2e hello" }).waitFor();
+  await page.locator("#log .msg.me[data-seq]", { hasText: "e2e hello" }).waitFor();
   await page.locator("#log .msg.ai", { hasText: "echo: e2e hello" }).waitFor();
   // sent -> delivered -> read: the agent took the say in, then opened a turn with it
   await page.waitForFunction(() => document.querySelector("#log .delivery")?.textContent === "已读");
   const say = await requested(kernel, (r) => r.word === "say");
   assert.deepEqual([say.to, say.body], ["agent:main", { text: "e2e hello" }]);
   await page.reload();
-  await page.locator("#log .msg.me", { hasText: "e2e hello" }).waitFor();
+  await page.locator("#log .msg.me[data-seq]", { hasText: "e2e hello" }).waitFor();
   await page.locator("#log .msg.ai", { hasText: "echo: e2e hello" }).waitFor();
   assert.equal(await page.locator("#log .delivery").count(), 1);
 }));
@@ -120,6 +120,12 @@ test(...withBrowser("a message typed while the connection is down is shown as un
   assert.equal(kernel.requests.filter((r) => r.word === "say").length, 0);
   await page.context().setOffline(false);
   await page.locator("#log .msg.ai", { hasText: "echo: typed offline" }).waitFor();
-  assert.equal(kernel.requests.filter((r) => r.word === "say").length, 1, "delivered exactly once");
+  // A send the dropped connection may have swallowed is sent again with the same client_id, which the hub answers from its first
+  // record: so the page may send twice, but it is one message, one id.
+  const ids = new Set(kernel.requests.filter((r) => r.word === "say").map((r) => r.client_id));
+  assert.equal(ids.size, 1, "every send of it carries the same client_id");
+  assert.equal(kernel.ledger.filter((m) => m.word === "say" && m.from === "person:owner").length, 1, "delivered exactly once");
+  // the local placeholder gives way to the ledger's own bubble
+  await page.locator("#log .msg.pending-local").waitFor({ state: "detached" });
   assert.equal(await page.locator("#log .msg.me", { hasText: "typed offline" }).count(), 1);
 }));

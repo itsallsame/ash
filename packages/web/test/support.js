@@ -4,20 +4,20 @@ import { quickClock } from "./kernel.js";
 
 export class MemoryPending {
   constructor() { this.items = new Map(); }
-  async list(space) { return [...this.items.values()].filter((item) => item.space === space); }
-  async enqueue(space, wire) {
-    const item = { space, wire, client_id: wire.client_id, text: wire.body.text, attachments: [], status: "unsent", id: null, seq: null, leaseOwner: null, leaseUntil: 0 };
+  async list() { return [...this.items.values()]; }
+  async enqueue(wire) {
+    const item = { wire, client_id: wire.client_id, text: wire.body.text, attachments: [], status: "unsent", id: null, seq: null, leaseOwner: null, leaseUntil: 0 };
     this.items.set(wire.client_id, item); return item;
   }
-  async claim(space, owner) {
-    const item = [...this.items.values()].find((value) => value.space === space && value.wire && !value.id && value.status !== "rejected" && !value.leaseOwner);
+  async claim(owner) {
+    const item = [...this.items.values()].find((value) => value.wire && !value.id && value.status !== "rejected" && !value.leaseOwner);
     if (!item) return null;
     item.leaseOwner = owner; item.status = "sending"; return { ...item };
   }
   async renew() {}
   async release(item, owner, status) { const saved = this.items.get(item.client_id); if (saved?.leaseOwner === owner) { saved.leaseOwner = null; saved.status = status; } }
   async accept(item, owner, id, seq) { const saved = this.items.get(item.client_id); if (saved?.leaseOwner === owner) { saved.id = id; saved.seq = seq; saved.status = "accepted"; saved.wire = null; saved.leaseOwner = null; } }
-  async removeAccepted(_space, id) { for (const [key, value] of this.items) if (value.id === id) this.items.delete(key); }
+  async removeAccepted(id) { for (const [key, value] of this.items) if (value.id === id) this.items.delete(key); }
 }
 
 export const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));

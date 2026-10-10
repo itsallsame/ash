@@ -9,7 +9,8 @@ const PAGE = 200;
 const PAGE_WAIT_MS = 20_000;
 
 export const OWNER = "person:owner";
-export const DEFAULT_PRIMARY = "agent:main";
+const PRIMARY_KEY = "ash.primary";
+const remembered = () => { try { const id = globalThis.localStorage?.getItem(PRIMARY_KEY); return AGENT.test(id ?? "") ? id : null; } catch { return null; } };
 
 export class Net {
   /**
@@ -31,7 +32,9 @@ export class Net {
     this.client = null;
     this.local = false;
     this.generation = 0;
-    this.primary = DEFAULT_PRIMARY;
+    /** The hub names the primary agent (`service:agents/list`); until it has, the one it named last time; before that, none. */
+    this.primary = remembered();
+    this.primaryLoad = null;
     this.queue = [];
     this.outbox = [];
     this.seenLedgerIds = new Set();
@@ -40,7 +43,6 @@ export class Net {
     this.bootstrapped = false;
     this.tabOwner = crypto.randomUUID();
     this.flushing = false;
-    this.adminIntent = null;
     this.visible = null;
     this.pendingReady = Promise.resolve(pendingStore ?? openPendingStore()).catch(() => null);
     this.port = openPort({
@@ -82,8 +84,7 @@ export class Net {
       this.client = info.client;
       this.local = info.local === true;
       this.generation++;
-      this.adminIntent = null;
-      this.visible = null; // the kernel forgets what a connection said about itself when it ends
+        this.visible = null; // the kernel forgets what a connection said about itself when it ends
       this.setStatus("online");
       this.onOpen(info);
       this.openHistory();
@@ -101,13 +102,19 @@ export class Net {
     else this.setStatus(state === "connecting" ? "connecting" : "offline");
   }
 
-  async refreshPrimary() {
+  refreshPrimary() {
     const binding = this.binding();
-    try {
-      const { agents } = unwrap(await this.call("service:agents", "list"));
-      const primary = agents?.find((agent) => agent.primary === true);
-      if (primary && this.same(binding)) this.primary = primary.id;
-    } catch { /* the default stands */ }
+    this.primaryLoad = (async () => {
+      try {
+        const { agents } = unwrap(await this.call("service:agents", "list"));
+        const primary = agents?.find((agent) => agent.primary === true);
+        if (primary && this.same(binding)) {
+          this.primary = primary.id;
+          try { globalThis.localStorage?.setItem(PRIMARY_KEY, primary.id); } catch { /* not remembered */ }
+        }
+      } catch { /* what we had stands */ }
+    })();
+    return this.primaryLoad;
   }
 
   // ---- words ----
@@ -148,7 +155,7 @@ export class Net {
   }
 
   /** The owner is (or stopped) typing to [agent]. */
-  setTyping(typing, agent = this.primary) { this.port.presence({ typing, agent }); }
+  setTyping(typing, agent = this.primary) { if (agent) this.port.presence({ typing, agent }); }
 
   // ---- history ----
 
@@ -179,7 +186,7 @@ export class Net {
     const before = this.outbox.length;
     this.outbox = this.outbox.filter((item) => item.id !== message.id);
     if (this.outbox.length !== before) this.publishOutbox();
-    void this.pendingReady.then((store) => store?.removeAccepted(this.space, message.id)).catch(() => {});
+    void this.pendingReady.then((store) => store?.removeAccepted(message.id)).catch(() => {});
     return true;
   }
 
@@ -214,8 +221,6 @@ export class Net {
 
   // ---- the owner's own messages ----
 
-  get space() { return "ash"; }
-
   publishOutbox() {
     this.onQueue(this.queue.length, this.outbox.map((item) => ({ ...item })));
   }
@@ -223,9 +228,9 @@ export class Net {
   async restorePending() {
     const store = await this.pendingReady;
     if (!store) { this.onState("send-error", new Error("pending storage unavailable")); return; }
-    const items = (await store.list(this.space)).filter((item) => {
+    const items = (await store.list()).filter((item) => {
       if (!item.id || !this.seenLedgerIds.has(item.id)) return true;
-      void store.removeAccepted(this.space, item.id).catch(() => {});
+      void store.removeAccepted(item.id).catch(() => {});
       return false;
     });
     this.queue = items.filter((item) => item.wire && !item.id).map((item) => item.wire);
@@ -243,7 +248,10 @@ export class Net {
   }
 
   /** Keeps what the owner typed, then sends it as soon as there is a connection. Returns the message's `client_id`. */
-  async enqueueSay(text, attachments = [], option = null, target = this.primary) {
+  async enqueueSay(text, attachments = [], option = null, target = null) {
+    if (!target && !this.primary) await this.primaryLoad;
+    target ??= this.primary;
+    if (!target) throw new Error("还不知道该对谁说话；连上后再试");
     const store = await this.pendingReady;
     if (!store) throw new Error("pending storage unavailable");
     if (typeof text !== "string" || (!text.trim() && !attachments.length)) throw new Error("empty message");
@@ -252,29 +260,10 @@ export class Net {
     if (!AGENT.test(target)) throw new Error("invalid agent target");
     const body = { text, ...(attachments.length ? { attachments } : {}), ...(option ? { in_reply_to: option.in_reply_to, option_id: option.option_id } : {}) };
     const message = { to: target, kind: "request", word: "say", body, client_id: crypto.randomUUID() };
-    await store.enqueue(this.space, message);
+    await store.enqueue(message);
     await this.restorePending();
     void this.flush();
     return message.client_id;
-  }
-
-  /** A confirmed local-screen action: no queue, no optimistic success. */
-  async sendAdmin(word) {
-    if (!this.local || !this.session || !["pause", "resume"].includes(word)) return { ok: false, reason: "unregistered" };
-    const binding = this.binding();
-    if (this.adminIntent?.word !== word || this.adminIntent?.session !== binding.session) this.adminIntent = { word, session: binding.session, clientId: crypto.randomUUID() };
-    const intent = this.adminIntent;
-    const reply = await this.call("service:admin", word, word === "resume" ? { confirmed: true } : {}, { clientId: intent.clientId });
-    if (!this.same(binding) || !this.local) return { ok: false, reason: "screen-changed" };
-    if (!reply.ok) {
-      // A definite refusal retires the retry id; a lost answer keeps it so the same request may be sent again.
-      if (!retryable(reply.error) && this.adminIntent === intent) this.adminIntent = null;
-      return { ok: false, reason: reply.error.code };
-    }
-    const paused = word === "pause";
-    if (reply.result?.data?.paused !== paused) return { ok: false, reason: "unconfirmed" };
-    if (this.adminIntent === intent) this.adminIntent = null;
-    return { ok: true, paused };
   }
 
   /** The owner answers a question (`ask`) from the card. The kernel records the answer; the first answer counts. */
@@ -299,7 +288,7 @@ export class Net {
       const store = await this.pendingReady;
       if (!store) { this.onState("send-error", new Error("pending storage unavailable")); return; }
       while (this.same(binding)) {
-        const queued = await store.claim(this.space, this.tabOwner);
+        const queued = await store.claim(this.tabOwner);
         if (!queued) break;
         if (queued.blockedUntil) { retry(queued.blockedUntil - Date.now() + 20); break; }
         this.setOutbox(queued.client_id, { status: "sending" });
@@ -325,7 +314,7 @@ export class Net {
           break;
         }
         await store.accept(queued, this.tabOwner, result.message.id, result.message.seq);
-        if (this.seenLedgerIds.has(result.message.id)) await store.removeAccepted(this.space, result.message.id);
+        if (this.seenLedgerIds.has(result.message.id)) await store.removeAccepted(result.message.id);
         await this.restorePending();
       }
     } catch { this.onState("send-error", new Error("pending storage unavailable")); }

@@ -7,12 +7,12 @@ const BODY_ID = /^body:(main|[A-Za-z0-9_-]{22})$/;
 
 /**
  * The body a file card or attachment means. Cards name it as `workspace`: `main`, the id of a computer body, or the full
- * `body:` id; anything else means the main body.
+ * `body:` id. Anything else is not a body the page knows: null (it is not guessed to be the main one).
  */
 export function bodyOf(workspace) {
-  if (typeof workspace !== "string") return BODY_MAIN;
+  if (typeof workspace !== "string") return null;
   if (BODY_ID.test(workspace)) return workspace;
-  return BODY_ID.test(`body:${workspace}`) ? `body:${workspace}` : BODY_MAIN;
+  return BODY_ID.test(`body:${workspace}`) ? `body:${workspace}` : null;
 }
 
 const failed = (message) => new WordFailure({ code: "failed", message });

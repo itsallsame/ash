@@ -63,7 +63,7 @@ const DECIDED_BY = { hand_full: "设备完全放开", device_full: "设备完全
 const ANSWERS = { once: "允许这一次", always: "以后都允许", deny: "不允许" };
 
 /** One record's evidence: what was asked, what the reviewer saw and said, the card, the answer, and whether it ran. */
-export function renderEvidence(parent, entry, { now = Date.now(), name = "Ash", primary = "agent:main" } = {}) {
+export function renderEvidence(parent, entry, { now = Date.now(), name = "Ash", primary = null } = {}) {
   const box = text(parent, "div", "", "sheet-evidence");
   const row = (label, value) => {
     if (!value) return;
@@ -113,7 +113,7 @@ function group(parent, header, intro = "") {
 
 /** Only authenticated ledger projections are shown; no optimistic approval or fake rule rows. */
 export function renderApprovalsSheet(root, view, { now = Date.now(), onAnswer, answerState = new Map(),
-  history, rules, onRevoke, status = "", onRetry, name = "Ash", primary = "agent:main", armedRule = null, onArm, loading = false,
+  history, rules, onRevoke, status = "", onRetry, name = "Ash", primary = null, armedRule = null, onArm, loading = false,
   evidence = new Map(), onEvidence } = {}) {
   const sections = approvalSections(view, now);
   const fragment = document.createDocumentFragment();

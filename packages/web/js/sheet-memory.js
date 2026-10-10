@@ -27,7 +27,6 @@ export function workspaceStore(net, binding) {
     },
     async write(path, content, clientId) {
       live();
-      if (!net.local) throw Object.assign(new WordFailure({ code: "forbidden", message: "只有在她所在的手机上才能修改。" }), { userMessage: "只有在她所在的手机上才能修改。" });
       await writeText(net, BODY_MAIN, path, content, { clientId });
       live();
     },

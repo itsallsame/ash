@@ -106,9 +106,8 @@ export class AgentSheet {
     if (typeof name === "string" && name.trim()) this.name = name.trim();
   }
 
-  /** This connection, and whether the page may edit what lives on the machine she is on. */
   binding() {
-    return { ...this.net.binding(), local: this.net.local === true };
+    return this.net.binding();
   }
 
   current(binding = this.session) {
@@ -182,7 +181,7 @@ export class AgentSheet {
       history: this.approvalHistory, rules: this.approvalRules, status: this.approvalStatus,
       onRetry: () => this.loadApprovalData(binding, epoch),
       armedRule: this.armedRule, onArm: (id) => { this.armedRule = id; this.renderApprovals(); },
-      onRevoke: binding.local ? (id) => this.revokeApprovalRule(id, binding, epoch) : undefined,
+      onRevoke: (id) => this.revokeApprovalRule(id, binding, epoch),
       evidence: this.approvalEvidence, onEvidence: (id) => this.toggleEvidence(id, binding, epoch) });
   }
 
@@ -224,7 +223,7 @@ export class AgentSheet {
   }
 
   async revokeApprovalRule(id, binding, epoch) {
-    if (!binding.local || !this.current(binding) || this.activeTab !== "approvals" || epoch !== this.loadEpoch) return;
+    if (!this.current(binding) || this.activeTab !== "approvals" || epoch !== this.loadEpoch) return;
     const clientId = this.revokeIntents.get(id) ?? crypto.randomUUID();
     this.revokeIntents.set(id, clientId);
     try {
@@ -387,7 +386,7 @@ export class AgentSheet {
     if (existing) { void existing.refresh(); return; }
     section.replaceChildren(node("p", "正在读取…", "sheet-loading"));
     const binding = this.session;
-    const options = { store: isIdentity ? personaStore(this.net, binding) : workspaceStore(this.net, binding), canEdit: binding.local,
+    const options = { store: isIdentity ? personaStore(this.net, binding) : workspaceStore(this.net, binding),
       name: this.name, ...(isIdentity ? { onSaved: () => this.onIdentityChanged() } : {}) };
     const sheet = isIdentity
       ? new IdentitySheet(section, { ...options, extra: () => this.renameRow() })

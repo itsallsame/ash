@@ -7,8 +7,6 @@ const MAX_BYTES = 96 * 1024 * 1024;
 /** A frame is at most 4 MiB (SPEC-03 §1); the wire message of a queued say has to fit in one with room for the envelope. */
 export const MAX_WIRE_BYTES = 4 * 1024 * 1024 - 8 * 1024;
 const encodedBytes = (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-// One page origin keeps one queue: [space] names it (the app and each browser origin have their own database anyway).
-const keyFor = (space, clientId) => JSON.stringify([space, clientId]);
 
 export function openPendingStore(indexedDb = globalThis.indexedDB) {
   if (!indexedDb) return Promise.reject(new Error("pending storage unavailable"));
@@ -16,7 +14,6 @@ export function openPendingStore(indexedDb = globalThis.indexedDB) {
     const opening = indexedDb.open(DB_NAME, 1);
     opening.onupgradeneeded = () => {
       const store = opening.result.createObjectStore(STORE, { keyPath: "key" });
-      store.createIndex("space", "space");
       store.createIndex("createdAt", "createdAt");
     };
     opening.onsuccess = () => resolve(new PendingStore(opening.result));
@@ -40,11 +37,11 @@ export class PendingStore {
       catch { tx.abort(); }
     });
   }
-  async list(space, now = Date.now()) {
+  async list(now = Date.now()) {
     return this.transaction("readwrite", (store, set) => {
       const expiry = store.index("createdAt").openKeyCursor(IDBKeyRange.upperBound(now - TTL_MS));
       expiry.onsuccess = () => { const cursor = expiry.result; if (cursor) { store.delete(cursor.primaryKey); cursor.continue(); } };
-      const all = store.index("space").getAll(IDBKeyRange.only(space));
+      const all = store.getAll();
       all.onsuccess = () => {
         const items = [];
         for (const item of all.result) {
@@ -56,24 +53,24 @@ export class PendingStore {
       };
     });
   }
-  async enqueue(space, wire, now = Date.now()) {
+  async enqueue(wire, now = Date.now()) {
     const size = encodedBytes(wire);
     if (size > MAX_WIRE_BYTES) throw new Error("message exceeds request limit");
-    const key = keyFor(space, wire.client_id);
+    const key = wire.client_id;
     return this.transaction("readwrite", (store, set, tx) => {
-      const all = store.index("space").getAll(IDBKeyRange.only(space));
+      const all = store.getAll();
       all.onsuccess = () => {
         const retained = all.result.filter((item) => now - item.createdAt < TTL_MS);
         for (const expired of all.result) if (now - expired.createdAt >= TTL_MS) store.delete(expired.key);
         if (retained.some((item) => item.key === key) || retained.length >= MAX_ITEMS || retained.reduce((total, item) => total + (item.bytes || 0), size) > MAX_BYTES) { tx.abort(); return; }
-        const item = { key, space, client_id: wire.client_id, text: wire.body.text, attachments: wire.body.attachments?.map(({ name, mime_type, data }) => ({ name, mime_type, size: Math.floor(data.length * 3 / 4) })) || [], wire, bytes: size, status: "unsent", id: null, seq: null, createdAt: now, updatedAt: now, leaseOwner: null, leaseUntil: 0 };
+        const item = { key, client_id: wire.client_id, text: wire.body.text, attachments: wire.body.attachments?.map(({ name, mime_type, data }) => ({ name, mime_type, size: Math.floor(data.length * 3 / 4) })) || [], wire, bytes: size, status: "unsent", id: null, seq: null, createdAt: now, updatedAt: now, leaseOwner: null, leaseUntil: 0 };
         store.add(item); set(item);
       };
     }).catch(() => { throw new Error("pending storage full or unavailable"); });
   }
-  async claim(space, owner, now = Date.now()) {
+  async claim(owner, now = Date.now()) {
     return this.transaction("readwrite", (store, set) => {
-      const all = store.index("space").getAll(IDBKeyRange.only(space));
+      const all = store.getAll();
       all.onsuccess = () => {
         const eligible = all.result.filter((item) => item.wire && !item.id && item.status !== "rejected" && now - item.createdAt < TTL_MS)
           .sort((a, b) => a.createdAt - b.createdAt)[0];
@@ -121,9 +118,9 @@ export class PendingStore {
       };
     });
   }
-  async removeAccepted(space, id) {
+  async removeAccepted(id) {
     return this.transaction("readwrite", (store) => {
-      const all = store.index("space").getAll(IDBKeyRange.only(space));
+      const all = store.getAll();
       all.onsuccess = () => { for (const item of all.result) if (item.id === id) store.delete(item.key); };
     });
   }

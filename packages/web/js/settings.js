@@ -1,7 +1,7 @@
 // The settings drawer. Every setting is a word called on a member of the hub as the owner, over the page's one
 // connection (net.js); the page keeps no secrets and no copy of the hub's state. Management is shown only while the page
 // is connected to a hub on this same machine (`net.local`), exactly as before.
-import { unwrap } from "./link.js";
+import { retryable, unwrap } from "./link.js";
 import { ProactivePreferences } from "./settings-preferences.js";
 import { AppsSettings, appsSummary } from "./settings-apps.js";
 import { usdToCnyText as money, balanceText, CNY_ESTIMATE_NOTE } from "./money.js";
@@ -75,7 +75,6 @@ function armed(control, label, confirmLabel, onWarn, run) {
   });
 }
 
-const SCOPE_NAMES = { chat: "对话", mind: "内心整理", background: "后台任务", title: "起标题", compaction: "压缩历史", review: "审批判断", progress: "进展摘要", other: "其他" };
 const KEYS = [
   { ref: "DEEPSEEK_API_KEY", title: "DeepSeek Key", use: "用于：对话模型", hint: "没有它，Ash 无法对话。" },
   { ref: "OPENROUTER_API_KEY", title: "OpenRouter Key", use: "用于：快速判断（JEV 模型）", hint: "没有它，快速判断只能靠关键词。" },
@@ -138,7 +137,7 @@ export function balanceSentence(data) {
     const balance = entry?.balance;
     if (!balance || typeof balance !== "object") continue;
     if (balance.available === false) unavailable = true;
-    const list = Array.isArray(balance.balances) ? balance.balances : [balance];
+    const list = Array.isArray(balance.balances) ? balance.balances : [];
     const label = PROVIDER_NAMES[entry.provider] ?? entry.provider ?? "";
     for (const item of list) parts.push(`${label ? `${label} ` : ""}${balanceText(item)}`);
   }
@@ -147,7 +146,7 @@ export function balanceSentence(data) {
 }
 
 /** Usage as two lists: how much per period, then where the last week went. */
-export function renderUsage(summary) {
+export function renderUsage(summary, names = {}) {
   const zero = { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0, unpriced_calls: 0 };
   const period = (key) => ({ ...zero, ...(summary?.periods?.[key] ?? {}) });
   const line = (label, totals) => {
@@ -157,15 +156,14 @@ export function renderUsage(summary) {
     text.className = "set-text";
     const note = totals.unpriced_calls ? ` · 另有 ${totals.unpriced_calls} 次没有价格` : "";
     text.append(node("span", label, "set-title"),
-      node("span", `${number(totals.calls)} 次调用 · 输入 ${tokens(number(totals.input_tokens) + number(totals.cache_read_tokens))} / 输出 ${tokens(number(totals.output_tokens))}${note}`, "set-sub"));
+      node("span", `${number(totals.calls)} 次调用 · 输入 ${tokens(number(totals.input_tokens))} / 输出 ${tokens(number(totals.output_tokens))}${note}`, "set-sub"));
     row.append(text, node("span", money(totals.cost_usd), "set-value"));
     return row;
   };
   const groups = [group("", line("今天", period("today")), line("近 7 天", period("7d")), line("近 30 天", period("30d")))];
-  // The hub reports the last week by caller (`by_caller`); a plain `scope` is read the same way.
-  const parts = (Array.isArray(summary?.by_caller) ? summary.by_caller : Array.isArray(summary?.by_scope) ? summary.by_scope : [])
-    .map((entry) => ({ ...zero, ...entry, key: entry.caller ?? entry.scope })).filter((entry) => typeof entry.key === "string");
-  if (parts.length) groups.push(group("近 7 天花在哪", ...parts.map((entry) => line(SCOPE_NAMES[entry.key] ?? entry.key, entry))));
+  // Where the last week went, by whoever made the calls: a member's name where the page knows it, else its id.
+  const parts = (Array.isArray(summary?.by_caller) ? summary.by_caller : []).map((entry) => ({ ...zero, ...entry })).filter((entry) => typeof entry.caller === "string");
+  if (parts.length) groups.push(group("近 7 天花在哪", ...parts.map((entry) => line(names[entry.caller] ?? entry.caller, entry))));
   return groups;
 }
 
@@ -180,6 +178,7 @@ function quietOf(settings) {
 /** Local management controls are rendered only while this page is connected to a hub on this machine. */
 export class SettingsControls {
   constructor(panel, net, { onClose } = {}) {
+    this.adminIntent = null;
     this.panel = panel;
     this.net = net;
     this.onClose = onClose;
@@ -278,10 +277,10 @@ export class SettingsControls {
     // One word, as the owner. It answers with the reply, or with a "stale" failure when this section or the connection it
     // was drawn for is gone (so a late answer never lands on a screen that moved on). `ask` returns the data or throws.
     const stale = () => ({ ok: false, error: { code: "stale", message: "连接已经换了" } });
-    const callReply = async (to, word, body = {}) => {
+    const callReply = async (to, word, body = {}, options) => {
       const binding = this.net.binding();
       if (!live() || !this.online || this.net.local !== true || !this.net.same(binding)) return stale();
-      const reply = await this.net.call(to, word, body);
+      const reply = await this.net.call(to, word, body, options);
       if (!live() || this.net.local !== true || !this.net.same(binding)) return stale();
       return reply;
     };
@@ -331,13 +330,29 @@ export class SettingsControls {
       pause.hidden = paused === true;
       resume.hidden = paused === false;
     };
+    // Pause and resume are confirmed by what the word says (`paused`). A lost answer keeps the request id, so the same
+    // request may be sent again; a definite refusal retires it.
+    const setPaused = async (word) => {
+      const session = this.net.session;
+      if (this.adminIntent?.word !== word || this.adminIntent.session !== session) this.adminIntent = { word, session, clientId: crypto.randomUUID() };
+      const intent = this.adminIntent;
+      const reply = await callReply("service:admin", word, word === "resume" ? { confirmed: true } : {}, { clientId: intent.clientId });
+      if (!reply.ok) {
+        if (!retryable(reply.error) && this.adminIntent === intent) this.adminIntent = null;
+        return { ok: false };
+      }
+      const paused = word === "pause";
+      if (reply.result?.data?.paused !== paused) return { ok: false };
+      if (this.adminIntent === intent) this.adminIntent = null;
+      return { ok: true, paused };
+    };
     const run = async (word) => {
       if (!live() || !this.online || this.net.local !== true) return;
       pause.disabled = true;
       resume.disabled = true;
       yes.disabled = true;
       feedback.textContent = "正在处理…";
-      const result = await this.net.sendAdmin(word);
+      const result = await setPaused(word);
       if (!live() || !this.online) return;
       const done = result.ok && result.paused === (word === "pause");
       feedback.textContent = done ? word === "pause" ? `已暂停 ${name}` : `已恢复 ${name}` : "状态未确认，请检查连接后重试。";
@@ -377,7 +392,7 @@ export class SettingsControls {
       try {
         const summary = await ask(COST, "usage.get", { days: 7 });
         if (!live()) return;
-        usageTable.replaceChildren(...renderUsage(summary));
+        usageTable.replaceChildren(...renderUsage(summary, { [this.net.primary]: name }));
         showUsage(summary);
         usageStatus.textContent = `${summary.estimated ? "费用按模型的公开价格估算。" : ""}${CNY_ESTIMATE_NOTE}`;
       } catch { if (live()) usageStatus.textContent = "用量读取失败，请重试。"; return; }

@@ -56,7 +56,7 @@ function attachment(parent, item, openInline, onOpenFile) {
 }
 
 /** Append a stable ledger conversation without inventing an approval or option action. */
-export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = "agent:main", loading = false } = {}) {
+export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false } = {}) {
   if (!entries.length) text(fragment, "div", loading ? "正在载入对话…" : "还没有对话。", "hello");
   for (let index = 0; index < entries.length; index++) {
     const item = entries[index];

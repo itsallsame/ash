@@ -28,7 +28,7 @@ async function drawer({ local = true, setup } = {}) {
 function stubNet({ local = true } = {}) {
   const state = { generation: 1 };
   return { local, session: "s1", binding: () => ({ session: "s1", generation: state.generation }), same: (binding) => binding.generation === state.generation,
-    call: async () => fail("not_found", "stub"), sendAdmin: async () => ({ ok: false }), state };
+    call: async () => fail("not_found", "stub"), state };
 }
 
 test("management is shown only while connected to a hub on this machine", async () => {
@@ -86,6 +86,30 @@ test("resume requires a second explicit tap and never labels an unconfirmed resu
     f.panel.find("settingsResumeYes").click();
     await until(() => f.panel.find("settingsFeedback").textContent === "已恢复 Ash");
     assert.equal(f.panel.find("settingsResume").hidden, true);
+  } finally { f.close(); }
+});
+
+test("a resume whose answer was lost is sent again as the same request", async () => {
+  const f = await drawer({ setup: (kernel) => kernel.on("service:admin", "resume", fail("unavailable", "later")) });
+  try {
+    const resume = async () => { f.panel.find("settingsFeedback").textContent = ""; f.panel.find("settingsResume").click(); f.panel.find("settingsResumeYes").click(); await until(() => /未确认/.test(f.panel.find("settingsFeedback").textContent)); };
+    await resume();
+    await resume();
+    const ids = f.sent("service:admin", "resume").map((r) => r.client_id);
+    assert.equal(ids.length, 2);
+    assert.equal(ids[0], ids[1]);
+  } finally { f.close(); }
+});
+
+test("a resume the hub refused for good retires its request id", async () => {
+  const f = await drawer({ setup: (kernel) => kernel.on("service:admin", "resume", fail("denied", "no")) });
+  try {
+    const resume = async () => { f.panel.find("settingsFeedback").textContent = ""; f.panel.find("settingsResume").click(); f.panel.find("settingsResumeYes").click(); await until(() => /未确认/.test(f.panel.find("settingsFeedback").textContent)); };
+    await resume();
+    await resume();
+    const ids = f.sent("service:admin", "resume").map((r) => r.client_id);
+    assert.equal(ids.length, 2);
+    assert.notEqual(ids[0], ids[1]);
   } finally { f.close(); }
 });
 
@@ -443,7 +467,7 @@ test("outside the Android app there is no browser-login control, and the old nat
 test("settings show usage by period and by caller, and an unreadable balance is not shown as zero", async () => {
   const zero = { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0, unpriced_calls: 0 };
   const summary = { estimated: true, periods: { today: { ...zero, calls: 3, cost_usd: 0.0042, input_tokens: 12000, unpriced_calls: 1 }, "7d": { ...zero, calls: 9, cost_usd: 1.5 }, "30d": zero },
-    by_caller: [{ ...zero, caller: "chat", calls: 7, cost_usd: 1.2 }, { ...zero, caller: "service:reflex", calls: 2, cost_usd: 0.3 }] };
+    by_caller: [{ ...zero, caller: "agent:main", calls: 7, cost_usd: 1.2 }, { ...zero, caller: "service:reflex", calls: 2, cost_usd: 0.3 }] };
   let balance = fail("failed", "HTTP 401");
   const f = await drawer({ setup: (kernel) => {
     kernel.on("service:cost", "usage.get", summary);
@@ -456,7 +480,7 @@ test("settings show usage by period and by caller, and an unreadable balance is 
     assert.match(table[0], /^今天3 次调用 · 输入 12\.0k.*另有 1 次没有价格¥0\.03$/);
     assert.match(table[1], /^近 7 天9 次调用.*¥10\.11$/);
     assert.match(table[2], /¥0\.00$/);
-    assert.ok(table.some((row) => /^对话.*¥8\.09$/.test(row)) && table.some((row) => /^service:reflex.*¥2\.02$/.test(row)));
+    assert.ok(table.some((row) => /^Ash.*¥8\.09$/.test(row)) && table.some((row) => /^service:reflex.*¥2\.02$/.test(row)));
     assert.equal(f.panel.find("settingsUsageCard").children[1].textContent, "¥0.03");
     assert.deepEqual(f.sent("service:cost").map((request) => [request.word, request.body]).slice(-2), [["usage.get", { days: 7 }], ["balance.get", {}]]);
     assert.match(f.panel.find("settingsUsageBalance").textContent, /读不到（不是零）/);
@@ -624,6 +648,6 @@ test("the relay, the setup state and the balances read in plain words", () => {
   assert.equal(setupText(null), "");
   assert.match(setupText({ state: "failed", reason: "no account" }), /没有成功：no account/);
   assert.equal(balanceSentence({ balances: [] }), "账户余额：无数据");
-  assert.equal(balanceSentence({ balances: [{ provider: "openrouter", balance: { available: false, total: "3", currency: "USD" } }] }), "账户余额：OpenRouter 约 ¥20.22（账户当前不可用）");
+  assert.equal(balanceSentence({ balances: [{ provider: "openrouter", balance: { available: false, balances: [{ currency: "USD", total: "3" }] } }] }), "账户余额：OpenRouter 约 ¥20.22（账户当前不可用）");
   try { assert.match(renderUsage({ periods: {}, by_caller: [] })[0].text, /今天0 次调用/); } finally { delete globalThis.document; }
 });

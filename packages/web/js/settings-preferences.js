@@ -48,7 +48,7 @@ export class ProactivePreferences {
   }
 
   current() {
-    return this.active && this.valid() && this.net.local === true && this.net.same(this.identity);
+    return this.active && this.valid() && this.net.same(this.identity);
   }
 
   dispose() {

@@ -67,13 +67,12 @@ export function renderReadable(parent, text) {
  * guarded by reading the file again first: if it no longer reads as it did when the editor loaded it, nothing is written.
  */
 export class ManagedMarkdownEditor {
-  constructor(root, { path, store, canEdit = true, onSaved = () => {}, idFactory = () => crypto.randomUUID() } = {}) {
+  constructor(root, { path, store, onSaved = () => {}, idFactory = () => crypto.randomUUID() } = {}) {
     if (!paths.has(path) || typeof store?.read !== "function" || typeof store?.write !== "function") throw new TypeError("unsupported managed editor path or store");
     this.root = root;
     this.path = path;
     this.label = FILE_LABELS[path];
     this.store = store;
-    this.canEdit = canEdit;
     this.onSaved = onSaved;
     this.idFactory = idFactory;
     this.loaded = false;
@@ -91,7 +90,7 @@ export class ManagedMarkdownEditor {
   }
 
   /** Whether the owner may change the file here: only from the machine she lives on, and never from a partial read. */
-  get editable() { return this.canEdit && !this.truncated; }
+  get editable() { return !this.truncated; }
 
   dispose() {
     this.disposed = true;
@@ -279,7 +278,6 @@ export class ManagedMarkdownEditor {
       await this.load({ discardDraft: true });
     });
     refresh.hidden = !(this.conflict || this.unverified);
-    if (!this.canEdit && this.loaded) node(card, "p", "只能在她所在的那台手机上修改。", "set-sub");
     this.root.replaceChildren(fragment);
   }
 }

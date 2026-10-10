@@ -95,6 +95,7 @@ export class Files {
     const generation = this.shell(ref?.name || ref?.path?.split("/").pop() || "文件");
     if (!valid) { this.note.textContent = "文件路径无效"; return; }
     const body = bodyOf(ref.workspace);
+    if (!body) { this.note.textContent = "打不开：不知道这个文件在哪台设备上"; return; }
     this.note.textContent = ref.path;
     const directory = ref.path.split("/").slice(0, -1).join("/");
     const folder = add(this.actions, "button", "所在文件夹", "btn gray"); folder.onclick = () => this.browse(body, directory);

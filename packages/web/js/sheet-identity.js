@@ -29,7 +29,6 @@ export function personaStore(net, binding) {
     async write(path, content, clientId) {
       live();
       const refuse = (code, message) => Object.assign(new WordFailure({ code, message }), { userMessage: message });
-      if (!net.local) throw refuse("forbidden", "只有在她所在的手机上才能修改。");
       if (!content.trim()) throw refuse("bad_request", "这份内容不能是空的。");
       const result = await net.data("service:persona", "propose", { file: path, content, reason: REASON }, { clientId });
       live();

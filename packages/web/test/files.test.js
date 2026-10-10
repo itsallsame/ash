@@ -16,10 +16,10 @@ test("file links never climb out of the directory or become arbitrary URLs", () 
     assert.equal(resolveFileLink(href, { workspace: "main", path: "a.md" }), null, href);
 });
 
-test("a card names its body as main, a computer's id, or the full body id; anything else means the main body", () => {
+test("a card names its body as main, a computer's id, or the full body id; anything else is no body", () => {
   assert.equal(bodyOf("main"), "body:main");
-  assert.equal(bodyOf("home"), "body:main");
+  assert.equal(bodyOf("home"), null);
   assert.equal(bodyOf("A".repeat(22)), `body:${"A".repeat(22)}`);
   assert.equal(bodyOf(`body:${"B".repeat(22)}`), `body:${"B".repeat(22)}`);
-  assert.equal(bodyOf(undefined), "body:main");
+  assert.equal(bodyOf(undefined), null);
 });

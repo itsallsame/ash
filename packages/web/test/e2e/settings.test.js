@@ -19,8 +19,10 @@ function settingsHub(kernel) {
   kernel.on("service:gate", "rules.list", () => ({ rules: [], mode: state.mode }));
   kernel.on("service:gate", "history", () => ({ items: [] }));
   kernel.on("service:gate", "mode.set", ({ mode }) => { state.mode = mode; return { mode }; });
-  kernel.on("service:cost", "usage.get", () => ({ periods: { today: { calls: 2, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cost_usd: 0.5 }, "7d": { calls: 3, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cost_usd: 1 }, "30d": { calls: 4, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cost_usd: 2 } }, by_scope: [], by_caller: [] }));
-  kernel.on("service:cost", "balance.get", () => ({ balances: [], available: true }));
+  const totals = (calls, cost_usd) => ({ calls, input_tokens: 10, output_tokens: 5, cost_usd, unpriced_calls: 0 });
+  kernel.on("service:cost", "usage.get", () => ({ as_of: Date.now(), currency: "USD", estimated: true, periods: { today: totals(2, 0.5), "7d": totals(3, 1), "30d": totals(4, 2) },
+    by_caller: [{ caller: "agent:main", ...totals(3, 1) }, { caller: "service:reflex", ...totals(1, 0.1) }], by_day: [], recent: [], balances: [] }));
+  kernel.on("service:cost", "balance.get", () => ({ balances: [{ provider: "deepseek", at: Date.now(), balance: { available: true, balances: [{ currency: "CNY", total: "12.50" }] } }], errors: {} }));
   kernel.on("service:vault", "list", () => ({ entries: ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"].map((ref) => ({ ref, label: ref, kind: "model", configured: state.vault.has(ref) })) }));
   kernel.on("service:vault", "set", ({ ref }) => { state.vault.add(ref); return { ref, configured: true }; });
   kernel.on("service:vault", "delete", ({ ref }) => { state.vault.delete(ref); return { ref, configured: false }; });
@@ -164,6 +166,8 @@ test(...withBrowser("usage is shown from the cost service", async ({ kernel, bro
   await openSettings(page);
   await page.locator("#settingsUsageCard").click();
   await page.locator("#settingsUsageTable").getByText("今天").waitFor();
+  await page.locator("#settingsUsageTable").getByText("service:reflex").waitFor();
+  await page.locator("#settingsUsageBalance", { hasText: "12.5" }).waitFor();
   assert.equal(sent(kernel, "service:cost", "usage.get")[0].body.days, 7);
 }));
 

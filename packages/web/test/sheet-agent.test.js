@@ -356,21 +356,6 @@ test("opening a history record reads its evidence from the gate's audit", async 
   } finally { done(f); }
 });
 
-test("a page that is not on her machine can inspect rules but is offered no revoke button", async () => {
-  const net = fakeNet({ local: false, handlers: {
-    "service:gate/history": { items: [] },
-    "service:gate/rules.list": { rules: [{ id: "rule-remote", subject: "agent:main", to: "device:fixture", word: "send", object_pattern: "*", risk: "outward", created_at: 1, expires_at: Date.now() + 60_000 }] },
-  } });
-  const f = fixture({ net });
-  try {
-    f.sheet.open();
-    await f.sheet.show("approvals");
-    await settle();
-    assert.match(f.sheet.panels.get("approvals").textContent, /以后都允许/);
-    assert.doesNotMatch(f.sheet.panels.get("approvals").textContent, /撤销/);
-  } finally { done(f); }
-});
-
 const pendingGateAsk = () => ({ id: "gate-ask", seq: 7, from: "service:gate", state: "pending",
   options_valid: true, title: "发送一条测试消息？", detail: "仅合成内容", expires_at: Date.now() + 60_000,
   options: [{ id: "once", label: "仅这次" }, { id: "deny", label: "拒绝" }] });
@@ -478,13 +463,12 @@ test("an approval answered through a real kernel is recorded once and confirmed 
   } finally { done(f); net.stop(); kernel.close(); }
 });
 
-test("a page that is not on her machine reads identity but cannot edit; losing the connection discards a delayed read", async () => {
+test("losing the connection discards a delayed read of the identity", async () => {
   let release;
   const net = fakeNet({ local: false, handlers: { "service:persona/get": () => new Promise((resolve) => { release = () => resolve({ files: [{ file: "SOUL.md", content: "old private text", version: "v" }] }); }) } });
   const f = fixture({ net });
   try {
     f.sheet.open();
-    assert.equal(f.sheet.identity.options.canEdit, false);
     net.lose();
     net.reconnect();
     f.sheet.connected();

@@ -231,16 +231,6 @@ test("editing starts from what the file says now", () => dom(async (root) => {
   assert.equal(editor.editing, true);
 }));
 
-test("a read-only screen shows the file without an edit button", () => dom(async (root) => {
-  const store = memoryStore({ "SOUL.md": "沉着、好奇" });
-  const editor = new ManagedMarkdownEditor(root, { path: "SOUL.md", store, canEdit: false });
-  await editor.load();
-  const by = (className) => findAll(root, (item) => String(item.className ?? "").split(" ").includes(className))[0];
-  assert.equal(by("editor-edit").hidden, true);
-  assert.equal(by("editor-save").disabled, true);
-  assert.match(root.textContent, /沉着、好奇.*只能在她所在的那台手机上修改/s);
-}));
-
 // ---- the two stores, against the test kernel ----
 
 const online = async (options) => {
@@ -273,13 +263,7 @@ test("the workspace store reads and writes the main body's files; a missing file
   } finally { stop(); }
 });
 
-test("the workspace store writes nothing from a page that is not on her machine, and drops a result from another connection", async () => {
-  const remote = await online({ local: false });
-  try {
-    const store = workspaceStore(remote.net, remote.net.binding());
-    await assert.rejects(store.write("USER.md", "x", "c"), (error) => error.code === "forbidden");
-    assert.equal(remote.kernel.requests.some((r) => r.word === "workspace.write"), false);
-  } finally { remote.stop(); }
+test("the workspace store drops a result from another connection", async () => {
   const { kernel, net, stop } = await online();
   try {
     kernel.on("body:main", "workspace.read", async () => { await new Promise((resolve) => setTimeout(resolve, 30)); return { path: "USER.md", text: "old account", truncated: false }; });

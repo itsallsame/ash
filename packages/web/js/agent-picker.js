@@ -3,8 +3,8 @@ export function agentPicker(form, input, net, changed = () => {}) {
   /** The agent the owner picked; none means the hub's primary agent. */
   let selected = null;
   const basePlaceholder = input.placeholder;
-  const names = new Map([[net.primary, "Ash"]]);
-  const nameOf = (id) => names.get(id) ?? id.replace(/^agent:/, "");
+  const names = new Map();
+  const nameOf = (id) => id ? names.get(id) ?? id.replace(/^agent:/, "") : "…";
   const control = document.createElement("button"); control.type = "button"; control.className = "agent-recipient";
   const label = () => { control.textContent = `@ ${nameOf(selected?.id ?? net.primary)}`; };
   label();

@@ -116,31 +116,6 @@ test("a confirmation without options is answered yes or no", async () => {
   net.stop(); kernel.close();
 });
 
-test("pause and resume are confirmed by the data, with one retry id until a definite answer", async () => {
-  const kernel = startKernel();
-  const { net } = await ready(kernel);
-  let paused = false;
-  kernel.on("service:admin", "pause", () => { paused = true; return { paused: true }; });
-  kernel.on("service:admin", "resume", () => ({ ok: false, error: { code: "unavailable", message: "later" } }));
-  assert.deepEqual(await net.sendAdmin("pause"), { ok: true, paused: true });
-  assert.equal(paused, true);
-  const first = await net.sendAdmin("resume");
-  const second = await net.sendAdmin("resume");
-  assert.equal(first.ok, false);
-  const resumes = kernel.requests.filter((r) => r.word === "resume");
-  assert.equal(resumes[0].client_id, resumes[1].client_id, "an answer that did not arrive may be retried as the same request");
-  assert.deepEqual(resumes[0].body, { confirmed: true });
-  net.stop(); kernel.close();
-});
-
-test("management is for the local page only", async () => {
-  const kernel = startKernel({ local: false });
-  const { net } = await ready(kernel);
-  assert.equal(net.local, false);
-  assert.equal((await net.sendAdmin("pause")).reason, "unregistered");
-  net.stop(); kernel.close();
-});
-
 test("the kernel's chat open is handed to the page with its target, id and mode", async () => {
   const kernel = startKernel();
   const { net, events } = await ready(kernel);
@@ -236,4 +211,29 @@ test("an answer without a message id cannot drop a pending message", async () =>
   await until(() => net.outbox[0]?.status === "unsent");
   assert.equal(net.queue[0].client_id, id);
   net.stop(); kernel.close();
+});
+
+test("with no primary agent known the page sends nothing; the one the hub named last time is used until it names one again", async () => {
+  const kernel = startKernel();
+  kernel.on("service:agents", "list", { ok: false, error: { code: "unavailable", message: "not yet" } });
+  const first = await ready(kernel);
+  assert.equal(first.net.primary, null);
+  await assert.rejects(first.net.enqueueSay("to whom?"), /不知道该对谁说话/);
+  assert.equal(kernel.requests.some((r) => r.word === "say"), false);
+  first.net.stop();
+  const store = new Map([["ash.primary", "agent:ash"]]);
+  globalThis.localStorage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
+  try {
+    const second = await ready(kernel);
+    assert.equal(second.net.primary, "agent:ash");
+    await second.net.enqueueSay("to the one remembered");
+    await until(() => kernel.requests.some((r) => r.word === "say"));
+    assert.equal(kernel.requests.find((r) => r.word === "say").to, "agent:ash");
+    kernel.on("service:agents", "list", { agents: [{ id: "agent:new", name: "N", summary: "", state: "idle", primary: true }] });
+    second.net.stop();
+    const third = await ready(kernel);
+    await until(() => third.net.primary === "agent:new");
+    assert.equal(store.get("ash.primary"), "agent:new");
+    third.net.stop();
+  } finally { delete globalThis.localStorage; kernel.close(); }
 });

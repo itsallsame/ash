@@ -58,6 +58,8 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
     tick(ms = 1000) { clock += ms; return clock; },
   };
 
+  kernel.handlers.set("service:agents/list", { agents: [{ id: "agent:main", name: "Ash", summary: "", state: "idle", primary: true }] });
+
   const row = (partial) => {
     const message = { seq: ++seq, id: partial.id ?? `m_${seq}`, ts: partial.ts ?? (clock += 1000), from: partial.from, to: partial.to ?? null,
       kind: partial.kind ?? "request", word: partial.word, body: partial.body ?? {}, ...(partial.reply_to ? { reply_to: partial.reply_to } : {}),
@@ -109,6 +111,7 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
       const contract = request.to ? contractOf(request.to, request.word) : undefined;
       if (request.kind === "event") return refuse("forbidden", "the owner sends no events");
       if (!contract) return refuse("not_found", `${request.to} has no word ${request.word}`);
+      if (request.kind === "request" && contract.local_only && !kernel.local) return refuse("forbidden", `${request.word} can only be done from a channel on the hub's machine`);
       if (request.kind === "request" && !contract.callers.includes("owner")) return refuse("forbidden", `${request.word} is not for the owner`);
       if (request.kind === "request" && !validator(contract)(request.body)) return refuse("bad_request", `${request.to}/${request.word}: ${ajv.errorsText(validator(contract).errors)}`);
       if (request.client_id) {
