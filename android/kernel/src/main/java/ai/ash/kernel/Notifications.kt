@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
+import android.os.Bundle
 
 /** The words of the notification, one place; pure so a unit test can pin them. */
 object KernelText {
@@ -50,7 +52,17 @@ object KernelText {
 
 /** The one notification of the foreground service: status text only; a tap opens the hand app. */
 object Notifications {
-    const val CHANNEL = "ash.kernel.status"
+    /**
+     * A channel's importance cannot be raised or lowered once created, and the first builds made "ash.kernel.status" at a level
+     * the phone still shows in the status bar; so the minimum-importance channel is a new id and the old one is deleted.
+     */
+    const val CHANNEL = "ash.kernel.status.v2"
+    val RETIRED_CHANNELS = listOf("ash.kernel.status")
+    /**
+     * MIUI's own extra (an android.graphics.drawable.Icon): the app icon its notification shade draws instead of the launcher
+     * icon cache, which has no entry for a package with no launcher activity. Other systems ignore an unknown extra.
+     */
+    const val MIUI_APP_ICON = "miui.appIcon"
     const val ID = 1
     /** The hand app's chat page (its only launcher activity). */
     const val HOME_ACTIVITY = "ai.ash.ui.HomeActivity"
@@ -64,6 +76,8 @@ object Notifications {
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             },
         )
+        // A channel still carrying a running service's notification cannot be deleted (SecurityException); the next start retires it.
+        for (old in RETIRED_CHANNELS) runCatching { nm.deleteNotificationChannel(old) }
     }
 
     fun build(ctx: Context, text: String): Notification {
@@ -76,6 +90,9 @@ object Notifications {
             .setPriority(Notification.PRIORITY_MIN)
             .setContentText(text)
             .setOngoing(true)
+            .addExtras(Bundle().apply {
+                putParcelable(MIUI_APP_ICON, Icon.createWithResource(ctx, R.mipmap.ic_launcher))
+            })
         // Explicit component: getLaunchIntentForPackage is null on Android 11+ without package visibility, and the tap would do nothing.
         val open = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
             .setComponent(ComponentName(HandConnector.HAND_PACKAGE, HOME_ACTIVITY))
