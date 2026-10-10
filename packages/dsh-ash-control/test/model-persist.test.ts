@@ -87,8 +87,19 @@ test("restore: a failing set returns what the session already offered, and logs 
   const f = fakeSession([{ type: "model/selection", data: { provider: "deepseek-official", model: "gone" } }]);
   const logged: string[] = [];
   const result = { configOptions: options(FLASH) };
-  assert.equal(await createModelMemory(f.ctx, (t: string) => logged.push(t)).restore("s1", result, async () => { throw new Error("unknown model option"); }), result);
+  assert.deepEqual(await createModelMemory(f.ctx, (t: string) => logged.push(t)).restore("s1", result, async () => { throw new Error("unknown model option"); }), result);
   assert.match(logged[0]!, /could not restore the model choice: unknown model option/);
+});
+
+test("restore: when the model went back but the effort did not, ash is given the options with the model that DSH is now on", async () => {
+  const f = fakeSession([{ type: "model/selection", data: { provider: "deepseek-official", model: "deepseek-v4-pro", reasoningEffort: "low" } }]);
+  const logged: string[] = [];
+  const result = { sessionId: "s1", configOptions: options(FLASH) };
+  const set = async (id: string) => { if (id === "reasoning_effort") throw new Error("unknown reasoning effort"); return { configOptions: options(PRO) }; };
+  const out = await createModelMemory(f.ctx, (t: string) => logged.push(t)).restore("s1", result, set);
+  assert.equal(selectionOf(out.configOptions).model, "deepseek-v4-pro", "not the flash that the resume reported");
+  assert.equal(out.sessionId, "s1");
+  assert.match(logged[0]!, /could not restore the model choice: unknown reasoning effort/);
 });
 
 // -- the real DSH ---------------------------------------------------------------------------------------------------
@@ -208,4 +219,27 @@ test("real DSH, through the driver: the model an agent declares and one set by c
     assert.equal(await modelOf(two), FLASH);
     assert.deepEqual(errors, []);
   } finally { for (const d of drivers) await d.stop("agent:t", "test").catch(() => {}); mcp.close(); }
+});
+
+test("real DSH, through the driver: effort is set under DSH's own name, from the declaration and from configure, and survives a restart", { skip, timeout: 120_000 }, async () => {
+  const home = dshHome();
+  const mcp = await stubMcp();
+  const errors: string[] = [];
+  const driver = createDshDriver({ report: (e) => { if (e.event === "error") errors.push(e.message); }, spawn: (argv) => home.spawn(argv), writeFile: async () => {}, argv: home.argv });
+  const spec = (runtime: AgentStartSpec["runtime"]): AgentStartSpec => ({
+    runtime, native: { on: "body:main", cwd: home.cwd }, tools: { mcp_url: mcp.url, tokens: { front: "tok" }, allowed: [] },
+    modules: { static: [] }, lanes: ["front"], sessions: {},
+  });
+  const effortOf = async () => (await driver.configure("agent:t", "front", {}))["effort"];
+  try {
+    await driver.start("agent:t", spec({ kind: "dsh", effort: "low" }));
+    assert.equal(await effortOf(), "low", "the declared effort is on the new session");
+    assert.equal((await driver.configure("agent:t", "front", { effort: "high" }))["effort"], "high");
+    await driver.restart("agent:t");
+    assert.equal(await effortOf(), "high", "restart resumes on the effort that was set");
+    assert.equal((await driver.configure("agent:t", "front", { effort: "low" }))["effort"], "low");
+    await driver.restart("agent:t");
+    assert.equal(await effortOf(), "low");
+    assert.deepEqual(errors, []);
+  } finally { await driver.stop("agent:t", "test").catch(() => {}); mcp.close(); }
 });

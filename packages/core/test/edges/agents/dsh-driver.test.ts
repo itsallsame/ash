@@ -197,7 +197,7 @@ test("session.compact: compacts an idle lane; a running lane is a conflict", asy
 test("configure: sets a bare model name through the offered values, reads back what the runtime reports; the declared model goes onto new sessions", async () => {
   const t = setup();
   await t.driver.start("agent:main", spec({ runtime: { kind: "dsh", model: "deepseek-flash", effort: "high" } }));
-  assert.deepEqual(t.log().filter((l) => l.set).map((l) => [l.set, l.value]).slice(0, 2), [["model", '["p","deepseek-flash"]'], ["effort", "high"]]);
+  assert.deepEqual(t.log().filter((l) => l.set).map((l) => [l.set, l.value]).slice(0, 2), [["model", '["p","deepseek-flash"]'], ["reasoning_effort", "high"]]);
   const now = await t.driver.configure("agent:main", "back");
   assert.equal(now.model, '["p","deepseek-flash"]');
   const changed = await t.driver.configure("agent:main", "back", { model: "m0" });
