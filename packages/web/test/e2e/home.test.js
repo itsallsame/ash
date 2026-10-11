@@ -17,7 +17,7 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   hub.files.set("USER.md", "# 关于你\n## 生活\n- 住在杭州\n## 要紧的\n- 对花生过敏\n");
   hub.files.set("PROACTIVE.md", "快递变化直接说。");
   hub.settings["delivery.quiet_hours"] = "21:30-09:00";
-  hub.timers = [{ id: "c1", next: Date.now() + 3_600_000, label: "每日复盘", every: 86_400 }, { id: "sys", next: Date.now() + 1_800_000, label: "semantic:reload:12", every: 3_600 }, { id: "sys2", next: Date.now() + 1_700_000, label: "整理记忆", created_by: "service:semantic" }, { id: "sys3", next: Date.now() + 1_600_000, label: "pulse:wake:3" }];
+  hub.timers = [{ id: "c1", next: Date.now() + 3_600_000, label: "每日复盘", every: 86_400 }, { id: "sys", next: Date.now() + 1_800_000, label: "semantic:reload:12", every: 3_600 }, { id: "sys2", next: Date.now() + 1_700_000, label: "整理记忆", created_by: "service:semantic" }, { id: "sys3", next: Date.now() + 1_600_000, label: "pulse:wake:3" }, { id: "own", next: Date.now() + 5_400_000, label: "remind:water", created_by: "agent:main", to: "agent:main" }];
   for (const name of ["AGENTS.md", "PULSE.md", "SOUL.md"]) hub.files.set(name, "# 内部设置");
   hub.files.set("装备清单.md", "# 清单");
   turn(kernel, "t1", { tools: ["read"] });
@@ -44,7 +44,8 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   assert.doesNotMatch(await home.textContent(), /service:|agent:|body:|\bJEV\b|DSH/);
   const upcoming = await open(page, "upcoming");
   await upcoming.locator('.hm-plan[data-timer="c1"]').waitFor();
-  assert.equal(await upcoming.locator(".hm-plan").count(), 1, "the plans page lists the same plans as the home page: the system's own are in neither");
+  assert.equal(await upcoming.locator(".hm-plan").count(), 2, "the plans page lists the same plans as the home page: the system's own are in neither, an agent's own are in both");
+  await upcoming.getByText("remind:water").waitFor();
   assert.doesNotMatch(await upcoming.textContent(), /semantic|pulse|整理记忆/);
 }));
 
