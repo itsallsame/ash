@@ -1,4 +1,4 @@
-import { drawsConversation, fold, initialView, OWNER } from "./project.js";
+import { drawsConversation, fold, foldMany, initialView, OWNER } from "./project.js";
 import { Net } from "./net.js";
 import { appendConversation, appendOutbox } from "./conversation.js";
 import { renderProgress } from "./progress.js";
@@ -51,17 +51,19 @@ export class Timeline {
     this.onChange(this.view, drawsConversation(message));
   }
   addMany(messages) {
-    let changed = false;
+    const accepted = [];
     let conversation = false;
     for (const message of messages.sort((a, b) => a.seq - b.seq)) {
       if (!Number.isSafeInteger(message?.seq) || message.seq < 1 || typeof message.id !== "string" || this.records.has(message.seq)) continue;
       this.records.set(message.seq, message);
       this.byId.set(message.id, message);
-      this.view = fold(this.view, message);
-      changed = true;
+      accepted.push(message);
       if (!conversation && drawsConversation(message)) conversation = true;
     }
-    if (changed) this.onChange(this.view, conversation);
+    if (accepted.length) {
+      this.view = foldMany(this.view, accepted);
+      this.onChange(this.view, conversation);
+    }
   }
   async older() {
     if (this.loading || this.exhausted || !this.records.size) return 0;

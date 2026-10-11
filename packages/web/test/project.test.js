@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fold, initialView } from "../js/project.js";
+import { fold, foldMany, initialView } from "../js/project.js";
 
 const message = (entry, i) => ({ seq: i + 1, id: `m${i + 1}`, ts: (i + 1) * 1000, to: null, summary: "", size: 1, ...entry });
 const replay = (entries) => entries.reduce((state, entry, i) => fold(state, message(entry, i)), initialView());
@@ -20,6 +20,51 @@ test("fold is pure and idempotent across duplicate delivery and history replay",
   // rows may arrive out of order (an older page is folded after a newer one)
   const state = fold(fold(initialView(), message(agentSays("later"), 4)), message(agentSays("earlier"), 1));
   assert.deepEqual(state.conversation.map((item) => item.seq), [2, 5]);
+});
+
+test("a batch equals successive folds across replay, conflicting ids/sequences and older pages", () => {
+  const older = message(say("old", { id: "old" }), 0);
+  const newer = message(agentSays("new", { id: "new" }), 19);
+  const current = fold(initialView(), newer);
+  const batch = [
+    message(agentSays("first id delivery", { id: "same" }), 8),
+    message(agentSays("later id delivery", { id: "same" }), 1),
+    message(agentSays("first seq delivery", { id: "seq-first" }), 4),
+    message(agentSays("later seq delivery", { id: "seq-second" }), 4),
+    older, newer,
+    { ...older, seq: -1, id: "invalid" },
+    message({ from: "agent:main", kind: "request", word: "unknown", body: { token: "PRIVATE" } }, 15),
+  ];
+  const before = JSON.stringify(batch);
+  const expected = batch.reduce(fold, current);
+  const actual = foldMany(current, batch);
+  assert.deepEqual(actual, expected);
+  assert.deepEqual(actual._records, expected._records);
+  assert.equal(JSON.stringify(batch), before, "the received batch is not changed by projection");
+  assert.deepEqual(current.conversation.map((item) => item.id), ["new"], "the existing view is unchanged");
+  assert.equal(foldMany(actual, batch), actual, "a replay returns the existing view");
+  assert.equal(foldMany(current, []), current);
+  assert.equal(JSON.stringify(actual).includes("PRIVATE"), false);
+});
+
+test("batch projection hydrates replies and read facts that arrived before their older source page", () => {
+  const asked = message({ id: "ask", from: "service:gate", to: OWNER, kind: "request", word: "ask",
+    body: { title: "Allow?", human_kind: "confirmation" } }, 1);
+  const card = message({ id: "card", from: "agent:main", to: OWNER, kind: "request", word: "show",
+    body: { card: { type: "options", options: [{ id: "yes", text: "Yes" }] } } }, 2);
+  const said = message(say("hi"), 0);
+  const later = [
+    message({ id: "answer", from: OWNER, to: "service:gate", kind: "response", word: "ask", reply_to: "ask", body: { ok: true, result: { data: { choice: "yes" } } } }, 10),
+    message(say("Yes", { id: "option", body: { text: "Yes", in_reply_to: "card", option_id: "yes" } }), 11),
+    message(turnStarted("front", { ids: [said.id] }), 12),
+  ];
+  const current = later.reduce(fold, initialView());
+  const batch = [card, asked, said];
+  const actual = foldMany(current, batch);
+  assert.deepEqual(actual, batch.reduce(fold, current));
+  assert.equal(actual.asks[0].state, "answered");
+  assert.equal(actual.conversation.find((item) => item.id === "card").selected_option_id, "yes");
+  assert.equal(actual.conversation.find((item) => item.id === said.id).delivery, "read");
 });
 
 test("delivery goes sent, delivered (the agent took the say), read (a turn was started with it)", () => {

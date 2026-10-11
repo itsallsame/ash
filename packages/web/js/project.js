@@ -21,6 +21,23 @@ export function fold(state, message) {
   return project(records);
 }
 
+/** Folds a received batch once, with the same first-delivery wins rule as successive folds. */
+export function foldMany(state, messages) {
+  const current = state && Array.isArray(state._records) ? state : initialView();
+  if (!messages.length) return current;
+  const ids = new Set(current._records.map((r) => r.id));
+  const seqs = new Set(current._records.map((r) => r.seq));
+  let records = null;
+  for (const message of messages) {
+    const next = record(message);
+    if (!next || ids.has(next.id) || seqs.has(next.seq)) continue;
+    ids.add(next.id);
+    seqs.add(next.seq);
+    (records ??= [...current._records]).push(next);
+  }
+  return records ? project(records.sort((a, b) => a.seq - b.seq)) : current;
+}
+
 /** The view of a whole batch of ledger rows at once (the home page reads the ledger this way, once per look, not row by row). */
 export function projectMessages(messages) {
   const bySeq = new Map();
