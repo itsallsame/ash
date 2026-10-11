@@ -315,9 +315,11 @@ body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums
 /* 点击区不小于 44：设计稿里这几样控件小于 44（头像 34、选项 40、小按钮 34、分段 32、链接 28、「她」38、发送 30、胶囊 34），
    可见尺寸不变，用不可见的伪元素把可点的范围向外扩到 44；只往外扩到相邻控件之间的空隙里，不盖住它们。 */
 .field .to,.opt,.btn-sm,.seg>*,.card-link,.topbar .who,.say .sbtn,.pill{position:relative}
-.field .to::after,.pill::after{content:"";position:absolute;inset:-5px}
+.field .to::after{content:"";position:absolute;inset:-5px}
+.pill::after{content:"";position:absolute;left:-6px;right:-6px;top:-6px;bottom:-6px}
 .btn-sm::after{content:"";position:absolute;left:0;right:0;top:-5px;bottom:-5px}
-.opt::after{content:"";position:absolute;left:0;right:0;top:-2px;bottom:-2px}
+/* an absolute offset is measured from the padding edge, inside the 1px border: -3px reaches 2px beyond the button */
+.opt::after{content:"";position:absolute;left:0;right:0;top:-3px;bottom:-3px}
 .seg>*::after{content:"";position:absolute;left:0;right:0;top:-6px;bottom:-6px}
 .card-link::after{content:"";position:absolute;left:0;right:0;top:-8px;bottom:-8px}
 .topbar .who::after{content:"";position:absolute;left:0;right:0;top:-3px;bottom:-3px}
@@ -560,7 +562,7 @@ body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums
 /* the small controls the design draws under 44 high keep their look and get a 44 high area */
 .hm-root .seg>*,.hm-root .opt,.hm-root .card-link,.hm-turn-title,.hm-quote-hint,.hm-detail summary{position:relative}
 .hm-root .seg>*::after{content:"";position:absolute;left:0;right:0;top:-3px;bottom:-9px}
-.hm-root .opt::after{content:"";position:absolute;left:0;right:0;top:-2px;bottom:-2px}
+.hm-root .opt::after{content:"";position:absolute;left:0;right:0;top:-3px;bottom:-3px}
 .hm-root .card-link::after,.hm-turn-title::after,.hm-quote-hint::after,.hm-detail summary::after{content:"";position:absolute;left:0;right:0;top:-8px;bottom:-8px}
 </style>
 <style>
