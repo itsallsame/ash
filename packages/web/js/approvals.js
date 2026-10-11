@@ -70,7 +70,8 @@ export function renderEvidence(parent, entry, { now = Date.now(), name = "Ash", 
     text(line, "span", value, "hm-ev-value");
   };
   const effect = EFFECTS[entry.effect] ?? safeText(entry.effect, 40);
-  row("谁要做", entry.requester === primary ? name : safeText(entry.requester, 80));
+  // Who asked, in words: she herself, another agent as a helper, anything else as the system.
+  row("谁要做", entry.requester === primary ? name : /^agent:/.test(entry.requester ?? "") ? "一个帮手" : "系统");
   // The gate's own words carry English contract labels; the owner reads them by what they do.
   const what = entry.member === "service:gate" ? actionLabel(entry) : safeText(entry.label, 120) || safeText(entry.word, 80);
   row("要做什么", `${what}${effect ? `（${effect}）` : ""}`);

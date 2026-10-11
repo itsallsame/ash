@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cancelClock, listClock, normalizeClockList, repeatText } from "../js/clock.js";
+import { cancelClock, isSystemPlan, listClock, userPlans, normalizeClockList, repeatText } from "../js/clock.js";
 import { unwrap } from "../js/link.js";
 import { until } from "./support.js";
 
@@ -21,7 +21,7 @@ function fakeNet(handlers = {}) {
 }
 
 test("clock list data is checked before it is shown; a malformed timer is an error, never an empty list", () => {
-  const timer = { id: "timer1", next: 999999999999, every: null, to: "agent:main", word: "say", label: "带伞", blocked: null };
+  const timer = { id: "timer1", next: 999999999999, every: null, to: "agent:main", by: null, word: "say", label: "带伞", blocked: null };
   assert.deepEqual(normalizeClockList({ timers: [timer] }), [{ ...timer, every: null, blocked: null }]);
   assert.deepEqual(normalizeClockList({ timers: [] }), []);
   for (const bad of [undefined, {}, { timers: "x" }, { timers: [{ id: "bad", next: "tomorrow" }] }, { timers: [{ id: "", next: 1 }] },
@@ -70,4 +70,21 @@ test("a list that arrives after the connection changed is not adopted, and a can
   await cancelClock(net, { session: "s2", generation: net.generation }, "tmr_a", "cancel-client-one");
   assert.deepEqual(net.calls.at(-1), { to: "service:clock", word: "cancel", body: { id: "tmr_a" }, options: { clientId: "cancel-client-one" } });
   void fresh;
+});
+
+test("a plan the system made for itself carries an internal name and is not the owner's to see", () => {
+  assert.equal(isSystemPlan({ label: "semantic:reload:1760" }), true);
+  assert.equal(isSystemPlan({ label: "ash:tick" }), true);
+  assert.equal(isSystemPlan({ label: "带伞" }), false);
+  assert.equal(isSystemPlan({ label: "提醒: 开会" }), false, "words with a space are a person's");
+  assert.equal(isSystemPlan({ label: "" }), false);
+  assert.equal(isSystemPlan({ label: "每日整理", by: "service:semantic" }), true, "told by who made it");
+  assert.equal(isSystemPlan({ label: "pulse:wake:7", by: "agent:main" }), true, "or by the name it carries");
+  assert.equal(isSystemPlan({ label: "吃药", by: "agent:main" }), false);
+  assert.equal(isSystemPlan({ label: "整理", to: "service:semantic" }), true, "aimed at a service");
+  assert.equal(isSystemPlan({ label: "heartbeat_1791734193803" }), true, "a bare code with a timestamp in it");
+  assert.equal(isSystemPlan({ label: "给小李打电话 1791734193", to: "agent:main" }), false);
+  assert.equal(isSystemPlan({ label: "wake-up", to: "agent:main" }), false);
+  assert.equal(isSystemPlan({ label: "吃药", by: "person:owner" }), false);
+  assert.deepEqual(userPlans([{ id: "a", label: "semantic:x:1" }, { id: "b", label: "吃药" }]).map((p) => p.id), ["b"]);
 });

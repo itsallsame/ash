@@ -17,7 +17,9 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   hub.files.set("USER.md", "# 关于你\n## 生活\n- 住在杭州\n## 要紧的\n- 对花生过敏\n");
   hub.files.set("PROACTIVE.md", "快递变化直接说。");
   hub.settings["delivery.quiet_hours"] = "21:30-09:00";
-  hub.timers = [{ id: "c1", next: Date.now() + 3_600_000, label: "每日复盘", every: 86_400 }];
+  hub.timers = [{ id: "c1", next: Date.now() + 3_600_000, label: "每日复盘", every: 86_400 }, { id: "sys", next: Date.now() + 1_800_000, label: "semantic:reload:12", every: 3_600 }, { id: "sys2", next: Date.now() + 1_700_000, label: "整理记忆", created_by: "service:semantic" }, { id: "sys3", next: Date.now() + 1_600_000, label: "pulse:wake:3" }];
+  hub.files.set("AGENTS.md", "# 内部设置");
+  hub.files.set("装备清单.md", "# 清单");
   turn(kernel, "t1", { tools: ["read"] });
   gateAsk(kernel, { title: "要发消息给小李" });
   kernel.append({ id: "q1", from: "agent:main", to: OWNER, kind: "request", word: "ask", body: { title: "订哪个营地？", human_kind: "question", expires_at: Date.now() + 3_600_000, options: [{ id: "a", label: "西溪" }, { id: "b", label: "千岛湖" }] } });
@@ -34,8 +36,16 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   await home.getByText("21:30", { exact: true }).waitFor();
   await home.getByText("快递变化直接说。").waitFor();
   await home.getByText("对话还没设").waitFor();
+  await home.getByText("装备清单.md").waitFor();
+  assert.equal(await home.getByText("AGENTS.md").count(), 0, "her own settings files are not documents she made");
+  assert.equal(await home.getByText(/semantic|pulse|整理记忆/).count(), 0, "a plan the system made for itself is not listed");
+  await home.getByText("DeepSeek", { exact: true }).waitFor();
   assert.equal(await home.locator("#homeCellPhone").count(), 0, "outside the app there is no phone checkup");
   assert.doesNotMatch(await home.textContent(), /service:|agent:|body:|\bJEV\b|DSH/);
+  const upcoming = await open(page, "upcoming");
+  await upcoming.locator('.hm-plan[data-timer="c1"]').waitFor();
+  assert.equal(await upcoming.locator(".hm-plan").count(), 1, "the plans page lists the same plans as the home page: the system's own are in neither");
+  assert.doesNotMatch(await upcoming.textContent(), /semantic|pulse|整理记忆/);
 }));
 
 test(...withBrowser("the page's own state follows her work: working shows what she does, and the back button goes home", async ({ kernel, browser }) => {
@@ -194,4 +204,50 @@ test(...withBrowser("renaming her on her home page changes the name in the conve
   await identity.getByRole("button", { name: "保存", exact: true }).click();
   await page.locator("#title", { hasText: "River" }).waitFor();
   await identity.locator(".hm-id-name", { hasText: "River" }).waitFor();
+}));
+
+test(...withBrowser("every control of her home pages has a hit area at least 44 px high, whatever it is drawn at", async ({ kernel, browser }) => {
+  const hub = homeHub(kernel);
+  hub.files.set("USER.md", "# 关于你\n## 生活\n- 喜欢喝茶\n");
+  hub.timers = [{ id: "c1", next: Date.now() + 3_600_000, label: "吃药提醒", every: 86_400 }];
+  turn(kernel, "t1", { tools: ["read"] });
+  gateAsk(kernel, { title: "要发消息给小李" });
+  kernel.append({ id: "q1", from: "agent:main", to: OWNER, kind: "request", word: "ask", body: { title: "订哪个营地？", human_kind: "question", expires_at: Date.now() + 3_600_000, options: [{ id: "a", label: "西溪" }, { id: "b", label: "千岛湖" }] } });
+  const { page } = await openPage(browser, kernel);
+  const small = async () => page.evaluate(() => {
+    const root = document.querySelector('#home .hm-screen:last-child');
+    const out = [];
+    for (const el of root.querySelectorAll("button, a[href], summary, [role=button], [role=tab], [role=switch], input:not([type=hidden])")) {
+      let r = el.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(el).visibility === "hidden") continue;
+      el.scrollIntoView({ block: "center" });
+      r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      if (cy - 30 < 0 || cy + 30 > innerHeight) continue;
+      const at = (y) => { const hit = document.elementFromPoint(cx, y); return Boolean(hit) && (el === hit || el.contains(hit) || hit.contains(el)); };
+      let up = 0, down = 0;
+      while (up < 30 && at(cy - up - 1)) up++;
+      while (down < 30 && at(cy + down)) down++;
+      if (up + down < 44) out.push(`${el.tagName} ${(el.textContent || el.getAttribute("aria-label") || el.className).slice(0, 20)} ${up + down}`);
+    }
+    return out;
+  });
+  const failures = [];
+  for (const section of ["home", "waiting", "activity", "upcoming", "memory", "promises", "hands", "backstage", "advanced", "keys", "connect"]) {
+    await openHome(page, { page: "home", section: section === "home" ? undefined : section }, `#home .hm-screen[data-page="${section}"]`);
+    await page.waitForTimeout(700);
+    for (const item of await small()) failures.push(`${section}: ${item}`);
+  }
+  assert.deepEqual(failures, []);
+}));
+
+test(...withBrowser("a helper that has no name yet is told as 一个帮手, never by its id", async ({ kernel, browser }) => {
+  homeHub(kernel);
+  turn(kernel, "t_ghost", { lane: "back", tools: ["grep"], agent: "agent:ghost" });
+  const { page } = await openPage(browser, kernel);
+  const activity = await open(page, "activity");
+  await activity.locator(".hm-bgrow", { hasText: "一个帮手" }).waitFor();
+  assert.equal(await activity.getByText(/ghost/).count(), 0);
+  await openHome(page, { page: "home", agent: "agent:ghost" }, '#home .hm-screen[data-page="home"]:last-child');
+  await page.locator("#home #homeName", { hasText: "一个帮手" }).waitFor();
 }));

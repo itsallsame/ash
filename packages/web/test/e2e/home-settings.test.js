@@ -91,6 +91,8 @@ test(...withBrowser("backstage: a key is saved and removed through the vault wor
   await model.locator("#homeModelStatus", { hasText: "已保存" }).waitFor();
   assert.equal(hub.model, "deepseek-reasoner");
   const advanced = await open(page, "advanced");
+  await advanced.getByText("她的扩展", { exact: true }).waitFor();
+  assert.doesNotMatch(await advanced.textContent(), /DSH|@deepseek|dsh-/);
   await advanced.locator('[data-plugin-id="p1"] .sw').click();
   await eventually(() => hub.plugins[0].enabled === false, "plugin off");
   assert.deepEqual(sent(kernel, "service:admin", "plugins.op")[0].body, { op: "plugin", id: "p1", enabled: false });
