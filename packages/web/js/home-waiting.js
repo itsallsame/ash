@@ -126,7 +126,7 @@ export function waitingPage(ctx, screen, arg) {
     if (loading) return;
     loading = true; older.disabled = newer.disabled = true;
     try {
-      currentPage = await screen.ask("service:history", "current", { limit: 40, ...params });
+      currentPage = await screen.ask("service:history", "current", { limit: 40, ...(agent ? { agent } : {}), ...params });
       if (!screen.alive()) return;
       older.hidden = !currentPage.has_more_before; newer.hidden = !currentPage.has_more_after;
       const active = new Set(currentPage.items.map(item => item.ask?.id));

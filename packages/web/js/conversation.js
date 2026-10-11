@@ -1,6 +1,6 @@
 // Render selected conversation facts; gate originals appear only in an explicit plain-text disclosure.
 import { cardHead, fileRef, renderCard } from "./cards.js";
-import { appendApprovalOriginal } from "./approval-original.js";
+import { appendApprovalOriginal, appendFullAnswer } from "./approval-original.js";
 import { appendMarkdown } from "./markdown.js";
 import { addIcon, avatarUrl, button, dayStamp, text, validUntil } from "./chat-ui.js";
 export { fileRef } from "./cards.js";
@@ -92,7 +92,7 @@ function introduction(fragment, herName) {
   text(root, "span", "刚刚住进你的手机", "tx-caption");
 }
 
-function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName, onReadOriginal, lifetime }) {
+function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName, onReadOriginal, onReadAnswer, lifetime }) {
   const ask = item.ask;
   const confirm = ask.from === "service:gate" || ask.human_kind === "confirmation";
   const card = text(fragment, "div", "", "a-card card ask");
@@ -128,6 +128,7 @@ function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, prim
     const line = text(card, "div", "", `resolved ask-outcome${ok ? " ok" : ""}`);
     if (ok) addIcon(line, "check", "i-xs");
     text(line, "span", outcome);
+    appendFullAnswer(card, ask, { onReadAnswer, lifetime });
     return;
   }
   const locked = (option) => answer?.status === "pending" || answer?.status === "confirmed" || answer?.status === "rejected" || Boolean(answer?.choice && answer.choice !== option.id);
@@ -259,7 +260,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
       if (item.side === "owner") text(fragment, "span", deliveryText[item.delivery] || deliveryText.sent, "delivery meta r");
     } else if (item.type === "ask") {
       lastSide = "card";
-      approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName, onReadOriginal, lifetime });
+      approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName, onReadOriginal, onReadAnswer, lifetime });
     } else if (item.type === "card") {
       lastSide = "card";
       renderCard(fragment, item, { onSelect, onPermission, optionPending, onOpenFile, herName });

@@ -47,11 +47,15 @@ const firstLine = (text) => String(text ?? "").split(/\r?\n/).map((line) => line
 export function homePage(ctx, screen) {
   const agentId = ctx.agent;
   const isHer = !agentId;
-  const state = { todayCount: null, usage: null, clock: null, memory: null, quiet: undefined, approval: null, proactive: undefined, devices: null, apps: null, soul: null, files: null, agents: null, relay: null };
+  const state = { agentCurrent: null, todayCount: null, usage: null, clock: null, memory: null, quiet: undefined, approval: null, proactive: undefined, devices: null, apps: null, soul: null, files: null, agents: null, relay: null };
   const hero = h("div", { class: "hm-hero" });
   const body = h("div", { class: "hm-blocks" });
   const online = () => ctx.net.status === "online";
-  const view = () => ctx.feed.view();
+  const view = () => agentId && state.agentCurrent ? {
+    asks: state.agentCurrent.items.map(item => item.ask).filter(Boolean),
+    turns: state.agentCurrent.progress ? { [state.agentCurrent.progress.id]: state.agentCurrent.progress } : {},
+    presence: state.agentCurrent.presence, waiting_count: state.agentCurrent.total_count,
+  } : ctx.feed.view();
 
   // ---- 她此刻
   const heroStat = h("div", { class: "hm-stats" });
@@ -59,7 +63,7 @@ export function homePage(ctx, screen) {
     const v = view();
     const st = stateOf(v, agentId, online());
     const name = isHer ? ctx.name : (state.agents?.find((agent) => agent.id === agentId)?.name ?? agentId.replace(/^agent:/, ""));
-    const waiting = !agentId && Number.isSafeInteger(v.waiting_count) ? v.waiting_count : waitingItems(v).filter((item) => !agentId || item.ask.from === agentId).length;
+    const waiting = !agentId || state.agentCurrent ? v.waiting_count ?? null : null;
     const today = state.usage?.periods?.today?.cost_usd;
     const live = st.state === "working" ? " av-live" : st.state === "thinking" ? " av-breath" : st.state === "waiting_you" ? " av-wait" : "";
     // A quiet dot when she is simply here (green) or away (grey); a ring only while she is doing something, thinking or asking.
@@ -69,7 +73,7 @@ export function homePage(ctx, screen) {
     const pill = h("span", { class: `tag tag-${st.tone} hm-state`, id: "homeState" }, st.state === "working" || st.state === "thinking" ? h("span", { class: "spinner hm-spin" }) : null, `${st.text}${since}`);
     fill(heroStat, 
       stat(state.todayCount === null ? "—" : String(state.todayCount), "今天做的事", { onClick: () => ctx.go("activity", agentId), id: "homeStatDone" }),
-      stat(String(waiting), "等你", { tone: waiting ? "warn" : "", onClick: () => ctx.go("waiting", agentId), id: "homeStatWaiting" }),
+      stat(waiting === null ? "—" : String(waiting), "等你", { tone: waiting ? "warn" : "", onClick: () => ctx.go("waiting", agentId), id: "homeStatWaiting" }),
       stat(typeof today === "number" ? money(today) : "—", "今天花的", { onClick: () => ctx.go("backstage"), id: "homeStatSpent" }));
     fill(hero, face, h("span", { class: "hm-name", id: "homeName" }, name), pill, heroStat);
   };
@@ -84,8 +88,9 @@ export function homePage(ctx, screen) {
     const rows = items.slice(0, 3).map(({ kind, ask }) => row({ icon: kind === "approval" ? "shield" : "ask", tone: kind === "approval" ? "warn" : "her", tall: true, title: ask.title,
       sub: kind === "approval" ? `${firstLine(ask.detail).slice(0, 24)}${ask.detail ? " · " : ""}${dayTime(ask.expires_at, now)} 前有效` : `${agentId ? "" : "她"}问你 · ${ago(ask.ts, now)}`,
       onClick: () => ctx.go("waiting", agentId) }));
-    fill(waitingBox, section("等你的", { right: (v.waiting_count ?? items.length) ? `${v.waiting_count ?? items.length} 件` : null },
-      rows.length ? list(...rows) : list(row({ icon: "check", tone: "ok", title: "没有要你决定的事", sub: "有事她会在这里和对话里叫你" }))));
+    const total = agentId && !state.agentCurrent ? null : v.waiting_count ?? items.length;
+    fill(waitingBox, section("等你的", { right: total ? `${total} 件` : null },
+      rows.length ? list(...rows) : total === null ? note("正在读取…") : list(row({ icon: "check", tone: "ok", title: "没有要你决定的事", sub: "有事她会在这里和对话里叫你" }))));
   };
 
   // ---- 接下来
@@ -203,10 +208,16 @@ export function homePage(ctx, screen) {
     if (counting) { recount = true; return; }
     counting = true;
     try {
-      const day = new Date(); day.setHours(0, 0, 0, 0);
-      const end = new Date(day); end.setDate(end.getDate() + 1);
-      const page = await screen.ask("service:history", "activity.page", { limit: 1, since_ts: day.getTime(), until_ts: end.getTime(), ...(agentId ? { agent: agentId } : {}) });
-      if (screen.alive() && Number.isSafeInteger(page.total_count)) { state.todayCount = page.total_count; drawHero(); }
+      const since = startOfDay(Date.now());
+      const [page, current] = await Promise.all([
+        screen.ask("service:history", "activity.page", { limit: 1, since_ts: since, until_ts: since + 86_400_000, ...(agentId ? { agent: agentId } : {}) }),
+        agentId ? screen.ask("service:history", "current", { agent: agentId, limit: 3 }) : null,
+      ]);
+      if (screen.alive()) {
+        if (Number.isSafeInteger(page.total_count)) state.todayCount = page.total_count;
+        if (current && (!state.agentCurrent || current.snapshot_seq >= state.agentCurrent.snapshot_seq)) state.agentCurrent = current;
+        draw();
+      }
     } catch { /* A missing reply never turns an unknown total into zero. */ }
     finally { counting = false; if (recount && screen.alive()) { recount = false; void countToday(); } }
   };

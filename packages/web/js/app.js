@@ -143,6 +143,32 @@ export function boot({ bridge } = {}) {
     if (serial !== navigationSerial) return false;
     navigation = id ? { id } : { latest: true }; redraw(); return true;
   };
+  const disclosureCharges = new Map();
+  const readDisclosure = async (ask, field, signal) => {
+    const dataset = timeline.store.dataset, hash = ask[field];
+    const text = await net.readBlobText(hash, { signal });
+    if (signal?.aborted || dataset !== timeline.store.dataset || timeline.get(ask.id)?.ask?.[field] !== hash) throw new Error("这段文字已经离开当前对话。");
+    const charges = disclosureCharges.get(ask.id) ?? new Set();
+    const charge = new TextEncoder().encode(text).byteLength;
+    // Each simultaneous disclosure owns its own charge and releases it exactly once.
+    const entry = { bytes: charge }; charges.add(entry);
+    retainReadingAnchor();
+    const total = [...charges].reduce((sum, value) => sum + value.bytes, 0);
+    const dirty = timeline.store.expand(ask.id, total);
+    if (!dirty) { charges.delete(entry); throw new Error("请先结束当前文字选择，再查看完整文字。"); }
+    disclosureCharges.set(ask.id, charges);
+    paintView(timeline.view, true, dirty);
+    let released = false;
+    return { text, release: () => {
+      if (released) return; released = true; charges.delete(entry);
+      if (disclosureCharges.get(ask.id) !== charges) return;
+      if (!charges.size) disclosureCharges.delete(ask.id);
+      if (dataset === timeline.store.dataset) {
+        const remaining = [...charges].reduce((sum, value) => sum + value.bytes, 0);
+        if (remaining) timeline.store.expand(ask.id, remaining); else timeline.store.collapse(ask.id);
+      }
+    } };
+  };
   const cardActions = {
     agentName: id => recipient?.name(id) ?? id.replace(/^agent:/, ""),
     get primary() { return net.primary; },
@@ -159,17 +185,8 @@ export function boot({ bridge } = {}) {
     },
     onOpenFile: (ref) => files.open(ref),
     onFileLink: (href) => files.openLink(href),
-    onReadOriginal: async (ask, signal) => {
-      const dataset = timeline.store.dataset;
-      const text = await net.readBlobText(ask.original_full, { signal });
-      if (signal?.aborted || dataset !== timeline.store.dataset || timeline.get(ask.id)?.ask?.original_full !== ask.original_full) throw new Error("这条原文已经离开当前对话。");
-      retainReadingAnchor();
-      const dirty = timeline.store.expand(ask.id, new TextEncoder().encode(text).byteLength);
-      if (!dirty) throw new Error("请先结束当前文字选择，再查看完整原文。");
-      paintView(timeline.view, true, dirty);
-      let released = false;
-      return { text, release: () => { if (!released) { released = true; timeline.store.collapse(ask.id); } } };
-    },
+    onReadOriginal: (ask, signal) => readDisclosure(ask, "original_full", signal),
+    onReadAnswer: (ask, signal) => readDisclosure(ask, "answer_full", signal),
     fullTexts,
     onExpand: async (hash, id, { automatic = false, signal, mounted = () => {} } = {}) => {
       id ??= timeline.store.items.find(item => item.full === hash)?.id;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendApprovalOriginal } from "../js/approval-original.js";
+import { appendApprovalOriginal, appendFullAnswer } from "../js/approval-original.js";
 
 test("an externalized gate snapshot reads complete plain text only on disclosure and releases on close", async () => {
   class Node {
@@ -50,5 +50,26 @@ test("closing and reopening a pending original cancels its old read without over
     pending[0].resolve({ text: "obsolete original", release: () => releases++ }); await first;
     assert.equal(pre.textContent, "new complete original"); assert.equal(releases, 1);
     details.open = false; await details.events.toggle(); assert.equal(releases, 2);
+  } finally { delete globalThis.document; }
+});
+
+
+test("a large custom answer exposes its exact selectable text only on explicit disclosure", async () => {
+  class Node {
+    constructor() { this.children = []; this.events = {}; this.isConnected = true; }
+    append(node) { this.children.push(node); }
+    addEventListener(name, fn) { this.events[name] = fn; }
+  }
+  globalThis.document = { createElement: () => new Node() };
+  try {
+    const parent = new Node(), complete = "我自己的完整回答。".repeat(3000);
+    let reads = 0, releases = 0;
+    appendFullAnswer(parent, { state: "answered", answer_text: "summary", answer_full: "hash" }, {
+      onReadAnswer: async ask => { assert.equal(ask.answer_full, "hash"); reads++; return { text: complete, release: () => releases++ }; },
+    });
+    assert.equal(reads, 0);
+    const details = parent.children[0], pre = details.children[1];
+    details.open = true; await details.events.toggle(); assert.equal(pre.textContent, complete);
+    details.open = false; await details.events.toggle(); assert.equal(releases, 1); assert.equal(pre.textContent, "");
   } finally { delete globalThis.document; }
 });
