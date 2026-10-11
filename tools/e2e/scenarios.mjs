@@ -657,8 +657,9 @@ export const phoneWordPrompt = (device, word, args, why = "这是自动化测试
   `${why}：请用 capability_call 调手机（member 是 ${device}）的 ${word}，参数 ${JSON.stringify(args)}。必须真的调用，不要问我，调完告诉我结果。`;
 
 /** A long job: keeps the agent busy for a while without tools (so a message can come "while it is busy"). */
-// Long enough that a fast model is still writing a few seconds in (a 600-character essay came back within 5 s).
-export const longJob = (tag) => `（${tag}）请不用任何工具，认真写一篇 2000 字的短文《一个人的春天》，分十段，每段都写细。`;
+// A turn that is surely still running for a while: a model writes even a 2000-character essay within seconds, so the
+// task is a command that takes 90 s (the main body runs it without asking).
+export const longJob = (tag) => `（${tag}）这是自动化测试：请在你的工作区用 shell 执行命令 \`sleep 90\`（必须真的执行并等它结束，不要用别的办法代替），结束后回复「好了」。`;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Part 4. The scenarios. `codes` are the old numbers they cover (tools/regress.sh R1-R21, spec/REGRESSION-0.3.md S001-S175).
@@ -1535,7 +1536,7 @@ defineScenario({
     let base, a;
     for (let attempt = 1; ; attempt++) {
       base = await ctx.head();
-      a = await ctx.send(`（S005-${attempt}）请不用任何工具，认真写一篇 2000 字的短文《一个人的春天》，分十段，每段都写细。`);
+      a = await ctx.send(longJob(`S005-${attempt}`));
       check(await ctx.startedTurnOf(base, a.id, { ms: 60_000, every: 300 }), "the message never started a turn");
       await sleep(800);
       const gone = await ctx.kill(await ctx.dshPids());
