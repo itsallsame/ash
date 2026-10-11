@@ -38,7 +38,7 @@ const set = (extra: Record<string, unknown>) => ({ to: "agent:main", word: "wake
 
 test("the words are the sdk contracts and set/list/cancel work", async () => {
   const s = setup();
-  assert.deepEqual(s.service.words().map((w) => w.word).sort(), ["cancel", "list", "set", "wake.fired"]);
+  assert.deepEqual(s.service.words().map((w) => w.word).sort(), ["cancel", "cancel.owner", "list", "set", "wake.fired"]);
   const setContract = s.service.words().find((w) => w.word === "set")!;
   assert.ok(compileSchema(setContract.input_schema)(set({ at: T0 + 1000 })));
 
@@ -193,7 +193,7 @@ test("a send that fails is logged and does not stop the other timers", async () 
   await svc.handle(msg("set", set({ at: T0, to: "device:phone", word: "ping", body: {}, label: "two" })), ctx);
   svc.check();
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(sent.filter((t) => t !== "service:host").sort(), ["app:x", "device:phone"]);
+  assert.deepEqual(sent.filter((t) => t !== "service:host" && t !== "service:agents").sort(), ["app:x", "device:phone"]);
   assert.equal(logs.filter((l) => l.startsWith("timer")).length, 2);
   svc.stop();
 });
@@ -318,4 +318,94 @@ test("reconcileTimers only counts the timers its own member set: an agent cannot
   assert.equal(all.filter((t) => t.label === "pulse:wake:1" && t.created_by === "agent:main").length, 1, "the agent's own timer is left alone");
   assert.equal(all.filter((t) => t.label === "pulse:wake:1" && t.created_by === "service:pulse").length, 1, "the pulse laid down its own");
   assert.equal(all.filter((t) => t.label === "pulse:wake:2").length, 0, "its stale one was taken away");
+});
+
+// ---- a member that is gone: its timers are taken back ----
+
+test("cancel.owner takes back all of one member's timers and no one else's; it is for the hub alone", async () => {
+  const h = hub();
+  await h.setTimerAs(agent("helper"), "service:quiet", "tick", "h1");
+  await h.setTimerAs(agent("helper"), "service:quiet", "tick", "h2");
+  await h.setTimerAs(agent("main"), "service:quiet", "tick", "m");
+  await h.setTimerAs(owner, "service:quiet", "tick", "o");
+  const cancelOwner = (member: string, caller: Caller) => h.router.send({ to: CLOCK_ID, kind: "request", word: "cancel.owner", body: { member } }, caller);
+  const labels = async () => success(await h.router.send({ to: CLOCK_ID, kind: "request", word: "list", body: {} }, owner)).timers.map((t: any) => t.label).sort();
+
+  for (const caller of [agent("main"), agent("helper"), app(), owner]) assert.equal(failure(await cancelOwner("agent:helper", caller)).code, "forbidden");
+  assert.deepEqual(await labels(), ["h1", "h2", "m", "o"]);
+
+  assert.deepEqual(success(await cancelOwner("agent:helper", service("agents"))), { cancelled: 2 });
+  assert.deepEqual(await labels(), ["m", "o"]);
+  assert.deepEqual(success(await cancelOwner("agent:helper", service("agents"))), { cancelled: 0 });
+});
+
+test("cancel.owner re-arms: with no timer left the in-process timeout is dropped and the host alarm cleared", async () => {
+  const s = setup();
+  await s.call("set", set({ every: 3600, label: "x" }));
+  assert.equal(s.timers.filter((t) => t.live).length, 1);
+  await s.service.handle({ ...msg("cancel.owner", { member: "agent:main" }), from: "service:agents" }, { ...ctx, caller: { member: "service:agents", via: "service", local: true } });
+  assert.equal(s.timers.filter((t) => t.live).length, 0);
+  assert.equal(s.alarms.at(-1), null);
+});
+
+/** A clock whose router says the agent is refused and `service:agents/describe` answers as given. */
+function gone(declared: (agent: string) => Reply, code: "forbidden" | "offline" = "forbidden") {
+  const { ledger } = openLedger();
+  const sent: Outgoing[] = [];
+  const logs: string[] = [];
+  const svc = createClockService({ ledger, now: () => T0, log: (m) => logs.push(m),
+    router: { send: async (m): Promise<Reply> => {
+      sent.push(m);
+      if (m.to === "service:agents" && m.word === "describe") return declared((m.body as { agent: string }).agent);
+      if (m.to === "service:host") return { ok: true };
+      return { ok: false, error: { code, message: "not a declared agent" } };
+    } } });
+  const setAs = (member: string, via: Caller["via"], label: string, every: number | undefined = 3600) =>
+    svc.handle(msg("set", set({ every, at: T0, to: "service:quiet", word: "tick", body: {}, label })), { ...ctx, caller: { member, via, local: false } });
+  const labels = () => (svc as any).rows().map((r: any) => r.label).sort();
+  const fireAll = async () => { svc.check(); await flush(); };
+  return { svc, sent, logs, setAs, labels, fireAll };
+}
+const notFound = (): Reply => ({ ok: false, error: { code: "not_found", message: "no such agent" } });
+const found = (): Reply => ({ ok: true, result: { data: {} } });
+
+test("a repeating timer whose agent is no longer declared is taken back with its siblings, with a log; others stay", async () => {
+  const h = gone((a) => (a === "agent:alive" ? found() : notFound()));
+  await h.setAs("agent:dead", "agent", "d1");
+  await h.setAs("agent:dead", "agent", "d2");
+  await h.setAs("agent:alive", "agent", "a");
+  await h.setAs("service:semantic", "service", "s");
+  await h.fireAll();
+  assert.deepEqual(h.labels(), ["a", "s"].sort());
+  assert.ok(h.logs.some((l) => /agent:dead is no longer a declared agent/.test(l)));
+  const probes = h.sent.filter((m) => m.to === "service:agents" && m.word === "describe");
+  assert.deepEqual(probes.map((m) => (m.body as any).agent).sort(), ["agent:alive", "agent:dead"], "timers that fell due together ask once for the same agent");
+  h.svc.stop();
+});
+
+test("a timer of an agent that is only offline (still declared) stays and goes on", async () => {
+  const h = gone(() => found(), "offline");
+  await h.setAs("agent:resting", "agent", "r");
+  await h.fireAll();
+  assert.deepEqual(h.labels(), ["r"], "the repeating timer is kept");
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+  h.svc.stop();
+});
+
+test("when the check itself fails, nothing is taken back", async () => {
+  const h = gone(() => { throw new Error("agents module down"); });
+  await h.setAs("agent:resting", "agent", "r");
+  await h.fireAll();
+  assert.deepEqual(h.labels(), ["r"]);
+  assert.ok(h.logs.some((l) => /could not check whether agent:resting still exists/.test(l)));
+  h.svc.stop();
+});
+
+test("only an agent's timers are checked: an app's refused timer is not probed", async () => {
+  const h = gone(() => notFound());
+  await h.setAs("app:todo", "app", "t");
+  await h.fireAll();
+  assert.equal(h.sent.filter((m) => m.to === "service:agents").length, 0);
+  assert.deepEqual(h.labels(), ["t"]);
+  h.svc.stop();
 });

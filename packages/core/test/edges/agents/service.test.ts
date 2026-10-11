@@ -344,6 +344,31 @@ test("removing an agent stops it, takes it out of the registry and clears its in
   assert.deepEqual(((await f.service("list", {}))!.data as any).agents.map((a: any) => a.id), [M]);
 });
 
+test("removing an agent has the clock take back the timers it set (as the agents module); a failing clock does not stop the removal", async () => {
+  const f = fixture();
+  f.router.on("service:clock/cancel.owner", () => ({ ok: true, result: { data: { cancelled: 1 } } }));
+  await f.start();
+  await f.service("declare", decl("agent:b"));
+  await f.service("declare", decl("agent:c"));
+  await f.service("remove", { agent: "agent:b" });
+  const calls = f.router.to("service:clock", "cancel.owner");
+  assert.deepEqual(calls.map((c) => c.msg.body), [{ member: "agent:b" }], "only the removed agent's timers; stopping alone does not do it");
+  assert.equal(calls[0]!.caller.member, "service:agents");
+
+  f.router.on("service:clock/cancel.owner", () => { throw new Error("clock down"); });
+  await f.service("remove", { agent: "agent:c" });
+  assert.ok(!f.registry.members.has("agent:c"));
+  assert.ok(f.logs.some((l) => /clearing the timers of agent:c/.test(String(l))));
+});
+
+test("stopping an agent keeps its timers (it is still declared)", async () => {
+  const f = fixture();
+  await f.start();
+  await f.service("declare", decl("agent:b"));
+  await f.service("stop", { agent: "agent:b" });
+  assert.equal(f.router.to("service:clock", "cancel.owner").length, 0);
+});
+
 test("threads: a question waiting for an answer can be listed and stopped", async () => {
   const f = fixture();
   await f.start();

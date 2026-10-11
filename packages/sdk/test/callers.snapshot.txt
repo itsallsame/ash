@@ -107,6 +107,7 @@
 * service:agents/env.changed  kernel  event-in
   service:clock/set  owner,agent,app
   service:clock/cancel  owner,agent,app
+* service:clock/cancel.owner  kernel
   service:clock/list  owner,agent,app
 * service:clock/wake.fired  kernel  event-in
   service:llm/complete  owner,agent,app
