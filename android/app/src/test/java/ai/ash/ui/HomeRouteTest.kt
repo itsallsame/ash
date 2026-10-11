@@ -45,7 +45,7 @@ class HomeRouteTest {
         assertFalse(HomeRoute.isLauncher(null, setOf("android.intent.category.LAUNCHER")))
     }
 
-    /** UI-SPLIT §3: the web page asks for the apps grid or the checkup (a whole page or one part of it); anything else is nothing. */
+    /** The page bridge: the web page asks for the apps grid or the checkup (a whole page or one part of it); anything else is nothing. */
     @Test fun theWebPageMayOpenOnlyTheAppsAndTheCheckup() {
         assertTrue(HomeRoute.nativeFor("apps") is HomeRoute.Native.Apps)
         assertNull((HomeRoute.nativeFor("checkup") as HomeRoute.Native.Checkup).part)

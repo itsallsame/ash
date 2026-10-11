@@ -45,7 +45,7 @@ object HomeRoute {
     /** Whether the chat is what the owner is looking at: it is what the presence, the island and notifications go by. */
     fun chatInFront(resumed: Boolean, tab: HomeTab): Boolean = resumed && tab == HomeTab.CHAT
 
-    /** What the web page may ask the app to open (`open_native`, UI-SPLIT §3): the apps grid, or the checkup (`checkup`, `checkup/<part>`). */
+    /** What the web page may ask the app to open (`open_native`, the page bridge in design/app/IMPLEMENTATION.md): the apps grid, or the checkup (`checkup`, `checkup/<part>`). */
     sealed class Native {
         object Apps : Native()
         class Checkup(val part: OnboardingPlan.Part?) : Native()
