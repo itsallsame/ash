@@ -73,9 +73,9 @@ object KernelInstaller {
     /** Why [apk] must not be installed, or null when it may be. */
     fun problem(ctx: Context, apk: File): String? {
         val info = ctx.packageManager.getPackageArchiveInfo(apk.path, SIGNERS) ?: return "下载的文件不是安装包"
-        if (info.packageName != KernelLauncher.PACKAGE) return "下载的不是内核包"
+        if (info.packageName != KernelLauncher.PACKAGE) return "下载的不是大脑的安装包"
         val mine = ctx.packageManager.getPackageInfo(ctx.packageName, SIGNERS)
-        return if (sameSigners(signers(info), signers(mine))) null else "内核包的签名和 Ash 不一致"
+        return if (sameSigners(signers(info), signers(mine))) null else "大脑的安装包的签名和 Ash 不一致"
     }
 
     private fun signers(info: android.content.pm.PackageInfo): List<ByteArray> =
@@ -105,11 +105,11 @@ object KernelInstaller {
         when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 @Suppress("DEPRECATION") val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                if (confirm != null) BackgroundLaunch.start(ctx, confirm, "确认安装 Ash 内核", "点这里确认安装")
+                if (confirm != null) BackgroundLaunch.start(ctx, confirm, "确认安装 Ash 大脑", "点这里确认安装")
             }
             PackageInstaller.STATUS_SUCCESS -> { failure = null; Log.i(TAG, "kernel package installed") }
             else -> {
-                failure = "内核包没装上（${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "代码 $status"}）"
+                failure = "大脑的安装包没装上（${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "代码 $status"}）"
                 Log.w(TAG, "kernel install failed: $status")
             }
         }

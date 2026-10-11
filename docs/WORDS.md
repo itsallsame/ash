@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `b420cc9870e5d058`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `ce68e40ba4f670ef`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -322,7 +322,7 @@
 | `wake.fired` | kernel | read / none | event out | at* | 在转达唤醒闹钟 | The host's alarm went off (the device woke): the host module passes it on to service:clock. |
 | `env.changed` | kernel | read / none | event out | what*, network*, online*, saver* | 在转达环境变化 | The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay). |
 | `hands.handoff` | kernel | act / none | - | port*, token* (secret) | 在交接本机的手 | Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down. |
-| `update.install` | owner | execute / structure | - | version*, url*, sha256* | 在安装内核更新 | Have the host download and install a new kernel package (checked against sha256). Only the owner. |
+| `update.install` | owner | execute / structure | - | version*, url*, sha256* | 在安装大脑更新 | Have the host download and install a new kernel package (checked against sha256). Only the owner. |
 
 ## `service:bodies`
 

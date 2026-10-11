@@ -121,7 +121,7 @@ object Permissions {
                 confirmable = { PhoneMaker.current.ownSwitches },
             ))
             if (KernelAutostart.applies()) add(Permission(
-                "kernel_autostart", "内核自启动", "手机重启或内核被系统清理后，内核自己回来；不开的话，要等你再打开 Ash 才会把它叫起来",
+                "kernel_autostart", "大脑自启动", "手机重启或大脑被系统清理后，大脑自己回来；不开的话，要等你再打开 Ash 才会把它叫起来",
                 // Readable on MIUI; where it is not, the owner's word stands.
                 { KernelAutostart.state(it) != false },
                 { a -> KernelAutostart.open(a) },

@@ -14,7 +14,7 @@ object KernelGate {
         INSTALL,
         /** Installed but not running: start its foreground service. */
         START,
-        /** Started [MAX_STARTS] times and still not bound: stop trying by itself, show 「内核未运行」 and let the owner retry. */
+        /** Started [MAX_STARTS] times and still not bound: stop trying by itself, show 「大脑未运行」 and let the owner retry. */
         WAIT,
         /** Bound: nothing to do, the guide goes on. */
         PROCEED,

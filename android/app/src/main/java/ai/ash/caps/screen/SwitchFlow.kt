@@ -12,7 +12,7 @@ import ai.ash.caps.screen.KeepAliveSwitches.Target
  * a fixed screen to wait for, a label to find by its exact text, and one tap on that label's own row.
  *
  *  1. Settings → 「应用」 → 「自启动」 (the list of apps).
- *  2. For each app, its row, found by the app's exact name (「Ash」 is never 「Ash 内核」):
+ *  2. For each app, its row, found by the app's exact name (「Ash」 is never 「Ash 大脑」):
  *     - ColorOS 15: the row has the app's one switch, and a subtitle saying what it covers (「开机自启动、后台自启动」,
  *       「后台自启动」, with 「已禁止」 when off). The switch is turned on if off and read again; the subtitle afterwards
  *       says which of 开机自启动 / 后台自启动 it turned on.
@@ -314,7 +314,7 @@ class SwitchFlow(
         if (front.isNotEmpty() && !allowedPackage(front)) throw Abort("前台是 $front，不是系统设置")
     }
 
-    /** Elements whose whole text (or description) is [label]: 「Ash」 never matches 「Ash 内核」 or 「Ash 应用」. */
+    /** Elements whose whole text (or description) is [label]: 「Ash」 never matches 「Ash 大脑」 or 「Ash 应用」. */
     private fun exact(root: UiNode, label: String): List<UiNode> =
         root.findByText(label).filter { (it.text == label || it.description == label) && allowedPackage(it.packageName) }
 

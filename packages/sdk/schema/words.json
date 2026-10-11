@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "b420cc9870e5d0584dbbf85badb3ea2434cbd6fe7d861361b9f1233924d5a116",
+ "hash": "ce68e40ba4f670efb276d02cc4f8861a8a4ac9b12e64b05a385981fef42d5f9e",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -13493,7 +13493,7 @@
     "owner"
    ],
    "label": {
-    "doing": "在安装内核更新"
+    "doing": "在安装大脑更新"
    }
   },
   {
