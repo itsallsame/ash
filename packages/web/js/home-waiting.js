@@ -1,20 +1,16 @@
 // 等你的: the approvals and questions waiting for you, drawn as the same cards as in the conversation, and the decisions
 // made lately (with the evidence of each).
-import { answerGateAsk, approvalSections, renderEvidence } from "./sheet-approvals.js";
+import { actionLabel, answerGateAsk, renderEvidence } from "./approvals.js";
 import { ago, dayTime, h, ico, fill } from "./home-dom.js";
 import { group, list, note, row, skeleton, btn } from "./home-ui.js";
 import { waitingItems } from "./home-model.js";
-import { retryable } from "./link.js";
-import { named } from "./editor.js";
 
 /** The owner's answers in flight, by ask: a retry after a lost answer sends the same request again. */
 const intents = new Map();
 
-const ACTIONS = { "calendar.create": "创建日历事件", "message.send": "发送消息", "browser.click": "在网页上点击", "browser.type": "在网页上输入", "shell.run": "执行命令", "rules.set": "修改审批规则", "rules.revoke": "修改审批规则", "mode.set": "修改审批档位" };
-export const actionLabel = (item) => ACTIONS[item?.word] ?? (item?.risk === "outward" ? "对外操作" : item?.risk === "structure" ? "修改资料" : "受保护操作");
 const DECISIONS = { once: "允许了", always: "以后都允许", deny: "拒绝了", timeout: "过期没回答：", cancelled: "取消了", rule: "按规则放行：", review: "她判断后放行：", carry: "刚允许过，沿用：", hand_full: "设备完全放开放行：", declared_none: "无影响，直接放行：", assessed_none: "评估无影响，直接放行：" };
-export const decisionText = (item) => `${DECISIONS[item.decision] ?? "已记录："}「${(typeof item.label === "string" && item.label) || actionLabel(item)}」`;
-const VERB = { once: "仅这一次", always: "以后都允许", deny: "已拒绝", timeout: "过期没回答", cancelled: "已取消", rule: "按规则放行", review: "由她判断后放行", carry: "刚允许过，沿用", hand_full: "设备完全放开放行", declared_none: "无影响，直接放行", assessed_none: "评估无影响，直接放行" };
+const decisionText = (item) => `${DECISIONS[item.decision] ?? "已记录："}「${(typeof item.label === "string" && item.label) || actionLabel(item)}」`;
+export const VERB = { once: "仅这一次", always: "以后都允许", deny: "已拒绝", timeout: "过期没回答", cancelled: "已取消", rule: "按规则放行", review: "由她判断后放行", carry: "刚允许过，沿用", hand_full: "设备完全放开放行", declared_none: "无影响，直接放行", assessed_none: "评估无影响，直接放行" };
 const valid = (item) => item && typeof item.id === "string" && item.id && Number.isSafeInteger(item.at);
 
 /** The same answer the conversation's card gives: a gate approval through the gate's checks, anything else as a plain answer. */
@@ -42,7 +38,7 @@ async function answer(ctx, screen, ask, choice, answerText) {
 }
 
 /** One waiting item as the card of the conversation. */
-export function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
+function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
   const { kind, ask } = item;
   const approval = kind === "approval";
   const state = intents.get(ask.id);
@@ -116,7 +112,7 @@ export function settledPage(ctx, screen) {
     const now = Date.now();
     fill(box, group("最近的决定", list(...items.slice(0, 40).map((item) => {
       const shown = evidence.get(item.request_id);
-      const el = row({ icon: item.decision === "deny" ? "x" : "check", tone: item.decision === "deny" ? "err" : "ok", title: (typeof item.label === "string" && item.label) || actionLabel(item), sub: `${VERB[item.decision] ?? "已记录"} · ${dayTime(item.at, now)}`,
+      const el = row({ icon: item.decision === "deny" ? "x" : "check", tone: item.decision === "deny" ? "err" : "ok", title: (typeof item.label === "string" && item.label) || actionLabel(item), sub: `${VERB[item.decision] ?? "已记录"} · ${dayTime(item.at, now)}`, note: (item.decision === "review" || item.decision === "carry") && typeof item.reason === "string" ? item.reason.slice(0, 200) : null,
         right: typeof item.request_id === "string" ? btn(shown ? "收起" : "查看依据", "a-btn btn-ghost btn-sm", () => toggle(item.request_id)) : null });
       if (shown) {
         const body = h("div", { class: "hm-evidence" });

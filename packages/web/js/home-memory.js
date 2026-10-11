@@ -2,10 +2,9 @@ import { fill } from "./home-dom.js";
 // 她记得你 (USER.md and MEMORY.md in her work directory) and 她是谁 (SOUL.md and IDENTITY.md, through the persona member).
 import { HomeEditor, editButton, readable } from "./home-editor.js";
 import { groupMemory, memoryCount, urgentGroup } from "./home-model.js";
-import { btn, group, h, list, note, row } from "./home-ui.js";
-import { workspaceStore } from "./sheet-memory.js";
-import { personaStore } from "./sheet-identity.js";
-import { named } from "./editor.js";
+import { btn, group, h, list, row } from "./home-ui.js";
+import { workspaceStore } from "./home-stores.js";
+import { personaStore } from "./home-stores.js";
 
 /** A page of two files with a switch between them and an "编辑" button on the bar. */
 function twoFiles(ctx, screen, { title, files, store, view, foot, onSaved, count = () => undefined }) {
@@ -65,7 +64,8 @@ export function identityPage(ctx, screen) {
   const view = (path, content, parent) => { parent.append(h("div", { class: "list hm-doc-card" }, (() => { const box = h("div", { class: "hm-doc-body" }); readable(box, content, { empty: "还没有写下什么。点「编辑」写几句。", skipTitle: true }); if (path === "SOUL.md" && content.trim()) box.append(h("span", { class: "hm-doc-sig" }, `— ${ctx.name}`)); return box; })())); };
   const page = twoFiles(ctx, screen, { title: "她是谁", files, store: (binding) => personaStore(ctx.net, binding), view,
     foot: () => "这些决定了她是谁、怎样和你相处，改完她下一句话就照新的来。想给她换个名字？直接跟她说。",
-    onSaved: () => { void screen.ask("service:persona", "get", { file: "IDENTITY.md" }).catch(() => {}); } });
+    onSaved: (path) => { if (path === "IDENTITY.md") ctx.refreshName(); } });
+  screen.every(() => { header.querySelector(".hm-id-name").textContent = ctx.name; }, 500);
   const original = page.body;
   page.body = h("div", { class: "hm-stack" }, header, original);
   const refresh = page.refresh;

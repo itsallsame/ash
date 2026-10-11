@@ -13,8 +13,15 @@ export function nameFromIdentity(content) {
   return name;
 }
 
+/**
+ * Every reader of the name on one connection (the conversation's top bar, her home page) hears a change the moment any of them
+ * reads it: rename her on her home page and the bar follows without waiting for a reconnect.
+ */
+const readers = new Set();
+
 export class IdentityName {
   constructor(net, onName) {
+    readers.add(this);
     this.net = net;
     this.onName = onName;
     this.epoch = 0;
@@ -46,9 +53,19 @@ export class IdentityName {
       this.name = nameFromIdentity(file.content) || DEFAULT_NAME;
       this.resolved = binding;
       this.onName(this.name);
+      for (const other of readers) if (other !== this && other.net === this.net) other.adopt(this.name, binding);
     } catch {
       if (current()) this.resetName();
     }
+  }
+
+  /** Another reader on the same connection read the name: take it, as if read here. */
+  adopt(name, binding) {
+    if (!this.net.same(binding)) return;
+    this.epoch++;
+    this.name = name;
+    this.resolved = binding;
+    this.onName(name);
   }
 
   resetName() {

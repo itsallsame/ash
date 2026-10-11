@@ -1,11 +1,11 @@
 import { fill } from "./home-dom.js";
 // 幕后: what runs her. Keys (and whether they work), the model, what she costs, and the developer options. The spending card
 // is the same on the page and on 花了多少.
-import { KEYS, keyProblems, keyStateText } from "./settings.js";
-import { balanceSentence } from "./settings.js";
+import { KEYS, keyProblems, keyStateText } from "./home-text.js";
+import { balanceSentence } from "./home-text.js";
 import { readAgents, readUsage, settled } from "./home-data.js";
 import { pauseControl } from "./home-pause.js";
-import { btn, card, group, h, ico, list, localHint, note, row, skeleton, tag, twoTap } from "./home-ui.js";
+import { btn, card, group, h, list, localHint, note, row, skeleton, tag, twoTap } from "./home-ui.js";
 import { switchRow } from "./home-switch.js";
 import { balanceText, usdToCnyText as money, CNY_ESTIMATE_NOTE } from "./money.js";
 
@@ -16,7 +16,7 @@ const callerName = (names, caller) => names[caller] ?? (caller === "service:refl
 const KEY_COPY = { deepseek: ["DeepSeek Key", "跟你对话用", "没有它，她没法跟你说话。"], openrouter: ["OpenRouter Key", "快速判断要不要问你", "没有它，快速判断只能靠关键词。"] };
 
 /** The spending card: the last seven days as a number and as bars, and what today and the balance are. */
-export function spendCard(usage, balance) {
+function spendCard(usage, balance) {
   const week = usage?.periods?.["7d"]?.cost_usd;
   const days = (Array.isArray(usage?.by_day) ? usage.by_day : []).slice(-7).map((day) => num(day.cost_usd));
   const peak = Math.max(...days, 0.000001);

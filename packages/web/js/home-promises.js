@@ -1,11 +1,10 @@
 // 你们的约定: the quiet hours, how often she asks before acting (and what you said "always" to), and when she may come to you.
 // What is changeable is written into the sentence: the words in the accent colour are tapped and changed in place.
-import { ProactivePreferences } from "./settings-preferences.js";
-import { QUIET_FORMAT, QUIET_DEFAULT } from "./settings.js";
-import { readApproval, readFile, readQuiet } from "./home-data.js";
-import { actionLabel } from "./home-waiting.js";
-import { btn, card, h, ico, note, twoTap } from "./home-ui.js";
-import { named } from "./editor.js";
+import { ProactivePreferences } from "./home-preferences.js";
+import { QUIET_FORMAT, QUIET_DEFAULT } from "./home-text.js";
+import { readApproval, readQuiet } from "./home-data.js";
+import { actionLabel } from "./approvals.js";
+import { btn, card, h, ico, note } from "./home-ui.js";
 import { dayTime, fill } from "./home-dom.js";
 
 const QUIET_KEY = "delivery.quiet_hours";
@@ -103,7 +102,6 @@ export function promisesPage(ctx, screen, arg) {
   // ---- proactive contact
   const prefsRoot = h("div", { class: "hm-prefs" });
   const prefs = new ProactivePreferences(prefsRoot, ctx.net, () => screen.alive(), { onText: (text) => { state.proactive = text; drawProactive(false); } });
-  prefs.editor.className = "hm-source"; prefs.saveButton.className = "a-btn btn-primary btn-block"; prefs.loadButton.className = "a-btn btn-neutral btn-block"; prefs.status.className = "hm-note";
   const drawProactive = (reload = true) => {
     const text = state.proactive;
     const view = h("div", { class: "hm-proactive-view" }, text === undefined ? h("span", { class: "hm-sentence" }, "正在读取…") : text && text.trim() ? h("span", { class: "hm-sentence plain" }, text.trim()) : h("span", { class: "hm-sentence plain c-3" }, "关于你的偏好，还没写。"));

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ProactivePreferences } from "../js/settings-preferences.js";
+import { ProactivePreferences } from "../js/home-preferences.js";
 import { startKernel } from "./kernel.js";
 import { connect } from "./support.js";
 

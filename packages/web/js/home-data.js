@@ -1,9 +1,8 @@
 // The reads the home pages share. Each takes the `screen` of its page (see home.js), so an answer that arrives after the
 // page or the connection moved on throws `{code: "stale"}` instead of being drawn.
 import { BODY_MAIN } from "./body.js";
-import { normalizeClockList } from "./sheet-upcoming.js";
-import { quietOf, QUIET_KEY } from "./settings.js";
-import { nameFromIdentity } from "./identity-name.js";
+import { normalizeClockList } from "./clock.js";
+import { quietOf, QUIET_KEY } from "./home-text.js";
 
 export const settled = (work) => Promise.resolve(work).then((value) => value, () => null);
 
@@ -52,7 +51,6 @@ export async function readPersona(screen, file) {
   return typeof found?.content === "string" ? found.content : null;
 }
 
-export { nameFromIdentity };
 
 /** The agents the hub lists: `[{id, name, primary, runtime}]`. */
 export async function readAgents(screen) {
@@ -75,5 +73,3 @@ export function quoteOf(markdown, max = 90) {
   return [...text].length > max ? `${[...text].slice(0, max).join("")}…` : text;
 }
 
-/** The text of a quiet-hours value in the page's words: "每天 21:30 到 09:00"; "" for none. */
-export const quietWords = (quiet) => quiet ? quiet.replace("-", " 到 ") : "";

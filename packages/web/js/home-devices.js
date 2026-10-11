@@ -1,9 +1,9 @@
 import { fill } from "./home-dom.js";
 // The devices that connect to her: the list on 她的手和眼, one device's page (name, what it may do, diagnosis, removal), a request
 // waiting for your approval, and the pairing of a new one with the relay it goes through.
-import { deviceDiagnosis, handOf, KIND_NAMES, clock, relayText, setupText, SETUP_ACTIVE } from "./settings.js";
+import { deviceDiagnosis, handOf, KIND_NAMES, clock, relayText, setupText, SETUP_ACTIVE } from "./home-text.js";
 import { readDevices } from "./home-data.js";
-import { btn, card, group, h, ico, list, localHint, note, row, skeleton, twoTap } from "./home-ui.js";
+import { btn, card, group, h, list, localHint, note, row, skeleton, twoTap } from "./home-ui.js";
 import { switchRow } from "./home-switch.js";
 
 const KINDS = [["computer", "电脑"], ["server", "服务器"], ["browser", "浏览器"]];

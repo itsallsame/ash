@@ -1,10 +1,10 @@
 // 她做过的事: a timeline of her turns by day (a chip per day), the steps of a turn, and the background work as one row.
-import { safeActivityView } from "./sheet-agent.js";
+import { safeActivityView } from "./activity-model.js";
 import { activityByDay, chipLabel } from "./home-model.js";
 import { btn, h, ico } from "./home-ui.js";
-import { duration, hhmm, startOfDay, fill } from "./home-dom.js";
+import { duration, hhmm, fill } from "./home-dom.js";
 import { readAgents } from "./home-data.js";
-import { outcomeText } from "./sheet-activity.js";
+import { outcomeText } from "./activity-model.js";
 
 const OUTCOME_TONE = { running: "her", completed: "ok", cancelled: "3", error: "err", ended: "3" };
 

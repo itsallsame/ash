@@ -7,7 +7,7 @@ import { composerContext } from "./composer.js";
 import { openInlineBlob, prepareUploads } from "./attachments.js";
 import { addPicked, attachMenu } from "./attach-menu.js";
 import { PresenceBar } from "./presence.js";
-import { answerGateAsk } from "./sheet-approvals.js";
+import { answerGateAsk } from "./approvals.js";
 import { IdentityName } from "./identity-name.js";
 import { Files } from "./files.js";
 import { framePainter } from "./frame-painter.js";

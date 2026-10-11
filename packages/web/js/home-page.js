@@ -1,17 +1,16 @@
 // 她的主页: who she is right now, what waits for you, what is coming, what she remembers, what you agreed, her hands and eyes,
 // who she is, her files, and the backstage. Every block opens a page of its own (home-pages.js).
-import { activityByDay } from "./home-model.js";
 import { ago, dayTime, duration, h, hhmm, ico, startOfDay, weekday, fill } from "./home-dom.js";
-import { card, group, list, note, row, section, tag } from "./home-ui.js";
+import { card, list, note, row, section, tag } from "./home-ui.js";
 import { groupMemory, memoryCount, nextUp, turnsToday, urgentGroup, waitingItems } from "./home-model.js";
-import { quietWords, quoteOf, readApproval, readClock, readDevices, readFile, readPersona, readQuiet, readUsage, readAgents, settled } from "./home-data.js";
+import { quoteOf, readApproval, readClock, readDevices, readFile, readPersona, readQuiet, readUsage, readAgents, settled } from "./home-data.js";
 import { usdToCnyText as money } from "./money.js";
-import { repeatText } from "./sheet-upcoming.js";
+import { repeatText } from "./clock.js";
 import { pauseControl } from "./home-pause.js";
 import { listDirectory } from "./body.js";
 import { BODY_MAIN } from "./body.js";
-import { KEYS } from "./settings.js";
-import { appsSummary } from "./settings-apps.js";
+import { KEYS } from "./home-text.js";
+import { appsSummary } from "./home-text.js";
 
 const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars";
 const FACE = { idle: "default", resting: "resting", listening: "listening", thinking: "thinking", working: "focused", done: "success", waiting_you: "listening" };
@@ -19,7 +18,7 @@ const STATE_TEXT = { idle: "在线", resting: "休息中", listening: "在听", 
 const LETTER_TONES = ["--you", "--her-fill", "--warn-fill", "--ok-fill"];
 
 /** The face and the state line of an agent: presence of the ledger, as the conversation's top bar says it. */
-export function stateOf(view, agent = null, online = true) {
+function stateOf(view, agent = null, online = true) {
   const turns = Object.values(view?.turns ?? {}).filter((turn) => turn.background !== true && !Number.isFinite(turn.ended) && (!agent || turn.agent === agent)).sort((a, b) => b.started - a.started);
   const open = turns[0];
   if (!online) return { state: "resting", face: "resting", text: "离线", tone: "mute", since: null };

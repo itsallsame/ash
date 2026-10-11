@@ -1,8 +1,41 @@
-import { ManagedFilesSheet, named } from "./editor.js";
+// Her files as the home pages read and write them: USER.md and MEMORY.md are plain files in the main body's work directory, SOUL.md and
+// IDENTITY.md belong to the persona member. A store is bound to the connection the page opened on: once the page has another one,
+// nothing read or written is adopted.
+import { BODY_MAIN, readText, writeText } from "./body.js";
 import { WordFailure } from "./link.js";
 
 const STALE_CONNECTION = "连接已经换过，这次的结果没有采用。";
-const REASON = "主人在人物页修改";
+
+/**
+ * USER.md and MEMORY.md are plain files in the main body's work directory: read and written like any file. [binding] is the
+ * connection the sheet opened on; once the page has another one, nothing read or written is adopted.
+ */
+export function workspaceStore(net, binding) {
+  const live = () => {
+    if (!net.same(binding)) throw new WordFailure({ code: "offline", message: STALE_CONNECTION });
+  };
+  return {
+    async read(path) {
+      live();
+      let file;
+      try { file = await readText(net, BODY_MAIN, path); }
+      catch (error) {
+        live();
+        if (error?.code === "not_found") return null;
+        throw error;
+      }
+      live();
+      return { content: file.text, truncated: file.truncated };
+    },
+    async write(path, content, clientId) {
+      live();
+      await writeText(net, BODY_MAIN, path, content, { clientId });
+      live();
+    },
+  };
+}
+
+const REASON = "主人在她的主页修改";
 
 /**
  * SOUL.md and IDENTITY.md are the persona member's approved files: read with `get`, changed with `propose` (the owner's own
@@ -35,19 +68,4 @@ export function personaStore(net, binding) {
       if (result.applied === false) throw refuse("failed", "这次改动没有马上生效，什么都没改。");
     },
   };
-}
-
-/** Identity files are read and changed only through the persona member. */
-export class IdentitySheet extends ManagedFilesSheet {
-  constructor(root, options) {
-    const name = options?.name || "Ash";
-    super(root, options, { files: ["SOUL.md", "IDENTITY.md"],
-      intro: `这些决定了${named(name)}是谁、怎样和你相处。改之前想一想；改完她下一句话就会照新的来。`,
-      extra: options?.extra });
-  }
-
-  async open(path = "SOUL.md") {
-    if (path !== "SOUL.md" && path !== "IDENTITY.md") throw new TypeError("unknown identity file");
-    return super.open(path);
-  }
 }

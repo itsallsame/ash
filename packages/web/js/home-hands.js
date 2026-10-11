@@ -3,8 +3,8 @@ import { fill } from "./home-dom.js";
 // apps, and a button to connect a new device.
 import { readApps, readDevices, settled } from "./home-data.js";
 import { deviceRows } from "./home-devices.js";
-import { appsSummary } from "./settings-apps.js";
-import { btn, card, group, h, ico, list, note, row, tag, twoTap } from "./home-ui.js";
+import { appsSummary } from "./home-text.js";
+import { btn, card, group, h, ico, list, note, row, twoTap } from "./home-ui.js";
 
 const PARTS = { brain: ["cpu", "大脑"], alarm: ["alarm", "闹钟"], notify: ["bell", "叫你"], awake: ["bolt", "在后台醒着"], eyes: ["eye", "眼睛和手"], files: ["folder", "照片和文件"], location: ["pin", "位置和健康"] };
 const openNative = (page) => globalThis.__ashOpenNative?.(page);

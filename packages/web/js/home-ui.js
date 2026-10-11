@@ -20,10 +20,10 @@ export function section(title, { right = null, onOpen = null, tone = "" } = {}, 
 }
 
 /** A row of a list: an icon tile, a title and a line under it, a value or a control on the right, and a chevron if it opens. */
-export function row({ icon = null, tone = "", title, sub = null, subTone = "", value = null, valueTone = "", right = null, onClick = null, id = null, tall = false, titleTone = "" } = {}) {
+export function row({ icon = null, tone = "", title, sub = null, subTone = "", value = null, valueTone = "", right = null, onClick = null, id = null, tall = false, titleTone = "", note = null } = {}) {
   const tile = icon ? h("span", { class: `lic${tone ? ` lic-${tone}` : ""}` }, ico(icon, "i-s")) : null;
   const text = h("span", { class: "lt" }, h("span", { class: `t${titleTone ? ` c-${titleTone}` : ""}` }, title),
-    sub === null || sub === "" ? null : h("span", { class: `s${subTone ? ` c-${subTone}` : ""}` }, sub));
+    sub === null || sub === "" ? null : h("span", { class: `s${subTone ? ` c-${subTone}` : ""}` }, sub), note ? h("span", { class: "s hm-wrap" }, note) : null);
   const val = value === null ? null : h("span", { class: `lv${valueTone ? ` c-${valueTone}` : ""}` }, value);
   const tail = right === false ? null : right ?? (onClick ? ico("chev", "i-s chev") : null);
   const el = h(onClick ? "button" : "div", { class: `li${icon ? "" : " noic"}${onClick ? " tap" : ""}${tall ? " li-tall" : ""}`, type: onClick ? "button" : null, id, onclick: onClick }, tile, text, val, tail);

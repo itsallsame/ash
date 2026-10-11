@@ -1,5 +1,5 @@
 // What the home pages say, worked out from the ledger view and the services' answers: plain functions, no DOM.
-import { approvalSections } from "./sheet-approvals.js";
+import { approvalSections } from "./approvals.js";
 import { startOfDay } from "./home-dom.js";
 
 const DAY = 86_400_000;

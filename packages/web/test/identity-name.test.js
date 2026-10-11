@@ -140,3 +140,24 @@ test("without a connection nothing is asked", async () => {
   assert.equal(kernel.requests.length, 0);
   kernel.close();
 });
+
+test("every reader of the name on one connection hears a name any of them read, and a reader on another connection does not", async () => {
+  const { kernel, net, stop } = await online();
+  const other = await online();
+  try {
+    let content = "- 名字：小舟\n";
+    kernel.on("service:persona", "get", () => identity(content));
+    const bar = [];
+    const home = [];
+    const elsewhere = [];
+    const barName = new IdentityName(net, (value) => bar.push(value));
+    const homeName = new IdentityName(net, (value) => home.push(value));
+    new IdentityName(other.net, (value) => elsewhere.push(value));
+    await barName.refresh();
+    assert.equal(home.at(-1), "小舟", "the second reader follows the first without asking");
+    content = "- 名字：River\n";
+    await homeName.refresh();
+    assert.equal(bar.at(-1), "River", "renamed on one page, the other follows at once");
+    assert.equal(elsewhere.at(-1), "Ash", "another connection's reader is not told");
+  } finally { stop(); other.stop(); }
+});

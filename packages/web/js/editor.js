@@ -1,7 +1,7 @@
 // Managed Markdown editor. The editor knows no transport: a store adapter reads and writes the file
 // (`store.read(path)` -> {content, truncated?} or null when the file is missing; `store.write(path, content, clientId)`;
-// both throw a WordFailure when the word did not succeed). The memory sheet builds a store on the main body's files,
-// the identity sheet one on the persona member.
+// both throw a WordFailure when the word did not succeed; see home-stores.js for the two stores). The state of editing, saving and
+// conflict lives here; how it looks is the page's (home-editor.js).
 import { retryable } from "./link.js";
 
 const paths = new Set(["SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md"]);
@@ -15,53 +15,7 @@ const failText = (error) => typeof error?.userMessage === "string" ? error.userM
 export const named = (name, before = true, after = true) =>
   /[A-Za-z0-9]/.test(name) ? `${before ? " " : ""}${name}${after ? " " : ""}` : name;
 /** What each managed file is, in the owner's words. */
-export const FILE_LABELS = Object.freeze({ "SOUL.md": "性格", "IDENTITY.md": "名片", "USER.md": "关于你", "MEMORY.md": "她记下的事" });
-const two = (value) => String(value).padStart(2, "0");
-/** "今天 14:20", "昨天 09:05", "10月3日 14:20". */
-export function when(ts, now = Date.now()) {
-  if (!Number.isFinite(ts)) return "时间不详";
-  const at = new Date(ts);
-  const time = `${at.getHours()}:${two(at.getMinutes())}`;
-  const day = (value) => { const date = new Date(value); date.setHours(0, 0, 0, 0); return date.getTime(); };
-  const diff = Math.round((day(ts) - day(now)) / 86_400_000);
-  if (diff === 0) return `今天 ${time}`;
-  if (diff === -1) return `昨天 ${time}`;
-  if (diff === 1) return `明天 ${time}`;
-  const year = at.getFullYear() === new Date(now).getFullYear() ? "" : `${at.getFullYear()}年`;
-  return `${year}${at.getMonth() + 1}月${at.getDate()}日 ${time}`;
-}
-
-function node(parent, tag, value, className = "") {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  element.textContent = String(value ?? "");
-  parent.append(element);
-  return element;
-}
-
-/** Plain reading view of a Markdown file: headings, bullets and paragraphs; never parsed as HTML. */
-export function renderReadable(parent, text) {
-  let list = null;
-  let paragraph = null;
-  for (const raw of String(text ?? "").split(/\r?\n/)) {
-    const line = raw.trim();
-    const plain = (value) => value.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
-    if (!line) { list = null; paragraph = null; continue; }
-    const heading = /^#{1,6}\s+(.*)$/.exec(line);
-    const bullet = /^(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
-    if (heading) { list = null; paragraph = null; node(parent, "h4", plain(heading[1])); }
-    else if (bullet) {
-      paragraph = null;
-      list ??= node(parent, "ul", "");
-      node(list, "li", plain(bullet[1]));
-    } else if (paragraph) {
-      const before = paragraph.textContent;
-      paragraph.textContent = `${before}${/[A-Za-z0-9,.;:!?)]$/.test(before) && /^[A-Za-z0-9(]/.test(line) ? " " : ""}${plain(line)}`;
-    }
-    else { list = null; paragraph = node(parent, "p", plain(line)); }
-  }
-}
-
+const FILE_LABELS = Object.freeze({ "SOUL.md": "性格", "IDENTITY.md": "名片", "USER.md": "关于你", "MEMORY.md": "她记下的事" });
 /**
  * One managed file. [store] reads and writes it; [onSaved](path) runs after the owner's change went through. A save is
  * guarded by reading the file again first: if it no longer reads as it did when the editor loaded it, nothing is written.
@@ -237,121 +191,6 @@ export class ManagedMarkdownEditor {
     return { conflict: this.conflict };
   }
 
-  render() {
-    if (this.disposed) { this.root.replaceChildren(); return; }
-    const fragment = document.createDocumentFragment();
-    const card = node(fragment, "div", "", "set-card doc-card");
-    card.dataset.file = this.path;
-    const reading = node(card, "div", "", "doc-body");
-    reading.hidden = this.editing;
-    if (!this.loaded) node(reading, "p", "", "doc-empty");
-    else if (!this.content.trim()) node(reading, "p", this.editable ? "还没有写下什么。点「编辑」写几句。" : "还没有写下什么。", "doc-empty");
-    else renderReadable(reading, this.content);
-    const source = node(card, "textarea", "", "markdown-source");
-    source.value = this.draft;
-    source.hidden = !this.editing;
-    source.disabled = !this.loaded || !this.editable || !!this.pending || this.unverified;
-    source.addEventListener("input", () => { this.draft = source.value; });
-    const warning = this.conflict || this.unverified || !!this.pending;
-    node(card, "p", this.status, warning ? "editor-warning" : "editor-status");
-    const actions = node(card, "div", "", "set-actions");
-    const action = (label, className, run) => {
-      const button = node(actions, "button", label, className);
-      button.type = "button";
-      button.addEventListener("click", async () => {
-        try { await run(); }
-        catch (error) { if (!this.disposed) { this.status = error instanceof Error ? error.message : "没有完成，可以再试一次。"; this.render(); } }
-      });
-      return button;
-    };
-    const edit = action("编辑", "btn editor-edit", () => this.edit());
-    edit.hidden = this.editing || !this.editable || !this.loaded;
-    edit.disabled = !!this.pending;
-    const save = node(actions, "button", this.pending ? "再试一次保存" : "保存", "btn editor-save");
-    save.type = "button";
-    save.hidden = !this.editing;
-    save.disabled = !this.loaded || !this.editable || this.conflict || this.unverified;
-    save.addEventListener("click", async () => { try { await this.save(); } catch { /* status is visible; draft remains */ } });
-    const cancel = action("取消", "btn gray editor-cancel", () => this.cancelEdit());
-    cancel.hidden = !this.editing || !!this.pending || this.conflict || this.unverified;
-    const refresh = action(this.editing ? "重新读取（放弃修改）" : "重新读取", "btn gray editor-refresh", async () => {
-      await this.load({ discardDraft: true });
-    });
-    refresh.hidden = !(this.conflict || this.unverified);
-    this.root.replaceChildren(fragment);
-  }
-}
-
-/** One page of managed files (identity or memory): a short note, a file switcher and the active file. */
-export class ManagedFilesSheet {
-  constructor(root, options, { files, intro = "", extra = null } = {}) {
-    this.root = root;
-    this.options = options;
-    this.files = files;
-    this.intro = intro;
-    this.extra = extra;
-    this.active = null;
-    this.editor = null;
-    this.epoch = 0;
-  }
-
-  dispose() {
-    this.epoch++;
-    this.editor?.dispose();
-    this.editor = null;
-    this.active = null;
-    this.root.replaceChildren();
-  }
-
-  busy() {
-    return Boolean(this.editor && (this.editor.pending || this.editor.editing ||
-      this.editor.loaded && this.editor.draft !== this.editor.content));
-  }
-
-  async open(path = this.files[0]) {
-    if (!this.files.includes(path)) throw new TypeError("unknown managed file");
-    if (this.editor?.pending ||
-      this.editor?.loaded && this.editor.draft !== this.editor.content) throw new Error("先保存或取消正在改的内容，再切换。");
-    const epoch = ++this.epoch;
-    const panel = document.createElement("section");
-    const editor = new ManagedMarkdownEditor(panel, { ...this.options, path });
-    await editor.load();
-    if (epoch !== this.epoch) { editor.dispose(); throw new Error("页面已经换过，这次读取没有采用。"); }
-    const tabs = document.createElement("nav");
-    tabs.className = "sheet-switch";
-    for (const name of this.files) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = FILE_LABELS[name];
-      button.dataset.file = name;
-      button.disabled = name === path;
-      if (name === path) button.className = "on";
-      button.addEventListener("click", async () => {
-        try { await this.open(name); }
-        catch (error) { editor.status = error instanceof Error ? error.message : "没能切换。"; editor.render(); }
-      });
-      tabs.append(button);
-    }
-    this.editor?.dispose();
-    const parts = [];
-    if (this.intro) {
-      const note = document.createElement("p");
-      note.className = "set-intro";
-      note.textContent = this.intro;
-      parts.push(note);
-    }
-    parts.push(tabs, panel);
-    const extra = this.extra?.();
-    if (extra) parts.push(extra);
-    this.root.replaceChildren(...parts);
-    this.active = path;
-    this.editor = editor;
-    return editor;
-  }
-
-  /** Coming back to the page shows what is on disk now, unless the owner is in the middle of something. */
-  async refresh() {
-    if (!this.editor || this.busy()) return;
-    try { await this.editor.load(); } catch { /* the visible card keeps its last confirmed content */ }
-  }
+  /** Draws the file where the page shows it; the page's own editor (home-editor.js) overrides this, the state above does not depend on it. */
+  render() {}
 }
