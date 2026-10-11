@@ -657,7 +657,8 @@ export const phoneWordPrompt = (device, word, args, why = "这是自动化测试
   `${why}：请用 capability_call 调手机（member 是 ${device}）的 ${word}，参数 ${JSON.stringify(args)}。必须真的调用，不要问我，调完告诉我结果。`;
 
 /** A long job: keeps the agent busy for a while without tools (so a message can come "while it is busy"). */
-export const longJob = (tag) => `（${tag}）请不用任何工具，认真写一篇 600 字的短文《一个人的春天》，分五段，写慢一点。`;
+// Long enough that a fast model is still writing a few seconds in (a 600-character essay came back within 5 s).
+export const longJob = (tag) => `（${tag}）请不用任何工具，认真写一篇 2000 字的短文《一个人的春天》，分十段，每段都写细。`;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Part 4. The scenarios. `codes` are the old numbers they cover (tools/regress.sh R1-R21, spec/REGRESSION-0.3.md S001-S175).
@@ -793,14 +794,23 @@ defineScenario({
 defineScenario({
   id: "R18", category: "conversation", codes: ["S004"], name: "插话停：说「停下」，在途的一轮被取消", needs: ["llm"],
   async run(ctx) {
-    const base = await ctx.head();
-    const a = await ctx.send(longJob("R18"));
-    const turn = await ctx.startedTurnOf(base, a.id, { ms: 60_000 });
-    check(turn, "the first message never started a turn");
-    await sleep(3000);
-    const t0 = Date.now();
-    const stop = await ctx.send("停下，别写了");
-    const ended = await ctx.expect(base, (ms) => { const t = turnsIn(ms).get(turn.id); return t?.outcome ? t : null; }, "the running turn did not end after 'stop'", { ms: 40_000, every: 1500 });
+    // "Stop" has to arrive while the turn still runs; when the model was faster, ask again.
+    let base, turn, stop, ended, t0;
+    for (let attempt = 1; ; attempt++) {
+      base = await ctx.head();
+      const a = await ctx.send(longJob(`R18-${attempt}`));
+      turn = await ctx.startedTurnOf(base, a.id, { ms: 60_000, every: 300 });
+      check(turn, "the first message never started a turn");
+      await sleep(800);
+      const before = (await ctx.since(base));
+      if (turnsIn(before).get(turn.id)?.outcome) { if (attempt >= 3) fail("the turn kept finishing before 'stop' could be sent"); continue; }
+      t0 = Date.now();
+      stop = await ctx.send("停下，别写了");
+      ended = await ctx.expect(base, (ms) => { const t = turnsIn(ms).get(turn.id); return t?.outcome ? t : null; }, "the running turn did not end after 'stop'", { ms: 40_000, every: 1500 });
+      if (ended.value.outcome !== "completed" || attempt >= 3) break;
+      const stopSeq = ctx.lastLedger.find((m) => m.id === stop.id)?.seq ?? stop.seq;
+      if (!(ended.value.endedSeq < stopSeq)) break;   // it completed after the stop arrived: a real failure, checked below
+    }
     const secs = Math.round((Date.now() - t0) / 100) / 10;
     check(["cancelled", "interrupted"].includes(ended.value.outcome), `the turn ended '${ended.value.outcome}', not cancelled/interrupted`);
     const next = await ctx.turnOf(base, stop.id, { ms: 120_000 });
