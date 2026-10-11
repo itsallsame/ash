@@ -17,7 +17,7 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   hub.files.set("USER.md", "# 关于你\n## 生活\n- 住在杭州\n## 要紧的\n- 对花生过敏\n");
   hub.files.set("PROACTIVE.md", "快递变化直接说。");
   hub.settings["delivery.quiet_hours"] = "21:30-09:00";
-  hub.timers = [{ id: "c1", next: Date.now() + 3_600_000, label: "每日复盘", every: 86_400 }, { id: "sys", next: Date.now() + 1_800_000, label: "semantic:reload:12", every: 3_600 }];
+  hub.timers = [{ id: "c1", next: Date.now() + 3_600_000, label: "每日复盘", every: 86_400 }, { id: "sys", next: Date.now() + 1_800_000, label: "semantic:reload:12", every: 3_600 }, { id: "sys2", next: Date.now() + 1_700_000, label: "整理记忆", created_by: "service:semantic" }, { id: "sys3", next: Date.now() + 1_600_000, label: "pulse:wake:3" }];
   hub.files.set("AGENTS.md", "# 内部设置");
   hub.files.set("装备清单.md", "# 清单");
   turn(kernel, "t1", { tools: ["read"] });
@@ -38,7 +38,7 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   await home.getByText("对话还没设").waitFor();
   await home.getByText("装备清单.md").waitFor();
   assert.equal(await home.getByText("AGENTS.md").count(), 0, "her own settings files are not documents she made");
-  assert.equal(await home.getByText(/semantic/).count(), 0, "a plan the system made for itself is not listed");
+  assert.equal(await home.getByText(/semantic|pulse|整理记忆/).count(), 0, "a plan the system made for itself is not listed");
   await home.getByText("DeepSeek", { exact: true }).waitFor();
   assert.equal(await home.locator("#homeCellPhone").count(), 0, "outside the app there is no phone checkup");
   assert.doesNotMatch(await home.textContent(), /service:|agent:|body:|\bJEV\b|DSH/);

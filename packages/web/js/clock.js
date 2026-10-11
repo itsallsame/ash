@@ -13,15 +13,17 @@ export function normalizeClockList(data) {
     item.every != null && (!Number.isSafeInteger(item.every) || item.every < 60) ||
     !human(item.label) || !human(item.blocked))) throw new Error("暂时读不到计划（不代表没有）。");
   return timers.map((item) => ({ id: item.id, next: item.next, every: Number.isSafeInteger(item.every) && item.every >= 60 ? item.every : null,
-      to: typeof item.to === "string" ? item.to : null, word: typeof item.word === "string" ? item.word : null,
+      to: typeof item.to === "string" ? item.to : null, by: typeof item.created_by === "string" ? item.created_by : null, word: typeof item.word === "string" ? item.word : null,
       label: typeof item.label === "string" ? item.label : "", blocked: typeof item.blocked === "string" ? "请稍后再看" : null }));
 }
 
 /**
- * The plans made by the system itself carry an internal name (`semantic:reload:…`): a word, a colon, more, no space. They are not
- * the owner's plans to read or delete, so the pages do not list them; a name that has a space in it is a person's words.
+ * The plans a service makes for its own upkeep (reloading memory, waking for a pulse) are not the owner's to read or delete: they
+ * are told by who made them (a service, where the owner's and her agents' plans come from a person or an agent) and, when the
+ * clock does not say, by the internal name they carry (`pulse:wake:…`: a word, a colon, more, no space; a name with a space is a
+ * person's words).
  */
-export const isSystemPlan = (timer) => /^[a-z][a-z0-9_-]*(:[^\s:]+)+$/i.test(timer?.label ?? "");
+export const isSystemPlan = (timer) => (timer?.by ? /^service:/.test(timer.by) : false) || /^[a-z][a-z0-9_-]*(:[^\s:]+)+$/i.test(timer?.label ?? "");
 
 /** The plans of [timers] that are the owner's to see. */
 export const userPlans = (timers) => timers.filter((timer) => !isSystemPlan(timer));

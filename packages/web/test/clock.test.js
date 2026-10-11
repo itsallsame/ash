@@ -21,7 +21,7 @@ function fakeNet(handlers = {}) {
 }
 
 test("clock list data is checked before it is shown; a malformed timer is an error, never an empty list", () => {
-  const timer = { id: "timer1", next: 999999999999, every: null, to: "agent:main", word: "say", label: "带伞", blocked: null };
+  const timer = { id: "timer1", next: 999999999999, every: null, to: "agent:main", by: null, word: "say", label: "带伞", blocked: null };
   assert.deepEqual(normalizeClockList({ timers: [timer] }), [{ ...timer, every: null, blocked: null }]);
   assert.deepEqual(normalizeClockList({ timers: [] }), []);
   for (const bad of [undefined, {}, { timers: "x" }, { timers: [{ id: "bad", next: "tomorrow" }] }, { timers: [{ id: "", next: 1 }] },
@@ -78,5 +78,9 @@ test("a plan the system made for itself carries an internal name and is not the 
   assert.equal(isSystemPlan({ label: "带伞" }), false);
   assert.equal(isSystemPlan({ label: "提醒: 开会" }), false, "words with a space are a person's");
   assert.equal(isSystemPlan({ label: "" }), false);
+  assert.equal(isSystemPlan({ label: "每日整理", by: "service:semantic" }), true, "told by who made it");
+  assert.equal(isSystemPlan({ label: "pulse:wake:7", by: "agent:main" }), true, "or by the name it carries");
+  assert.equal(isSystemPlan({ label: "吃药", by: "agent:main" }), false);
+  assert.equal(isSystemPlan({ label: "吃药", by: "person:owner" }), false);
   assert.deepEqual(userPlans([{ id: "a", label: "semantic:x:1" }, { id: "b", label: "吃药" }]).map((p) => p.id), ["b"]);
 });
