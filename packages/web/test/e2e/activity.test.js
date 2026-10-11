@@ -119,12 +119,27 @@ test(...withBrowser("an option button takes a tap just outside its 40px, up to 4
   const button = (name) => page.locator(".card", { hasText: `选${name}` }).locator(".opt");
   await button("甲").waitFor();
   await button("乙").waitFor();
+  // The box of a button that is drawn and has stopped moving (a redraw or a scroll can still be under way when it appears).
+  const settled = async (locator) => {
+    await locator.scrollIntoViewIfNeeded();
+    let box = null;
+    await eventually(async () => {
+      const first = await locator.boundingBox();
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const second = await locator.boundingBox();
+      box = second;
+      return first && second && first.x === second.x && first.y === second.y && first.height === second.height;
+    }, "the button drawn and still");
+    return box;
+  };
   for (const [name, side] of [["甲", "above"], ["乙", "below"]]) {
-    const box = await button(name).boundingBox();
+    const box = await settled(button(name));
     assert.equal(box.height, 40, "the button looks as designed");
     // 1.5px outside the edge: inside the 2px the touch area reaches beyond the button
     await page.mouse.click(box.x + box.width / 2, side === "above" ? box.y - 1.5 : box.y + box.height + 1.5);
     await eventually(() => kernel.requests.some((r) => r.word === "say" && r.body.option_id === name), `the tap ${side} the button chose ${name}`);
+    // wait for the card to settle on the answer before the next measurement
+    await button(name).and(page.locator(".on")).waitFor();
   }
   assert.equal(cards.length, 2);
 }));
