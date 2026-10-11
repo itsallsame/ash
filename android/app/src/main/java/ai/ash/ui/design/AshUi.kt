@@ -63,9 +63,8 @@ object AshUi {
         typeface = weighted(type.weight)
         includeFontPadding = false
         val linePx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, type.lineSp, resources.displayMetrics)
-        // 34+: the exact line height. Before that the add-on below is only a stand-in for text set some other way; [text] sets the exact one itself.
-        if (Build.VERSION.SDK_INT >= 34) setLineHeight(TypedValue.COMPLEX_UNIT_SP, type.lineSp)
-        else if (Build.VERSION.SDK_INT >= 28) lineHeight = linePx.toInt()
+        // The add-on is only a stand-in for text set some other way; [text] sets the exact line height itself.
+        if (Build.VERSION.SDK_INT >= 28) lineHeight = linePx.toInt()
         else setLineSpacing(linePx - paint.fontMetricsInt.let { it.descent - it.ascent }, 1f)
         fontFeatureSettings = "tnum"
         setTextColor(color ?: type.role?.let { color(context, it) } ?: p(context).text)
@@ -83,9 +82,9 @@ object AshUi {
         }
     }
 
-    /** [s] with the style's exact line height on phones before 34 (from 34 [style] already has it). */
+    /** [s] with the style's exact line height. (`setLineHeight` of 34+ was measured too and still gave taller lines under a CJK fallback font.) */
     private fun exactLines(tv: TextView, s: CharSequence, type: AshType): CharSequence {
-        if (Build.VERSION.SDK_INT >= 34 || s.isEmpty()) return s
+        if (s.isEmpty()) return s
         tv.setLineSpacing(0f, 1f)
         val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, type.lineSp, tv.resources.displayMetrics).toInt()
         return SpannableStringBuilder(s).apply { setSpan(ExactLine(px), 0, length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) }
