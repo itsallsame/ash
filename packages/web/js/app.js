@@ -402,6 +402,13 @@ export function boot({ bridge } = {}) {
     if (!progressRoot.hidden) progress();
     if (timeline.view.asks.some((ask) => ask.state === "pending" && ask.expires_at <= Date.now())) redraw();
   }, 1_000);
+  // While the owner is at the bottom of the conversation, the bottom stays in view when the area changes size (the progress
+  // pill or a chip appearing, the keyboard).
+  let atBottom = true;
+  log.addEventListener("scroll", () => { atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 100; }, { passive: true });
+  if (typeof ResizeObserver === "function") new ResizeObserver(() => { if (atBottom) log.scrollTop = log.scrollHeight; }).observe(log);
+  // The whole field is the target of a tap, not only the text line.
+  document.querySelector("#field").addEventListener("click", (event) => { if (event.target === event.currentTarget) input.focus(); });
   log.addEventListener("scroll", async () => {
     if (log.scrollTop > 80 || timeline.loading) return;
     const height = log.scrollHeight;
