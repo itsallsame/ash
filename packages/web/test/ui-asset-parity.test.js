@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { coreUiBytes, staticManifest, verifyStaticUi } from "../../../tools/spikes/v2-604-ui-asset.mjs";
+import { UI_JS } from "../../core/src/edges/link-server/ui.generated.ts";
 
 const appAsset = () => readFileSync(new URL("../../../android/app/src/main/assets/ash-ui/index.html", import.meta.url), "utf8");
 const scripts = (html) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
@@ -17,12 +18,12 @@ test("test-only static UI uses exactly the generated core bytes", () => {
   assert.ok(!html.includes("ash_ui"));
 });
 
-test("generated inline browser script parses without placeholder substitution", () => {
+test("the deferred browser script parses without placeholder substitution", () => {
   const html = coreUiBytes().toString("utf8");
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-  assert.ok(script);
-  assert.ok(!script.includes("<!-- ui-app -->"));
-  assert.doesNotThrow(() => new Function(script));
+  assert.ok(html.includes('<script defer src="/app.js"></script>'));
+  assert.equal(scripts(html).length, 0, "the browser bundle is not parsed as HTML");
+  assert.ok(!UI_JS.includes("<!-- ui-app -->"));
+  assert.doesNotThrow(() => new Function(UI_JS));
 });
 
 test("test-only static parity refuses altered bytes, digest and length", () => {
@@ -44,11 +45,11 @@ test("the app's page is the same shell and page code as the browser's, with the 
   // Everything outside the page script and the bootstrap is the browser's page exactly.
   const shell = (html, script) => html.replace(`<script>${script}</script>`, "<!-- ui-app -->");
   assert.equal(shell(asset.replace(/<meta http-equiv="Content-Security-Policy"[^>]+>\n/, "").replace(`<script>${native}</script>\n`, ""), appScript),
-    shell(generated, scripts(generated)[0]));
+    generated.replace('<script defer src="/app.js"></script>', "<!-- ui-app -->"));
   assert.match(asset, /connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'/);
   assert.doesNotMatch(asset, /script-src[^;]*unsafe-eval/);
   assert.ok(!asset.includes("/?token="));
   // Browser frame checks are generated at build time; neither transport compiles code while opening the page.
-  assert.ok(!scripts(generated)[0].includes("new Function") && !appScript.includes("new Function"));
-  assert.ok(scripts(generated)[0].length > appScript.length);
+  assert.ok(!UI_JS.includes("new Function") && !appScript.includes("new Function"));
+  assert.ok(UI_JS.length > appScript.length);
 });

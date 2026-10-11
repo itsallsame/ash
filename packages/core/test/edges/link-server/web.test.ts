@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AVATARS, UI_HTML } from "../../../src/edges/link-server/ui.generated";
+import { AVATARS, UI_HTML, UI_JS } from "../../../src/edges/link-server/ui.generated";
 import { startHub } from "./harness";
 
 test("the web client: the page, its manifest, icon and faces are served at /, and nothing else is, to GET only", async (t) => {
@@ -13,6 +13,27 @@ test("the web client: the page, its manifest, icon and faces are served at /, an
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-type")!, /^text\/html/);
   assert.equal(await page.text(), UI_HTML);
+  const script = await get("/app.js");
+  assert.equal(script.status, 200);
+  assert.equal(script.headers.get("content-type"), "application/javascript; charset=utf-8");
+  assert.equal(Number(script.headers.get("content-length")), Buffer.byteLength(UI_JS));
+  assert.equal(script.headers.get("cache-control"), "no-cache");
+  const etag = script.headers.get("etag")!;
+  assert.match(etag, /^"[0-9a-f]{64}"$/);
+  assert.equal(await script.text(), UI_JS);
+  const head = await get("/app.js", "HEAD");
+  assert.equal(head.status, 200);
+  assert.equal(Number(head.headers.get("content-length")), Buffer.byteLength(UI_JS));
+  assert.equal(head.headers.get("etag"), etag);
+  assert.equal(await head.text(), "");
+  const cached = await fetch(`http://127.0.0.1:${hub.port}/app.js`, { headers: { "if-none-match": etag } });
+  assert.equal(cached.status, 304);
+  assert.equal(cached.headers.get("cache-control"), "no-cache");
+  assert.equal(cached.headers.get("etag"), etag);
+  assert.equal(await cached.text(), "");
+  assert.equal((await fetch(`http://127.0.0.1:${hub.port}/app.js`, { headers: { "if-none-match": '"old"' } })).status, 200);
+  assert.equal((await get("/app.js", "POST")).status, 405);
+  assert.equal((await get("/app.js/anything")).status, 404);
   assert.equal((await get("/manifest.webmanifest")).status, 200);
   assert.equal((await get("/icon.svg")).headers.get("content-type"), "image/svg+xml");
   const face = await get("/avatars/default.webp");

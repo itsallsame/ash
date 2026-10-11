@@ -208,20 +208,14 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
 }
 
 /**
- * Serves the page (the generated `UI_HTML`) and `/link` on a real port, for a browser to open. Resolves with the
+ * Serves the production static page/assets and `/link` on a real port, for a browser to open. Resolves with the
  * kernel, now with `url`; `kernel.close()` stops the server too.
  */
 export async function serveKernel(options = {}) {
   const { createServer } = await import("node:http");
-  const { UI_HTML, AVATARS } = await import("../../core/src/edges/link-server/ui.generated.ts");
+  const { staticWeb } = await import("../../core/src/edges/link-server/web.ts");
   const kernel = startKernel(options);
-  const http = createServer((req, res) => {
-    const path = new URL(req.url, "http://x").pathname;
-    const face = /^\/avatars\/([a-z]+)\.webp$/.exec(path);
-    if (face && AVATARS[face[1]]) { res.writeHead(200, { "content-type": "image/webp" }).end(Buffer.from(AVATARS[face[1]], "base64")); return; }
-    if (path === "/") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(UI_HTML); return; }
-    res.writeHead(404).end();
-  });
+  const http = createServer(staticWeb());
   kernel.server.attach(http);
   await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
   kernel.url = `http://127.0.0.1:${http.address().port}`;
