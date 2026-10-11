@@ -23,7 +23,7 @@ function bodyWithFiles(kernel, files) {
   });
 }
 
-test(...withBrowser("the file area browses a body, opens a Markdown file, follows its link to a page shown inertly, and says when a file is gone", async ({ kernel, browser }) => {
+test(...withBrowser("the reader opens a Markdown file from a file card, follows its link to a page shown inertly, and says when a file is gone", async ({ kernel, browser }) => {
   const files = new Map([
     ["reports/说明 一.md", "# 我的报告\n\n**文件内容**\n\n[网页](./index.html)"],
     ["reports/index.html", '<!doctype html><h1>HTML 报告</h1><script>parent.window.fileEscape=true</script>'],
@@ -31,10 +31,9 @@ test(...withBrowser("the file area browses a body, opens a Markdown file, follow
   ]);
   bodyWithFiles(kernel, files);
   const { page } = await openPage(browser, kernel);
-  await page.getByRole("button", { name: "文件", exact: true }).click();
+  kernel.append({ from: "agent:main", to: OWNER, kind: "request", word: "show", body: { card: { type: "file", workspace: "main", path: "reports/说明 一.md", name: "说明 一.md", mime_type: "text/markdown", size: 40 } } });
   const reader = page.getByRole("dialog", { name: "文件", exact: true });
-  await reader.locator(".files-row", { hasText: "reports" }).click();
-  await reader.locator(".files-row", { hasText: "说明 一.md" }).click();
+  await page.getByRole("button", { name: "说明 一.md" }).click();
   await reader.getByRole("heading", { name: "我的报告" }).waitFor();
   await reader.getByRole("link", { name: "网页" }).click();
   await page.frameLocator(".files-html").locator("h1").waitFor();

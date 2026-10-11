@@ -209,3 +209,7 @@ body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums
 
 /* 滚动区里的直接子元素不被压缩，超出部分就是「还能往下滑」 */
 .page>*,.stream>*{flex-shrink:0}
+
+/* The design draws these with the browser's default box model (padding and border outside the stated size); the page's
+   `* { box-sizing: border-box }` would make them smaller than the reference. */
+.spinner,.pill,.av .dot,.codeblk .hd{box-sizing:content-box}

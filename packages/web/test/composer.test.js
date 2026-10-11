@@ -33,8 +33,9 @@ test("activity ask prefills an ordinary draft and a removable local context chip
 
 test("conversation has no stop, interrupt, edit, or withdraw control toolbar", () => {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-  assert.match(html, /<main id="log"><\/main>/);
+  assert.match(html, /<main id="log" class="stream" aria-busy="true"><\/main>/);
   assert.match(html, /<textarea id="t"/);
-  assert.match(html, /<button id="send">发送<\/button>/);
+  assert.match(html, /<button id="send" class="send idle" type="submit" aria-label="发送"><\/button>/);
+  assert.doesNotMatch(html, /id="(?:menu|files)"/, "the top bar has only her and the apps");
   assert.doesNotMatch(html, /id="(?:stop|interrupt|steer|edit|withdraw)"/);
 });

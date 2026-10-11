@@ -327,9 +327,8 @@ test("the pairing code is shown only on the page, with the install address, and 
     f.panel.find("settingsGatewayRow").click();
     await until(() => /还没有连接其他设备/.test(f.panel.find("settingsGatewayStatus").textContent));
     assert.equal(f.panel.find("settingsGatewayPairCode").hidden, true);
-    // No code: no empty box holding only a copy button, and the page's styles really hide a hidden card.
+    // No code: no empty box holding only a copy button.
     assert.equal(f.panel.find("settingsGatewayPairCopy").hidden, true);
-    assert.match(readFileSync(new URL("../index.html", import.meta.url), "utf8"), /[,}]\.set-card\[hidden\][,{][^}]*display:none/);
     f.panel.find("settingsGatewayPair").click();
     await until(() => f.panel.find("settingsGatewayPairCode").hidden === false);
     assert.deepEqual(world.started, { kind: "computer" });

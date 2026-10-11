@@ -6,14 +6,18 @@ import { presentUiOpen } from "./suggestions.js";
 import { composerContext } from "./composer.js";
 import { openInlineBlob, prepareUploads } from "./attachments.js";
 import { addPicked, attachMenu } from "./attach-menu.js";
-import { SettingsControls } from "./settings.js";
 import { PresenceBar } from "./presence.js";
-import { AgentSheet } from "./sheet-agent.js";
 import { answerGateAsk } from "./sheet-approvals.js";
 import { IdentityName } from "./identity-name.js";
 import { Files } from "./files.js";
 import { framePainter } from "./frame-painter.js";
 import { agentPicker } from "./agent-picker.js";
+import { addIcon, avatarUrl } from "./chat-ui.js";
+
+/** The pages of her home that the kernel (or the agent) can ask this page to open, by the name it uses; others are aliases. */
+const HOME_SECTIONS = new Set(["waiting", "upcoming", "memory", "promises", "hands", "backstage", "identity", "files", "activity",
+  "settled", "device", "connect", "browser", "apps", "app", "keys", "model", "usage", "advanced"]);
+const TARGET_SECTION = Object.freeze({ approvals: "waiting", turn: "activity" });
 
 export class Timeline {
   constructor(net, onChange = () => {}) {
@@ -71,6 +75,7 @@ export class Timeline {
       if (epoch !== this.epoch) return 0;
       if (!page.end?.has_more) this.exhausted = true;
       this.addMany(page.messages);
+      if (this.exhausted && !page.messages.length) this.onChange(this.view, true);
       return page.messages.length;
     } finally {
       if (epoch === this.epoch) this.loading = false;
@@ -97,35 +102,78 @@ function text(parent, tag, value, className = "") {
   return node;
 }
 
+/** Turns of the front lane that ended in an error in the last day and were not followed by anything the owner said: each gets a card. */
+export function failedTurns(view, now = Date.now()) {
+  const last = [...view.conversation].reverse().find((item) => item.type === "say" && item.side === "owner");
+  // A failure from yesterday is history, not something to retry.
+  return Object.entries(view.turns ?? {})
+    .filter(([, turn]) => turn.background !== true && turn.outcome === "error" && Number.isFinite(turn.ended) && now - turn.ended < 86_400_000 && !(last && last.ts > turn.ended))
+    .map(([turn, info]) => {
+      // What to say again: the owner's last words before the turn began, when they were plain text.
+      const said = [...view.conversation].reverse().find((item) => item.type === "say" && item.side === "owner" && item.ts <= info.started);
+      return { turn, ts: info.ended, retry: said && !said.full && said.text && !(said.attachments?.length) ? { text: said.text, to: said.to } : null };
+    });
+}
+
+const reducedMotion = () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+/** Messages that have been drawn before: only the ones that are new rise into place. */
+const drawn = { newest: 0, clients: new Set(), fresh: false, local: 0 };
+
 export function render(view, outbox = [], openInline, presenceBar, cardActions) {
   const log = document.querySelector("#log");
   const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
   const oldHeight = log.scrollHeight;
   const oldTop = log.scrollTop;
+  const loading = cardActions?.loading?.() === true;
+  // A card that was waiting for an answer and is answered now folds up instead of jumping to its short form.
+  const heights = new Map();
+  for (const card of log.querySelectorAll?.(".a-card[data-ask-id]") ?? []) heights.set(card.dataset.askId, card.offsetHeight);
   const fragment = document.createDocumentFragment();
-  appendConversation(fragment, view.conversation, { openInline, ...cardActions, loading: cardActions?.loading?.() === true });
+  appendConversation(fragment, view.conversation, { openInline, ...cardActions, loading, failures: loading ? [] : failedTurns(view), atStart: cardActions?.atStart?.() === true, herName: cardActions?.herName?.() ?? "Ash" });
   appendOutbox(fragment, outbox);
   log.replaceChildren(fragment);
+  if (log.setAttribute) log.setAttribute("aria-busy", loading ? "true" : "false");
+  if (log.querySelectorAll) animate(log, heights);
   if (nearEnd) log.scrollTop = log.scrollHeight;
   else log.scrollTop = oldTop + Math.max(0, log.scrollHeight - oldHeight);
-  presenceBar?.render(cardActions?.loading?.() === true ? { state: "unknown" } : view.presence);
+  presenceBar?.render(loading ? { state: "unknown" } : view.presence);
+}
+
+/** Motion of the design: a new message rises 6px and fades in (240 ms), an answered card folds up (300 ms). */
+function animate(log, heights) {
+  const motion = !reducedMotion();
+  const before = drawn.newest;
+  let local = drawn.local;
+  for (const node of log.querySelectorAll("[data-seq], [data-client-id]")) {
+    const seq = Number(node.dataset.seq);
+    const client = node.dataset.clientId;
+    const known = client ? drawn.clients.has(client) : seq <= before;
+    if (client) drawn.clients.add(client); else drawn.newest = Math.max(drawn.newest, seq);
+    // The owner's own message has risen once already, as the local copy that waited to be sent.
+    const settled = !client && !known && local > 0 && node.classList.contains("me") && local--;
+    if (drawn.fresh && motion && !known && !settled) node.classList.add("enter");
+  }
+  drawn.local = log.querySelectorAll(".pending-local").length;
+  if (log.querySelector("[data-seq], [data-client-id]")) drawn.fresh = true;
+  if (!motion) return;
+  const css = getComputedStyle(document.documentElement);
+  for (const card of log.querySelectorAll(".a-card[data-ask-id]")) {
+    const was = heights.get(card.dataset.askId);
+    const now = card.offsetHeight;
+    if (was > now + 4) card.animate?.([{ height: `${was}px`, overflow: "hidden" }, { height: `${now}px`, overflow: "hidden" }],
+      { duration: parseInt(css.getPropertyValue("--dur-resolve"), 10) || 300, easing: css.getPropertyValue("--ease").trim() || "ease" });
+  }
 }
 
 export function boot({ bridge } = {}) {
   performance.mark("shell.boot");
   const form = document.querySelector("#f");
   const input = document.querySelector("#t");
-  let agentSheet;
   let identityName;
-  const presenceBar = new PresenceBar(document, { onOpen: () => {
-    document.querySelector("#drawer").classList.remove("open");
-    agentSheet?.open();
-  } });
+  const presenceBar = new PresenceBar(document, { onOpen: () => openHome({ agent: recipient?.picked() }) });
   const connection = document.querySelector("#connection");
   const progressRoot = document.querySelector("#progress");
   const log = document.querySelector("#log");
-  const pending = document.querySelector("#pending");
-  const pendingNote = document.querySelector(".pending-note");
   const suggestions = document.querySelector("#suggestions");
   const contextRoot = document.querySelector("#context");
   const context = composerContext(contextRoot, input);
@@ -133,22 +181,39 @@ export function boot({ bridge } = {}) {
   const attachButton = document.querySelector("#attach");
   const selected = document.querySelector("#selected");
   const sendButton = document.querySelector("#send");
+  const appsButton = document.querySelector("#apps");
+  addIcon(appsButton, "grid");
+  addIcon(attachButton, "plus");
+  addIcon(sendButton, "up");
+  addIcon(document.querySelector("#netBannerIcon"), "wifioff", "i-s");
   /** Files chosen so far (photos, videos, files), sent with the next message. */
   let picked = [];
+  /** The send button is the coral one only when there is something to send. */
+  const sendable = () => { sendButton.classList.toggle("idle", !input.value.trim() && !picked.length); };
   const showPicked = () => {
     selected.replaceChildren();
+    selected.hidden = !picked.length;
+    sendable();
     if (!picked.length) return;
-    selected.append(`${picked.length} 个附件，${picked.map((file) => file.name).join("、").slice(0, 120)}`);
+    const chip = document.createElement("span");
+    chip.className = "ctx";
+    chip.title = picked.map((file) => file.name).join("、").slice(0, 200);
+    chip.append(`${picked.length} 个附件`);
     const clear = document.createElement("button");
     clear.type = "button";
-    clear.textContent = "移除";
+    clear.className = "chip-clear";
+    clear.setAttribute("aria-label", "移除附件");
+    addIcon(clear, "x", "i-xs");
     clear.addEventListener("click", () => { picked = []; showPicked(); });
-    selected.append(clear);
+    chip.append(clear);
+    selected.append(chip);
   };
   let timeline;
-  let settings;
   let recipient;
   let files;
+  /** Ask for her home, or for the apps page (`page: "apps"`): whoever owns that page answers the event. */
+  const openHome = ({ page = "home", agent, section } = {}) => window.dispatchEvent(new CustomEvent("ash:open",
+    { cancelable: true, detail: { page, ...(agent ? { agent } : {}), ...(section ? { section } : {}) } }));
   const askIntents = new Map();
   const optionPending = new Set();
   /** Long texts read from the ledger on demand, by blob hash. */
@@ -158,6 +223,12 @@ export function boot({ bridge } = {}) {
     agentName: id => recipient?.name(id) ?? id.replace(/^agent:/, ""),
     get primary() { return net.primary; },
     loading: () => !timeline?.ready,
+    atStart: () => timeline?.exhausted === true,
+    herName: () => presenceBar.title.textContent || "Ash",
+    onRetry: async (failure) => {
+      await net.enqueueSay(failure.retry.text, [], null, failure.retry.to ?? recipient.target());
+      log.scrollTop = log.scrollHeight;
+    },
     onOpenFile: (ref) => files.open(ref),
     onFileLink: (href) => files.openLink(href),
     fullTexts,
@@ -176,46 +247,37 @@ export function boot({ bridge } = {}) {
     },
     onAnswerAsk: async (ask, choice, answerText) => {
       const fresh = timeline.view.asks.find((item) => item.id === ask.id);
-      if (!fresh || fresh.seq !== ask.seq || fresh.state !== "pending") throw new Error("待批请求已失效。");
+      if (!fresh || fresh.seq !== ask.seq || fresh.state !== "pending") throw new Error("这个问题已经过期，不用再回答了。");
       let intent = askIntents.get(ask.id);
       if (intent?.choice && (intent.choice !== choice || intent.answerText !== answerText || intent.status === "pending" || intent.status === "confirmed" || intent.status === "rejected")) return;
       if (!intent?.choice) { intent = { choice, answerText, customDraft: intent?.customDraft, clientId: crypto.randomUUID(), status: "pending" }; askIntents.set(ask.id, intent); }
       else intent.status = "pending";
       const binding = net.binding();
       try {
-        if (!net.same(binding)) throw new Error("连接已经换过，回答没有送出。");
+        if (!net.same(binding)) throw new Error("连接刚换过，回答没有送出，请再点一次。");
         await answerAsk(net, fresh, choice, intent.clientId, { answerText });
         intent.status = "confirmed";
       } catch (error) {
-        intent.status = /无权|被拒绝|已失效|不可用/.test(error?.message || "") ? "rejected" : "uncertain";
-        connection.textContent = error instanceof Error ? error.message : "审批结果未知；只能原样重试。";
+        intent.status = /无权|被拒绝|已失效|不可用|已经过期|没有这个选项|没被接受/.test(error?.message || "") ? "rejected" : "uncertain";
+        presenceBar.problem(error instanceof Error ? error.message : "回答有没有送到还不知道，请再点一次。");
       }
       redraw();
     },
   };
   const clearContext = context.clear;
-  const progress = () => renderProgress(progressRoot, timeline?.view, { onOpen: () => {
-    if (agentSheet?.open()) void agentSheet.show("activity");
-  } });
-  /** The kernel (or the agent) asks the page to open a page: settings, the activity of a turn, a file... */
+  const progress = () => renderProgress(progressRoot, timeline?.view, { onOpen: () => { openHome({ section: "activity" }); } });
+  /** The kernel (or the agent) asks the page to open a page: her home or one of its pages, a file... */
   const openUiTarget = async (target, request = {}) => {
     if (!net.session) return false;
-    if (target === "settings") {
-      if (!agentSheet.close()) return false;
-      document.querySelector("#drawer").classList.add("open");
-      settings.opened();
-      return true;
-    }
     if (target === "file") {
       if (typeof request.id !== "string" || !request.id) return false;
       void files.open({ workspace: "main", path: request.id });
       return true;
     }
-    const tab = target === "turn" ? "activity" : target;
-    if (!agentSheet.open()) return false;
-    document.querySelector("#drawer").classList.remove("open");
-    await agentSheet.show(tab);
-    return agentSheet.activeTab === tab;
+    const section = TARGET_SECTION[target] ?? (HOME_SECTIONS.has(target) ? target : undefined);
+    if (target !== "settings" && !section) return false;
+    // The answer is whether the home page took the event.
+    return !openHome({ section });
   };
   const openInline = async (messageId, index) => {
     const ref = timeline.inlineAttachment(messageId, index);
@@ -236,29 +298,23 @@ export function boot({ bridge } = {}) {
       return { ok: true, data: { opened } };
     },
     onState: (status, detail) => {
-      settings?.network(status);
-      agentSheet?.network(status);
       if (status !== "online") identityName?.reset();
       presenceBar.network(status, status === "closed" ? detail : "");
       if (status === "send-error" && detail) connection.title = String(detail.message || detail);
+      if (status === "online" || status === "connecting") sendable();
     },
     onOpen: () => {
-      settings?.connected();
-      agentSheet?.connected();
       void identityName?.refresh();
       void recipient?.refresh();
       net.setVisible(!document.hidden);
     },
     onQueue: (count, outbox) => {
-      pending.textContent = count ? `${count} 条消息等待送达` : "";
-      pendingNote.hidden = !count; // the storage notice matters only while something waits to be sent
       for (const item of outbox) if (item.in_reply_to && item.status === "rejected") optionPending.delete(item.in_reply_to);
       for (const item of outbox) if (item.in_reply_to && item.status !== "rejected") optionPending.add(item.in_reply_to);
       if (timeline) render(timeline.view, outbox, openInline, presenceBar, cardActions);
     },
   });
   files = new Files(net, { save: net.embedded ? (file) => globalThis.__ashFileSave(file) : null });
-  document.querySelector("#files").onclick = () => files.browse();
   // Pages are counted in ledger records, and a page of background events can hold no conversation at all. Older pages
   // otherwise load only by scrolling to the top, which a short page cannot do: keep reading back until the conversation
   // fills the screen or the history ends.
@@ -278,30 +334,21 @@ export function boot({ bridge } = {}) {
     if (conversation) render(view, net.outbox, openInline, presenceBar, cardActions);
     else presenceBar?.render(timeline?.ready ? view.presence : { state: "unknown" });
     progress();
-    agentSheet?.update();
     setTimeout(fillScreen, 0);
   });
   timeline = new Timeline(net, paintView);
   identityName = new IdentityName(net, (name) => {
     presenceBar.setName(name);
-    document.querySelector("#agentSheetHeader h2").textContent = name;
-    agentSheet?.setName(name);
-    settings?.setName(name);
   });
-  settings = new SettingsControls(document.querySelector("#panel"), net,
-    { onClose: () => document.querySelector("#drawer").classList.remove("open") });
-  agentSheet = new AgentSheet(document.querySelector("#agentSheet"), net, { getView: () => timeline.view,
-    onAskAbout: ({ turn, text: prefill }) => {
-      if (!agentSheet.close()) return;
-      context.askAbout({ turn, text: prefill });
-    }, onPrefill: (prefill) => {
-      if (!agentSheet.close()) return;
-      clearContext();
-      input.value = prefill;
-      input.focus();
-    }, onIdentityChanged: () => { void identityName.refresh(); } });
-  pending.textContent = net.queue.length ? `${net.queue.length} 条消息等待送达` : "";
-  pendingNote.hidden = !net.queue.length;
+  // Her home puts words in the box with `ash:compose` ({text, turn?}); with a turn they come as a question about that turn.
+  window.addEventListener("ash:compose", (event) => {
+    const { text: words, turn } = event.detail ?? {};
+    if (typeof words !== "string" || event.defaultPrevented) return;
+    event.preventDefault();
+    if (typeof turn === "string" && turn) context.askAbout({ turn, text: words });
+    else { clearContext(); input.value = words; input.focus(); }
+    sendable();
+  });
 
   // The owner is typing to an agent: said while there is text, every few seconds, and unsaid when it is sent or cleared.
   let lastTyping = 0;
@@ -329,17 +376,20 @@ export function boot({ bridge } = {}) {
       const attachments = await prepareUploads(files, value);
       await net.enqueueSay(value, attachments, null, recipient.target());
       input.value = "";
+      input.style.height = "";
       stopTyping();
       clearContext();
       fileInput.value = "";
       picked = [];
       showPicked();
       log.scrollTop = log.scrollHeight;
-    } catch (error) { connection.textContent = `未发送：${error.message || "无法保存待发送消息"}`; }
-    finally { sendButton.disabled = false; }
+    } catch (error) { presenceBar.problem(`没发出去：${error.message || "这台设备存不下待发送的消息"}`); }
+    finally { sendButton.disabled = false; sendable(); }
   });
   input.addEventListener("input", typing);
-  recipient = agentPicker(form, input, net, redraw);
+  input.addEventListener("input", sendable);
+  input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, window.innerHeight * 0.4)}px`; });
+  recipient = agentPicker(form, input, net, redraw, { field: document.querySelector("#field") });
   document.addEventListener("visibilitychange", () => {
     net.setVisible(!document.hidden);
     if (!document.hidden) typing(); else stopTyping();
@@ -355,7 +405,7 @@ export function boot({ bridge } = {}) {
     const height = log.scrollHeight;
     const top = log.scrollTop;
     try { if (await timeline.older()) log.scrollTop = top + log.scrollHeight - height; }
-    catch { connection.textContent = "更早记录暂时无法加载"; }
+    catch { presenceBar.problem("更早的对话暂时加载不出来，稍后再往上翻一次。"); }
   });
   attachMenu(document.querySelector("#attachMenu"), attachButton, fileInput);
   fileInput.addEventListener("change", () => {
@@ -363,12 +413,12 @@ export function boot({ bridge } = {}) {
     fileInput.value = "";
     showPicked();
   });
-  document.querySelector("#menu").addEventListener("click", () => {
-    if (!agentSheet.close()) return;
-    if (document.querySelector("#drawer").classList.toggle("open")) settings.opened();
+  // The apps page is native in the app; in a browser the home page's apps are the stand-in.
+  appsButton.addEventListener("click", () => {
+    if (typeof globalThis.__ashOpenNative === "function") globalThis.__ashOpenNative("apps");
+    else openHome({ page: "apps" });
   });
   window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); net.stop(); });
-  window.addEventListener("offline", () => agentSheet.reset());
   window.addEventListener("online", () => net.reconnect());
   window.addEventListener("pageshow", (event) => { if (event.persisted) net.start(); });
   net.start();
@@ -382,11 +432,11 @@ export function boot({ bridge } = {}) {
 async function answerAsk(net, ask, choice, clientId, { answerText } = {}) {
   if (ask.from === "service:gate") return answerGateAsk(net, ask, choice, clientId, { answerText });
   const custom = ask.allow_custom && choice === "custom" && typeof answerText === "string" && answerText.trim();
-  if (!custom && !ask.options.some((option) => option.id === choice)) throw new Error("待批请求已失效或选项不可用。");
+  if (!custom && !ask.options.some((option) => option.id === choice)) throw new Error("这个问题已经过期，或没有这个选项。");
   const result = await net.answerAsk(ask, { choice: custom ? "custom" : choice, ...(custom ? { text: answerText } : {}) }, clientId);
   if (result.ok) return result.message;
   throw new Error(["offline", "unavailable", "timeout", "result_unknown", "internal"].includes(result.error.code)
-    ? "回答的回执未知；只能用同一选项原样重试。" : "回答被拒绝；请刷新记录。");
+    ? "回答有没有送到还不知道，请再点一次同一个选项。" : "回答没被接受，这个问题可能已经过期。");
 }
 
 // In the app the page waits for the native bridge; in a browser it opens its own connection.
