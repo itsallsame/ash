@@ -17,9 +17,9 @@ const COST = "service:cost";
 const AGENTS = "service:agents";
 const APPS = "service:apps";
 
-const QUIET_KEY = "delivery.quiet_hours";
-const QUIET_DEFAULT = "21:30-09:00";
-const QUIET_FORMAT = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
+export const QUIET_KEY = "delivery.quiet_hours";
+export const QUIET_DEFAULT = "21:30-09:00";
+export const QUIET_FORMAT = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
 
 function node(tag, label, className = "") {
   const element = document.createElement(tag);
@@ -77,7 +77,7 @@ function armed(control, label, confirmLabel, onWarn, run) {
   });
 }
 
-const KEYS = [
+export const KEYS = [
   { ref: "DEEPSEEK_API_KEY", provider: "deepseek", title: "DeepSeek Key", use: "用于：对话模型", hint: "没有它，Ash 无法对话。", lost: "对话模型的 DeepSeek Key", account: "对话模型的 DeepSeek 账户", effect: "Ash 暂时无法对话" },
   { ref: "OPENROUTER_API_KEY", provider: "openrouter", title: "OpenRouter Key", use: "用于：快速判断（JEV 模型）", hint: "没有它，快速判断只能靠关键词。", lost: "快速判断的 OpenRouter Key", account: "快速判断的 OpenRouter 账户", effect: "快速判断只能靠关键词" },
 ];
@@ -102,18 +102,18 @@ export function keyProblems(keys) {
     return [];
   });
 }
-const KIND_NAMES = { computer: "电脑", laptop: "电脑", server: "服务器", browser: "浏览器" };
+export const KIND_NAMES = { computer: "电脑", laptop: "电脑", server: "服务器", browser: "浏览器" };
 const PROVIDER_NAMES = { deepseek: "DeepSeek", openrouter: "OpenRouter" };
 const tokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
 const number = (value) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
-const clock = (at) => {
+export const clock = (at) => {
   const d = new Date(Number(at));
   return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : "";
 };
 
 /** The hand id behind a device id (`device:<hand>`), which `service:link` words name. */
-const handOf = (device) => (typeof device === "string" ? device.replace(/^device:/, "") : "");
+export const handOf = (device) => (typeof device === "string" ? device.replace(/^device:/, "") : "");
 
 /** A device's diagnosis in plain words for the owner, not the raw record. */
 export function deviceDiagnosis({ device = {}, connections = [], diagnosis = null } = {}) {
@@ -151,7 +151,7 @@ export function setupText(setup) {
     default: return "";
   }
 }
-const SETUP_ACTIVE = ["waiting_login", "authorized", "deploying", "claimed"];
+export const SETUP_ACTIVE = ["waiting_login", "authorized", "deploying", "claimed"];
 
 /** What the account balances answer says, with an unreadable provider named rather than shown as zero. */
 export function balanceSentence(data) {
@@ -193,7 +193,7 @@ export function renderUsage(summary, names = {}) {
 }
 
 /** The time a quiet-hours setting names: "HH:MM-HH:MM", "" for none, or null when it cannot be read. */
-function quietOf(settings) {
+export function quietOf(settings) {
   const value = settings?.[QUIET_KEY];
   if (value === undefined) return QUIET_DEFAULT;
   if (value === "") return "";

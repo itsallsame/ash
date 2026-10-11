@@ -28,3 +28,11 @@
 ## App 图标
 
 - `design/app/icons/app-icon.svg` → `android/{app,kernel}/src/main/res/mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher.png`（48–192px 位图，MIUI 要位图，不加 adaptive）；应用内引用的 `drawable/ic_launcher.xml` 同步成同一个图形。通知小图标 `ic_stat_ash` 没动。
+
+## 她的主页（网页）
+
+- 代码：`packages/web/js/home*.js` + `packages/web/home.css`（`tools/gen-ui.mjs` 内联）。页面壳 `index.html` 不认识它们：它们在 `<body>` 上挂自己的层，监听 `ash:open`（`{page: "home" | "apps", agent?, section?, arg?}`，处理了就 `preventDefault()`）。`section` 取：`waiting upcoming memory promises hands backstage identity files activity`，以及主页再往下的 `settled device connect browser apps app keys model usage advanced`。
+- 数据：`home-hook.js` 在页面代码之前求值，页面的连接（Net）启动时它接上同一份账本行（`home-feed.js`，只在主页打开时才投影，不对每条消息折叠一遍）。主页的每一页拿到一个 `screen`：`screen.ask(to, word, body)` 以主人身份调一个词，页面或连接换掉后迟到的回答抛 `{code: "stale"}`，不会画到别处。
+- 把话放进对话框：`ctx.compose(text)` 发 `ash:compose`（`detail: {text, turn?}`，可取消）；没人处理就直接填 `#t`。
+- 原生入口：`globalThis.__ashOpenNative(page)`、`globalThis.__ashCheckup()` / `ash:checkup`（见 `spec/UI-SPLIT.md` §3），没有原生时「这台手机」格不显示。
+- 删除类操作都是两次点击：第一次写后果，第二次执行（`twoTap`）。

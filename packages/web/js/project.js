@@ -252,3 +252,15 @@ export function fold(state, message) {
   const records = [...current._records, next].sort((a, b) => a.seq - b.seq);
   return project(records);
 }
+
+/** The view of a whole batch of ledger rows at once (the home page reads the ledger this way, once per look, not row by row). */
+export function projectMessages(messages) {
+  const bySeq = new Map();
+  for (const message of messages) {
+    const next = record(message);
+    if (next && !bySeq.has(next.seq)) bySeq.set(next.seq, next);
+  }
+  const seen = new Set();
+  const records = [...bySeq.values()].sort((a, b) => a.seq - b.seq).filter((r) => !seen.has(r.id) && seen.add(r.id));
+  return project(records);
+}
