@@ -128,13 +128,15 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
     const given = rows(`SELECT m.id ${givenSql} ORDER BY r.position LIMIT 1`, start.seq)[0];
     const count = Number((db.prepare(`SELECT count(*) AS n ${givenSql}`).get(start.seq) as { n: number }).n);
     const title = given ? [...fact(given.id)!.text].slice(0, 48).join("") : "";
+    const anchor = rows("SELECT m.id FROM message_relations r JOIN messages m ON m.id=r.target WHERE r.source_seq=? AND r.kind='read' AND m.display_type='owner.say' AND m.seq<=? ORDER BY r.position LIMIT 1", start.seq, snap)[0]
+      ?? rows("SELECT id FROM messages INDEXED BY m_turn_display WHERE fact_turn=? AND display_type IS NOT NULL AND seq<=? ORDER BY seq LIMIT 1", start.fact_turn, snap)[0];
     const message = ledger.get(start.id)!;
     const background = (start as Row & { lane: string }).lane !== "front";
     const ended = end ? { ts: end.ts, outcome: (end as Row & { outcome: string }).outcome } : null;
     let stepCount = Number((db.prepare("SELECT count(*) AS n FROM messages WHERE fact_turn=? AND seq<=? AND NOT EXISTS(SELECT 1 FROM message_relations r WHERE r.source_seq=messages.seq AND r.kind='activity.child') AND ((fact_type='activity.request' AND activity_mode!='poll') OR (fact_type='tool' AND tool_phase='start'))").get(start.fact_turn, snap) as { n: number }).n);
     if (snap === highest()) stepCount += Number((db.prepare("SELECT count(*) AS n FROM messages WHERE fact_turn=? AND seq<=? AND activity_mode='poll' AND activity_state='failed'").get(start.fact_turn, snap) as { n: number }).n);
     else for (const row of db.prepare("SELECT * FROM messages WHERE fact_turn=? AND seq<=? AND activity_mode='poll'").iterate(start.fact_turn, snap) as Iterable<Row>) if (!stepOf(row, snap).hidden) stepCount++;
-    return { id: start.fact_turn, seq: start.seq, agent: f?.agent ?? message.from, lane: (start as Row & { lane: string }).lane, background, started: start.ts, step_count: stepCount,
+    return { id: start.fact_turn, seq: start.seq, message_id: anchor?.id ?? null, agent: f?.agent ?? message.from, lane: (start as Row & { lane: string }).lane, background, started: start.ts, step_count: stepCount,
       title: background ? `${message.from.slice(6)} 在后台工作` : title ? `${title}${count > 1 ? ` · ${count} 条` : ""}` : "对话", steps: [],
       ...(ended ? { ended: ended.ts, outcome: ended.outcome } : {}) };
   }
@@ -143,7 +145,7 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
     if (f.type === "tool") {
       const end = related(r.id, "tool.end", snap, r.seq)[Symbol.iterator]().next().value;
       const e = end ? fact(end.id) : null;
-      return { id: f.id, seq: f.seq, ts: f.ts, label: f.summary || f.name, state: e ? e.ok ? "ok" : "failed" : "pending", ...(e ? { ended: e.ts } : {}) };
+      return { id: f.id, seq: f.seq, ts: f.ts, tool: true, label: f.summary || f.name, state: e ? e.ok ? "ok" : "failed" : "pending", ...(e ? { ended: e.ts } : {}) };
     }
     const child = related(r.id, "activity.child", snap, r.seq)[Symbol.iterator]().next().value;
     const second = child ? fact(child.id) : null;
@@ -173,7 +175,7 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
     for (const row of responses) { const response = fact(row.id); if (!response) continue; receipts(response.seq - 1); apply(response); }
     receipts(snap);
     const step = activity.steps[0]!;
-    return { ...step, id: f.id, seq: f.seq, hidden: step.polling && step.state !== "failed" };
+    return { ...step, id: f.id, seq: f.seq, tool: true, hidden: step.polling && step.state !== "failed" };
   }
   function activityPage(b: Body) {
     const snap = snapshot(b), limit = Math.min(200, Math.max(1, b.limit ?? 30));
@@ -204,17 +206,19 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
   }
   function current(b: Body) {
     const snap = snapshot(b), time = now(), limit = Math.min(200, Math.max(1, b.limit ?? 40));
-    const pending = `display_type='ask' AND seq<=? AND expires_at>? AND ${snap === highest() ? "answer_seq IS NULL" : "(answer_seq IS NULL OR answer_seq>?)"}`;
-    const pendingArgs = snap === highest() ? [snap, time] : [snap, time, snap];
+    const agentScope = b.agent !== undefined ? ' AND "from"=?' : "";
+    const agentArgs = b.agent !== undefined ? [b.agent] : [];
+    const pending = `display_type='ask' AND seq<=? AND expires_at>? AND ${snap === highest() ? "answer_seq IS NULL" : "(answer_seq IS NULL OR answer_seq>?)"}${agentScope}`;
+    const pendingArgs = [...(snap === highest() ? [snap, time] : [snap, time, snap]), ...agentArgs];
     const total = Number((db.prepare(`SELECT count(*) AS n FROM messages WHERE ${pending}`).get(...pendingArgs) as { n: number }).n);
     const desc = b.after === undefined;
     const selected = rows(`SELECT id,seq FROM messages WHERE ${pending} AND seq${desc ? "<" : ">"}? ORDER BY seq ${desc ? "DESC" : "ASC"} LIMIT ?`, ...pendingArgs, b.after ?? b.before ?? snap + 1, limit);
     const bounded = budget(selected.map((r) => hydrate(r.id, snap)), limit); if (desc) bounded.items.reverse();
     const first = bounded.items[0]?.seq ?? null, last = bounded.items.at(-1)?.seq ?? null;
     const more = (at: number | null, op: string) => at !== null && !!db.prepare(`SELECT 1 FROM messages WHERE ${pending} AND seq${op}? LIMIT 1`).get(...pendingArgs, at);
-    const open = rows(`SELECT * FROM messages WHERE fact_type='turn.start' AND lane='front' AND seq<=? AND ${snap === highest() ? "turn_end_seq IS NULL" : "(turn_end_seq IS NULL OR turn_end_seq>?)"} ORDER BY seq DESC LIMIT 1`, ...(snap === highest() ? [snap] : [snap, snap]))[0];
+    const open = rows(`SELECT * FROM messages WHERE fact_type='turn.start' AND lane='front' AND seq<=? AND ${snap === highest() ? "turn_end_seq IS NULL" : "(turn_end_seq IS NULL OR turn_end_seq>?)"}${agentScope} ORDER BY seq DESC LIMIT 1`, ...(snap === highest() ? [snap] : [snap, snap]), ...agentArgs)[0];
     // Keep the time range as the driving table; an idle read must not test every historical start.
-    const recent = rows("SELECT s.* FROM messages e INDEXED BY m_ended CROSS JOIN messages s ON s.fact_turn=e.fact_turn AND s.fact_type='turn.start' WHERE e.fact_type='turn.end' AND e.ts>? AND e.seq<=? AND s.lane='front' AND s.seq<=? ORDER BY s.seq DESC LIMIT 1", time - 60_000, snap, snap)[0];
+    const recent = rows(`SELECT s.* FROM messages e INDEXED BY m_ended CROSS JOIN messages s ON s.fact_turn=e.fact_turn AND s.fact_type='turn.start' WHERE e.fact_type='turn.end' AND e.ts>? AND e.seq<=? AND s.lane='front' AND s.seq<=?${b.agent !== undefined ? ' AND s."from"=?' : ""} ORDER BY s.seq DESC LIMIT 1`, time - 60_000, snap, snap, ...agentArgs)[0];
     const progressStart = open && (!recent || open.seq > recent.seq) ? open : recent;
     const progress = progressStart ? turnSummary(progressStart, snap) : null;
     if (progress) { progress.steps = activityPage({ turn: progress.id, limit: 5, snapshot_seq: snap }).items; progress.steps_more = progress.step_count > progress.steps.length; }

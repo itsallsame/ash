@@ -50,6 +50,7 @@ CREATE INDEX m_thread ON messages(thread) WHERE thread IS NOT NULL;
 CREATE INDEX m_word ON messages(word, seq);
 
 CREATE INDEX m_display ON messages(seq) WHERE display_type IS NOT NULL;
+CREATE INDEX m_turn_display ON messages(fact_turn,seq) WHERE display_type IS NOT NULL;
 CREATE INDEX m_owner_order ON messages(seq) WHERE display_type='owner.say';
 CREATE INDEX m_owner_say ON messages(ts, seq) WHERE display_type='owner.say';
 CREATE INDEX m_facts ON messages(fact_type, seq);

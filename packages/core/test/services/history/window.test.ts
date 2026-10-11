@@ -353,3 +353,35 @@ test("inline attachment display references retain an on-demand path to exact ori
   const ref = raw.messages[0].body.attachments[attachment.index].data;
   assert.ok(ref.$blob); assert.equal(Buffer.from(ledger.blob.get(ref.$blob)!.bytes).toString(), data);
 });
+
+test("current scopes agent presence and complete pending counts without losing owner-wide gate approvals", async () => {
+  const { ledger } = openLedger(); const time = Date.now();
+  const a = ledger.append(say("给主agent", "person:owner"));
+  const b = ledger.append({ ...say("给子agent", "person:owner"), to: "agent:other" });
+  ledger.append(turn("main-live", "turn.started", { ids: [a.id] }));
+  ledger.append({ ...turn("other-live", "turn.started", { ids: [b.id] }), from: "agent:other" });
+  ledger.tx(() => {
+    for (let i = 0; i < 70; i++) ledger.append({ ...say(""), from: i < 60 ? "agent:main" : "agent:other", word: "ask", body: { title: String(i), allow_custom: true, expires_at: time + 100_000 } });
+    ledger.append({ ...say(""), from: "service:gate", word: "ask", body: { title: "批准", human_kind: "confirmation", expires_at: time + 100_000 } });
+  });
+  const service = createHistoryService({ ledger, now: () => time });
+  const all = await call(service, owner, "current", { limit: 1 }); assert.equal(all.total_count, 71);
+  const main = await call(service, owner, "current", { agent: "agent:main", limit: 2 });
+  assert.equal(main.total_count, 60); assert.equal(main.items.length, 2); assert.equal(main.progress.id, "main-live");
+  assert.equal(main.progress.message_id, a.id); assert.ok(main.items.every((x: any) => x.ask.from === "agent:main"));
+  const older = await call(service, owner, "current", { agent: "agent:main", before: main.before, limit: 3 }); assert.equal(older.total_count, 60);
+  const other = await call(service, owner, "current", { agent: "agent:other" }); assert.equal(other.total_count, 10); assert.equal(other.progress.message_id, b.id);
+  const missing = await call(service, owner, "current", { agent: "agent:missing" }); assert.equal(missing.total_count, 0); assert.equal(missing.progress, null); assert.equal(missing.presence.state, "idle");
+});
+
+test("turn summaries locate a visible turn reply when no owner input exists and tool flags preserve display steps", async () => {
+  const { ledger } = openLedger(); ledger.append(turn("no-input"));
+  const tool = ledger.append(turn("no-input", "agent.tool", { name: "workspace.read", phase: "start" }));
+  const work = ledger.append({ from: "agent:main", to: "service:test", kind: "request", word: "read", turn: "no-input", body: { purpose: "读取文件" } });
+  const spoken = ledger.append({ ...say("这轮的答复"), turn: "no-input" });
+  const service = createHistoryService({ ledger });
+  const turns = await call(service, owner, "activity.page"); assert.equal(turns.items[0].message_id, spoken.id);
+  const steps = await call(service, owner, "activity.page", { turn: "no-input" }); assert.equal(steps.total_count, 2);
+  assert.deepEqual(steps.items.map((x: any) => [x.id, x.tool]), [[tool.id, true], [work.id, true]]);
+  assert.equal((await call(service, owner, "window", { around_id: turns.items[0].message_id })).items[0].id, spoken.id);
+});
