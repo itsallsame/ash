@@ -560,7 +560,7 @@ add("service:host", "env.changed", "event", ENV_CHANGED, undefined,
 add("service:host", "hands.handoff", "request", obj({ port: { type: "integer", minimum: 1, maximum: 65535 }, token: secret({ type: "string", minLength: 1 }) }, ["port", "token"]), obj({ delivered: strings }, ["delivered"]),
   { callers: KERNEL, effect: "act", label: "在交接本机的手", description: "Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down." });
 add("service:host", "update.install", "request", obj({ version: nonempty, url: nonempty, sha256: sha }, ["version", "url", "sha256"]), empty,
-  { callers: OWNER, effect: "execute", risk: "structure", label: "在安装内核更新", description: "Have the host download and install a new kernel package (checked against sha256). Only the owner." });
+  { callers: OWNER, effect: "execute", risk: "structure", label: "在安装大脑更新", description: "Have the host download and install a new kernel package (checked against sha256). Only the owner." });
 
 // ===================================================================================================================
 // app:*: the one word the hub calls on every app
