@@ -90,7 +90,7 @@ class AshUnavailable(message: String) : Exception(message)
 class Ash(ctx: Context, private val app: String?, private val inProcess: Boolean = false) {
     private val ctx = ctx.applicationContext
     /** [inProcess]: the screen is in Ash's own process (the list in the apps tab), so it asks the bridge's policy directly instead of binding to it. */
-    private val direct by lazy { AppsBridge(app, Process.myUid(), { Process.myUid() }, owner = inProcess && app == null) { request -> HumanSend.send(this.ctx, request) } }
+    private val direct by lazy { AppsBridge(app, Process.myUid(), { Process.myUid() }) { request -> HumanSend.send(this.ctx, request) } }
     private val lock = Object()
     private var bridge: IAppsBridge? = null
     private var bound = false
@@ -184,11 +184,23 @@ class Ash(ctx: Context, private val app: String?, private val inProcess: Boolean
     }
 
     /**
-     * One of the owner's words on an app (`apps.install`, `apps.enable`, `apps.disable`, `apps.revoke`, `apps.refresh`): true when
-     * Ash did it. Only the list screen, which lives in Ash's own process, may say these (see [AppsBridgePolicy]).
+     * One of the owner's words on an app (`apps.install`, `apps.enable`, `apps.disable`, `apps.revoke`, `apps.refresh`), sent the way the
+     * web page sends it (on the app's own connection, [HumanSend]) — the list screen is in Ash's process and needs no bridge. The `Reply`
+     * ([Replies]); never throws. Out of reach before the word went out is `offline`; once it went out, a failure is `result_unknown`.
      */
-    fun owner(word: String, id: String? = null): Boolean =
-        call("service:apps", word, JSONObject().apply { if (id != null) put("id", id) }).optBoolean("ok")
+    fun owner(word: String, id: String? = null): JSONObject {
+        val body = JSONObject().apply { if (id != null) put("id", id) }
+        return try {
+            val sent = HumanSend.send(ctx, JSONObject().put("to", "service:apps").put("kind", "request").put("word", word).put("body", body).put("wait", true))
+            HumanSend.reply(sent) ?: Replies.error("result_unknown", UNKNOWN)
+        } catch (e: HumanSend.Refused) {
+            Replies.error(e.code, e.message.orEmpty().ifBlank { "Ash 没有收下" })
+        } catch (_: java.io.IOException) {
+            Replies.error("offline", OFFLINE)
+        } catch (_: Exception) {
+            Replies.error("internal", "出了点问题")
+        }
+    }
 
     fun icon(id: String): Bitmap? = runCatching {
         val bytes = Base64.decode(Replies.data(call("service:apps", "apps.icon", JSONObject().put("id", id)))?.optString("data") ?: return null, Base64.DEFAULT)
