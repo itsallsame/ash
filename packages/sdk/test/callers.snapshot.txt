@@ -111,6 +111,8 @@
   service:clock/list  owner,agent,app
 * service:clock/wake.fired  kernel  event-in
   service:llm/complete  owner,agent,app
+* service:llm/keys.status  owner,agent
+* service:llm/keys.check  owner,agent
   service:persona/get  owner,agent,app
 * service:persona/propose  owner,agent
 * service:cost/usage.get  owner

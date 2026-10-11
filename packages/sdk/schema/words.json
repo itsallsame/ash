@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "cb123876bb94ad433921cf014dcb50a521a1c073e7cb87cd3a250a1fdc894616",
+ "hash": "b784b5efaba8087d5492dfe1063a62e9288c89476101823b9f1e7b40f190268b",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8645,6 +8645,173 @@
    "timeout_ms": 60000,
    "label": {
     "doing": "在问小模型"
+   }
+  },
+  {
+   "member": "service:llm",
+   "word": "keys.status",
+   "kind": "request",
+   "direction": "in",
+   "description": "Whether each model key (DeepSeek for the conversation model, OpenRouter for the quick judgement) is saved and whether its provider accepts it: status ok, rejected (refused: reason says why, such as expired; ask the owner for a new key) or unknown (not checked yet or unreachable). Never the key. Use this when the model or quick judgement seems not to work.",
+   "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "keys": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "provider": {
+         "type": "string",
+         "enum": [
+          "deepseek",
+          "openrouter"
+         ]
+        },
+        "ref": {
+         "type": "string",
+         "minLength": 1
+        },
+        "configured": {
+         "type": "boolean"
+        },
+        "status": {
+         "type": "string",
+         "enum": [
+          "ok",
+          "rejected",
+          "unknown"
+         ]
+        },
+        "reason": {
+         "type": "string"
+        },
+        "detail": {
+         "type": "string"
+        },
+        "checked_at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        }
+       },
+       "required": [
+        "provider",
+        "ref",
+        "configured",
+        "status"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "keys"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent"
+   ],
+   "label": {
+    "doing": "在看模型密钥是否可用"
+   }
+  },
+  {
+   "member": "service:llm",
+   "word": "keys.check",
+   "kind": "request",
+   "direction": "in",
+   "description": "Ask the provider now whether a model key is accepted (one provider, or both when left out) with a free authenticated request that costs nothing, and return the same as keys.status. A key saved in the vault is checked automatically; use this to check again.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "provider": {
+      "type": "string",
+      "enum": [
+       "deepseek",
+       "openrouter"
+      ]
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "keys": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "provider": {
+         "type": "string",
+         "enum": [
+          "deepseek",
+          "openrouter"
+         ]
+        },
+        "ref": {
+         "type": "string",
+         "minLength": 1
+        },
+        "configured": {
+         "type": "boolean"
+        },
+        "status": {
+         "type": "string",
+         "enum": [
+          "ok",
+          "rejected",
+          "unknown"
+         ]
+        },
+        "reason": {
+         "type": "string"
+        },
+        "detail": {
+         "type": "string"
+        },
+        "checked_at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        }
+       },
+       "required": [
+        "provider",
+        "ref",
+        "configured",
+        "status"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "keys"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent"
+   ],
+   "timeout_ms": 30000,
+   "label": {
+    "doing": "在验证模型密钥"
    }
   },
   {

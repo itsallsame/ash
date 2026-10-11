@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { balanceSentence, deviceDiagnosis, relayText, renderUsage, setupText, SettingsControls } from "../js/settings.js";
+import { balanceSentence, deviceDiagnosis, keyProblems, keyStateText, relayText, renderUsage, setupText, SettingsControls } from "../js/settings.js";
 import { startKernel } from "./kernel.js";
 import { connect, FakeElement, until } from "./support.js";
 
@@ -526,6 +526,87 @@ test("the vault section saves and removes keys through the vault words, clears t
   } finally { f.close(); }
 });
 
+const health = (provider, status, extra = {}) => ({ provider, ref: provider === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENROUTER_API_KEY", configured: true, status, ...extra });
+
+test("key words for the owner: verified, refused with the reason, not verified; and the refused ones become problems", () => {
+  assert.equal(keyStateText(health("deepseek", "ok", { checked_at: 1 })), "已保存，已验证可用。");
+  assert.equal(keyStateText(health("openrouter", "rejected", { reason: "已过期" })), "已失效（已过期），请换一把新的 Key。");
+  assert.equal(keyStateText(health("openrouter", "rejected")), "已失效（无效），请换一把新的 Key。");
+  assert.equal(keyStateText(health("deepseek", "unknown", { reason: "连不上服务商" })), "已保存，暂时没验证上（连不上服务商）。");
+  assert.equal(keyStateText(health("deepseek", "unknown")), "已保存，暂时没验证上。");
+  assert.equal(keyStateText(undefined), "已保存。", "the hub could not be asked: no claim either way");
+  assert.deepEqual(keyProblems([health("deepseek", "rejected", { reason: "无效" }), health("openrouter", "rejected", { reason: "已过期" })]), [
+    "对话模型的 DeepSeek Key已失效（无效），Ash 暂时无法对话。", "快速判断的 OpenRouter Key已失效（已过期），快速判断只能靠关键词。"]);
+  assert.deepEqual(keyProblems([health("deepseek", "ok"), health("openrouter", "unknown"), { ...health("openrouter", "rejected"), configured: false }]), []);
+  assert.deepEqual(keyProblems(undefined), []);
+});
+
+test("the vault section shows each saved key's standing, lists a refused key as a problem, and re-checks on request", async () => {
+  let openrouter = health("openrouter", "rejected", { reason: "已过期", detail: "API key expired", checked_at: 5 });
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:vault", "list", { entries: [{ ref: "DEEPSEEK_API_KEY", label: "x", kind: "model", configured: true }, { ref: "OPENROUTER_API_KEY", label: "y", kind: "model", configured: true }] });
+    kernel.on("service:llm", "keys.status", () => ({ keys: [health("deepseek", "ok", { checked_at: 5 }), openrouter] }));
+    kernel.on("service:llm", "keys.check", (body) => ({ keys: [health("deepseek", "ok", { checked_at: 6 }), openrouter].filter((k) => !body.provider || k.provider === body.provider) }));
+  } });
+  try {
+    f.panel.find("settingsVaultRow").click();
+    const line = (ref) => f.panel.find(`settingsVault_${ref}_status`).textContent;
+    await until(() => /已失效/.test(line("OPENROUTER_API_KEY")));
+    assert.equal(line("DEEPSEEK_API_KEY"), "已保存，已验证可用。");
+    assert.equal(line("OPENROUTER_API_KEY"), "已失效（已过期），请换一把新的 Key。");
+    assert.equal(f.panel.find("settingsVault_OPENROUTER_API_KEY_status").className, "set-status warn");
+    const problems = f.panel.find("settingsVault_problems");
+    assert.equal(problems.hidden, false);
+    assert.equal(problems.textContent, "发现这些问题：\n· 快速判断的 OpenRouter Key已失效（已过期），快速判断只能靠关键词。");
+    assert.equal(f.sent("service:llm", "keys.check").length, 0, "a key that already has a verdict is not asked about again on opening");
+    // the owner replaces nothing but taps 验证 after fixing the account: the hub is asked for that provider only
+    openrouter = health("openrouter", "ok", { checked_at: 9 });
+    f.panel.find("settingsVault_OPENROUTER_API_KEY").children.at(-1).children.find((item) => item.textContent === "验证").click();
+    await until(() => /已验证可用/.test(line("OPENROUTER_API_KEY")));
+    assert.deepEqual(f.sent("service:llm", "keys.check")[0].body, { provider: "openrouter" });
+    assert.equal(f.panel.find("settingsVault_problems").hidden, true);
+  } finally { f.close(); }
+});
+
+test("saving a key shows the verification, not just 'saved'; a key the hub has never checked is checked when the page opens", async () => {
+  const saved = new Set(["DEEPSEEK_API_KEY"]);
+  let verdict = health("openrouter", "rejected", { reason: "无效", checked_at: 8 });
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:vault", "list", () => ({ entries: [...saved].map((ref) => ({ ref, label: ref, kind: "model", configured: true })) }));
+    kernel.on("service:vault", "set", (body) => { saved.add(body.ref); return { ref: body.ref, configured: true }; });
+    kernel.on("service:llm", "keys.status", () => ({ keys: [health("deepseek", "unknown"), { ...health("openrouter", "unknown"), configured: saved.has("OPENROUTER_API_KEY") }] }));
+    kernel.on("service:llm", "keys.check", (body) => ({ keys: [body.provider === "deepseek" ? health("deepseek", "ok", { checked_at: 7 }) : verdict] }));
+  } });
+  try {
+    f.panel.find("settingsVaultRow").click();
+    await until(() => f.panel.find("settingsVault_DEEPSEEK_API_KEY_status").textContent === "已保存，已验证可用。");
+    assert.deepEqual(f.sent("service:llm", "keys.check").map((r) => r.body), [{ provider: "deepseek" }], "only the saved, never-checked key");
+    f.panel.find("settingsVault_OPENROUTER_API_KEY_value").value = "sk-or-bad";
+    f.panel.find("settingsVault_OPENROUTER_API_KEY").children.at(-1).children.find((item) => item.textContent === "保存").click();
+    await until(() => /已失效/.test(f.panel.find("settingsVault_OPENROUTER_API_KEY_status").textContent));
+    assert.equal(f.panel.find("settingsVault_OPENROUTER_API_KEY_status").textContent, "已失效（无效），请换一把新的 Key。");
+    assert.match(f.panel.find("settingsVault_problems").textContent, /快速判断的 OpenRouter Key已失效（无效）/);
+    assert.doesNotMatch(JSON.stringify(f.panel), /sk-or-bad/);
+  } finally { f.close(); }
+});
+
+test("when the hub cannot say, a saved key says it was not verified instead of claiming it works", async () => {
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:vault", "list", { entries: [{ ref: "DEEPSEEK_API_KEY", label: "x", kind: "model", configured: true }] });
+    kernel.on("service:vault", "set", { ref: "DEEPSEEK_API_KEY", configured: true });
+    kernel.on("service:llm", "keys.status", fail("unavailable", "later"));
+    kernel.on("service:llm", "keys.check", fail("unavailable", "later"));
+  } });
+  try {
+    f.panel.find("settingsVaultRow").click();
+    await until(() => /^已保存/.test(f.panel.find("settingsVault_DEEPSEEK_API_KEY_status").textContent));
+    f.panel.find("settingsVault_DEEPSEEK_API_KEY_value").value = "sk-x";
+    f.panel.find("settingsVault_DEEPSEEK_API_KEY").children.at(-1).children.find((item) => item.textContent === "保存").click();
+    await until(() => /没验证上/.test(f.panel.find("settingsVault_DEEPSEEK_API_KEY_status").textContent));
+    assert.equal(f.panel.find("settingsVault_problems").hidden, true);
+  } finally { f.close(); }
+});
+
 test("a locked secure storage is explained and cannot be changed from settings", async () => {
   const f = await drawer({ setup: (kernel) => kernel.on("service:vault", "list", fail("unavailable", "locked")) });
   try {
@@ -571,6 +652,7 @@ test("opening settings reads what each row should say: quiet hours, pause, keys,
     kernel.on("service:gate", "rules.list", { rules: [], mode: "always" });
     kernel.on("service:cost", "usage.get", { periods: { today: { ...zero, cost_usd: 0.12 }, "7d": { ...zero, cost_usd: 1.5 }, "30d": { ...zero, cost_usd: 4 } }, by_caller: [] });
     kernel.on("service:vault", "list", { entries: [{ ref: "DEEPSEEK_API_KEY", label: "DeepSeek", kind: "model", configured: false }, { ref: "OPENROUTER_API_KEY", label: "OpenRouter", kind: "model", configured: true }] });
+    kernel.on("service:llm", "keys.status", { keys: [{ provider: "openrouter", ref: "OPENROUTER_API_KEY", configured: true, status: "rejected", reason: "已过期" }] });
     kernel.on("service:devices", "list", { devices: [{ device: dev("A"), name: "A", online: true }, { device: dev("R"), name: "R", online: false, revoked_at: 5 }] });
     kernel.on("service:devices", "pair_pending", { pairs: [{ pair_id: "p", state: "requested", kind: "computer" }] });
     kernel.on("service:link", "gateway.status", { configured: true, connected: true, url: "https://r.example.test" });
@@ -584,7 +666,7 @@ test("opening settings reads what each row should say: quiet hours, pause, keys,
     assert.equal(f.panel.find("settingsPause").hidden, true);
     assert.equal(f.panel.find("settingsResume").hidden, false);
     assert.equal(f.panel.find("settingsApprovalRow").sub.textContent, "每次都问");
-    assert.equal(f.panel.find("settingsVaultRow").sub.textContent, "DeepSeek Key 未设置 · OpenRouter Key 已保存");
+    assert.equal(f.panel.find("settingsVaultRow").sub.textContent, "DeepSeek Key 未设置 · OpenRouter Key 已失效");
     assert.equal(f.panel.find("settingsVaultRow").sub.className, "set-sub warn");
     assert.equal(f.panel.find("settingsGatewayRow").sub.textContent, "1 台设备 · 1 个等你批准");
     assert.equal(f.panel.find("settingsUsageCard").children[1].textContent, "¥0.81");

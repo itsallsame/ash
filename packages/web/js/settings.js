@@ -10,6 +10,7 @@ import { usdToCnyText as money, balanceText, CNY_ESTIMATE_NOTE } from "./money.j
 const ADMIN = "service:admin";
 const GATE = "service:gate";
 const VAULT = "service:vault";
+const LLM = "service:llm";
 const DEVICES = "service:devices";
 const LINK = "service:link";
 const COST = "service:cost";
@@ -77,9 +78,26 @@ function armed(control, label, confirmLabel, onWarn, run) {
 }
 
 const KEYS = [
-  { ref: "DEEPSEEK_API_KEY", title: "DeepSeek Key", use: "用于：对话模型", hint: "没有它，Ash 无法对话。" },
-  { ref: "OPENROUTER_API_KEY", title: "OpenRouter Key", use: "用于：快速判断（JEV 模型）", hint: "没有它，快速判断只能靠关键词。" },
+  { ref: "DEEPSEEK_API_KEY", provider: "deepseek", title: "DeepSeek Key", use: "用于：对话模型", hint: "没有它，Ash 无法对话。", lost: "对话模型的 DeepSeek Key", effect: "Ash 暂时无法对话" },
+  { ref: "OPENROUTER_API_KEY", provider: "openrouter", title: "OpenRouter Key", use: "用于：快速判断（JEV 模型）", hint: "没有它，快速判断只能靠关键词。", lost: "快速判断的 OpenRouter Key", effect: "快速判断只能靠关键词" },
 ];
+
+/** What `service:llm/keys.status` says about one saved key, in words for the owner. `health` is undefined when the hub could not be asked. */
+export function keyStateText(health) {
+  if (health?.status === "ok") return "已保存，已验证可用。";
+  if (health?.status === "rejected") return `已失效（${health.reason || "无效"}），请换一把新的 Key。`;
+  if (health?.status === "unknown") return `已保存，暂时没验证上${health.reason ? `（${health.reason}）` : ""}。`;
+  return "已保存。";
+}
+
+/** The saved keys their providers refuse, one plain sentence each (the owner and the agent both need to know these do not work). */
+export function keyProblems(keys) {
+  const list = Array.isArray(keys) ? keys : [];
+  return KEYS.flatMap(({ provider, lost, effect }) => {
+    const health = list.find((item) => item?.provider === provider);
+    return health?.configured === true && health.status === "rejected" ? [`${lost}已失效（${health.reason || "无效"}），${effect}。`] : [];
+  });
+}
 const KIND_NAMES = { computer: "电脑", laptop: "电脑", server: "服务器", browser: "浏览器" };
 const PROVIDER_NAMES = { deepseek: "DeepSeek", openrouter: "OpenRouter" };
 const tokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
@@ -409,7 +427,20 @@ export class SettingsControls {
     const vaultPage = page("settingsVault", "密钥",
       `Key 只保存在这台手机上。${name} 知道存了哪几个，但看不到内容，Key 也不会出现在聊天里。保存后立刻生效。`, () => refreshVault());
     const vaultViews = [];
-    for (const { ref, title, use, hint } of KEYS) {
+    // Both keys' standing with their providers (`service:llm/keys.status`); never the keys. Empty when the hub could not be asked.
+    let keyHealth = [];
+    const problems = node("pre", "", "set-status warn");
+    problems.id = "settingsVault_problems";
+    problems.hidden = true;
+    vaultPage.append(problems);
+    const showProblems = () => {
+      const found = keyProblems(keyHealth);
+      problems.hidden = !found.length;
+      problems.textContent = found.length ? ["发现这些问题：", ...found.map((line) => `· ${line}`)].join("\n") : "";
+    };
+    const renderAll = () => { for (const view of vaultViews) view.render(); showProblems(); };
+    const learn = (keys) => { if (Array.isArray(keys)) keyHealth = keys; renderAll(); };
+    for (const { ref, provider, title, use, hint } of KEYS) {
       const card = document.createElement("div");
       card.id = `settingsVault_${ref}`;
       card.className = "set-card";
@@ -425,28 +456,53 @@ export class SettingsControls {
       field.placeholder = "粘贴 Key";
       field.autocomplete = "off";
       const save = button("保存");
+      const check = button("验证", "btn gray");
       const remove = button("移除", "btn gray");
+      check.hidden = true;
       remove.hidden = true;
+      let isSaved = null;
+      let checking = false;
+      const render = () => {
+        if (isSaved === null) return;
+        const health = keyHealth.find((item) => item?.provider === provider);
+        status.textContent = !isSaved ? `还没有保存。${hint}` : checking ? "已保存，正在验证…" : keyStateText(health);
+        status.className = !isSaved || health?.status === "rejected" ? "set-status warn" : health?.status === "ok" ? "set-status ok" : "set-status";
+      };
       const showSaved = (saved) => {
-        status.textContent = saved ? "已保存。" : `还没有保存。${hint}`;
-        status.className = saved ? "set-status ok" : "set-status warn";
+        isSaved = saved;
+        render();
         field.placeholder = saved ? "粘贴新的 Key 替换" : "粘贴 Key";
         field.disabled = false;
         save.disabled = false;
         remove.disabled = false;
+        check.disabled = false;
+        check.hidden = !saved;
         remove.hidden = !saved;
       };
       const lock = () => {
+        isSaved = null;
         status.textContent = "手机安全存储暂时不可用。原有密钥未被读取或修改，请重启手机后再试。";
         status.className = "set-status warn";
         field.value = "";
         field.disabled = true;
         save.disabled = true;
+        check.disabled = true;
+        check.hidden = true;
         remove.disabled = true;
         remove.hidden = true;
       };
-      vaultViews.push({ ref, show: showSaved, lock, status });
-      const failure = (error, text) => { if (live()) { if (error?.code === "unavailable") for (const view of vaultViews) view.lock(); else status.textContent = text; } };
+      // Asks the provider now (the hub does the asking, with the key it holds) and shows what it says.
+      const verify = async () => {
+        checking = true;
+        render();
+        try { learn((await ask(LLM, "keys.check", { provider })).keys); } catch {
+          if (live()) learn([...keyHealth.filter((item) => item?.provider !== provider), { provider, ref, configured: true, status: "unknown", reason: "没能问到服务商" }]);
+        }
+        finally { checking = false; if (live()) render(); }
+      };
+      const view = { ref, show: showSaved, lock, status, render, verify, saved: () => isSaved === true };
+      vaultViews.push(view);
+      const failure = (error, text) => { if (live()) { if (error?.code === "unavailable") for (const other of vaultViews) other.lock(); else status.textContent = text; } };
       save.addEventListener("click", () => { void (async () => {
         if (save.disabled) return;
         const value = field.value.trim();
@@ -456,21 +512,32 @@ export class SettingsControls {
         status.textContent = "正在保存…";
         try {
           const saved = await ask(VAULT, "set", { ref, value, label: title, kind: "model" });
-          if (live()) { if (saved.configured === true) showSaved(true); else status.textContent = "保存失败，请重试。"; }
+          if (live()) {
+            if (saved.configured === true) {
+              keyHealth = keyHealth.filter((item) => item?.provider !== provider); // the old key's verdict no longer counts
+              showSaved(true);
+              await verify();
+            } else status.textContent = "保存失败，请重试。";
+          }
         } catch (error) { failure(error, "保存失败，请重试。"); }
         finally { if (!field.disabled) save.disabled = false; }
+      })(); });
+      check.addEventListener("click", () => { void (async () => {
+        if (check.disabled) return;
+        check.disabled = true;
+        try { await verify(); } finally { if (!field.disabled) check.disabled = false; }
       })(); });
       armed(remove, "移除", "确定移除？", () => { status.textContent = `移除后，${hint.replace(/^没有它，/, "")}`; }, async () => {
         remove.disabled = true;
         try {
           const removed = await ask(VAULT, "delete", { ref });
-          if (live()) { if (removed.deleted === true) showSaved(false); else status.textContent = "移除失败，请重试。"; }
+          if (live()) { if (removed.deleted === true) { keyHealth = keyHealth.filter((item) => item?.provider !== provider); showSaved(false); showProblems(); } else status.textContent = "移除失败，请重试。"; }
         } catch (error) { failure(error, "移除失败，请重试。"); }
         finally { if (!field.disabled) remove.disabled = false; }
       });
       const actions = document.createElement("div");
       actions.className = "set-actions";
-      actions.append(save, remove);
+      actions.append(save, check, remove);
       card.append(head, status, field, actions);
       vaultPage.append(card);
     }
@@ -484,12 +551,20 @@ export class SettingsControls {
         throw error;
       }
     };
+    const readKeyHealth = async () => { try { const { keys } = await ask(LLM, "keys.status", {}); return Array.isArray(keys) ? keys : []; } catch { return []; } };
     const refreshVault = async () => {
       try {
-        const vault = await readVault();
+        const [vault, keys] = await Promise.all([readVault(), readKeyHealth()]);
         if (!live()) return;
         if (!vault.available) { for (const view of vaultViews) view.lock(); return; }
+        keyHealth = keys;
         for (const view of vaultViews) view.show(vault.entries.find((item) => item.ref === view.ref)?.configured === true);
+        showProblems();
+        // A key the hub has not asked its provider about yet (the hub just started): ask now, so the page never says "saved" and stops there.
+        for (const view of vaultViews) {
+          const health = keyHealth.find((item) => item?.ref === view.ref);
+          if (view.saved() && health?.configured === true && health.status === "unknown" && health.checked_at === undefined) void view.verify();
+        }
       } catch { if (live()) for (const view of vaultViews) view.status.textContent = "读取失败，请重试。"; }
     };
 
@@ -1034,9 +1109,9 @@ export class SettingsControls {
         const [{ devices }, { pairs }] = await Promise.all([ask(DEVICES, "list", {}), ask(DEVICES, "pair_pending", {})]);
         return { devices: Array.isArray(devices) ? devices : [], pairs: Array.isArray(pairs) ? pairs : [] };
       };
-      const [status, quietSettings, approval, usage, vault, devices, relayState] = await Promise.all([
+      const [status, quietSettings, approval, usage, vault, devices, relayState, modelKeys] = await Promise.all([
         settled(ask(ADMIN, "status", {})), settled(ask(ADMIN, "settings.get", { keys: [QUIET_KEY] })), settled(ask(GATE, "rules.list", { limit: 1 })),
-        settled(ask(COST, "usage.get", { days: 7 })), settled(readVault()), settled(readDevices()), settled(ask(LINK, "gateway.status", {}))]);
+        settled(ask(COST, "usage.get", { days: 7 })), settled(readVault()), settled(readDevices()), settled(ask(LINK, "gateway.status", {})), settled(ask(LLM, "keys.status", {}))]);
       if (!live()) return;
       const quiet = quietSettings ? quietOf(quietSettings.settings) : null;
       if (quiet !== null) showQuiet(quiet);
@@ -1049,8 +1124,9 @@ export class SettingsControls {
         vaultRow.sub.className = "set-sub warn";
       } else if (vault) {
         const saved = (ref) => vault.entries.find((entry) => entry.ref === ref)?.configured === true;
-        vaultRow.sub.textContent = KEYS.map(({ ref, title }) => `${title} ${saved(ref) ? "已保存" : "未设置"}`).join(" · ");
-        vaultRow.sub.className = saved(KEYS[0].ref) ? "set-sub" : "set-sub warn";
+        const refused = new Set((modelKeys?.keys ?? []).filter((item) => item?.configured === true && item.status === "rejected").map((item) => item.ref));
+        vaultRow.sub.textContent = KEYS.map(({ ref, title }) => `${title} ${refused.has(ref) ? "已失效" : saved(ref) ? "已保存" : "未设置"}`).join(" · ");
+        vaultRow.sub.className = saved(KEYS[0].ref) && !refused.size ? "set-sub" : "set-sub warn";
       }
       if (devices || relayState) {
         const count = devices ? devices.devices.filter((device) => !device.revoked_at).length : deviceCount;

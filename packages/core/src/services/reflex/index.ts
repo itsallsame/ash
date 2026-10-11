@@ -65,6 +65,9 @@ function until<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** A failure in one short line for the log: its own message (the llm edge never puts a key or message text in one). */
+const whyFailed = (error: unknown): string => String((error as { message?: unknown } | null)?.message ?? error ?? "error").replace(/[\r\n]+/g, " ").slice(0, 160);
+
 interface TurnInfo { turn: string; agent: string; lane: string; ids: string[]; seq: number; running: boolean; outcome?: string }
 
 export function createReflexService(options: ReflexOptions): Member {
@@ -124,7 +127,9 @@ export function createReflexService(options: ReflexOptions): Member {
       if (judged.intent === "stop" && judged.confidence >= threshold) return done("interrupt", judged.confidence, "jev");
       if (judged.intent === "redirect" && judged.confidence >= threshold) return done("steer", judged.confidence, "jev");
       return done("followup", judged.confidence, "jev");
-    } catch {
+    } catch (error) {
+      // The judge could not answer (a refused key, a timeout, a malformed answer): say so, with no message text, then fall back.
+      if (!ctx.signal.aborted) log(`conversation.control ${agent}: JEV failed, fell back to keywords (${whyFailed(error)})`);
       return done("followup", 0, "keyword");
     }
   }
@@ -156,6 +161,7 @@ export function createReflexService(options: ReflexOptions): Member {
       return { data: { outcome: answer.choice, confidence: answer.confidence } };
     } catch (error) {
       if (error instanceof WordError) throw error;
+      if (!ctx.signal.aborted) log(`task.outcome ${turn}: JEV failed, no label given (${whyFailed(error)})`);
       throw new WordError("unavailable", "the judge could not answer");
     }
   }

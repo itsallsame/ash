@@ -242,3 +242,146 @@ test("baseUrl: DeepSeek (no path) and OpenRouter (/api/v1) keep the model's own 
   assert.deepEqual(seen, ["http://127.0.0.1:9", "http://127.0.0.1:9/api/v1"]);
   assert.deepEqual(sent, ["http://127.0.0.1:9/chat/completions", "http://127.0.0.1:9/api/v1/chat/completions"]);
 });
+
+// ---- key health: what the providers say about the keys --------------------------------------------------------------
+function healthFixture(respond: (sent: Sent) => Promise<Response> | Response, store: Record<string, string | null> = { ...keys }, complete?: Complete, verifyTimeoutMs?: number) {
+  const sent: Sent[] = [];
+  let now = 1000;
+  const llm = createLlm({ key: (ref) => store[ref] ?? null, report: () => {}, clock: { now: () => now },
+    fetch: (async (url: URL, init: RequestInit) => { const s = { url: String(url), init }; sent.push(s); return respond(s); }) as unknown as typeof fetch,
+    ...(complete ? { complete } : {}), ...(verifyTimeoutMs ? { verifyTimeoutMs } : {}) });
+  return { llm, sent, store, tick: (ms: number) => { now += ms; } };
+}
+const status = (llm: { keys(): ReturnType<ReturnType<typeof healthFixture>["llm"]["keys"]> }, provider: string) => llm.keys().find((k) => k.provider === provider)!;
+
+test("keys: before anything is known both keys are unknown, and a missing key is not configured", () => {
+  const f = healthFixture(() => new Response("{}"), { DEEPSEEK_API_KEY: FAKE_DEEPSEEK, OPENROUTER_API_KEY: null });
+  assert.deepEqual(f.llm.keys(), [
+    { provider: "deepseek", ref: "DEEPSEEK_API_KEY", configured: true, status: "unknown" },
+    { provider: "openrouter", ref: "OPENROUTER_API_KEY", configured: false, status: "unknown" },
+  ]);
+  assert.equal(f.sent.length, 0, "reading the status never touches the network");
+});
+
+test("verify: a free authenticated GET on each provider's fixed host; accepted means ok, with the time", async () => {
+  const f = healthFixture(() => new Response('{"is_available":true}'));
+  const one = await f.llm.verify("deepseek");
+  const two = await f.llm.verify("openrouter");
+  assert.deepEqual([one.status, one.checked_at, two.status], ["ok", 1000, "ok"]);
+  assert.deepEqual(f.sent.map((s) => [s.url, s.init.method]), [["https://api.deepseek.com/user/balance", "GET"], ["https://openrouter.ai/api/v1/key", "GET"]]);
+  assert.equal((f.sent[0]!.init.headers as Record<string, string>).authorization, `Bearer ${FAKE_DEEPSEEK}`);
+  assert.equal(f.sent[0]!.init.body, undefined);
+  assert.doesNotMatch(JSON.stringify(f.llm.keys()), /fake-(deepseek|openrouter)-key/, "the status never holds a key");
+});
+
+test("verify: 401 and 403 are rejected with the provider's words; expired, revoked and plain invalid get their own short reason", async () => {
+  const say = (status: number, message: string) => () => new Response(JSON.stringify({ error: { message, code: status } }), { status });
+  const expired = await healthFixture(say(401, "API key expired")).llm.verify("openrouter");
+  assert.deepEqual([expired.status, expired.reason, expired.detail], ["rejected", "已过期", "API key expired"]);
+  const invalid = await healthFixture(say(401, `Authentication Fails, Your api key: ${FAKE_DEEPSEEK} is invalid`)).llm.verify("deepseek");
+  assert.deepEqual([invalid.status, invalid.reason], ["rejected", "无效"]);
+  assert.doesNotMatch(String(invalid.detail), new RegExp(FAKE_DEEPSEEK), "should the provider echo the key, it is blanked out");
+  const revoked = await healthFixture(say(403, "key was revoked")).llm.verify("deepseek");
+  assert.deepEqual([revoked.status, revoked.reason], ["rejected", "已被停用"]);
+  const forbidden = await healthFixture(say(403, "nope")).llm.verify("deepseek");
+  assert.equal(forbidden.reason, "没有权限");
+  const bare = await healthFixture(() => new Response("<html>", { status: 401 })).llm.verify("deepseek");
+  assert.deepEqual([bare.status, bare.reason, bare.detail], ["rejected", "无效", undefined]);
+});
+
+test("verify: a network error, a timeout or a 5xx says nothing about the key (unknown)", async () => {
+  const outcomes: Array<() => Response | Promise<Response>> = [() => { throw new Error("connect failed"); }, () => new Response("busy", { status: 503 })];
+  let n = 0;
+  const f = healthFixture(() => outcomes[n++]!());
+  const first = await f.llm.verify("deepseek");
+  assert.deepEqual([first.status, first.reason], ["unknown", "连不上服务商"]);
+  const second = await f.llm.verify("deepseek");
+  assert.equal(second.status, "unknown");
+  assert.match(String(second.reason), /HTTP 503/);
+  const hung = healthFixture(() => new Promise<Response>(() => {}), { ...keys }, undefined, 20);
+  const timedOut = await hung.llm.verify("deepseek");
+  assert.deepEqual([timedOut.status, timedOut.reason], ["unknown", "连接服务商超时"]);
+});
+
+test("verify: not reaching the provider never replaces a verdict already known", async () => {
+  const outcomes: Array<() => Response> = [() => new Response("{}"), () => { throw new Error("offline"); }, () => new Response("expired", { status: 401 }), () => new Response("busy", { status: 503 })];
+  let n = 0;
+  const f = healthFixture(() => outcomes[n++]!());
+  assert.equal((await f.llm.verify("deepseek")).status, "ok");
+  assert.equal((await f.llm.verify("deepseek")).status, "ok", "offline: still what it was");
+  assert.equal((await f.llm.verify("deepseek")).status, "rejected");
+  const after = await f.llm.verify("deepseek");
+  assert.deepEqual([after.status, after.reason], ["rejected", "无效"], "a 503 does not clear a refusal");
+});
+
+test("verify: a check already running is shared; an unconfigured key is not asked about; forget wipes what was known", async () => {
+  let release!: () => void;
+  const f = healthFixture(() => new Promise<Response>((resolve) => { release = () => resolve(new Response("{}")); }));
+  const a = f.llm.verify("deepseek"), b = f.llm.verify("deepseek");
+  await new Promise((r) => setImmediate(r));
+  release();
+  assert.equal(await a, await b);
+  assert.equal(f.sent.length, 1);
+  assert.equal(status(f.llm, "deepseek").status, "ok");
+  f.llm.forget("deepseek");
+  assert.equal(status(f.llm, "deepseek").status, "unknown");
+  assert.equal(status(f.llm, "deepseek").checked_at, undefined);
+  const none = healthFixture(() => new Response("{}"), { DEEPSEEK_API_KEY: null });
+  assert.equal((await none.llm.verify("deepseek")).configured, false);
+  assert.equal(none.sent.length, 0);
+  await assert.rejects(none.llm.verify("nope" as "deepseek"), (e: LlmError) => e.code === "bad_request");
+});
+
+test("verify: an answer about a key the owner has replaced meanwhile is dropped", async () => {
+  let release!: () => void;
+  const f = healthFixture(() => new Promise<Response>((resolve) => { release = () => resolve(new Response("expired", { status: 401 })); }));
+  const running = f.llm.verify("openrouter");
+  await new Promise((r) => setImmediate(r));
+  f.store.OPENROUTER_API_KEY = "fake-new-key-9999";
+  f.llm.forget("openrouter");
+  release();
+  await running;
+  assert.equal(status(f.llm, "openrouter").status, "unknown", "the old key's refusal does not count against the new key");
+});
+
+test("use: a 401 or 403 from post marks the provider's key rejected with the time and reason; the next success clears it", async () => {
+  let answer: () => Response = () => new Response(JSON.stringify({ error: { message: "API key expired", code: 401 } }), { status: 401 });
+  const f = healthFixture(() => answer());
+  await assert.rejects(f.llm.post("hub:jev", jevRequest), (e: LlmError) => e.code === "failed" && /HTTP 401/.test(e.message));
+  const rejected = status(f.llm, "openrouter");
+  assert.deepEqual([rejected.status, rejected.reason, rejected.detail, rejected.checked_at], ["rejected", "已过期", "API key expired", 1000]);
+  assert.equal(status(f.llm, "deepseek").status, "unknown", "only the provider that was called");
+  f.tick(500);
+  answer = () => new Response("{}", { status: 200 });
+  await f.llm.post("hub:jev", jevRequest);
+  const cleared = status(f.llm, "openrouter");
+  assert.deepEqual([cleared.status, cleared.reason, cleared.checked_at], ["ok", undefined, 1500]);
+});
+
+test("use: a timeout, a 5xx or a transport failure never changes the status, rejected or not", async () => {
+  let answer: () => Response | Promise<Response> = () => new Response("nope", { status: 401 });
+  const f = healthFixture(() => answer());
+  await assert.rejects(f.llm.post("hub:jev", jevRequest));
+  const before = status(f.llm, "openrouter");
+  for (const next of [() => new Response("boom", { status: 502 }), () => { throw new Error("offline"); }, () => new Promise<Response>(() => {})]) {
+    answer = next;
+    await assert.rejects(f.llm.post("hub:jev", { ...jevRequest, timeout_ms: 20 }));
+    assert.deepEqual(status(f.llm, "openrouter"), before);
+  }
+  const fresh = healthFixture(() => new Response("boom", { status: 500 }));
+  await assert.rejects(fresh.llm.post("hub:jev", jevRequest));
+  assert.equal(status(fresh.llm, "openrouter").status, "unknown", "a failure that is not a refusal does not even create a status");
+});
+
+test("use: complete reads the provider's '401 ...' error the same way, and a good reply clears it", async () => {
+  let fail = true;
+  const f = healthFixture(() => new Response("{}"), { ...keys }, async () => fail ? reply({ stopReason: "error", errorMessage: "401 API key expired", content: [] }) : reply());
+  await assert.rejects(f.llm.complete("hub:reviewer", { model: "openrouter:vendor/m", messages: [{ role: "user", content: "hi" }] }), (e: LlmError) => e.code === "failed" && /401/.test(e.message));
+  assert.deepEqual([status(f.llm, "openrouter").status, status(f.llm, "openrouter").reason], ["rejected", "已过期"]);
+  fail = false;
+  await f.llm.complete("hub:reviewer", { model: "openrouter:vendor/m", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(status(f.llm, "openrouter").status, "ok");
+  const server = healthFixture(() => new Response("{}"), { ...keys }, async () => reply({ stopReason: "error", errorMessage: "500 internal error", content: [] }));
+  await assert.rejects(server.llm.complete("hub:reviewer", { messages: [{ role: "user", content: "hi" }] }));
+  assert.equal(status(server.llm, "deepseek").status, "unknown");
+});

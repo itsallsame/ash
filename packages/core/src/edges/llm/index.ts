@@ -11,7 +11,18 @@ export { DEFAULT_MODEL, KEY_REF, type Provider } from "./models";
 export type LlmErrorCode = "bad_request" | "unavailable" | "unknown_model" | "timeout" | "failed";
 /** Every failure out of this module carries one of these codes; the message never contains a key. */
 export class LlmError extends Error {
-  constructor(readonly code: LlmErrorCode, message: string) { super(message); this.name = "LlmError"; }
+  /** `http`: set when the provider itself answered with an HTTP status (its own words, key blanked out). */
+  constructor(readonly code: LlmErrorCode, message: string, readonly http?: { status: number; detail: string }) { super(message); this.name = "LlmError"; }
+}
+
+/**
+ * What the hub knows about one model key's standing with its provider. `ok`: the provider accepted it (a check or a call).
+ * `rejected`: the provider refused it (HTTP 401/403): `reason` is a short Chinese label (已过期, 无效, ...) and `detail` the
+ * provider's own words. `unknown`: not checked yet, or the check could not reach the provider. Never holds the key.
+ */
+export interface KeyHealth {
+  provider: Provider; ref: string; configured: boolean; status: "ok" | "rejected" | "unknown";
+  reason?: string; detail?: string; checked_at?: number;
 }
 
 export interface LlmMessage { role: "system" | "user" | "assistant"; content: string }
@@ -45,6 +56,8 @@ export interface LlmOptions {
   /** Tests only: a stand-in for fetch, used by post(). */
   fetch?: typeof fetch;
   clock?: { now(): number };
+  /** Tests only: how long a key check may take (default 8 s). */
+  verifyTimeoutMs?: number;
   /**
    * Send every call to this protocol, host and port instead of the providers' own (a model server of the owner's, a fake
    * in tests). Only the origin counts: each call keeps its own path (`/api/v1/...` for OpenRouter, none for DeepSeek).
@@ -54,6 +67,12 @@ export interface LlmOptions {
 export interface Llm {
   complete(caller: string, request: LlmRequest): Promise<LlmResult>;
   post(caller: string, request: LlmPost): Promise<unknown>;
+  /** Both model keys, as last learned (no network). */
+  keys(): KeyHealth[];
+  /** Asks the provider whether it accepts the key (a free authenticated GET) and remembers the answer. Calls in flight share one check. */
+  verify(provider: Provider): Promise<KeyHealth>;
+  /** The key was saved or removed: what was known about the old one no longer counts. */
+  forget(provider: Provider): void;
 }
 
 /** The reviewer's budget, the longest of the hub's own judgements apart from JEV. */
@@ -63,6 +82,9 @@ const MAX_TIMEOUT_MS = 120_000;
 const MAX_MESSAGE_CHARS = 200_000;
 const MAX_BODY_CHARS = 200_000;
 const MAX_ANSWER_CHARS = 1_000_000;
+/** A free, authenticated GET on each provider (DeepSeek: account balance; OpenRouter: the key's own info). 401/403 means the key is refused. */
+const VERIFY_PATH: Record<Provider, string> = { deepseek: "/user/balance", openrouter: "/api/v1/key" };
+const VERIFY_TIMEOUT_MS = 8000;
 const PATH = /^\/[\w.~\-/]*(\?[\w.~\-=&%]*)?$/;
 
 const zeroUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -74,6 +96,25 @@ function describe(error: unknown, key: string | null): string {
   if (key) text = text.split(key).join("***");
   return text.replace(/\b(sk|or)-[A-Za-z0-9_\-]{8,}/g, "***").replace(/[\r\n]+/g, " ").slice(0, 300);
 }
+
+/** The provider's own words from an error body (`{error:{message}}` or `{message}`), one short line, key blanked out. */
+function providerWords(text: string, key: string | null): string {
+  try {
+    const body = JSON.parse(text) as { error?: unknown; message?: unknown } | null;
+    const inner = body?.error;
+    const said = typeof inner === "string" ? inner : (inner as { message?: unknown } | null)?.message ?? body?.message;
+    if (typeof said === "string") return describe(said, key).slice(0, 160);
+  } catch { /* not JSON: nothing worth showing */ }
+  return "";
+}
+/** A short Chinese label for why a key was refused. */
+function refusal(status: number, detail: string): string {
+  if (/expire|过期/i.test(detail)) return "已过期";
+  if (/revok|disabled|deactivat|suspend/i.test(detail)) return "已被停用";
+  return status === 403 ? "没有权限" : "无效";
+}
+const refused = (error: unknown): error is LlmError & { http: { status: number; detail: string } } =>
+  error instanceof LlmError && !!error.http && (error.http.status === 401 || error.http.status === 403);
 
 function toContext(messages: LlmMessage[], model: Model<Api>, at: number): Context {
   const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
@@ -111,7 +152,7 @@ function withOrigin(address: string, origin: string): string {
 }
 
 /** What one call learns as it goes; whatever is known when it ends is what gets reported. */
-interface Tally { provider: Provider; model: string; key: string | null; input: number; output: number; cost?: number }
+interface Tally { provider: Provider; model: string; key: string | null; epoch: number; input: number; output: number; cost?: number }
 
 export function createLlm(options: LlmOptions): Llm {
   const origin = options.baseUrl ? new URL(options.baseUrl).origin : null;
@@ -120,10 +161,28 @@ export function createLlm(options: LlmOptions): Llm {
   const doFetch = options.fetch ?? fetch;
   const clock = options.clock ?? { now: () => Date.now() };
 
+  /** What was learned about each provider's key. Memory only: after a restart it is learned again. */
+  const health = new Map<Provider, { status: KeyHealth["status"]; reason?: string; detail?: string; at: number }>();
+  const checking = new Map<Provider, Promise<KeyHealth>>();
+  /** Bumped when a provider's key is saved or removed (`forget`); an answer about an older key is dropped. */
+  const epochs: Record<Provider, number> = { deepseek: 0, openrouter: 0 };
+  /** Notes an answer, unless the key it was about has been replaced meanwhile. */
+  function remember(provider: Provider, epoch: number, found: { status: KeyHealth["status"]; reason?: string; detail?: string }): void {
+    if (epochs[provider] !== epoch) return;
+    health.set(provider, { ...found, at: clock.now() });
+  }
+  function snapshot(provider: Provider): KeyHealth {
+    const ref = KEY_REF[provider];
+    const configured = !!options.key(ref);
+    const known = configured ? health.get(provider) : undefined;
+    return { provider, ref, configured, status: known?.status ?? "unknown",
+      ...(known?.reason ? { reason: known.reason } : {}), ...(known?.detail ? { detail: known.detail } : {}), ...(known ? { checked_at: known.at } : {}) };
+  }
+
   /** The shared frame: fetch the key, bound the time, turn any failure into an LlmError without the key, and report. */
   async function track<T>(caller: string, first: { provider: Provider; model: string }, work: (tally: Tally, at: number) => Promise<T>): Promise<T> {
     const at = clock.now();
-    const tally: Tally = { ...first, key: null, input: 0, output: 0 };
+    const tally: Tally = { ...first, key: null, epoch: epochs[first.provider], input: 0, output: 0 };
     let value: T | undefined;
     let failure: LlmError | undefined;
     try { value = await work(tally, at); } catch (error) {
@@ -132,6 +191,11 @@ export function createLlm(options: LlmOptions): Llm {
     const report: LlmUsageReport = { caller, provider: tally.provider, model: tally.model, input_tokens: tally.input, output_tokens: tally.output,
       ...(tally.cost === undefined ? {} : { cost: tally.cost }), ok: !failure, at };
     try { options.report(report); } catch { /* accounting never changes the answer */ }
+    // What the provider said about the key: a refusal marks it, a success clears the mark, anything else changes nothing.
+    if (tally.key) {
+      if (refused(failure)) remember(tally.provider, tally.epoch, { status: "rejected", reason: refusal(failure.http.status, failure.http.detail), detail: failure.http.detail });
+      else if (!failure) remember(tally.provider, tally.epoch, { status: "ok" });
+    }
     if (failure) throw failure;
     return value as T;
   }
@@ -140,6 +204,7 @@ export function createLlm(options: LlmOptions): Llm {
     const key = options.key(KEY_REF[tally.provider]);
     if (!key) throw new LlmError("unavailable", `no ${tally.provider} key is set`);
     tally.key = key;
+    tally.epoch = epochs[tally.provider];
     return key;
   }
   /** Runs `run` with an abort signal that fires after `ms`, and fails with `timeout` even if `run` ignores the signal. */
@@ -154,7 +219,44 @@ export function createLlm(options: LlmOptions): Llm {
     try { return await Promise.race([running, expired]); } finally { if (timer) clearTimeout(timer); }
   }
 
+  async function check(provider: Provider): Promise<KeyHealth> {
+    const key = options.key(KEY_REF[provider]);
+    if (!key) { health.delete(provider); return snapshot(provider); }
+    const path = VERIFY_PATH[provider];
+    const epoch = epochs[provider];
+    let found: { status: KeyHealth["status"]; reason?: string; detail?: string };
+    try {
+      found = await bounded(options.verifyTimeoutMs ?? VERIFY_TIMEOUT_MS, async (signal) => {
+        const response = await doFetch(origin ? `${origin}${path}` : `${ORIGIN[provider]}${path}`, { method: "GET", signal, redirect: "error",
+          headers: { accept: "application/json", authorization: `Bearer ${key}` } });
+        const text = (await response.text()).slice(0, 4000);
+        if (response.ok) return { status: "ok" as const };
+        if (response.status === 401 || response.status === 403) {
+          const detail = providerWords(text, key);
+          return { status: "rejected" as const, reason: refusal(response.status, detail), ...(detail ? { detail } : {}) };
+        }
+        return { status: "unknown" as const, reason: `服务商暂时没有正常回答（HTTP ${response.status}）` };
+      });
+    } catch (error) {
+      found = { status: "unknown", reason: error instanceof LlmError && error.code === "timeout" ? "连接服务商超时" : "连不上服务商" };
+    }
+    // Not being able to reach the provider says nothing about the key: it never replaces a verdict already known.
+    if (found.status !== "unknown" || (health.get(provider)?.status ?? "unknown") === "unknown") remember(provider, epoch, found);
+    return snapshot(provider);
+  }
+
   return {
+    keys: () => (Object.keys(KEY_REF) as Provider[]).map(snapshot),
+    verify(provider) {
+      if (provider !== "deepseek" && provider !== "openrouter") return Promise.reject(new LlmError("bad_request", "provider must be deepseek or openrouter"));
+      const running = checking.get(provider);
+      if (running) return running;
+      const run = check(provider).finally(() => { if (checking.get(provider) === run) checking.delete(provider); });
+      checking.set(provider, run);
+      return run;
+    },
+    forget(provider) { epochs[provider]++; health.delete(provider); checking.delete(provider); },
+
     complete(caller, request) {
       return track(caller, { provider: "deepseek", model: typeof request?.model === "string" ? request.model : "" }, async (tally, at) => {
         validate(request);
@@ -172,8 +274,12 @@ export function createLlm(options: LlmOptions): Llm {
         const priced = Object.values(model.cost).some((rate) => rate > 0);
         const price = reply.usage?.cost?.total;
         if (priced && typeof price === "number" && Number.isFinite(price)) tally.cost = price;
-        if (reply.stopReason !== "stop" && reply.stopReason !== "length")
-          throw new LlmError("failed", `model call failed: ${describe(reply.errorMessage ?? reply.stopReason, tally.key)}`);
+        if (reply.stopReason !== "stop" && reply.stopReason !== "length") {
+          // The provider's SDK words an HTTP refusal as "<status> <message>" (for example "401 API key expired").
+          const said = describe(reply.errorMessage ?? reply.stopReason, tally.key);
+          const http = /^(\d{3})\b\s*(.*)$/.exec(said);
+          throw new LlmError("failed", `model call failed: ${said}`, http ? { status: Number(http[1]), detail: http[2]!.slice(0, 160) } : undefined);
+        }
         const text = reply.content.filter((part) => part.type === "text").map((part) => (part as { text: string }).text).join("");
         return { text, usage: { input_tokens: tally.input, output_tokens: tally.output, ...(tally.cost === undefined ? {} : { cost: tally.cost }) } };
       });
@@ -198,7 +304,7 @@ export function createLlm(options: LlmOptions): Llm {
           const response = await doFetch(origin ? `${origin}${url.pathname}${url.search}` : url, { method: "POST", signal, redirect: "error",
             headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${apiKey}` }, body: payload });
           const text = await response.text();
-          if (!response.ok) throw new LlmError("failed", `the provider answered HTTP ${response.status}`);
+          if (!response.ok) throw new LlmError("failed", `the provider answered HTTP ${response.status}`, { status: response.status, detail: providerWords(text.slice(0, 4000), apiKey) });
           if (text.length > MAX_ANSWER_CHARS) throw new LlmError("failed", "the provider's answer is too large");
           let answer: unknown;
           try { answer = JSON.parse(text); } catch { throw new LlmError("failed", "the provider's answer is not JSON"); }

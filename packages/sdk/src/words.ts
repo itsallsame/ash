@@ -430,6 +430,15 @@ add("service:llm", "complete", "request", obj({
 }, ["messages"]), obj({ text: str, model: str, usage: obj({ input_tokens: nonnegativeSafe, output_tokens: nonnegativeSafe }) }, ["text"]),
   { timeout_ms: 60_000, label: "在问小模型", description: "A short completion from the hub's small model (the model argument is optional). For organs that must judge something in code, e.g. a sensor rule. The usage is counted against the caller and its quota." });
 
+const keyHealth = obj({
+  provider: choice("deepseek", "openrouter"), ref: nonempty, configured: bool, status: choice("ok", "rejected", "unknown"),
+  reason: str, detail: str, checked_at: nonnegativeSafe,
+}, ["provider", "ref", "configured", "status"]);
+add("service:llm", "keys.status", "request", empty, obj({ keys: array(keyHealth) }, ["keys"]),
+  { callers: OWNER_AGENT, label: "在看模型密钥是否可用", description: "Whether each model key (DeepSeek for the conversation model, OpenRouter for the quick judgement) is saved and whether its provider accepts it: status ok, rejected (refused: reason says why, such as expired; ask the owner for a new key) or unknown (not checked yet or unreachable). Never the key. Use this when the model or quick judgement seems not to work." });
+add("service:llm", "keys.check", "request", obj({ provider: choice("deepseek", "openrouter") }), obj({ keys: array(keyHealth) }, ["keys"]),
+  { callers: OWNER_AGENT, timeout_ms: 30_000, label: "在验证模型密钥", description: "Ask the provider now whether a model key is accepted (one provider, or both when left out) with a free authenticated request that costs nothing, and return the same as keys.status. A key saved in the vault is checked automatically; use this to check again." });
+
 // ===================================================================================================================
 // service:persona: the approved SOUL and IDENTITY
 // ===================================================================================================================

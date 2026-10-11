@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `cb123876bb94ad43`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `b784b5efaba8087d`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -15,7 +15,7 @@
 - [`service:agents`](#serviceagents) (31)
 - [`service:apps`](#serviceapps) (16)
 - [`service:clock`](#serviceclock) (5)
-- [`service:llm`](#servicellm) (2)
+- [`service:llm`](#servicellm) (4)
 - [`service:persona`](#servicepersona) (2)
 - [`service:widgets`](#servicewidgets) (13)
 - [`service:pulse`](#servicepulse) (7)
@@ -206,6 +206,8 @@
 | 词 | 调用方 | effect / risk | 标记 | 输入 | 进行时 | 说明 |
 |---|---|---|---|---|---|---|
 | `complete` | owner, agent, app | read / none | timeout 60s | model, messages*, max_tokens | 在问小模型 | A short completion from the hub's small model (the model argument is optional). For organs that must judge something in code, e.g. a sensor rule. The usage is counted against the caller and its quota. |
+| `keys.status` | owner, agent | read / none | - | - | 在看模型密钥是否可用 | Whether each model key (DeepSeek for the conversation model, OpenRouter for the quick judgement) is saved and whether its provider accepts it: status ok, rejected (refused: reason says why, such as expired; ask the owner for a new key) or unknown (not checked yet or unreachable). Never the key. Use this when the model or quick judgement seems not to work. |
+| `keys.check` | owner, agent | read / none | timeout 30s | provider | 在验证模型密钥 | Ask the provider now whether a model key is accepted (one provider, or both when left out) with a free authenticated request that costs nothing, and return the same as keys.status. A key saved in the vault is checked automatically; use this to check again. |
 | `usage.recorded` | kernel | read / none | event out | caller*, provider*, model*, input_tokens*, output_tokens*, cache_read_tokens, cost, ok*, at* | 在记下用量 | One call of the hub's small model (the approval review, JEV, the progress summary, service:llm/complete), passed to service:cost under the caller's name. |
 
 ## `service:persona`

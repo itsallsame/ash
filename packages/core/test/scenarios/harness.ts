@@ -733,7 +733,8 @@ export class Scenario {
     writeFileSync(join(this.dataDir, "ash-gateway.metadata.json"), JSON.stringify({ main_module: "ash-gateway.mjs" }));
     const starting = startHub({
       dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
-      ...(this.options.llm ? { llm: this.options.llm } : {}),
+      // Without a fake model server of its own a scenario still never reaches a real provider (a saved key is checked at once): a closed local port.
+      llm: this.options.llm ?? { baseUrl: "http://127.0.0.1:9" },
       ...(this.options.fakeNow ? { now: this.clock.now } : {}),
     });
     starting.catch(() => {});

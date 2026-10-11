@@ -96,6 +96,36 @@ test("a JEV failure, a malformed answer, a timeout, or no JEV at all is followup
   }
 });
 
+test("a JEV failure that falls back to keywords is logged: the agent and why, never the message text or a key", async () => {
+  const lines: string[] = [];
+  const f = setup(async () => { throw new Error("the provider answered HTTP 401"); }, {}, (line) => lines.push(line));
+  const m = f.owner("先别动，等等看他怎么说吧 secret-owner-words");
+  const data = (await f.call("conversation.control", { message_id: m.id, agent: "agent:main" })).data;
+  assert.deepEqual(data, { action: "followup", confidence: 0, stage: "keyword" });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /^conversation\.control agent:main: JEV failed, fell back to keywords \(the provider answered HTTP 401\)$/);
+  assert.doesNotMatch(lines[0]!, /secret-owner-words/);
+  // a keyword decision, no JEV configured, and a cancelled call are not failures to log
+  const quiet: string[] = [];
+  const stop = setup(async () => { throw new Error("never asked"); }, {}, (line) => quiet.push(line));
+  await stop.call("conversation.control", { message_id: stop.owner("停下").id, agent: "agent:main" });
+  const none = setup(undefined, {}, (line) => quiet.push(line));
+  await none.call("conversation.control", { message_id: none.owner("等等看吧").id, agent: "agent:main" });
+  assert.deepEqual(quiet, []);
+});
+
+test("task.outcome logs a JEV failure too, and still answers unavailable", async () => {
+  const lines: string[] = [];
+  const f = setup(async () => { throw new Error("the provider answered HTTP 401"); }, {}, (line) => lines.push(line));
+  const owner = f.owner("do it");
+  f.event("agent:main", "turn.started", { turn: "t1", lane: "front", ids: [owner.id] }, "t1");
+  f.ledger.append({ from: "agent:main", to: "person:owner", kind: "request", word: "say", body: { text: "done" }, turn: "t1" });
+  f.event("agent:main", "turn.ended", { turn: "t1", outcome: "completed" }, "t1");
+  assert.equal(await code(f.call("task.outcome", { turn: "t1" })), "unavailable");
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /^task\.outcome t1: JEV failed, no label given \(the provider answered HTTP 401\)$/);
+});
+
 test("jev goes through the post of edges/llm: the decisions path, the model and the state in the body", async () => {
   const seen: unknown[] = [];
   const jev = createJev({ post: async (r) => { seen.push(r); return intent("unrelated", 0.9, 0.1); }, timeoutMs: 6000 });

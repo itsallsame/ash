@@ -25,6 +25,10 @@ function settingsHub(kernel) {
   kernel.on("service:cost", "balance.get", () => ({ balances: [{ provider: "deepseek", at: Date.now(), balance: { available: true, balances: [{ currency: "CNY", total: "12.50" }] } }], errors: {} }));
   kernel.on("service:vault", "list", () => ({ entries: ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"].map((ref) => ({ ref, label: ref, kind: "model", configured: state.vault.has(ref) })) }));
   kernel.on("service:vault", "set", ({ ref }) => { state.vault.add(ref); return { ref, configured: true }; });
+  const refOf = { deepseek: "DEEPSEEK_API_KEY", openrouter: "OPENROUTER_API_KEY" };
+  const standing = (provider) => ({ provider, ref: refOf[provider], configured: state.vault.has(refOf[provider]), status: state.vault.has(refOf[provider]) ? "ok" : "unknown", checked_at: 1 });
+  kernel.on("service:llm", "keys.status", () => ({ keys: ["deepseek", "openrouter"].map(standing) }));
+  kernel.on("service:llm", "keys.check", ({ provider }) => ({ keys: [standing(provider)] }));
   kernel.on("service:vault", "delete", ({ ref }) => { state.vault.delete(ref); return { ref, configured: false }; });
   kernel.on("service:apps", "apps.list", () => ({ apps: state.apps }));
   kernel.on("service:apps", "apps.install", ({ id }) => { Object.assign(state.apps.find((a) => a.id === id), { granted: true, enabled: true, running: true }); return {}; });
@@ -102,7 +106,7 @@ test(...withBrowser("a key is saved and removed through the vault words; its tex
   await page.locator("#settingsVaultRow").click();
   await page.locator("#settingsVault_DEEPSEEK_API_KEY_value").fill("sk-test-secret-value");
   await page.locator("#settingsVault_DEEPSEEK_API_KEY").getByRole("button", { name: "保存" }).click();
-  await page.locator("#settingsVault_DEEPSEEK_API_KEY_status", { hasText: "已保存" }).waitFor();
+  await page.locator("#settingsVault_DEEPSEEK_API_KEY_status", { hasText: "已验证可用" }).waitFor();
   assert.equal(hub.vault.has("DEEPSEEK_API_KEY"), true);
   assert.equal(await page.locator("#settingsVault_DEEPSEEK_API_KEY_value").inputValue(), "");
   const remove = page.locator("#settingsVault_DEEPSEEK_API_KEY").getByRole("button", { name: "移除" });
