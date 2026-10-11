@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { startKernel } from "../kernel.js";
+import { serveKernel } from "../kernel.js";
 import { nativeBridgeFor, until } from "../support.js";
 import { launchBrowser, newPage } from "./browser.js";
-import { gateAsk, requested, say } from "./support.js";
+import { gateAsk, openPage, requested, say } from "./support.js";
 
 const origin = "https://appassets.androidplatform.net";
 const assetRoot = new URL("../../../../android/app/src/main/assets/ash-ui/", import.meta.url);
@@ -13,11 +13,12 @@ const mime = { html: "text/html", js: "text/javascript", webp: "image/webp", svg
 for (const readyDelay of [0, 75]) test(`exact APK assets boot with ${readyDelay ? "late native ready" : "synchronous native ready"}, SQLite history, and the restrictive CSP`, async t => {
   const browser = await launchBrowser();
   if (!browser) return t.skip("no browser to drive");
-  const kernel = startKernel();
+  const kernel = await serveKernel();
   const errors = [], assets = [], messages = [], cspViolations = [];
   let native, page;
   try {
     say(kernel, "APK asset history");
+    say(kernel, "## Shared rendering\n\nStrong **text** and `code`.\n\n| A | B |\n| --- | --- |\n| one | two |\n\n- First\n- Second");
     const ask = gateAsk(kernel);
     native = await nativeBridgeFor(kernel);
     await until(native.linked, 2000, "native human channel");
@@ -70,6 +71,13 @@ for (const readyDelay of [0, 75]) test(`exact APK assets boot with ${readyDelay 
     assert.ok(assets.some(path => /^app\.[a-f0-9]{64}\.js$/.test(path)) && assets.some(path => /^native-bootstrap\.[a-f0-9]{64}\.js$/.test(path)));
     assert.ok(messages.some(message => message.type === "frame"));
     assert.deepEqual(errors, []);
+
+    const { page: browserPage, context: browserContext } = await openPage(browser, kernel);
+    const snapshot = surface => surface.evaluate(() => [...document.querySelectorAll('#log .msg, #log .card.ask')].map(node => node.outerHTML));
+    await page.locator('#log .msg table tbody tr').waitFor();
+    await browserPage.locator('#log .msg table tbody tr').waitFor();
+    assert.deepEqual(await snapshot(page), await snapshot(browserPage), "browser and native builds produce the same Markdown/message/card DOM from the same SQLite facts");
+    await browserContext.close();
 
     await page.getByRole("button", { name: "允许这一次", exact: true }).click();
     await requested(kernel, request => request.reply_to === ask.id && request.kind === "response");

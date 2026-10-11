@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { coreUiBytes, staticManifest, verifyStaticUi } from "../../../tools/spikes/v2-604-ui-asset.mjs";
 import { UI_JS, UI_JS_FILE } from "../../core/src/edges/link-server/ui.generated.ts";
 import { assertNoInlineScripts } from "../../../tools/ui-scripts.mjs";
+import { buildUiBundle } from "../../../tools/ui-bundle.mjs";
 
 const appAsset = () => readFileSync(new URL("../../../android/app/src/main/assets/ash-ui/index.html", import.meta.url), "utf8");
 const scripts = (html) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
@@ -46,23 +47,35 @@ test("test-only static parity refuses altered bytes, digest and length", () => {
   assert.throws(() => verifyStaticUi(bytes, { ...manifest, bytes: manifest.bytes + 1 }), /differs/);
 });
 
-test("the app's page loads the browser's exact bundle before its native bridge, under a same-origin script CSP", () => {
+test("both page bundles match current shared sources, with only the native browser transport excluded", async () => {
   const asset = appAsset();
   const generated = coreUiBytes().toString("utf8");
   const native = readFileSync(new URL("../js/native-bootstrap.js", import.meta.url), "utf8");
   const root = new URL("../../../android/app/src/main/assets/ash-ui/", import.meta.url);
+  const [browserBuild, nativeBuild] = await Promise.all([buildUiBundle("browser"), buildUiBundle("native")]);
+  assert.equal(browserBuild.code, UI_JS);
+  const nativeAppFile = `app.${createHash("sha256").update(nativeBuild.code).digest("hex")}.js`;
   const bootstrapFile = `native-bootstrap.${createHash("sha256").update(native).digest("hex")}.js`;
-  const appScript = readFileSync(new URL(UI_JS_FILE, root), "utf8");
+  const appScript = readFileSync(new URL(nativeAppFile, root), "utf8");
   const bootstrap = readFileSync(new URL(bootstrapFile, root), "utf8");
-  assert.equal(appScript, UI_JS);
+  assert.equal(appScript, nativeBuild.code);
+  const webInputs = Object.keys(browserBuild.inputs).filter(path => /packages\/web\/js\//.test(path) && !path.endsWith("/link-browser.js"));
+  assert.ok(webInputs.some(path => path.endsWith("/markdown.js")) && webInputs.some(path => path.endsWith("/home.js")) && webInputs.some(path => path.endsWith("/app.js")));
+  const sharedInput = input => ({ ...input, imports: input.imports.filter(edge => edge.original !== "./link-browser.js") });
+  for (const path of webInputs) {
+    assert.ok(nativeBuild.inputs[path], `shared module included: ${path}`);
+    assert.deepEqual(sharedInput(nativeBuild.inputs[path]), sharedInput(browserBuild.inputs[path]), `same shared module imports and bytes: ${path}`);
+  }
+  assert.ok(!Object.keys(nativeBuild.inputs).some(path => /packages\/link\/src\/hand|sdk-link/.test(path)), "no browser client or standalone frame checks in the native bundle");
+  assert.ok(Buffer.byteLength(appScript) < 384 * 1024 && Buffer.byteLength(appScript) < Buffer.byteLength(UI_JS), "native bundle keeps its smaller footprint");
   assert.equal(bootstrap, native);
   assert.equal(scripts(asset).length, 0);
   const scriptTags = [...asset.matchAll(/<script\b[^>]*>/g)].map(match => match[0]);
-  assert.deepEqual(scriptTags, [`<script defer src="${UI_JS_FILE}">`, `<script defer src="${bootstrapFile}">`]);
-  assert.deepEqual(readdirSync(root).filter(file => file.endsWith(".js")).sort(), [UI_JS_FILE, bootstrapFile].sort(), "only current content-addressed scripts ship");
+  assert.deepEqual(scriptTags, [`<script defer src="${nativeAppFile}">`, `<script defer src="${bootstrapFile}">`]);
+  assert.deepEqual(readdirSync(root).filter(file => file.endsWith(".js")).sort(), [nativeAppFile, bootstrapFile].sort(), "only current content-addressed scripts ship");
   assert.doesNotThrow(() => assertNoInlineScripts(asset));
   // Everything outside the page script and the bootstrap is the browser's page exactly.
-  assert.equal(asset.replace(/<meta http-equiv="Content-Security-Policy"[^>]+>\n/, "").replace(`<script defer src="${bootstrapFile}"></script>\n`, "").replace(`<script defer src="${UI_JS_FILE}"></script>`, "<!-- ui-app -->"),
+  assert.equal(asset.replace(/<meta http-equiv="Content-Security-Policy"[^>]+>\n/, "").replace(`<script defer src="${bootstrapFile}"></script>\n`, "").replace(`<script defer src="${nativeAppFile}"></script>`, "<!-- ui-app -->"),
     generated.replace(`<script defer src="/${UI_JS_FILE}"></script>`, "<!-- ui-app -->"));
   assert.match(asset, /script-src 'self';/);
   assert.match(asset, /connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'/);
