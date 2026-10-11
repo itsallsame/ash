@@ -206,7 +206,7 @@ export class ClockService implements Member {
    * The setter was refused or the target was not there. When the setter is an agent that is no longer declared, or an app that is
    * no longer installed (it was deleted and its timers were not cleaned, or from before the cleaning existed), none of its timers
    * can ever be sent again: take them back. Only the owning module's answer says it is gone (`service:agents/describe`: not_found;
-   * `service:apps/apps.describe`: not_found, or found with `granted` false, which is a folder left behind after an uninstall). A stopped,
+   * `service:apps/apps.describe`: not_found, or found with `granted` false, which is a folder left behind after an uninstall; it answers from the install record, so an app whose folder is missing is still installed, and `unavailable` before the apps are loaded, which this leaves alone). A stopped,
    * restarting or only disabled member is still known, and any other answer or failure leaves the timers alone.
    */
   private async dropIfGone(row: Row, member: string, via: "agent" | "app"): Promise<void> {

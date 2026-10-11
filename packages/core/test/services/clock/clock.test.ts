@@ -5,6 +5,7 @@ import { compileSchema } from "../../../../sdk/src/word";
 import { Ledger } from "../../../src/kernel/ledger";
 import { createClockService, CLOCK_ID } from "../../../src/services/clock";
 import { reconcileTimers } from "../../../src/services/semantic/shared";
+import { call as callApps, world as appsWorld } from "../../edges/apps/helpers";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { agent, app, failure, fake, flush, owner, service, success, word, world } from "../../kernel/router/world";
 
@@ -433,4 +434,67 @@ test("a service's refused timer is not probed", async () => {
   assert.equal(h.sent.filter((m) => m.to === "service:agents" || m.to === "service:apps").length, 0);
   assert.deepEqual(h.labels(), ["s"]);
   h.svc.stop();
+});
+
+// ---- the hub starts the clock before the apps: an overdue timer is sent while the apps are not loaded yet ----
+
+const APP_DOC = { doc: "# d", docPath: "/root/apps/APP-CONTRACT.md" };
+/** An app installed in one run of the hub; the next run (same database) has a clock with an overdue timer of the app. */
+async function restarted(options: { fixture?: false; launcher?: null } = {}) {
+  const first = appsWorld({ contract: APP_DOC });
+  await first.apps.start();
+  assert.equal((await callApps(first, "service:apps", "apps.install", { id: "fixture" })).ok, true);
+  await first.apps.stopAll(Date.now() + 3000);
+  const second = appsWorld({ dbPath: first.dbPath, root: first.root, fixture: false, contract: APP_DOC, ...options });
+  const logs: string[] = [];
+  const now = Date.now();
+  const clock = createClockService({ ledger: second.ledger, router: second.router, now: () => now, log: (m) => logs.push(m), setTimer: () => () => {} });
+  second.registry.add(clock);
+  const as = JSON.stringify({ member: "app:fixture", via: "app", local: false });
+  const put = second.ledger.db().prepare("INSERT INTO timers (id,next_at,every_s,target,word,body,label,created_by,created_as,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  put.run("tmr_a", now - 1000, 3600, "app:fixture", "tick", "{}", "overdue", "app:fixture", as, now - 100000);
+  put.run("tmr_b", now + 3_600_000, 3600, "app:fixture", "tick", "{}", "later", "app:fixture", as, now - 100000);
+  const left = () => (second.ledger.db().prepare("SELECT label FROM timers WHERE created_by='app:fixture' ORDER BY label").all() as { label: string }[]).map((r) => r.label);
+  const fire = async () => { clock.check(); await flush(); await new Promise((r) => setTimeout(r, 50)); };
+  return { second, clock, logs, left, fire };
+}
+
+test("restart: an overdue timer of an installed app fires before apps.start(); the app is not loaded, so nothing is taken back", async () => {
+  const h = await restarted();
+  const described = await callApps(h.second, "service:apps", "apps.describe", { id: "fixture" });
+  assert.equal(described.ok, false);
+  assert.equal(described.ok === false && described.error.code, "unavailable", "before the apps are loaded the apps module does not guess");
+
+  await h.fire();
+  assert.deepEqual(h.left(), ["later", "overdue"]);
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+
+  await h.second.apps.start();
+  const after = await callApps(h.second, "service:apps", "apps.describe", { id: "fixture" });
+  assert.equal(after.ok && (after.result?.data as { granted: boolean }).granted, true);
+  h.clock.stop();
+});
+
+test("restart without an apps folder (no launcher): the install record still says the app is installed; its timers stay", async () => {
+  const h = await restarted({ fixture: false, launcher: null });
+  await h.second.apps.start();
+  const described = await callApps(h.second, "service:apps", "apps.describe", { id: "fixture" });
+  assert.equal(described.ok, true, "described from the install record although no folder was found");
+  assert.equal((described.ok && described.result?.data as { granted: boolean }).granted, true);
+  await h.fire();
+  assert.deepEqual(h.left(), ["later", "overdue"]);
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+  h.clock.stop();
+});
+
+test("after the apps are loaded, an app whose record is gone loses its timers", async () => {
+  const h = await restarted();
+  await h.second.apps.start();
+  await callApps(h.second, "service:apps", "apps.remove", { id: "fixture" });   // the apps module clears its timers itself, but the clock here has the router to it
+  h.second.ledger.db().prepare("INSERT INTO timers (id,next_at,every_s,target,word,body,label,created_by,created_as,created_at) VALUES ('tmr_c',0,3600,'app:fixture','tick','{}','late','app:fixture',?,0)")
+    .run(JSON.stringify({ member: "app:fixture", via: "app", local: false }));
+  await h.fire();
+  assert.deepEqual(h.left(), []);
+  assert.ok(h.logs.some((l) => /app:fixture is no longer an installed app/.test(l)));
+  h.clock.stop();
 });

@@ -119,6 +119,7 @@ export class AppRuntime {
   private readonly shown = new Map<string, string>();
   private readonly output = new Map<string, { lines: string[]; exit: LastExit | null }>();
   private closed = false;
+  private started = false;
   private readonly log: (...args: unknown[]) => void;
 
   constructor(private readonly options: AppRuntimeOptions) {
@@ -157,7 +158,11 @@ export class AppRuntime {
     for (const id of this.options.builtinApps ?? []) this.seedBuiltin(id);
     await this.refresh();
     this.tellKept();
+    this.started = true;
   }
+
+  /** Whether `start()` has finished: before that the folders have not been scanned and nothing runs yet. */
+  isStarted(): boolean { return this.started; }
 
   /** The main agent hears (a background `tell`) that a release is waiting for the apps it changed; the hub does not merge it. */
   private tellKept(): void {
@@ -266,13 +271,17 @@ export class AppRuntime {
     return /^agent(?::|$)/.test(this.manifest(id)?.publisher ?? "") ? "agent" : "other";
   }
 
+  /**
+   * One app, from the folder and the install record. An app that is installed (a record in `apps_installed`) is described even
+   * when its folder is not (yet) found: `granted` is the record's, not the scan's. Only an id with neither is null.
+   */
   info(id: string): AppInfo | null {
     const item = this.found.get(id);
-    if (!item) return null;
     const grant = this.grants.get(id);
+    if (!item && !grant) return null;
     const state = this.running.get(id);
-    const error = "error" in item ? item.error : this.lastError.get(id);
-    const m = "manifest" in item ? item.manifest : null;
+    const error = item && "error" in item ? item.error : item ? this.lastError.get(id) : "the app folder was not found";
+    const m = item && "manifest" in item ? item.manifest : null;
     return {
       id, name: m?.name ?? id, version: m?.version ?? "", summary: m?.summary ?? "", role: m?.role ?? m?.summary ?? "", publisher: m?.publisher ?? "",
       enabled: Boolean(grant?.enabled), granted: Boolean(grant), running: Boolean(state?.online),

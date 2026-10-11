@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "ba0d61d9f7412f266b79bfb6be2804d7f6a2643665558848784101c8c3b4116c",
+ "hash": "250bfaf25fba910095080fcc78b89615dd8d6e89c1c838f2ef5d91eab5b6f52a",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8451,7 +8451,7 @@
    "word": "cancel.owner",
    "kind": "request",
    "direction": "in",
-   "description": "Internal: take back every timer the given member set, and tell how many there were. The agents module calls it when it deletes an agent, so the agent's timers do not go on firing as a member that no longer exists. The hub itself calls this; nobody else.",
+   "description": "Internal: take back every timer the given member set, and tell how many there were. The agents module calls it when it deletes an agent, and the apps module when an app is removed or loses all its grants, so their timers do not go on firing as a member that no longer exists. The hub itself calls this; nobody else.",
    "input_schema": {
     "type": "object",
     "properties": {

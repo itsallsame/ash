@@ -414,7 +414,7 @@ add("service:clock", "set", "request", obj({ at: num, every: { type: "integer", 
 add("service:clock", "cancel", "request", obj({ id }, ["id"]), obj({ cancelled: bool }, ["cancelled"]),
   { effect: "write", label: "在取消提醒", description: "Cancel a timer by id; check `cancelled` because it may already have fired." });
 add("service:clock", "cancel.owner", "request", obj({ member: id }, ["member"]), obj({ cancelled: integer }, ["cancelled"]),
-  { callers: KERNEL, effect: "write", label: "在清理已删成员的提醒", description: "Internal: take back every timer the given member set, and tell how many there were. The agents module calls it when it deletes an agent, so the agent's timers do not go on firing as a member that no longer exists. The hub itself calls this; nobody else." });
+  { callers: KERNEL, effect: "write", label: "在清理已删成员的提醒", description: "Internal: take back every timer the given member set, and tell how many there were. The agents module calls it when it deletes an agent, and the apps module when an app is removed or loses all its grants, so their timers do not go on firing as a member that no longer exists. The hub itself calls this; nobody else." });
 add("service:clock", "list", "request", empty, obj({ timers: array(any) }, ["timers"]),
   { label: "在看提醒", description: "The active timers, to look at before changing them; the result is a snapshot. An agent or an app sees the timers it set; the owner sees all." });
 add("service:clock", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]), undefined,
