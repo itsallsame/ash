@@ -53,3 +53,26 @@ test(...withBrowser("externalized Chinese messages and gate originals remain com
   await page.locator('#home [data-ask-id="gate_original"] summary').click();
   await eventually(async () => (await page.locator('#home [data-ask-id="gate_original"] pre').textContent()) === "");
 }));
+
+test(...withBrowser("home totals and a child agent's pending page include entries outside the conversation and global current slice", async ({ kernel, browser }) => {
+  homeHub(kernel);
+  for (let i = 0; i < 20; i++) {
+    const agent = i < 7 ? "agent:helper" : "agent:main", turn = `stats_${i}`;
+    kernel.append({ from: agent, kind: "event", word: "turn.started", turn, body: { turn, lane: "front" } });
+    kernel.append({ from: agent, kind: "event", word: "turn.ended", turn, body: { turn, lane: "front", outcome: "completed" } });
+  }
+  for (const [agent, count] of [["agent:helper", 13], ["agent:main", 20]]) for (let i = 0; i < count; i++) {
+    kernel.append({ from: agent, to: OWNER, kind: "request", word: "ask", body: { title: `Pending ${agent}-${i}`, human_kind: "question", expires_at: Date.now() + 3600000, options: [{ id: "yes", label: "好" }] } });
+  }
+  const { page } = await openPage(browser, kernel);
+  await openHome(page);
+  await eventually(async () => (await page.locator('#home #homeStatDone .hm-stat-n').textContent()) === "20");
+  assert.equal(await page.locator('#home #homeStatWaiting .hm-stat-n').textContent(), "33");
+  await page.keyboard.press("Escape");
+  await openHome(page, { page: "home", agent: "agent:helper" });
+  await eventually(async () => (await page.locator('#home #homeStatDone .hm-stat-n').textContent()) === "7");
+  await eventually(async () => (await page.locator('#home #homeStatWaiting .hm-stat-n').textContent()) === "13");
+  await page.locator('#home #homeStatWaiting').click();
+  await eventually(async () => (await page.locator('#home .hm-screen[data-page="waiting"] [data-ask-id]').count()) === 13);
+  assert.ok(kernel.requests.some(row => row.word === "current" && row.body.agent === "agent:helper"));
+}));
