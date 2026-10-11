@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Timeline, render } from "../js/app.js";
+import { Timeline } from "../js/app.js";
+import { appendConversation } from "../js/conversation.js";
 
 const message = (seq) => ({ seq, id: `m${seq}`, ts: seq, kind: "request", from: "person:owner", to: "agent:main", word: "say", body: { text: `text ${seq}` }, summary: `text ${seq}`, size: 1 });
 
@@ -72,10 +73,10 @@ test("a conversation draws the owner's channel label, an agent other than the pr
   const elements = { "#log": new Node("main"), "#state": new Node("span"), "#face img": new Node("img") };
   globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment"), querySelector: (selector) => elements[selector] };
   try {
-    render({ presence: { text: "", avatar: "default" }, conversation: [
+    appendConversation(elements["#log"], [
       { type: "say", side: "owner", seq: 2, text: "phone", origin: { label: "Phone browser" } },
       { type: "say", side: "owner", seq: 3, text: "<desk>", origin: { label: "Computer browser" } },
-    ] }, [], undefined, undefined, { primary: "agent:main" });
+    ], { primary: "agent:main" });
     const labels = elements["#log"].children.filter((child) => child.tag === "small").map((child) => child.textContent);
     assert.deepEqual(labels, ["来自 Phone browser", "来自 Computer browser"]);
     assert.equal(elements["#log"].children.find((child) => child.textContent === "<desk>").tag, "div");

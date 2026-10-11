@@ -46,3 +46,12 @@ test("the paint is told whether any change since the last paint touched the conv
   change(6, false); frames.run();
   assert.deepEqual(calls, [[2, false], [5, true], [6, false]]);
 });
+
+test("a frame merges changed IDs, with a full reset taking precedence", () => {
+  const frames = fakeFrames(), calls = [];
+  const change = framePainter((view, conversation, ids) => calls.push([view, conversation, ids === null ? null : [...ids]]), frames.schedule);
+  change(1, true, new Set(["m1"])); change(2, true, new Set(["m2", "m1"])); change(3, false); frames.run();
+  change(4, true, new Set(["m3"])); change(5, true); change(6, true, new Set(["m4"])); frames.run();
+  change(7, true, new Set(["m5"])); frames.run();
+  assert.deepEqual(calls, [[3, true, ["m1", "m2"]], [6, true, null], [7, true, ["m5"]]]);
+});

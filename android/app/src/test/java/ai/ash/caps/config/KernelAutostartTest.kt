@@ -20,7 +20,7 @@ class KernelAutostartTest {
         assertEquals(Rom.COLOROS, KernelAutostart.rom("OPPO"))
         for (rom in Rom.entries) {
             assertTrue(KernelAutostart.pages(rom).isNotEmpty())
-            assertTrue(KernelAutostart.guidance(rom).contains("Ash 内核"))
+            assertTrue(KernelAutostart.guidance(rom).contains("Ash 大脑"))
         }
         assertEquals(setOf("com.miui.securitycenter"), KernelAutostart.pages(Rom.MIUI).map { it.first }.toSet())
     }
