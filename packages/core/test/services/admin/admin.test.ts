@@ -73,11 +73,12 @@ test("settings are plain key-value; set announces the keys, never the values; nu
 
 test("model.set goes to the primary agent's configure and is stored nowhere in the hub", async () => {
   const s = setup();
+  const before = s.ledger.db().prepare("SELECT key,value FROM kv ORDER BY key").all();
   const result = await call(s.service, owner, "model.set", { provider: "deepseek", model: "deepseek-chat" });
   assert.deepEqual(result, { provider: "deepseek", model: "deepseek-chat", restart_required: false });
   const configure = s.router.sent.find((x) => x.msg.word === "configure")!;
   assert.deepEqual(configure.msg, { to: "service:agents", kind: "request", word: "configure", body: { agent: "agent:main", config: { model: JSON.stringify(["deepseek", "deepseek-chat"]) } } });
-  assert.deepEqual(s.ledger.db().prepare("SELECT key FROM kv WHERE key NOT IN ('schema')").all(), []);
+  assert.deepEqual(s.ledger.db().prepare("SELECT key,value FROM kv ORDER BY key").all(), before);
   assert.deepEqual((await call(s.service, owner, "settings.get")).settings, {});
 });
 

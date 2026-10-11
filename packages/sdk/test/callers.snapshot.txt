@@ -143,6 +143,10 @@
   service:history/read  owner,agent,app
   service:history/turn  owner,agent,app
   service:history/activity  owner,agent,app
+* service:history/window  owner
+* service:history/current  owner
+* service:history/activity.page  owner
+* service:history/confirm  owner
   service:blobs/read  owner,agent,app
   service:blobs/get  owner,agent,app
 * service:host/wake.at  kernel

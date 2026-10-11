@@ -122,14 +122,14 @@ export function safeRecord(m: any): DisplayFact | null {
         ...base, type: "ask", from: m.from, title: b.title, detail: string(b.detail), expires_at: expires,
         human_kind: b.human_kind === "confirmation" ? "confirmation" : "question", allow_custom: b.human_kind !== "confirmation" && b.allow_custom === true,
         // The gate's unabridged snapshot of what it is asking about; nobody else's text is shown as an original.
-        ...(m.from === "service:gate" && object(b.source) && typeof b.source.body_full === "string" ? { original: b.source.body_full } : {}),
+        ...(m.from === "service:gate" && object(b.source) && (typeof b.source.body_full === "string" || isBlob(b.source.body_full)) ? { original: textField(b.source.body_full).text, ...(textField(b.source.body_full).full ? { original_full: textField(b.source.body_full).full } : {}) } : {}),
         options_valid: valid && options.length > 0, options,
       };
     }
   }
   // An answer to a question: the owner's choice, or how the question ended without one.
   if (m.kind === "response" && m.word === "ask" && typeof m.reply_to === "string")
-    return { ...base, type: "ask.answer", reply_to: m.reply_to, choice: b.ok === true ? string(b.result?.data?.choice) : "", error: b.ok === false && object(b.error) ? string(b.error.code) : "", answer_text: b.ok === true ? string(b.result?.data?.text) : "" };
+    return { ...base, type: "ask.answer", reply_to: m.reply_to, choice: b.ok === true ? string(b.result?.data?.choice) : "", error: b.ok === false && object(b.error) ? string(b.error.code) : "", answer_text: b.ok === true ? textField(b.result?.data?.text).text : "", ...(b.ok === true && textField(b.result?.data?.text).full ? { answer_full: textField(b.result?.data?.text).full } : {}) };
   // The agent took a say in.
   if (m.kind === "response" && m.word === "say" && isAgent(m.from) && m.to === OWNER && typeof m.reply_to === "string")
     return { ...base, type: "say.result", reply_to: m.reply_to, accepted: b.ok === true && b.result?.data?.accepted === true };
@@ -188,7 +188,7 @@ export function projectRecords(records: DisplayFact[]): ConversationView {
       const answer = answers.get(r.id);
       const state = !answer ? "pending" : answer.error === "timeout" ? "expired" : answer.choice ? "answered" : "closed";
       const ask = { id: r.id, seq: r.seq, ts: r.ts, from: r.from, title: r.title, detail: r.detail, human_kind: r.human_kind, allow_custom: r.allow_custom,
-        answer_text: answer?.answer_text, ...(typeof r.original === "string" ? { original: r.original } : {}), options: r.options, options_valid: r.options_valid,
+        answer_text: answer?.answer_text, ...(answer?.answer_full ? { answer_full: answer.answer_full } : {}), ...(typeof r.original === "string" ? { original: r.original, ...(r.original_full ? { original_full: r.original_full } : {}) } : {}), options: r.options, options_valid: r.options_valid,
         expires_at: r.expires_at, state, choice: answer?.choice || null };
       view.asks.push(ask);
       view.conversation.push({ id: r.id, seq: r.seq, ts: r.ts, type: "ask", side: "agent", ask, reactions: reactions.get(r.id) || [] });
