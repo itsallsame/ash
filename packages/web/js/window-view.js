@@ -10,10 +10,10 @@ const context = row => ({ previousDisplay: row.previousDisplay, previous: row.pr
 const body = (row, options) => {
   const item = row.item;
   if (row.kind === "message" && item.type === "say") {
-    const { delivery, reactions, revision, group, ...content } = item;
+    const { delivery, reactions, revision, group, byte_size, reactions_more, ...content } = item;
     return { content, shown: item.full && options.fullTexts?.has(item.full) ? options.fullTexts.get(item.full) : item.text };
   }
-  if (row.kind === "message") { const { reactions, ...content } = item; return content; }
+  if (row.kind === "message") { const { reactions, byte_size, reactions_more, ...content } = item; return content; }
   return item;
 };
 

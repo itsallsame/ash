@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendConversation, appendOutbox, fileRef } from "../js/conversation.js";
+import { appendConversation, appendOutbox, conversationRows, fileRef } from "../js/conversation.js";
 import { dayStamp, validUntil } from "../js/chat-ui.js";
 import { failedTurns } from "../js/app.js";
 import { fold, initialView } from "../js/project.js";
@@ -234,6 +234,26 @@ test("a message that waits to be sent says so under the bubble", () => {
   } finally { delete globalThis.document; }
   assert.deepEqual(fragment.children.filter((node) => node.className?.startsWith("meta-pending")).map((node) => node.textContent), ["等连上就发", "没发出去"]);
   assert.match(fragment.children.find((node) => node.className?.includes("pending-local")).className, /\bwaiting\b/);
+});
+
+test("window DTOs render bounded reaction counts, authoritative intro and failure retry facts", async () => {
+  const message = { id: "m", seq: 1, ts: 0, type: "say", side: "owner", text: "hello", reactions: [{ emoji: "👍", count: 10000 }, { emoji: "❤️", count: 1 }] };
+  const failure = { id: "t1", type: "failed", seq: 2, ts: 3_599_000, turn: "t1", retry: { text: "hello" } };
+  const after = { ...message, id: "m3", seq: 3, ts: 3_600_000, reactions: [] };
+  const retries = [];
+  const rendered = draw([message, failure, after], { onRetry: async item => retries.push(item.id) });
+  assert.deepEqual(rendered.all().filter(node => node.className === "reaction").map(node => node.textContent), ["👍 10000", "❤️"]);
+  assert.equal(rendered.children.filter(node => node.className === "daysep").length, 2, "failure cards do not advance the timed-message context");
+  await rendered.all().find(node => node.tag === "button").listeners.click();
+  assert.deepEqual(retries, ["t1"]);
+  const agent = { ...message, side: "agent", text: "hi", reactions: [] };
+  assert.equal(draw([agent], { atStart: true, intro: false }).children.some(node => node.className === "intro"), false);
+  assert.equal(draw([agent], { intro: true }).children.filter(node => node.className === "intro").length, 1);
+  const rows = conversationRows([message, failure, after]);
+  assert.equal(rows[1].key, "failure:t1"); assert.equal(rows[1].kind, "failure");
+  assert.equal(rows[2].previousDisplay.ts, 0);
+  const boundary = conversationRows([after], { previous: failure, previousDisplay: { ts: 0 } });
+  assert.equal(boundary[0].previousDisplay.ts, 0);
 });
 
 test("the gate's own review line becomes a note under the sentence, and the sentence keeps its lines", () => {

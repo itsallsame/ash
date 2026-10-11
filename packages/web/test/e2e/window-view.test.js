@@ -107,3 +107,26 @@ test(...withBrowser("eviction respects focus and late attachment reads revoke th
   });
   assert.equal(settled.inputs, 0); assert.match(settled.outcome, /done/);
 }));
+
+test(...withBrowser("history window facts render failures, aggregate reactions and one authoritative introduction", async ({ browser }) => {
+  const page = await fixture(browser);
+  const result = await page.evaluate(async () => {
+    const retries = [];
+    const failed = { id: "t-failed", type: "failed", seq: 3, ts: Date.now(), turn: "t-failed", retry: { text: "try again" } };
+    const items = [{ ...say(2), byte_size: 100, reactions: [{ emoji: "👍", count: 10000 }] }, failed];
+    const settings = { ...options, intro: true, previous: { ...say(1), text: undefined }, onRetry: async item => retries.push(item.id) };
+    view.update(items, [], settings);
+    const bubble = document.querySelector(".msg"), paragraph = bubble.querySelector("p");
+    const introductions = document.querySelectorAll(".intro").length;
+    const group = bubble.className;
+    await document.querySelector(".failure button").click();
+    const jump = view.jump("t-failed");
+    view.update([{ ...items[0], byte_size: 101, reactions_more: true, reactions: [{ emoji: "👍", count: 10001 }] }, failed], [], { ...settings, atStart: true, intro: false }, new Set(["m2"]));
+    return { introductions, finalIntroductions: document.querySelectorAll(".intro").length, failures: document.querySelectorAll(".failure").length,
+      retries, jump, group, sameParagraph: paragraph === document.querySelector(".msg p"), reaction: document.querySelector(".reaction").textContent,
+      sameBubble: bubble === document.querySelector(".msg") };
+  });
+  assert.equal(result.introductions, 1); assert.equal(result.finalIntroductions, 0); assert.equal(result.failures, 1);
+  assert.deepEqual(result.retries, ["t-failed"]); assert.equal(result.jump, true); assert.match(result.group, /group-last/);
+  assert.equal(result.sameParagraph, true); assert.equal(result.sameBubble, true); assert.equal(result.reaction, "👍 10001");
+}));
