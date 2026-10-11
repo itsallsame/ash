@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HELPER, appState, isSettingsFile, pluginName, providerName, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
+import { HELPER, appState, appBroken, appTrouble, isSettingsFile, pluginName, providerName, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
 
 const dev = (letter) => `device:${letter.repeat(22)}`;
 
@@ -45,6 +45,7 @@ test("an app's state and the line for the apps read in plain words", () => {
   assert.equal(appState({ granted: true, enabled: false }), "已停用");
   assert.equal(appState({ granted: true, enabled: true, running: true }), "已启用 · 运行中");
   assert.equal(appState({ granted: true, enabled: true }), "已启用 · 还没运行起来");
+  assert.equal(appState({ granted: false, problem: "manifest", error: "app.json: x" }), "出错了");
   assert.equal(appsSummary([]), "还没有应用");
   assert.equal(appsSummary([{ granted: true, enabled: true }, { granted: false }]), "2 个应用 · 1 个已启用");
 });
@@ -66,4 +67,18 @@ test("plugin names, providers and her settings files read the way the page says 
   assert.ok(["AGENTS.md", "identity.md", "SOUL.md", "USER.md", "MEMORY.md", "PROACTIVE.md", ".hidden"].every(isSettingsFile));
   assert.ok(["装备清单.xlsx", "notes.md", "README.md"].every((name) => !isSettingsFile(name)));
   assert.equal(HELPER, "一个帮手");
+});
+
+test("an app whose app.json is broken is not one that wants in, and its trouble is told in plain words, not the hub's line", () => {
+  const bad = { granted: false, problem: "manifest", error: "app.json: 不是合法的 JSON：Unexpected token" };
+  assert.equal(appBroken(bad), true);
+  assert.equal(appBroken({ granted: false, error: "app.json: x" }), true, "an older hub gave no kind");
+  assert.equal(appBroken({ granted: true, enabled: true, error: "start failed: x" }), false);
+  assert.equal(appBroken({ granted: false }), false);
+  assert.match(appTrouble(bad), /说明文件写得不对，装不了/);
+  assert.match(appTrouble({ ...bad, granted: true }), /说明文件写得不对，打不开.*收回全部权限/);
+  assert.match(appTrouble({ granted: true, problem: "folder", error: "x" }), /文件夹已经不在了/);
+  assert.match(appTrouble({ granted: true, enabled: true, error: "start failed: ENOENT" }), /没能正常跑起来/);
+  assert.equal(appTrouble({ granted: true }), null);
+  for (const app of [bad, { ...bad, granted: true }]) assert.doesNotMatch(appTrouble(app), /app\.json|JSON|Unexpected/);
 });

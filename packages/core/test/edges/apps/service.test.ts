@@ -50,6 +50,18 @@ test("list, describe, refresh: what is in the folder and what the owner installe
   assert.deepEqual(refreshed.map((app: { id: string; running: boolean }) => [app.id, app.running]), [["fixture", true], ["second", false]]);
 });
 
+test("an app whose app.json is broken is listed with what kind of trouble it is, for a screen that must not show the raw line", async () => {
+  const w = await installed();
+  installFixtureFolder(w.root, () => {}, "broken");
+  writeFileSync(join(w.root, "broken", "app.json"), "{ not json");
+  const listed = dataOf(await words(w, "apps.refresh")).apps as { id: string; granted: boolean; error?: string; problem?: string }[];
+  const broken = listed.find((app) => app.id === "broken")!;
+  assert.equal(broken.granted, false);
+  assert.match(broken.error ?? "", /app\.json/);
+  assert.equal(broken.problem, "manifest");
+  assert.equal(listed.find((app) => app.id === "fixture")!.problem, undefined, "a healthy app has none");
+});
+
 test("disable stops the app and keeps its grants; enable starts it again; revoke narrows, revoking everything stops it", async () => {
   const w = await installed();
   const off = dataOf(await words(w, "apps.disable", { id: "fixture" }));
