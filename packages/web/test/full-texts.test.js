@@ -38,3 +38,33 @@ test("shared hashes do not turn one expansion choice into another message's choi
   await cache.load("second", "same", async () => { reads++; return "complete text"; });
   assert.equal(reads, 1); assert.equal(cache.has("same", "second"), true);
 });
+
+test("a DOM revisit waits for restoration even when its source is still cached", async () => {
+  const cache = new FullTexts(); let reads = 0;
+  const read = async () => { reads++; return "complete cached text"; };
+  await cache.load("first", "same", read);
+  cache.retain([{ id: "first", full: "same" }]);
+  assert.equal(cache.has("same", "first"), true);
+  cache.retain([]);
+  assert.equal(cache.has("same"), true);
+  assert.equal(cache.expanded("first"), true);
+  cache.retain([{ id: "first", full: "same" }]);
+  assert.equal(cache.has("same", "first"), false);
+  assert.equal(cache.expansionLabel("first"), "正在展开…");
+  await cache.load("first", "same", read);
+  assert.equal(reads, 1);
+  assert.equal(cache.has("same", "first"), true);
+  cache.hide("first");
+  assert.equal(cache.has("same", "first"), false);
+});
+
+test("small source references have a finite entry budget as well as a byte budget", async () => {
+  const cache = new FullTexts({ maxSources: 8 });
+  for (let i = 0; i < 1000; i++) {
+    await cache.load(`m${i}`, `h${i}`, async () => "x");
+    cache.retain([{ id: `m${i}`, full: `h${i}` }]);
+    assert.ok(cache.values.size <= 8);
+    assert.equal(cache.shown.size, 1);
+  }
+  assert.equal(cache.choices.size, 400);
+});

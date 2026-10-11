@@ -121,9 +121,11 @@ export function boot({ bridge } = {}) {
   const optionPending = new Set();
   /** Long texts read from the ledger on demand, by blob hash. */
   const fullTexts = new FullTexts();
-  const discardText = hash => {
-    fullTexts.discard(hash);
-    for (const item of timeline.store.items) if (item.full === hash) timeline.store.collapse(item.id);
+  const discardText = (hash, id) => {
+    fullTexts.hide(id);
+    const pins = new Set(conversationView(log).pinnedIds());
+    for (const item of timeline.store.items) if (item.id === id && item.full === hash && !pins.has(id)) timeline.store.collapse(item.id);
+    fullTexts.retain(timeline.store.items);
   };
   const redraw = () => { if (timeline) paintView(timeline.view, true); };
   let navigation = null, navigationSerial = 0;
@@ -177,7 +179,7 @@ export function boot({ bridge } = {}) {
     atStart: () => timeline?.store.intro === true,
     get previous() { return timeline?.store.previous; },
     get next() { return timeline?.store.next; },
-    shouldBuild: () => !restorer?.active || restorer.idle(),
+    shouldBuild: id => restorer?.active?.item.id !== id || restorer.idle(),
     herName: () => presenceBar.title.textContent || "Ash",
     onRetry: async (failure) => {
       await net.enqueueSay(failure.retry.text, [], null, failure.retry.to ?? recipient.target());
@@ -195,15 +197,24 @@ export function boot({ bridge } = {}) {
       const dataset = timeline.store.dataset;
       retainReadingAnchor();
       const entry = await fullTexts.load(id, hash, value => net.readBlobText(value, { signal }));
-      if (!entry || signal?.aborted || dataset !== timeline.store.dataset || timeline.get(id)?.full !== hash) { if (signal?.aborted) discardText(hash); fullTexts.retain(timeline.store.items); return; }
+      if (!entry || signal?.aborted || dataset !== timeline.store.dataset || timeline.get(id)?.full !== hash) { if (signal?.aborted) discardText(hash, id); fullTexts.retain(timeline.store.items); return; }
       const dirty = timeline.store.expand(id, entry.bytes);
-      if (!dirty) { discardText(hash); throw new Error("结束当前文字选择后，再展开这条消息。"); }
+      if (!dirty) { discardText(hash, id); throw new Error("结束当前文字选择后，再展开这条消息。"); }
       fullTexts.retain(timeline.store.items);
-      mounted();
-      paintView(timeline.view, true, dirty);
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      await conversationView(log).settled(id);
-      if (automatic && (signal?.aborted || !timeline.get(id))) { discardText(hash); redraw(); }
+      const view = conversationView(log), cancel = () => view.cancelExpansion(id);
+      signal?.addEventListener("abort", cancel, { once: true });
+      try {
+        mounted();
+        paintView(timeline.view, true, dirty);
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        // Native selection can defer replacing the preview; keep automatic ownership until the actual body exists.
+        while (!signal?.aborted && view.rows.get(`message:${id}`)?.deferred) await new Promise(resolve => setTimeout(resolve, 50));
+        if (signal?.aborted) cancel();
+        await view.settled(id);
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+        if (automatic && (signal?.aborted || !timeline.get(id))) { discardText(hash, id); redraw(); }
+      }
     },
     optionPending,
     askIntents,
@@ -334,6 +345,12 @@ export function boot({ bridge } = {}) {
   timeline.onCurrent = current => homeFeed.setCurrent(current);
   restorer = new IdleExpansion({
     contains: id => Boolean(timeline.get(id)),
+    near: id => {
+      const row = views.get(log)?.rows.get(`message:${id}`)?.nodes.find(node => node.matches?.(".msg"));
+      if (!row) return false;
+      const bounds = log.getBoundingClientRect(), rect = row.getBoundingClientRect();
+      return Math.max(bounds.top - rect.bottom, rect.top - bounds.bottom, 0) < log.clientHeight / 2;
+    },
     candidates: () => {
       const bounds = log.getBoundingClientRect(), rows = views.get(log)?.rows;
       return timeline.store.items.filter(item => item.full && fullTexts.expanded(item.id) && !fullTexts.has(item.full, item.id))

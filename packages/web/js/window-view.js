@@ -81,7 +81,7 @@ export class WindowView {
       const expired = item?.ask?.state === "pending" && item.ask.expires_at <= (options.now ?? Date.now());
       const pending = options.optionPending?.has(item?.id) === true;
       const content = candidate ? body(descriptor, options) : row?.content;
-      const sameBody = row && equal(row.content, content);
+      const sameBody = row && !row.lifetime.controller?.signal.aborted && equal(row.content, content);
       const state = item?.type === "say" ? { delivery: item.delivery, reactions: item.reactions } : null;
       const changed = !row || !sameBody || !equal(row.state, state) || !equal(row.chrome, chrome) || !equal(row.intent, intent) || row.expired !== expired || row.pending !== pending;
       const decided = item?.type === "ask" && (item.ask.state !== "pending" || expired) || item?.type === "card" && item.locked;

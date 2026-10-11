@@ -1,7 +1,7 @@
 /** Restore previously expanded text after scrolling settles. At most one read/build owns this controller. */
 export class IdleExpansion {
-  constructor({ candidates, contains, restore, delay = 150, now = () => performance.now(), timer = (fn, ms) => setTimeout(fn, ms), clear = handle => clearTimeout(handle) }) {
-    Object.assign(this, { candidates, contains, restore, delay, now, timer, clear });
+  constructor({ candidates, contains, near = () => true, restore, delay = 150, now = () => performance.now(), timer = (fn, ms) => setTimeout(fn, ms), clear = handle => clearTimeout(handle) }) {
+    Object.assign(this, { candidates, contains, near, restore, delay, now, timer, clear });
     this.idleAt = now() + delay;
     this.active = null; this.attempts = new Map(); this.closed = false;
   }
@@ -14,7 +14,7 @@ export class IdleExpansion {
   wake() {
     if (this.closed) return;
     for (const id of this.attempts.keys()) if (!this.contains(id)) this.attempts.delete(id);
-    if (this.active && !this.contains(this.active.item.id)) this.active.controller.abort();
+    if (this.active && (!this.contains(this.active.item.id) || !this.near(this.active.item.id))) this.active.controller.abort();
     this.clear(this.scheduled);
     this.scheduled = this.timer(() => { void this.run(); }, Math.max(0, this.idleAt - this.now()));
   }

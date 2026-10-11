@@ -42,3 +42,13 @@ test("resuming scrolling pauses construction admission and cancels a read that h
   restore.scroll(); assert.equal(restore.idle(), false); assert.equal(signal.aborted, true);
   restore.dispose(); finish();
 });
+
+test("a mounted restoration cancels when it leaves the nearby area inside the same window", async () => {
+  const time = clock(); let nearby = true, signal, finish;
+  const restore = new IdleExpansion({ ...time, candidates: () => [item], contains: () => true, near: () => nearby,
+    restore: async (_item, abort, mounted) => { signal = abort; mounted(); await new Promise(resolve => { finish = resolve; }); } });
+  restore.wake(); await time.advance(150);
+  restore.scroll(); assert.equal(signal.aborted, false, "a nearby mounted build pauses instead of discarding partial DOM");
+  nearby = false; restore.wake(); assert.equal(signal.aborted, true);
+  restore.dispose(); finish();
+});
