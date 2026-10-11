@@ -9,8 +9,7 @@ import { repeatText } from "./clock.js";
 import { pauseControl } from "./home-pause.js";
 import { listDirectory } from "./body.js";
 import { BODY_MAIN } from "./body.js";
-import { KEYS } from "./home-text.js";
-import { appsSummary } from "./home-text.js";
+import { HELPER, isSettingsFile, KEYS, appsSummary, providerName } from "./home-text.js";
 
 const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars";
 const FACE = { idle: "default", resting: "resting", listening: "listening", thinking: "thinking", working: "focused", done: "success", waiting_you: "listening" };
@@ -58,7 +57,7 @@ export function homePage(ctx, screen) {
   const drawHero = () => {
     const v = view();
     const st = stateOf(v, agentId, online());
-    const name = isHer ? ctx.name : (state.agents?.find((agent) => agent.id === agentId)?.name ?? agentId.replace(/^agent:/, ""));
+    const name = isHer ? ctx.name : (state.agents?.find((agent) => agent.id === agentId)?.name ?? HELPER);
     const waiting = waitingItems(v).filter((item) => !agentId || item.ask.from === agentId).length;
     const today = state.usage?.periods?.today?.cost_usd;
     const live = st.state === "working" ? " av-live" : st.state === "thinking" ? " av-breath" : st.state === "waiting_you" ? " av-wait" : "";
@@ -170,7 +169,7 @@ export function homePage(ctx, screen) {
   const filesBox = h("div");
   const drawFiles = () => {
     const entries = state.files;
-    const files = entries ? entries.filter((entry) => entry.type !== "directory").slice(0, 2) : [];
+    const files = entries ? entries.filter((entry) => entry.type !== "directory" && !isSettingsFile(entry.name)).slice(0, 2) : [];
     fill(filesBox, section("她的文件", { right: "全部", onOpen: () => ctx.go("files") },
       !entries ? note("正在读取…") : files.length ? list(...files.map((file) => row({ icon: "file", tone: "you", title: file.name, sub: Number.isFinite(file.size) ? `${Math.max(1, Math.ceil(file.size / 1024))} KB` : null, onClick: () => ctx.go("files", file.name) })))
         : list(row({ icon: "file", title: "还没有文件", sub: "她做出来的文档会放在这里", onClick: () => ctx.go("files") }))));
@@ -183,11 +182,12 @@ export function homePage(ctx, screen) {
     const keys = state.keys;
     const keyText = !keys ? "" : keys.problem ? keys.problem : keys.missing ? `${keys.missing}还没设` : "已保存";
     const model = state.agents?.find((agent) => agent.primary === true)?.runtime?.model;
+    const provider = model ? providerName(model) : state.provider ?? "";
     const week = state.usage?.periods?.["7d"]?.cost_usd;
     fill(backstageBox, h("section", { class: "hm-section hm-back" }, h("div", { class: "hm-head" }, h("span", { class: "tx-sub hm-backttl" }, "幕后")),
       h("div", { class: "list hm-plain" },
         row({ icon: "key", title: "密钥", value: keyText, valueTone: keys && (keys.problem || keys.missing) ? "warn" : "", onClick: () => ctx.go("keys") }),
-        row({ icon: "cpu", title: "模型", value: model ?? "", onClick: () => ctx.go("model") }),
+        row({ icon: "cpu", title: "模型", value: provider, onClick: () => ctx.go("model") }),
         row({ icon: "coin", title: "花了多少", value: typeof week === "number" ? `近 7 天 ${money(week)}` : "", onClick: () => ctx.go("usage") }),
         row({ icon: "slider", title: "高级", onClick: () => ctx.go("advanced") })),
       pause.root));
@@ -228,6 +228,7 @@ export function homePage(ctx, screen) {
           const standing = (ref) => (keys ?? []).find((item) => item?.ref === ref && item.configured === true)?.status;
           const problem = KEYS.find(({ ref }) => saved(ref) && ["rejected", "low_balance"].includes(standing(ref)));
           const missing = KEYS.find(({ ref }) => !saved(ref));
+          state.provider = saved("DEEPSEEK_API_KEY") ? "DeepSeek" : "";
           state.keys = { problem: problem ? (standing(problem.ref) === "rejected" ? `${problem.title} 已失效` : `${problem.title} 余额不足`) : "", missing: missing ? (missing.provider === "deepseek" ? "对话" : "快速判断") : "" };
           drawBackstage();
         }),

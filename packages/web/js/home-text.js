@@ -39,6 +39,28 @@ export const clock = (at) => {
 };
 
 /** The hand id behind a device id (`device:<hand>`), which `service:link` words name. */
+/** A helper agent that has no name yet. */
+export const HELPER = "一个帮手";
+
+/** A plugin's package name as a reader can say it: no scope, no vendor prefix, words apart. */
+export const pluginName = (name) => String(name).replace(/^@[^/]+\//, "").replace(/^(?:dsh|cordis)-(?:plugin-)?/, "").replace(/[-_/:]+/g, " ").trim() || String(name);
+
+/** The service behind a model, in the name people know it by; the model's own code when it is not a known one. */
+export function providerName(model) {
+  const code = String(model ?? "");
+  if (/^deepseek/i.test(code)) return "DeepSeek";
+  if (/^(?:gpt|o\d|chatgpt)/i.test(code)) return "OpenAI";
+  if (/^claude/i.test(code)) return "Claude";
+  if (/^gemini/i.test(code)) return "Gemini";
+  if (/^(?:qwen|qwq)/i.test(code)) return "通义千问";
+  if (/^(?:kimi|moonshot)/i.test(code)) return "Kimi";
+  if (/^glm/i.test(code)) return "智谱";
+  return code;
+}
+
+/** Her files that are not documents she made: her persona, memory and settings (and anything hidden). */
+export const isSettingsFile = (name) => name.startsWith(".") || /^(?:AGENTS|IDENTITY|SOUL|USER|MEMORY|PROACTIVE|TOOLS|HEARTBEAT|BOOTSTRAP)\.md$/i.test(name);
+
 export const handOf = (device) => (typeof device === "string" ? device.replace(/^device:/, "") : "");
 
 /** A device's diagnosis in plain words for the owner, not the raw record. */

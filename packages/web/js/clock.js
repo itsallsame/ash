@@ -17,6 +17,15 @@ export function normalizeClockList(data) {
       label: typeof item.label === "string" ? item.label : "", blocked: typeof item.blocked === "string" ? "请稍后再看" : null }));
 }
 
+/**
+ * The plans made by the system itself carry an internal name (`semantic:reload:…`): a word, a colon, more, no space. They are not
+ * the owner's plans to read or delete, so the pages do not list them; a name that has a space in it is a person's words.
+ */
+export const isSystemPlan = (timer) => /^[a-z][a-z0-9_-]*(:[^\s:]+)+$/i.test(timer?.label ?? "");
+
+/** The plans of [timers] that are the owner's to see. */
+export const userPlans = (timers) => timers.filter((timer) => !isSystemPlan(timer));
+
 /** How often a timer repeats, in the owner's words. */
 export function repeatText(every) {
   if (!Number.isSafeInteger(every) || every < 60) return "只一次";
@@ -39,7 +48,7 @@ async function clockRequest(net, binding, word, body, clientId) {
 }
 
 export async function listClock(net, binding) {
-  return normalizeClockList(await clockRequest(net, binding, "list", {}));
+  return userPlans(normalizeClockList(await clockRequest(net, binding, "list", {})));
 }
 
 export async function cancelClock(net, binding, id, clientId) {

@@ -96,7 +96,7 @@ export class Files {
     if (!valid) { this.note.textContent = "文件路径无效"; return; }
     const body = bodyOf(ref.workspace);
     if (!body) { this.note.textContent = "打不开：不知道这个文件在哪台设备上"; return; }
-    this.note.textContent = ref.path;
+    this.note.textContent = "";
     const directory = ref.path.split("/").slice(0, -1).join("/");
     const folder = add(this.actions, "button", "所在文件夹", "btn gray"); folder.onclick = () => this.browse(body, directory);
     const download = add(this.actions, "button", "下载", "btn gray");
@@ -134,7 +134,7 @@ export class Files {
       }
       const source = new TextDecoder().decode(file.data);
       if (["html", "htm"].includes(ext)) {
-        this.note.textContent = `${ref.path} · HTML 阅读模式（不运行脚本，不加载其中的图片和样式表）`;
+        this.note.textContent = "网页阅读模式（不运行脚本，不加载其中的图片和样式表）";
         // The page is shown from its text in a frame that may run nothing and reach nothing.
         const frame = add(this.body, "iframe", undefined, "files-html");
         frame.title = ref.path.split("/").pop(); frame.setAttribute("sandbox", ""); frame.referrerPolicy = "no-referrer";

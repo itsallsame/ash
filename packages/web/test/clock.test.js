@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cancelClock, listClock, normalizeClockList, repeatText } from "../js/clock.js";
+import { cancelClock, isSystemPlan, listClock, userPlans, normalizeClockList, repeatText } from "../js/clock.js";
 import { unwrap } from "../js/link.js";
 import { until } from "./support.js";
 
@@ -70,4 +70,13 @@ test("a list that arrives after the connection changed is not adopted, and a can
   await cancelClock(net, { session: "s2", generation: net.generation }, "tmr_a", "cancel-client-one");
   assert.deepEqual(net.calls.at(-1), { to: "service:clock", word: "cancel", body: { id: "tmr_a" }, options: { clientId: "cancel-client-one" } });
   void fresh;
+});
+
+test("a plan the system made for itself carries an internal name and is not the owner's to see", () => {
+  assert.equal(isSystemPlan({ label: "semantic:reload:1760" }), true);
+  assert.equal(isSystemPlan({ label: "ash:tick" }), true);
+  assert.equal(isSystemPlan({ label: "带伞" }), false);
+  assert.equal(isSystemPlan({ label: "提醒: 开会" }), false, "words with a space are a person's");
+  assert.equal(isSystemPlan({ label: "" }), false);
+  assert.deepEqual(userPlans([{ id: "a", label: "semantic:x:1" }, { id: "b", label: "吃药" }]).map((p) => p.id), ["b"]);
 });
