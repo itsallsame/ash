@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ash: an ember on a dark tile (same mark as the web UI's icon.svg). -->
+<!-- ash: the app icon, a ring that is part-way round with a coral dot (design/app/icons/app-icon.svg). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp" android:height="48dp"
     android:viewportWidth="512" android:viewportHeight="512">
-    <path android:fillColor="#1C1C1E"
-        android:pathData="M112,0 L400,0 Q512,0 512,112 L512,400 Q512,512 400,512 L112,512 Q0,512 0,400 L0,112 Q0,0 112,0 Z" />
-    <path android:fillColor="#FF7A3D"
-        android:pathData="M256,96c34,70 118,118 118,206a118,118 0,0 1,-236 0c0,-52 30,-86 58,-112 6,34 22,58 46,70 -8,-66 2,-118 14,-164z" />
-    <path android:fillColor="#FFD166"
-        android:pathData="M256,284 m-46,0 a46,46 0,1 0,92 0 a46,46 0,1 0,-92 0" />
+    <path android:fillColor="#FFF3EA"
+        android:pathData="M116,0 L396,0 Q512,0 512,116 L512,396 Q512,512 396,512 L116,512 Q0,512 0,396 L0,116 Q0,0 116,0 Z" />
+    <path android:strokeColor="#F6DFD0" android:strokeWidth="30"
+        android:pathData="M406,256 a150,150 0 1,1 -300,0 a150,150 0 1,1 300,0" />
+    <group android:pivotX="256" android:pivotY="256" android:rotation="-120">
+        <path android:strokeColor="#4CC7BE" android:strokeWidth="30" android:strokeLineCap="round" android:trimPathEnd="0.7427"
+            android:pathData="M406,256 a150,150 0 1,1 -300,0 a150,150 0 1,1 300,0" />
+    </group>
+    <path android:fillColor="#F2704E"
+        android:pathData="M256,256 m-52,0 a52,52 0 1,0 104,0 a52,52 0 1,0 -104,0" />
 </vector>

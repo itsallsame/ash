@@ -1,0 +1,10 @@
+{"board":"Setup","caption":"你好","theme":"dark","screen":{"w":390,"h":844},"elements":[{"d":0,"tag":"div","x":-35,"y":150,"w":460,"h":460,"bgImage":"radial-gradient(closest-side, rgba(76, 199, 190, 0.16), rgba(0, 0, 0, 0))"},
+{"d":0,"tag":"div","cls":"sb","x":0,"y":0,"w":390,"h":34},
+{"d":0,"tag":"div","x":0,"y":34,"w":390,"h":718,"pad":"0px 32px","layout":"flex col gap 14px"},
+{"d":1,"tag":"span","cls":"av av-breath","x":127,"y":244,"w":136,"h":136},
+{"d":2,"tag":"img","x":127,"y":244,"w":136,"h":136,"bg":"surface-2","radius":"32%","img":"default.webp"},
+{"d":1,"tag":"span","text":"你好，我是 Ash","x":80,"y":410,"w":230,"h":40,"font":"32px / 40px · 700","color":"ink"},
+{"d":1,"tag":"span","text":"我会住在你的手机里，帮你记事、提醒、跑腿。 先花两分钟，让我准备好。","x":32,"y":464,"w":326,"h":78,"font":"16px / 26px · 400","color":"text-2"},
+{"d":0,"tag":"div","x":0,"y":752,"w":390,"h":92,"pad":"0px 20px 40px"},
+{"d":1,"tag":"button","cls":"btn btn-primary btn-lg btn-block","text":"开始","x":20,"y":752,"w":350,"h":52,"bg":"you","font":"16px / normal · 650","color":"on-you","radius":"26px","pad":"0px 20px","layout":"inline-flex row gap 6px"},
+{"d":0,"tag":"span","cls":"home-ind","x":135,"y":833,"w":120,"h":4,"bg":"ink","radius":"2px","opacity":"0.22"}],"unit":"dp (CSS px 1:1)"}

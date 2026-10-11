@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>文案规范</title>
+
+<link rel="stylesheet" href="./ash.css">
+</head>
+<body>
+
+
+<style>body{margin:0}</style>
+
+<div class="board board-light t-light" style="width: 1900px; height: 1740px; background: #F2ECE6; gap: 32px">
+
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 13px; letter-spacing: .08em; color: #7A7C83; font-weight: 600">设计系统 · 文案</span>
+<h1 style="margin: 0; font-size: 44px; font-weight: 700; color: #111113">她怎么说话，按钮怎么写，出错怎么讲</h1>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+<div style="background: #fff; border-radius: 28px; padding: 28px; display: flex; flex-direction: column; gap: 12px">
+<span style="font-size: 20px; font-weight: 650; color: #111113">她的语气</span>
+<span style="font-size: 14.5px; line-height: 1.75; color: #3A3B40">像朋友发微信：短，先说结论，用口语。<br>自称「我」，叫主人「你」，不说「您」「用户」「系统」。<br>一句话说一件事；三件事以上才用列表。<br>不堆感叹号，不用 emoji（主人先用了再说）。<br>不确定就说不确定，不装作做完了。</span>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px">
+<div style="display: flex; gap: 10px; align-items: baseline"><span class="tag tag-ok" style="flex: none">这样写</span><span style="font-size: 14px; color: #1C1D20">「定好了，明早 7:45 叫你。」</span></div>
+<div style="display: flex; gap: 10px; align-items: baseline"><span class="tag tag-err" style="flex: none">不这样</span><span style="font-size: 14px; color: #62656D">「您的提醒已成功创建！」</span></div>
+</div>
+</div>
+<div style="background: #fff; border-radius: 28px; padding: 28px; display: flex; flex-direction: column; gap: 12px">
+<span style="font-size: 20px; font-weight: 650; color: #111113">按钮</span>
+<span style="font-size: 14.5px; line-height: 1.75; color: #3A3B40">动词开头，2 到 6 个字，按下去会发生什么就写什么。不写「确定」「OK」「提交」。危险的按钮第二次点时把后果写出来。</span>
+<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px">
+<span class="tag tag-you">允许这一次</span><span class="tag tag-you">以后都允许</span><span class="tag tag-mute">不允许</span><span class="tag tag-you">去开启</span><span class="tag tag-you">去授权</span><span class="tag tag-you">重试</span><span class="tag tag-you">保存</span><span class="tag tag-mute">取消</span><span class="tag tag-err">收回全部权限</span><span class="tag tag-err">确认删除</span><span class="tag tag-you">问问她这件事</span><span class="tag tag-you">回到 Ash</span>
+</div>
+</div>
+<div style="background: #fff; border-radius: 28px; padding: 28px; display: flex; flex-direction: column; gap: 12px">
+<span style="font-size: 20px; font-weight: 650; color: #111113">出错的时候</span>
+<span style="font-size: 14.5px; line-height: 1.75; color: #3A3B40"><b style="font-weight: 600">发生了什么 + 为什么（人话）+ 你能做什么。</b>不甩锅给主人，不出现代码和英文。读不到的东西要说「不代表没有」。</span>
+<div style="display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 21px; color: #1C1D20; margin-top: 4px">
+<span>「刚才这件事没做成：模型那边在限流。」<span style="color: #2A5BDF">重试</span></span>
+<span>「暂时读不到计划（不代表没有）。」<span style="color: #2A5BDF">重试</span></span>
+<span>「这一页出错停了。」<span style="color: #2A5BDF">重新加载</span></span>
+</div>
+</div>
+</div>
+
+<div style="background: #fff; border-radius: 28px; padding: 28px 32px; display: flex; flex-direction: column; gap: 16px">
+<span style="font-size: 20px; font-weight: 650; color: #111113">状态用词（顶栏、头像、灵动岛共用一套）</span>
+<div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px">
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: #F4F5F7"><span style="font-size: 15px; font-weight: 600; color: #111113">在线</span><span style="font-size: 12.5px; line-height: 18px; color: #62656D">空闲，绿点</span></div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: #F4F5F7"><span style="font-size: 15px; font-weight: 600; color: #111113">正在想…</span><span style="font-size: 12.5px; line-height: 18px; color: #62656D">刚开始一轮，还没动手；头像呼吸</span></div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: #F4F5F7"><span style="font-size: 15px; font-weight: 600; color: #111113">在看网页…</span><span style="font-size: 12.5px; line-height: 18px; color: #62656D">在做事，写她此刻的那个动作；头像光环转</span></div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: #F4F5F7"><span style="font-size: 15px; font-weight: 600; color: #111113">等你一句话</span><span style="font-size: 12.5px; line-height: 18px; color: #62656D">有问题或审批等你；琥珀色</span></div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: #F4F5F7"><span style="font-size: 15px; font-weight: 600; color: #111113">连接中…</span><span style="font-size: 12.5px; line-height: 18px; color: #62656D">刚打开、正在连上</span></div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: #F4F5F7"><span style="font-size: 15px; font-weight: 600; color: #111113">离线，正在重连…</span><span style="font-size: 12.5px; line-height: 18px; color: #62656D">连不上；头像变淡，顶栏下出横幅</span></div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: #F4F5F7"><span style="font-size: 15px; font-weight: 600; color: #111113">休息中</span><span style="font-size: 12.5px; line-height: 18px; color: #62656D">暂停了，或很久没事做</span></div>
+
+</div>
+</div>
+
+<div style="background: #fff; border-radius: 28px; padding: 28px 32px; display: flex; flex-direction: column; gap: 14px">
+<span style="font-size: 20px; font-weight: 650; color: #111113">现在的写法 → 改成</span>
+<div style="display: grid; grid-template-columns: 1fr 1fr 0.9fr; gap: 0; font-size: 14px; line-height: 21px">
+<span style="padding: 8px 12px; font-size: 12.5px; color: #8E9199; border-bottom: 1px solid #ECEDF0">现在</span><span style="padding: 8px 12px; font-size: 12.5px; color: #8E9199; border-bottom: 1px solid #ECEDF0">改成</span><span style="padding: 8px 12px; font-size: 12.5px; color: #8E9199; border-bottom: 1px solid #ECEDF0">为什么</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">可以 / 以后都可以 / 不行</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">允许这一次 / 以后都允许 / 不允许</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">说清楚授权的范围</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">已选择</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">选中的选项变实心并打勾</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">要看得出选了哪一个</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">未发送的文字和附件暂存在此浏览器，最多保留 7 天…</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">气泡下「等连上就发」</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">开发说明，主人不需要知道</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">正在载入对话…</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">骨架气泡，不写字</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">加载不用解释</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">已连接（常驻顶栏）</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">不显示；出问题才说</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">正常的事不用说</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">用于：快速判断（JEV 模型）</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">用来快速判断要不要问你</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">去掉代号</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">Ash 诊断 · 内核连接：已停止（关闭码 X）</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">手机权限 · 有 2 项需要处理</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">先说结论，给普通人看</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">内核</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">大脑</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">主人不需要知道「内核包」</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">开发者选项 · 主模型、DSH 插件</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">主页最底下的「幕后」</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">只留主人会用的，颜色最淡</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">{工具} · 调用完成 · 6 秒</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">在看网页 · 天气预报 · 完成 · 6 秒</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">不露工具名</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">设置（☰ 菜单）</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">她的主页（点头像）</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">Ash 是一个人，不是要配置的工具</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">免打扰 / 主动联系 / 审批（三个设置页）</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">「你们的约定」里的几句话</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">用句子讲规矩，点词就改</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">手机权限 · 诊断</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">她的手和眼 · 体检（大脑、闹钟、眼睛和手）</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">讲她能不能做事，不讲权限名</span>
+
+<span style="padding: 10px 12px; color: #62656D; border-bottom: 1px solid #F1F2F4; text-decoration: line-through; text-decoration-color: rgba(98,101,109,.4)">页签：对话 / 应用（底部）</span><span style="padding: 10px 12px; color: #111113; border-bottom: 1px solid #F1F2F4">没有页签；「应用」在顶栏右上角</span><span style="padding: 10px 12px; color: #62656D; font-size: 13px; border-bottom: 1px solid #F1F2F4">底部只留给输入框</span>
+
+</div>
+</div>
+
+<div style="background: #fff; border-radius: 28px; padding: 28px 32px; display: flex; gap: 40px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 10px"><span style="font-size: 20px; font-weight: 650; color: #111113">永远不出现在界面上</span><span style="font-size: 14.5px; line-height: 1.75; color: #3A3B40">内部 id、英文代号（JEV、DSH、turn、gate…）、工具名（web_fetch、bash…）、关闭码、文件路径、「请刷新记录」这类开发说明。</span></div>
+<div style="flex: 1; display: flex; flex-direction: column; gap: 10px"><span style="font-size: 20px; font-weight: 650; color: #111113">可以出现</span><span style="font-size: 14.5px; line-height: 1.75; color: #3A3B40">别人家的产品名：DeepSeek、OpenRouter、Cloudflare、Shizuku；手机型号（审批卡里要写清在哪台设备上做）；你自己起的名字。</span></div>
+</div>
+
+</div>
+
+
+</body>
+</html>

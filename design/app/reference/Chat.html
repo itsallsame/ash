@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>对话页</title>
+
+<link rel="stylesheet" href="./ash.css">
+</head>
+<body>
+
+
+<style>body{margin:0}</style>
+
+<div class="board board-light" style="width: 1892px; height: 2190px">
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11.5c0 4.14-3.58 7.5-8 7.5-1.2 0-2.33-.24-3.35-.68L4 19.5l1.25-3.55A7.2 7.2 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5z"></path></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2.2"></rect><rect x="13" y="4" width="7" height="7" rx="2.2"></rect><rect x="4" y="13" width="7" height="7" rx="2.2"></rect><rect x="13" y="13" width="7" height="7" rx="2.2"></rect></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"></path></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"></path></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5.5M6.5 11l5.5-5.5 5.5 5.5"></path></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5l7 2.8v5.2c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6.3z"></path></symbol>
+<symbol id="i-ask" viewBox="0 0 24 24"><path d="M20 11.5c0 4.14-3.58 7.5-8 7.5-1.2 0-2.33-.24-3.35-.68L4 19.5l1.25-3.55A7.2 7.2 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5z"></path><path d="M10 9.6a2 2 0 1 1 2.6 1.9c-.4.15-.6.5-.6.9v.6"></path><circle cx="12" cy="15.4" r=".4"></circle></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.8v5"></path><circle cx="12" cy="16.2" r=".4"></circle></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"></path></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"></rect><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"></path></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"></path><path d="M14 3.5V8h4.5"></path></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"></path><path d="M20 4v4.5h-4.5"></path></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"></path></symbol>
+</svg>
+
+<div style="display: flex; align-items: flex-end; justify-content: space-between">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 13px; letter-spacing: .08em; color: #7A7C83; font-weight: 600">A · 对话页（主屏）</span>
+<h1 style="margin: 0; font-size: 40px; font-weight: 700; color: #111113">像发微信一样，跟她说话</h1>
+</div>
+<p style="margin: 0; max-width: 620px; font-size: 15px; line-height: 1.65; color: #5A5C63">对话就是主屏，底部只留给输入框。顶栏只有她（点头像或名字进她的主页，设置、文件都在那里）和右上角的「应用」。对话里没有工具条，她要你决定的事以卡片出现在消息里；她在做什么，看头像的光环和输入框上方那颗小胶囊。</p>
+</div>
+
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">亮色</span>
+<div class="board-row">
+
+<!-- 1 · 日常对话 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36 av-live"><img src="../../../packages/web/avatars/focused.webp" alt=""></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state c-her"><span class="spinner" style="width: 9px; height: 9px; border-width: 1.6px"></span>在看网页…</span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<span class="daysep">今天 09:12</span>
+<div class="row me"><div class="b b-me">这周末杭州天气怎么样？适合去西溪露营吗</div><span class="meta">已读</span></div>
+<div class="gap-s"></div>
+<div class="row her">
+<div class="b b-her md b-wide"><p>看了一下，周六比周日好：</p>
+<div class="tbl"><table><tbody><tr><th>日子</th><th>天气</th><th>气温</th></tr><tr><td>周六</td><td>多云</td><td>16–24°</td></tr><tr><td>周日</td><td>小雨</td><td>15–20°</td></tr></tbody></table></div>
+<p>建议<b>周六</b>去，下午三点前把帐篷搭好。</p></div>
+<div class="b b-her mid">要我顺手查查西溪附近还有空位的营地吗？</div>
+</div>
+<div class="gap-s"></div>
+<div class="row me"><div class="b b-me">好，顺便看看要不要带厚睡袋</div><span class="meta">已读</span></div>
+</div>
+<div class="dock"><span class="pill"><span class="spinner"></span><b>在看网页</b>· 12 秒<svg class="i i-xs" style="color: var(--text-3)"><use href="#i-chev"></use></svg></span></div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">日常对话<span>她在后台做事：头像光环 + 小胶囊</span></span>
+</div>
+
+<!-- 2 · 选项卡 + 审批卡（待处理） -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36 av-wait"><img src="../../../packages/web/avatars/listening.webp" alt=""></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state c-warn"><span class="state-dot" style="background: var(--warn-fill)"></span>等你一句话</span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row her"><div class="b b-her">找到两个周六还有空位的营地，都能带帐篷。</div></div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-her"><span class="chip-ic" style="background: var(--her-soft)"><svg class="i i-xs"><use href="#i-ask"></use></svg></span>Ash 问你</div>
+<div class="card-title">你想订哪一个？</div>
+<div class="opts"><button class="opt">西溪森林营地</button><button class="opt">千岛湖湖畔营地</button></div>
+<div class="say">自己说…<span class="sbtn"><svg class="i i-xs"><use href="#i-up"></use></svg></span></div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-warn"><span class="chip-ic" style="background: var(--warn-soft)"><svg class="i i-xs"><use href="#i-shield"></use></svg></span>需要你确认<span class="exp">今天 23:59 前有效</span></div>
+<div class="card-title">在改剪贴板</div>
+<div class="card-body">Ash 想对「手机 · Xiaomi M2006J10C」做这件事：在改剪贴板。目的：把营地地址复制给你，方便发给朋友。</div>
+<div class="card-note">审核：会覆盖你剪贴板里现在的内容</div>
+<button class="card-link">查看完整原文<svg class="i i-xs"><use href="#i-chev"></use></svg></button>
+<div class="card-acts">
+<button class="btn btn-primary btn-block">允许这一次</button>
+<div class="two"><button class="btn btn-secondary">以后都允许</button><button class="btn btn-neutral">不允许</button></div>
+</div>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">选项卡 · 审批卡<span>等你决定时，头像换成琥珀色呼吸</span></span>
+</div>
+
+<!-- 3 · 已处理 / 失败重试 / 需要授权 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state">在线</span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="card">
+<div class="card-hd c-her"><span class="chip-ic" style="background: var(--her-soft)"><svg class="i i-xs"><use href="#i-ask"></use></svg></span>Ash 问你</div>
+<div class="card-title">你想订哪一个？</div>
+<div class="opts"><button class="opt on"><svg class="i i-xs"><use href="#i-check"></use></svg>西溪森林营地</button><button class="opt dim">千岛湖湖畔营地</button></div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-warn"><span class="chip-ic" style="background: var(--warn-soft)"><svg class="i i-xs"><use href="#i-shield"></use></svg></span>需要你确认</div>
+<div class="card-title">在改剪贴板</div>
+<div class="resolved ok"><svg class="i i-xs"><use href="#i-check"></use></svg>已允许这一次</div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-err"><span class="chip-ic" style="background: var(--err-soft)"><svg class="i i-xs"><use href="#i-alert"></use></svg></span>没做成</div>
+<div class="card-body" style="color: var(--text)">刚才这件事没做成：负责思考的进程中途退出了。</div>
+<div style="display: flex; gap: 8px"><button class="btn btn-sm btn-primary"><svg class="i i-xs"><use href="#i-refresh"></use></svg>重试</button></div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-you"><span class="chip-ic" style="background: var(--you-soft)"><svg class="i i-xs"><use href="#i-lock"></use></svg></span>需要授权</div>
+<div class="card-title">打开「日历」权限</div>
+<div class="card-body">这样我才能看到你接下来的日程。只读，不会改动。</div>
+<div style="display: flex"><button class="btn btn-sm btn-primary">去授权</button></div>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">已处理 · 失败重试 · 需要授权<span>答过的卡片收成一行结果</span></span>
+</div>
+
+<!-- 4 · 长内容 + 附件 + 子 agent -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36 av-breath"><img src="../../../packages/web/avatars/thinking.webp" alt=""></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state c-her">正在想<span class="typing"><i></i><i></i><i></i></span></span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row me">
+<div class="att-img"><div style="position: absolute; inset: 0; background: linear-gradient(160deg, #8FB7A5, #3F6B5C)"></div></div>
+<div class="att-file"><span class="ic"><svg class="i i-s"><use href="#i-file"></use></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 14px; color: var(--ink)">装备清单.xlsx</span><span class="tx-caption">18 KB</span></span></div>
+<div class="b b-me">照片里这些够吗？清单也发你了</div>
+</div>
+<div class="gap-s"></div>
+<span class="byline"><span class="av-letter" style="width: 20px; height: 20px; font-size: 11px; background: #7C6CF2">研</span>小研 · Ash 的帮手</span>
+<div class="row her">
+<div class="b b-her md b-wide"><h4>清单核对结果</h4>
+<ul><li>缺 <b>防潮垫</b>，晚上地面会凉</li><li>头灯电池建议换新</li></ul>
+<div class="codeblk"><div class="hd">表格公式<button class="iconbtn" style="width: 28px; height: 28px; color: var(--text-3)" aria-label="复制代码"><svg class="i i-xs"><use href="#i-copy"></use></svg></button></div><pre>=COUNTIF(C2:C40,"未带")</pre></div>
+<p>我把缺的两样标红了，<a href="#">打开清单</a>看看。</p></div>
+</div>
+</div>
+<div class="dock"><span class="ctx">关于这件事：露营装备<svg class="i i-xs"><use href="#i-x"></use></svg></span></div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="txt">那防潮垫帮我加进购物车</span></label>
+<button class="send" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">附件 · Markdown · 子 agent<span>只有帮手说话时才署名</span></span>
+</div>
+
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">暗色</span>
+<div class="board-row">
+
+<!-- 1 · 日常对话 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36 av-live"><img src="../../../packages/web/avatars/focused.webp" alt=""></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state c-her"><span class="spinner" style="width: 9px; height: 9px; border-width: 1.6px"></span>在看网页…</span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<span class="daysep">今天 09:12</span>
+<div class="row me"><div class="b b-me">这周末杭州天气怎么样？适合去西溪露营吗</div><span class="meta">已读</span></div>
+<div class="gap-s"></div>
+<div class="row her">
+<div class="b b-her md b-wide"><p>看了一下，周六比周日好：</p>
+<div class="tbl"><table><tbody><tr><th>日子</th><th>天气</th><th>气温</th></tr><tr><td>周六</td><td>多云</td><td>16–24°</td></tr><tr><td>周日</td><td>小雨</td><td>15–20°</td></tr></tbody></table></div>
+<p>建议<b>周六</b>去，下午三点前把帐篷搭好。</p></div>
+<div class="b b-her mid">要我顺手查查西溪附近还有空位的营地吗？</div>
+</div>
+<div class="gap-s"></div>
+<div class="row me"><div class="b b-me">好，顺便看看要不要带厚睡袋</div><span class="meta">已读</span></div>
+</div>
+<div class="dock"><span class="pill"><span class="spinner"></span><b>在看网页</b>· 12 秒<svg class="i i-xs" style="color: var(--text-3)"><use href="#i-chev"></use></svg></span></div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">日常对话<span>她在后台做事：头像光环 + 小胶囊</span></span>
+</div>
+
+<!-- 2 · 选项卡 + 审批卡（待处理） -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36 av-wait"><img src="../../../packages/web/avatars/listening.webp" alt=""></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state c-warn"><span class="state-dot" style="background: var(--warn-fill)"></span>等你一句话</span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row her"><div class="b b-her">找到两个周六还有空位的营地，都能带帐篷。</div></div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-her"><span class="chip-ic" style="background: var(--her-soft)"><svg class="i i-xs"><use href="#i-ask"></use></svg></span>Ash 问你</div>
+<div class="card-title">你想订哪一个？</div>
+<div class="opts"><button class="opt">西溪森林营地</button><button class="opt">千岛湖湖畔营地</button></div>
+<div class="say">自己说…<span class="sbtn"><svg class="i i-xs"><use href="#i-up"></use></svg></span></div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-warn"><span class="chip-ic" style="background: var(--warn-soft)"><svg class="i i-xs"><use href="#i-shield"></use></svg></span>需要你确认<span class="exp">今天 23:59 前有效</span></div>
+<div class="card-title">在改剪贴板</div>
+<div class="card-body">Ash 想对「手机 · Xiaomi M2006J10C」做这件事：在改剪贴板。目的：把营地地址复制给你，方便发给朋友。</div>
+<div class="card-note">审核：会覆盖你剪贴板里现在的内容</div>
+<button class="card-link">查看完整原文<svg class="i i-xs"><use href="#i-chev"></use></svg></button>
+<div class="card-acts">
+<button class="btn btn-primary btn-block">允许这一次</button>
+<div class="two"><button class="btn btn-secondary">以后都允许</button><button class="btn btn-neutral">不允许</button></div>
+</div>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">选项卡 · 审批卡<span>等你决定时，头像换成琥珀色呼吸</span></span>
+</div>
+
+<!-- 3 · 已处理 / 失败重试 / 需要授权 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state">在线</span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="card">
+<div class="card-hd c-her"><span class="chip-ic" style="background: var(--her-soft)"><svg class="i i-xs"><use href="#i-ask"></use></svg></span>Ash 问你</div>
+<div class="card-title">你想订哪一个？</div>
+<div class="opts"><button class="opt on"><svg class="i i-xs"><use href="#i-check"></use></svg>西溪森林营地</button><button class="opt dim">千岛湖湖畔营地</button></div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-warn"><span class="chip-ic" style="background: var(--warn-soft)"><svg class="i i-xs"><use href="#i-shield"></use></svg></span>需要你确认</div>
+<div class="card-title">在改剪贴板</div>
+<div class="resolved ok"><svg class="i i-xs"><use href="#i-check"></use></svg>已允许这一次</div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-err"><span class="chip-ic" style="background: var(--err-soft)"><svg class="i i-xs"><use href="#i-alert"></use></svg></span>没做成</div>
+<div class="card-body" style="color: var(--text)">刚才这件事没做成：负责思考的进程中途退出了。</div>
+<div style="display: flex; gap: 8px"><button class="btn btn-sm btn-primary"><svg class="i i-xs"><use href="#i-refresh"></use></svg>重试</button></div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-you"><span class="chip-ic" style="background: var(--you-soft)"><svg class="i i-xs"><use href="#i-lock"></use></svg></span>需要授权</div>
+<div class="card-title">打开「日历」权限</div>
+<div class="card-body">这样我才能看到你接下来的日程。只读，不会改动。</div>
+<div style="display: flex"><button class="btn btn-sm btn-primary">去授权</button></div>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">已处理 · 失败重试 · 需要授权<span>答过的卡片收成一行结果</span></span>
+</div>
+
+<!-- 4 · 长内容 + 附件 + 子 agent -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页">
+<span class="av av-36 av-breath"><img src="../../../packages/web/avatars/thinking.webp" alt=""></span>
+<span style="display: flex; flex-direction: column; min-width: 0"><span class="name">Ash</span><span class="state c-her">正在想<span class="typing"><i></i><i></i><i></i></span></span></span>
+</button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row me">
+<div class="att-img"><div style="position: absolute; inset: 0; background: linear-gradient(160deg, #8FB7A5, #3F6B5C)"></div></div>
+<div class="att-file"><span class="ic"><svg class="i i-s"><use href="#i-file"></use></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 14px; color: var(--ink)">装备清单.xlsx</span><span class="tx-caption">18 KB</span></span></div>
+<div class="b b-me">照片里这些够吗？清单也发你了</div>
+</div>
+<div class="gap-s"></div>
+<span class="byline"><span class="av-letter" style="width: 20px; height: 20px; font-size: 11px; background: #7C6CF2">研</span>小研 · Ash 的帮手</span>
+<div class="row her">
+<div class="b b-her md b-wide"><h4>清单核对结果</h4>
+<ul><li>缺 <b>防潮垫</b>，晚上地面会凉</li><li>头灯电池建议换新</li></ul>
+<div class="codeblk"><div class="hd">表格公式<button class="iconbtn" style="width: 28px; height: 28px; color: var(--text-3)" aria-label="复制代码"><svg class="i i-xs"><use href="#i-copy"></use></svg></button></div><pre>=COUNTIF(C2:C40,"未带")</pre></div>
+<p>我把缺的两样标红了，<a href="#">打开清单</a>看看。</p></div>
+</div>
+</div>
+<div class="dock"><span class="ctx">关于这件事：露营装备<svg class="i i-xs"><use href="#i-x"></use></svg></span></div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="txt">那防潮垫帮我加进购物车</span></label>
+<button class="send" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">附件 · Markdown · 子 agent<span>只有帮手说话时才署名</span></span>
+</div>
+
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

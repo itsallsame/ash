@@ -20,8 +20,11 @@ const noBrowserClient = { name: "no-browser-client", setup(b) {
 const bundle = async (plugins) => (await build({ entryPoints: [join(ui, "js/app.js")], bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent", plugins })).outputFiles[0].text.replaceAll("</script", "<\\/script");
 const app = await bundle([]);
 const appInApp = await bundle([noBrowserClient]);
-const html = readFileSync(join(ui, "index.html"), "utf8");
+// Design tokens (generated from design/app/tokens.json) and the component styles, ahead of the page's own rules.
+const styles = `<style>\n${["ash-tokens.css", "ash-ui.css"].map((f) => readFileSync(join(ui, f), "utf8").trim()).join("\n")}\n</style>`;
+const html = readFileSync(join(ui, "index.html"), "utf8").replace("<!-- ash-style -->", () => styles);
 if (!html.includes("<!-- ui-app -->")) throw new Error("UI app marker missing");
+if (!html.includes("--you-soft")) throw new Error("UI style marker missing");
 const generatedHtml = html.replace("<!-- ui-app -->", () => `<script>${app}</script>`);
 const assetRoot = join(ui, "../../android/app/src/main/assets/ash-ui");
 const nativeBootstrap = readFileSync(join(ui, "js/native-bootstrap.js"), "utf8").replaceAll("</script", "<\\/script");

@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>对话页状态</title>
+
+<link rel="stylesheet" href="./ash.css">
+</head>
+<body>
+
+
+<style>body{margin:0}</style>
+
+<div class="board board-light" style="width: 2816px; height: 2190px">
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11.5c0 4.14-3.58 7.5-8 7.5-1.2 0-2.33-.24-3.35-.68L4 19.5l1.25-3.55A7.2 7.2 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5z"></path></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2.2"></rect><rect x="13" y="4" width="7" height="7" rx="2.2"></rect><rect x="4" y="13" width="7" height="7" rx="2.2"></rect><rect x="13" y="13" width="7" height="7" rx="2.2"></rect></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"></path></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"></path></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5.5M6.5 11l5.5-5.5 5.5 5.5"></path></symbol>
+<symbol id="i-ask" viewBox="0 0 24 24"><path d="M20 11.5c0 4.14-3.58 7.5-8 7.5-1.2 0-2.33-.24-3.35-.68L4 19.5l1.25-3.55A7.2 7.2 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5z"></path><path d="M10 9.6a2 2 0 1 1 2.6 1.9c-.4.15-.6.5-.6.9v.6"></path><circle cx="12" cy="15.4" r=".4"></circle></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"></path></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></symbol>
+<symbol id="i-wifioff" viewBox="0 0 24 24"><path d="M3.5 3.5l17 17"></path><path d="M8.6 15.6a5 5 0 0 1 6.2-.6"></path><path d="M5.2 12.2a10 10 0 0 1 4.6-2.5"></path><path d="M14.6 9.8a10 10 0 0 1 4.2 2.4"></path><path d="M2 8.8a15 15 0 0 1 4-2.6"></path><path d="M10.5 4.6A15 15 0 0 1 22 8.8"></path><circle cx="12" cy="19" r=".5"></circle></symbol>
+<symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8.5a2 2 0 0 1 2-2h1.8l1.4-2h5.6l1.4 2H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"></path><circle cx="12" cy="12.5" r="3.5"></circle></symbol>
+<symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="3"></rect><path d="M16 10.5l5-3v9l-5-3"></path></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M20.5 16l-5-5-8 8.5"></path></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"></path><path d="M14 3.5V8h4.5"></path></symbol>
+</svg>
+
+<div style="display: flex; align-items: flex-end; justify-content: space-between">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 13px; letter-spacing: .08em; color: #7A7C83; font-weight: 600">A · 对话页 · 状态</span>
+<h1 style="margin: 0; font-size: 40px; font-weight: 700; color: #111113">第一次见面、等待、断线，和输入区的两张抽屉</h1>
+</div>
+<p style="margin: 0; max-width: 680px; font-size: 15px; line-height: 1.65; color: #5A5C63">那行「暂存在此浏览器」的说明去掉了：没发出去的消息就留在气泡上，标「等连上就发」；断线时顶栏下面出现一条横幅，连上后自动收起。</p>
+</div>
+
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">亮色</span>
+<div class="board-row">
+
+<!-- 1 · 首次见面 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 18px">
+<span class="av av-88 av-breath"><img src="../../../packages/web/avatars/success.webp" alt=""></span>
+<span class="tx-headline">Ash</span>
+<span class="tx-caption">刚刚住进你的手机</span>
+</div>
+<div class="row her">
+<div class="b b-her">你好呀，我是 Ash。以后有事直接跟我说，像发微信一样就好。</div>
+<div class="b b-her mid">我能帮你看日程、定提醒、上网查东西，也能替你在手机上动手。做有风险的事之前，我都会先问你。</div>
+<div class="b b-her mid">我该怎么称呼你？</div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-her"><span class="chip-ic" style="background: var(--her-soft)"><svg class="i i-xs"><use href="#i-ask"></use></svg></span>先从哪件事开始？</div>
+<div class="opts"><button class="opt">帮我理清今天要做的事</button><button class="opt">到某个时间提醒我</button><button class="opt">记下一项我希望你以后知道的偏好</button></div>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">叫我什么都行…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">首次见面<span>她先开口</span></span>
+</div>
+
+<!-- 2 · 空状态 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="empty">
+<span class="av av-120"><img src="../../../packages/web/avatars/default.webp" alt=""></span>
+<span class="tx-title" style="margin-top: 8px">有事就跟我说</span>
+<span class="tx-callout">像发微信一样就行，比如：</span>
+<div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; font-size: 14px; line-height: 21px; color: var(--text-2)">
+<span>「明早 8 点提醒我带伞」</span>
+<span>「我今天下午有什么安排？」</span>
+<span>「帮我查一下最近的加油站」</span>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">空状态<span>还没说过话</span></span>
+</div>
+
+<!-- 3 · 载入中 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state"><span class="spinner" style="width: 9px; height: 9px; border-width: 1.6px; border-color: var(--surface-3); border-top-color: var(--text-3)"></span>连接中…</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream" style="gap: 10px">
+<div class="sk" style="width: 58%; height: 44px; border-radius: 20px 20px 20px 6px"></div>
+<div class="sk" style="width: 74%; height: 92px; border-radius: 20px 20px 20px 6px"></div>
+<div class="sk" style="width: 46%; height: 44px; border-radius: 20px 20px 6px 20px; align-self: flex-end"></div>
+<div class="sk" style="width: 66%; height: 68px; border-radius: 20px 20px 20px 6px"></div>
+<div class="sk" style="width: 52%; height: 44px; border-radius: 20px 20px 6px 20px; align-self: flex-end"></div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">载入中<span>骨架气泡，不写「正在载入」</span></span>
+</div>
+
+<!-- 4 · 离线 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36" style="opacity: .55"><img src="../../../packages/web/avatars/resting.webp" alt=""><span class="dot off"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">离线，正在重连…</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="banner" style="background: var(--surface-2); color: var(--text-2)"><svg class="i i-s"><use href="#i-wifioff"></use></svg><span style="flex: 1">暂时连不上 Ash。你写的消息会先存着，连上就发。</span></div>
+<div class="stream">
+<span class="daysep">昨天 22:40</span>
+<div class="row her"><div class="b b-her">明早 7:30 提醒你出门，已经定好了。</div></div>
+<div class="gap-s"></div>
+<span class="daysep">今天 07:05</span>
+<div class="row me"><div class="b b-me" style="opacity: .7">改成 7:45 吧，今天晚点走</div><span class="meta-pending"><svg class="i i-xs"><use href="#i-clock"></use></svg>等连上就发</span></div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">离线<span>头像变灰，消息先存着</span></span>
+</div>
+
+<!-- 5 · 跟谁说（@） -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row me"><div class="b b-me">下周的周报要准备了</div></div>
+<div class="row her"><div class="b b-her">好，我让小研先把这周的资料整理出来。</div></div>
+</div>
+<div class="scrim"></div>
+<div class="sheet">
+<span class="grabber"></span>
+<span class="tx-headline" style="padding: 0 4px">跟谁说</span>
+<div class="list" style="box-shadow: none; background: var(--surface-2)">
+<div class="li"><span class="av av-40"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot" style="border-color: var(--surface-2)"></span></span><span class="lt"><span class="t">Ash</span><span class="s">在线</span></span><svg class="i c-you"><use href="#i-check"></use></svg></div>
+<div class="li"><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #7C6CF2">研</span><span class="lt"><span class="t">小研</span><span class="s c-her">在整理这周的资料</span></span></div>
+<div class="li"><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #E0864A">账</span><span class="lt"><span class="t">记账员</span><span class="s">就绪</span></span></div>
+<div class="li" style="opacity: .5"><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #8E9199">译</span><span class="lt"><span class="t">翻译</span><span class="s">暂时用不了</span></span></div>
+</div>
+<span class="tx-caption" style="padding: 0 4px">在输入框里打 @ 也能选。帮手都由 Ash 带着。</span>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">跟谁说<span>点输入框里的小头像</span></span>
+</div>
+
+<!-- 6 · 附件 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row her"><div class="b b-her">发张照片给我看看？</div></div>
+</div>
+<div class="scrim"></div>
+<div class="sheet">
+<span class="grabber"></span>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 6px 0 4px">
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-camera"></use></svg></span>拍照</button>
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-video"></use></svg></span>录像</button>
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-image"></use></svg></span>相册</button>
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-file"></use></svg></span>文件</button>
+</div>
+<div style="display: flex; gap: 8px; overflow: hidden">
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #A7C4D9, #48708C); flex: none"></div>
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #E3C9A0, #A0764A); flex: none"></div>
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #B9D3B0, #5D8355); flex: none"></div>
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #D6B8C8, #8A5E77); flex: none"></div>
+</div>
+<span class="tx-caption" style="padding: 0 2px">一条消息最多带约 3 MB</span>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">附件<span>最近的照片直接点选</span></span>
+</div>
+
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">暗色</span>
+<div class="board-row">
+
+<!-- 1 · 首次见面 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 18px">
+<span class="av av-88 av-breath"><img src="../../../packages/web/avatars/success.webp" alt=""></span>
+<span class="tx-headline">Ash</span>
+<span class="tx-caption">刚刚住进你的手机</span>
+</div>
+<div class="row her">
+<div class="b b-her">你好呀，我是 Ash。以后有事直接跟我说，像发微信一样就好。</div>
+<div class="b b-her mid">我能帮你看日程、定提醒、上网查东西，也能替你在手机上动手。做有风险的事之前，我都会先问你。</div>
+<div class="b b-her mid">我该怎么称呼你？</div>
+</div>
+<div class="gap-s"></div>
+<div class="card">
+<div class="card-hd c-her"><span class="chip-ic" style="background: var(--her-soft)"><svg class="i i-xs"><use href="#i-ask"></use></svg></span>先从哪件事开始？</div>
+<div class="opts"><button class="opt">帮我理清今天要做的事</button><button class="opt">到某个时间提醒我</button><button class="opt">记下一项我希望你以后知道的偏好</button></div>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">叫我什么都行…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">首次见面<span>她先开口</span></span>
+</div>
+
+<!-- 2 · 空状态 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="empty">
+<span class="av av-120"><img src="../../../packages/web/avatars/default.webp" alt=""></span>
+<span class="tx-title" style="margin-top: 8px">有事就跟我说</span>
+<span class="tx-callout">像发微信一样就行，比如：</span>
+<div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; font-size: 14px; line-height: 21px; color: var(--text-2)">
+<span>「明早 8 点提醒我带伞」</span>
+<span>「我今天下午有什么安排？」</span>
+<span>「帮我查一下最近的加油站」</span>
+</div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">空状态<span>还没说过话</span></span>
+</div>
+
+<!-- 3 · 载入中 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state"><span class="spinner" style="width: 9px; height: 9px; border-width: 1.6px; border-color: var(--surface-3); border-top-color: var(--text-3)"></span>连接中…</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream" style="gap: 10px">
+<div class="sk" style="width: 58%; height: 44px; border-radius: 20px 20px 20px 6px"></div>
+<div class="sk" style="width: 74%; height: 92px; border-radius: 20px 20px 20px 6px"></div>
+<div class="sk" style="width: 46%; height: 44px; border-radius: 20px 20px 6px 20px; align-self: flex-end"></div>
+<div class="sk" style="width: 66%; height: 68px; border-radius: 20px 20px 20px 6px"></div>
+<div class="sk" style="width: 52%; height: 44px; border-radius: 20px 20px 6px 20px; align-self: flex-end"></div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">载入中<span>骨架气泡，不写「正在载入」</span></span>
+</div>
+
+<!-- 4 · 离线 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36" style="opacity: .55"><img src="../../../packages/web/avatars/resting.webp" alt=""><span class="dot off"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">离线，正在重连…</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="banner" style="background: var(--surface-2); color: var(--text-2)"><svg class="i i-s"><use href="#i-wifioff"></use></svg><span style="flex: 1">暂时连不上 Ash。你写的消息会先存着，连上就发。</span></div>
+<div class="stream">
+<span class="daysep">昨天 22:40</span>
+<div class="row her"><div class="b b-her">明早 7:30 提醒你出门，已经定好了。</div></div>
+<div class="gap-s"></div>
+<span class="daysep">今天 07:05</span>
+<div class="row me"><div class="b b-me" style="opacity: .7">改成 7:45 吧，今天晚点走</div><span class="meta-pending"><svg class="i i-xs"><use href="#i-clock"></use></svg>等连上就发</span></div>
+</div>
+<div class="composer">
+<button class="plus" aria-label="附件"><svg class="i"><use href="#i-plus"></use></svg></button>
+<label class="field"><button class="to" aria-label="正在跟 Ash 说，点按换人"><img src="../../../packages/web/avatars/default.webp" alt=""></button><span class="ph">跟 Ash 说点什么…</span></label>
+<button class="send idle" aria-label="发送"><svg class="i"><use href="#i-up"></use></svg></button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">离线<span>头像变灰，消息先存着</span></span>
+</div>
+
+<!-- 5 · 跟谁说（@） -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row me"><div class="b b-me">下周的周报要准备了</div></div>
+<div class="row her"><div class="b b-her">好，我让小研先把这周的资料整理出来。</div></div>
+</div>
+<div class="scrim"></div>
+<div class="sheet">
+<span class="grabber"></span>
+<span class="tx-headline" style="padding: 0 4px">跟谁说</span>
+<div class="list" style="box-shadow: none; background: var(--surface-2)">
+<div class="li"><span class="av av-40"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot" style="border-color: var(--surface-2)"></span></span><span class="lt"><span class="t">Ash</span><span class="s">在线</span></span><svg class="i c-you"><use href="#i-check"></use></svg></div>
+<div class="li"><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #7C6CF2">研</span><span class="lt"><span class="t">小研</span><span class="s c-her">在整理这周的资料</span></span></div>
+<div class="li"><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #E0864A">账</span><span class="lt"><span class="t">记账员</span><span class="s">就绪</span></span></div>
+<div class="li" style="opacity: .5"><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #8E9199">译</span><span class="lt"><span class="t">翻译</span><span class="s">暂时用不了</span></span></div>
+</div>
+<span class="tx-caption" style="padding: 0 4px">在输入框里打 @ 也能选。帮手都由 Ash 带着。</span>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">跟谁说<span>点输入框里的小头像</span></span>
+</div>
+
+<!-- 6 · 附件 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="topbar">
+<button class="who" aria-label="打开 Ash 的主页"><span class="av av-36"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot"></span></span><span style="display: flex; flex-direction: column"><span class="name">Ash</span><span class="state">在线</span></span></button>
+<button class="iconbtn" aria-label="应用"><svg class="i"><use href="#i-grid"></use></svg></button>
+</div>
+<div class="stream">
+<div class="row her"><div class="b b-her">发张照片给我看看？</div></div>
+</div>
+<div class="scrim"></div>
+<div class="sheet">
+<span class="grabber"></span>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 6px 0 4px">
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-camera"></use></svg></span>拍照</button>
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-video"></use></svg></span>录像</button>
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-image"></use></svg></span>相册</button>
+<button style="display: flex; flex-direction: column; align-items: center; gap: 8px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text)"><span style="width: 60px; height: 60px; border-radius: 20px; background: var(--surface-2); display: flex; align-items: center; justify-content: center"><svg class="i i-l"><use href="#i-file"></use></svg></span>文件</button>
+</div>
+<div style="display: flex; gap: 8px; overflow: hidden">
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #A7C4D9, #48708C); flex: none"></div>
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #E3C9A0, #A0764A); flex: none"></div>
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #B9D3B0, #5D8355); flex: none"></div>
+<div style="width: 84px; height: 84px; border-radius: 14px; background: linear-gradient(160deg, #D6B8C8, #8A5E77); flex: none"></div>
+</div>
+<span class="tx-caption" style="padding: 0 2px">一条消息最多带约 3 MB</span>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">附件<span>最近的照片直接点选</span></span>
+</div>
+
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>引导</title>
+
+<link rel="stylesheet" href="./ash.css">
+</head>
+<body>
+
+
+<style>body{margin:0}</style>
+
+<div class="board board-light" style="width: 2344px; height: 2190px">
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"></path></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"></path></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"></path><path d="M10 20.5a2 2 0 0 0 4 0"></path></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+</svg>
+
+<div style="display: flex; align-items: flex-end; justify-content: space-between">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 13px; letter-spacing: .08em; color: #7A7C83; font-weight: 600">E · 引导（原生，新装后）　F · 诊断 = 主页里的「她的手和眼」</span>
+<h1 style="margin: 0; font-size: 40px; font-weight: 700; color: #111113">她一次只问你一件事</h1>
+</div>
+<p style="margin: 0; max-width: 820px; font-size: 15px; line-height: 1.65; color: #5A5C63">原来是一张十几项的权限清单。现在是她开口：为什么需要、开了你会得到什么，一屏一件；你可以「先不用」。要紧的先问（通知、在后台醒着、眼睛和手），可选的放后面（位置、健康）。原生诊断页和主页的「她的手和眼」长一个样，不再单独画。</p>
+</div>
+
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">亮色</span>
+<div class="board-row">
+
+<!-- 1 · 你好 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div style="position: absolute; left: 50%; top: 150px; width: 460px; height: 460px; margin-left: -230px; background: radial-gradient(closest-side, var(--her-soft), transparent); pointer-events: none"></div>
+<div class="sb"></div>
+<div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 32px; text-align: center; position: relative">
+<span class="av av-breath" style="width: 136px; height: 136px"><img src="../../../packages/web/avatars/default.webp" alt=""></span>
+<span style="font-size: 32px; line-height: 40px; font-weight: 700; color: var(--ink); margin-top: 16px">你好，我是 Ash</span>
+<span style="font-size: 16px; line-height: 26px; color: var(--text-2)">我会住在你的手机里，帮你记事、提醒、跑腿。<br>先花两分钟，让我准备好。</span>
+</div>
+<div style="padding: 0 20px 40px; position: relative"><button class="btn btn-primary btn-lg btn-block">开始</button></div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">你好<span>先认识她</span></span>
+</div>
+
+<!-- 2 · 大脑 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 32px; text-align: center">
+<div style="position: relative; width: 176px; height: 176px">
+<svg width="176" height="176" viewBox="0 0 176 176" aria-hidden="true" style="position: absolute; inset: 0"><circle cx="88" cy="88" r="82" fill="none" stroke="var(--surface-3)" stroke-width="5"></circle><circle cx="88" cy="88" r="82" fill="none" stroke="var(--her-fill)" stroke-width="5" stroke-linecap="round" stroke-dasharray="320 515" transform="rotate(-90 88 88)"></circle></svg>
+<span class="av" style="position: absolute; left: 28px; top: 28px; width: 120px; height: 120px"><img src="../../../packages/web/avatars/thinking.webp" alt="" style="border-radius: 50%"></span>
+</div>
+<span class="tx-num" style="font-size: 15px; font-weight: 600; color: var(--her)">正在下载 62%</span>
+<span style="font-size: 20px; line-height: 30px; font-weight: 600; color: var(--ink); margin-top: 6px">我先把自己的大脑装好</span>
+<span style="font-size: 15px; line-height: 24px; color: var(--text-2)">一两分钟。装好后系统会问你一次，请选「始终允许」。</span>
+</div>
+<div style="padding: 0 20px 40px"><button class="btn btn-neutral btn-lg btn-block" disabled="{{ true }}">请稍等</button></div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">大脑<span>进度就是她身边的那圈光</span></span>
+</div>
+
+<!-- 3 · 一次一件：通知 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div style="display: flex; justify-content: center; gap: 6px; padding: 16px 0 0">
+<span style="width: 18px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span>
+</div>
+<div style="flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 24px 24px; gap: 22px">
+<div style="display: flex; gap: 12px; align-items: flex-end">
+<span class="av av-40"><img src="../../../packages/web/avatars/default.webp" alt=""></span>
+<div class="b b-her" style="max-width: none; font-size: 17px; line-height: 27px">到点提醒你、要你确认的事，我都靠<b style="font-weight: 650">通知</b>告诉你。</div>
+</div>
+<div style="margin: 18px 6px 0; padding: 14px; border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-2); display: flex; gap: 12px; align-items: center; transform: rotate(-1.5deg)">
+<span class="av av-40"><img src="../../../packages/web/avatars/success.webp" alt=""></span>
+<span style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="display: flex; justify-content: space-between"><span style="font-size: 13px; font-weight: 600; color: var(--ink)">Ash</span><span class="tx-caption">现在</span></span><span style="font-size: 14px; color: var(--text)">07:45 了，该出门了，外面有点凉。</span></span>
+</div>
+<span class="tx-caption" style="text-align: center">开了之后，你会收到这样的提醒</span>
+</div>
+<div style="padding: 0 20px 34px; display: flex; flex-direction: column; gap: 4px">
+<button class="btn btn-primary btn-lg btn-block"><svg class="i i-s"><use href="#i-bell"></use></svg>好，打开通知</button>
+<button class="btn btn-ghost btn-block" style="color: var(--text-2)">先不用</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">一次一件<span>她说为什么，你看到会得到什么</span></span>
+</div>
+
+<!-- 4 · 要你亲手开的 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div style="display: flex; justify-content: center; gap: 6px; padding: 16px 0 0">
+<span style="width: 6px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 18px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span>
+</div>
+<div style="flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 24px 24px; gap: 18px">
+<div style="display: flex; gap: 12px; align-items: flex-end">
+<span class="av av-40"><img src="../../../packages/web/avatars/listening.webp" alt=""></span>
+<div class="b b-her" style="max-width: none; font-size: 17px; line-height: 27px">我想看懂屏幕、替你点按。这一项要你<b style="font-weight: 650">亲手</b>打开，我陪你走一遍：</div>
+</div>
+<div style="margin-top: 10px; border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-1); overflow: hidden">
+<div style="padding: 10px 14px; font-size: 12px; color: var(--text-3); border-bottom: .5px solid var(--line)">系统设置 › 无障碍 › 已下载的应用</div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; opacity: .45"><span style="width: 28px; height: 28px; border-radius: 8px; background: var(--surface-3)"></span><span style="flex: 1; font-size: 14.5px; color: var(--text)">其他应用</span><span class="sw"></span></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--you-soft); box-shadow: inset 3px 0 0 var(--you)"><svg width="28" height="28" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="#FFF3EA"></rect><circle cx="256" cy="256" r="150" fill="none" stroke="#4CC7BE" stroke-width="40" stroke-linecap="round" stroke-dasharray="700 943" transform="rotate(-120 256 256)"></circle><circle cx="256" cy="256" r="62" fill="#F2704E"></circle></svg><span style="flex: 1; font-size: 14.5px; font-weight: 600; color: var(--ink)">Ash</span><span class="sw on"></span></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 21px; color: var(--text-2); padding: 0 4px">
+<span>1　点下面的按钮，会跳到系统的无障碍设置</span>
+<span>2　找到「Ash」，把开关打开</span>
+<span>3　按返回，回到这里</span>
+</div>
+</div>
+<div style="padding: 0 20px 34px; display: flex; flex-direction: column; gap: 4px">
+<button class="btn btn-primary btn-lg btn-block"><svg class="i i-s"><use href="#i-eye"></use></svg>去打开</button>
+<button class="btn btn-ghost btn-block" style="color: var(--text-2)">先不用</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">要你亲手开的<span>画出系统里那一行</span></span>
+</div>
+
+<!-- 5 · 准备好了 -->
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div style="flex: 1; display: flex; flex-direction: column; align-items: center; padding: 72px 24px 0; gap: 10px; text-align: center">
+<div style="position: relative; width: 168px; height: 168px">
+<svg width="168" height="168" viewBox="0 0 168 168" aria-hidden="true" style="position: absolute; inset: 0"><circle cx="84" cy="84" r="78" fill="none" stroke="var(--surface-3)" stroke-width="5"></circle><circle cx="84" cy="84" r="78" fill="none" stroke="var(--her-fill)" stroke-width="5" stroke-linecap="round" stroke-dasharray="368 490" transform="rotate(-90 84 84)"></circle></svg>
+<span class="av" style="position: absolute; left: 24px; top: 24px; width: 120px; height: 120px"><img src="../../../packages/web/avatars/success.webp" alt="" style="border-radius: 50%"></span>
+</div>
+<span class="tx-display" style="margin-top: 14px">准备好了</span>
+<span style="font-size: 15.5px; line-height: 25px; color: var(--text-2)">开了 9 项。这 3 项你先没开，<br>需要时在我的主页里随时能开：</span>
+<div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px">
+<span class="tag tag-mute" style="height: 30px; padding: 0 12px; font-size: 13px">悬浮窗</span><span class="tag tag-mute" style="height: 30px; padding: 0 12px; font-size: 13px">位置</span><span class="tag tag-mute" style="height: 30px; padding: 0 12px; font-size: 13px">健康数据</span>
+</div>
+</div>
+<div style="padding: 0 20px 40px"><button class="btn btn-primary btn-lg btn-block">去跟她说话</button></div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">准备好了<span>光圈 = 开了多少</span></span>
+</div>
+
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">暗色</span>
+<div class="board-row">
+
+<!-- 1 · 你好 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div style="position: absolute; left: 50%; top: 150px; width: 460px; height: 460px; margin-left: -230px; background: radial-gradient(closest-side, var(--her-soft), transparent); pointer-events: none"></div>
+<div class="sb"></div>
+<div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 32px; text-align: center; position: relative">
+<span class="av av-breath" style="width: 136px; height: 136px"><img src="../../../packages/web/avatars/default.webp" alt=""></span>
+<span style="font-size: 32px; line-height: 40px; font-weight: 700; color: var(--ink); margin-top: 16px">你好，我是 Ash</span>
+<span style="font-size: 16px; line-height: 26px; color: var(--text-2)">我会住在你的手机里，帮你记事、提醒、跑腿。<br>先花两分钟，让我准备好。</span>
+</div>
+<div style="padding: 0 20px 40px; position: relative"><button class="btn btn-primary btn-lg btn-block">开始</button></div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">你好<span>先认识她</span></span>
+</div>
+
+<!-- 2 · 大脑 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 32px; text-align: center">
+<div style="position: relative; width: 176px; height: 176px">
+<svg width="176" height="176" viewBox="0 0 176 176" aria-hidden="true" style="position: absolute; inset: 0"><circle cx="88" cy="88" r="82" fill="none" stroke="var(--surface-3)" stroke-width="5"></circle><circle cx="88" cy="88" r="82" fill="none" stroke="var(--her-fill)" stroke-width="5" stroke-linecap="round" stroke-dasharray="320 515" transform="rotate(-90 88 88)"></circle></svg>
+<span class="av" style="position: absolute; left: 28px; top: 28px; width: 120px; height: 120px"><img src="../../../packages/web/avatars/thinking.webp" alt="" style="border-radius: 50%"></span>
+</div>
+<span class="tx-num" style="font-size: 15px; font-weight: 600; color: var(--her)">正在下载 62%</span>
+<span style="font-size: 20px; line-height: 30px; font-weight: 600; color: var(--ink); margin-top: 6px">我先把自己的大脑装好</span>
+<span style="font-size: 15px; line-height: 24px; color: var(--text-2)">一两分钟。装好后系统会问你一次，请选「始终允许」。</span>
+</div>
+<div style="padding: 0 20px 40px"><button class="btn btn-neutral btn-lg btn-block" disabled="{{ true }}">请稍等</button></div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">大脑<span>进度就是她身边的那圈光</span></span>
+</div>
+
+<!-- 3 · 一次一件：通知 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div style="display: flex; justify-content: center; gap: 6px; padding: 16px 0 0">
+<span style="width: 18px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span>
+</div>
+<div style="flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 24px 24px; gap: 22px">
+<div style="display: flex; gap: 12px; align-items: flex-end">
+<span class="av av-40"><img src="../../../packages/web/avatars/default.webp" alt=""></span>
+<div class="b b-her" style="max-width: none; font-size: 17px; line-height: 27px">到点提醒你、要你确认的事，我都靠<b style="font-weight: 650">通知</b>告诉你。</div>
+</div>
+<div style="margin: 18px 6px 0; padding: 14px; border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-2); display: flex; gap: 12px; align-items: center; transform: rotate(-1.5deg)">
+<span class="av av-40"><img src="../../../packages/web/avatars/success.webp" alt=""></span>
+<span style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="display: flex; justify-content: space-between"><span style="font-size: 13px; font-weight: 600; color: var(--ink)">Ash</span><span class="tx-caption">现在</span></span><span style="font-size: 14px; color: var(--text)">07:45 了，该出门了，外面有点凉。</span></span>
+</div>
+<span class="tx-caption" style="text-align: center">开了之后，你会收到这样的提醒</span>
+</div>
+<div style="padding: 0 20px 34px; display: flex; flex-direction: column; gap: 4px">
+<button class="btn btn-primary btn-lg btn-block"><svg class="i i-s"><use href="#i-bell"></use></svg>好，打开通知</button>
+<button class="btn btn-ghost btn-block" style="color: var(--text-2)">先不用</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">一次一件<span>她说为什么，你看到会得到什么</span></span>
+</div>
+
+<!-- 4 · 要你亲手开的 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div style="display: flex; justify-content: center; gap: 6px; padding: 16px 0 0">
+<span style="width: 6px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 18px; height: 6px; border-radius: 3px; background: var(--ink)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span><span style="width: 6px; height: 6px; border-radius: 3px; background: var(--surface-3)"></span>
+</div>
+<div style="flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 24px 24px; gap: 18px">
+<div style="display: flex; gap: 12px; align-items: flex-end">
+<span class="av av-40"><img src="../../../packages/web/avatars/listening.webp" alt=""></span>
+<div class="b b-her" style="max-width: none; font-size: 17px; line-height: 27px">我想看懂屏幕、替你点按。这一项要你<b style="font-weight: 650">亲手</b>打开，我陪你走一遍：</div>
+</div>
+<div style="margin-top: 10px; border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-1); overflow: hidden">
+<div style="padding: 10px 14px; font-size: 12px; color: var(--text-3); border-bottom: .5px solid var(--line)">系统设置 › 无障碍 › 已下载的应用</div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; opacity: .45"><span style="width: 28px; height: 28px; border-radius: 8px; background: var(--surface-3)"></span><span style="flex: 1; font-size: 14.5px; color: var(--text)">其他应用</span><span class="sw"></span></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--you-soft); box-shadow: inset 3px 0 0 var(--you)"><svg width="28" height="28" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="#FFF3EA"></rect><circle cx="256" cy="256" r="150" fill="none" stroke="#4CC7BE" stroke-width="40" stroke-linecap="round" stroke-dasharray="700 943" transform="rotate(-120 256 256)"></circle><circle cx="256" cy="256" r="62" fill="#F2704E"></circle></svg><span style="flex: 1; font-size: 14.5px; font-weight: 600; color: var(--ink)">Ash</span><span class="sw on"></span></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 21px; color: var(--text-2); padding: 0 4px">
+<span>1　点下面的按钮，会跳到系统的无障碍设置</span>
+<span>2　找到「Ash」，把开关打开</span>
+<span>3　按返回，回到这里</span>
+</div>
+</div>
+<div style="padding: 0 20px 34px; display: flex; flex-direction: column; gap: 4px">
+<button class="btn btn-primary btn-lg btn-block"><svg class="i i-s"><use href="#i-eye"></use></svg>去打开</button>
+<button class="btn btn-ghost btn-block" style="color: var(--text-2)">先不用</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">要你亲手开的<span>画出系统里那一行</span></span>
+</div>
+
+<!-- 5 · 准备好了 -->
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div style="flex: 1; display: flex; flex-direction: column; align-items: center; padding: 72px 24px 0; gap: 10px; text-align: center">
+<div style="position: relative; width: 168px; height: 168px">
+<svg width="168" height="168" viewBox="0 0 168 168" aria-hidden="true" style="position: absolute; inset: 0"><circle cx="84" cy="84" r="78" fill="none" stroke="var(--surface-3)" stroke-width="5"></circle><circle cx="84" cy="84" r="78" fill="none" stroke="var(--her-fill)" stroke-width="5" stroke-linecap="round" stroke-dasharray="368 490" transform="rotate(-90 84 84)"></circle></svg>
+<span class="av" style="position: absolute; left: 24px; top: 24px; width: 120px; height: 120px"><img src="../../../packages/web/avatars/success.webp" alt="" style="border-radius: 50%"></span>
+</div>
+<span class="tx-display" style="margin-top: 14px">准备好了</span>
+<span style="font-size: 15.5px; line-height: 25px; color: var(--text-2)">开了 9 项。这 3 项你先没开，<br>需要时在我的主页里随时能开：</span>
+<div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px">
+<span class="tag tag-mute" style="height: 30px; padding: 0 12px; font-size: 13px">悬浮窗</span><span class="tag tag-mute" style="height: 30px; padding: 0 12px; font-size: 13px">位置</span><span class="tag tag-mute" style="height: 30px; padding: 0 12px; font-size: 13px">健康数据</span>
+</div>
+</div>
+<div style="padding: 0 20px 40px"><button class="btn btn-primary btn-lg btn-block">去跟她说话</button></div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">准备好了<span>光圈 = 开了多少</span></span>
+</div>
+
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

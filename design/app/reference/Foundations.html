@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>设计系统 · 基础</title>
+
+<link rel="stylesheet" href="./ash.css">
+</head>
+<body>
+
+
+<style>body{margin:0}</style>
+
+<div class="board board-light t-light" style="width: 2200px; height: 2900px; background: #F2ECE6; gap: 40px">
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11.5c0 4.14-3.58 7.5-8 7.5-1.2 0-2.33-.24-3.35-.68L4 19.5l1.25-3.55A7.2 7.2 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5z"></path></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2.2"></rect><rect x="13" y="4" width="7" height="7" rx="2.2"></rect><rect x="4" y="13" width="7" height="7" rx="2.2"></rect><rect x="13" y="13" width="7" height="7" rx="2.2"></rect></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5.5L8.5 12l6.5 6.5"></path></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"></path></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"></path></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5.5M6.5 11l5.5-5.5 5.5 5.5"></path></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5l7 2.8v5.2c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6.3z"></path></symbol>
+<symbol id="i-ask" viewBox="0 0 24 24"><path d="M20 11.5c0 4.14-3.58 7.5-8 7.5-1.2 0-2.33-.24-3.35-.68L4 19.5l1.25-3.55A7.2 7.2 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5z"></path><path d="M10 9.6a2 2 0 1 1 2.6 1.9c-.4.15-.6.5-.6.9v.6"></path><circle cx="12" cy="15.4" r=".4"></circle></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.8v5"></path><circle cx="12" cy="16.2" r=".4"></circle></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"></path></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"></path></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"></circle><path d="M10.8 12.2L20 3M16.5 6.5l2.5 2.5M14 9l2 2"></path></symbol>
+<symbol id="i-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="2"></rect><path d="M2.5 19h19"></path></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"></path></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"></rect><path d="M11 18.5h2"></path></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"></path></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"></path><path d="M10 20.5a2 2 0 0 0 4 0"></path></symbol>
+<symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"></path></symbol>
+<symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"></rect><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"></path></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6.5v11M15 6.5v11"></path></symbol>
+<symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8.5a2 2 0 0 1 2-2h1.8l1.4-2h5.6l1.4 2H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"></path><circle cx="12" cy="12.5" r="3.5"></circle></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M20.5 16l-5-5-8 8.5"></path></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"></path><path d="M14 3.5V8h4.5"></path></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M6.5 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5l1-12.5"></path></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"></path><path d="M20 4v4.5h-4.5"></path></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+<symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"></path></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></symbol>
+</svg>
+
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 13px; letter-spacing: .08em; color: #7A7C83; font-weight: 600">设计系统 · 基础（从灵动岛延伸）</span>
+<h1 style="margin: 0; font-size: 44px; font-weight: 700; color: #111113">暖光：奶油白的底，珊瑚的暖，一点薄荷青</h1>
+<p style="margin: 6px 0 0; max-width: 1180px; font-size: 16px; line-height: 1.65; color: #5A5C63">Ash 是陪伴型助理，所以底子要亮、要暖：奶油白代替冷灰，暖深棕代替纯黑，阴影也带一点暖。两支亮色：<b style="color: #C8502F">珊瑚橙</b>是 Ash 这个牌子，也是你的动作（主按钮、发送、你的蜜桃色气泡）；<b style="color: #0E8A80">薄荷青</b>是她醒着、在做事，来自头像耳机上的光。一暖一清，有生气不刺眼。暗色是暖炭灰，不是纯黑；灵动岛保持原样。</p>
+</div>
+
+<!-- 品牌 -->
+<div style="display: flex; gap: 32px; align-items: stretch">
+<div style="flex: 1.2; background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; gap: 36px; align-items: center">
+<svg width="200" height="200" viewBox="0 0 512 512" aria-label="Ash 新图标"><rect width="512" height="512" rx="116" fill="#FFF3EA"></rect><circle cx="256" cy="256" r="150" fill="none" stroke="#F6DFD0" stroke-width="30"></circle><circle cx="256" cy="256" r="150" fill="none" stroke="#4CC7BE" stroke-width="30" stroke-linecap="round" stroke-dasharray="700 943" transform="rotate(-120 256 256)"></circle><circle cx="256" cy="256" r="52" fill="#F2704E"></circle></svg>
+<div style="display: flex; flex-direction: column; gap: 14px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">新图标：一点暖光，一圈她</span>
+<span style="font-size: 15px; line-height: 1.7; color: #5A5C63; max-width: 420px">奶油色底，中心一颗珊瑚色的暖光（牌子），外面一段薄荷青的环（她醒着），就是灵动岛里「正在做事」的那个环。亮、暖、干净，放在任何壁纸上都显眼，小到 48dp 也认得出。</span>
+<div style="display: flex; gap: 16px; align-items: center">
+<svg width="64" height="64" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="#FFF3EA"></rect><circle cx="256" cy="256" r="150" fill="none" stroke="#F6DFD0" stroke-width="34"></circle><circle cx="256" cy="256" r="150" fill="none" stroke="#4CC7BE" stroke-width="34" stroke-linecap="round" stroke-dasharray="700 943" transform="rotate(-120 256 256)"></circle><circle cx="256" cy="256" r="56" fill="#F2704E"></circle></svg>
+<svg width="44" height="44" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="#FFF3EA"></rect><circle cx="256" cy="256" r="150" fill="none" stroke="#4CC7BE" stroke-width="40" stroke-linecap="round" stroke-dasharray="700 943" transform="rotate(-120 256 256)"></circle><circle cx="256" cy="256" r="62" fill="#F2704E"></circle></svg>
+<svg width="64" height="64" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="256" fill="#3A3D44"></rect><circle cx="256" cy="256" r="150" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-dasharray="700 943" transform="rotate(-120 256 256)"></circle><circle cx="256" cy="256" r="56" fill="#FFFFFF"></circle></svg>
+<span style="font-size: 12.5px; color: #8E9199">桌面 · 小尺寸 · 安卓单色主题图标</span>
+</div>
+</div>
+</div>
+<div style="flex: 1; background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; flex-direction: column; gap: 18px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">头像就是她的表情</span>
+<div style="display: flex; gap: 22px; align-items: flex-start">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px"><span class="av av-56"><img src="../../../packages/web/avatars/default.webp" alt=""><span class="dot" style="border-color: #fff"></span></span><span style="font-size: 12.5px; color: #5A5C63">在线</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px"><span class="av av-56 av-breath"><img src="../../../packages/web/avatars/thinking.webp" alt=""></span><span style="font-size: 12.5px; color: #5A5C63">在想 · 呼吸</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px"><span class="av av-56 av-live"><img src="../../../packages/web/avatars/focused.webp" alt=""></span><span style="font-size: 12.5px; color: #5A5C63">在做事 · 光环转</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px"><span class="av av-56 av-wait"><img src="../../../packages/web/avatars/listening.webp" alt=""></span><span style="font-size: 12.5px; color: #5A5C63">等你 · 琥珀</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px"><span class="av av-56" style="opacity: .55"><img src="../../../packages/web/avatars/resting.webp" alt=""><span class="dot off" style="border-color: #fff"></span></span><span style="font-size: 12.5px; color: #5A5C63">离线 · 变淡</span></div>
+</div>
+<span style="font-size: 14px; line-height: 1.65; color: #5A5C63">圆角方形（32%），和岛上卡片的头像一致。表情跟着状态换（沿用岛的对应表）；光环只在她真的在做事时出现，平时安安静静。子 agent 用字母头像：圆角方形 + 一个字。</span>
+<div style="display: flex; gap: 10px; align-items: center"><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #7C6CF2">研</span><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #E0864A">账</span><span class="av-letter" style="width: 40px; height: 40px; font-size: 17px; background: #2F9E8F">译</span><span style="font-size: 12.5px; color: #8E9199">帮手头像 · 颜色从 6 个里按名字取</span></div>
+</div>
+</div>
+
+<!-- 颜色 -->
+<div style="background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; flex-direction: column; gap: 22px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">颜色 · 每一格左亮右暗</span>
+<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 18px">
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #FFF8F1"></span><span style="flex: 1; background: #1B1715"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">底色</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--bg · #FFF8F1 / #1B1715</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">奶油白 / 暖炭灰：页面和对话的背景</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #FFFFFF"></span><span style="flex: 1; background: #25201D"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">卡面</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--surface · #FFFFFF / #25201D</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">列表、卡片、她的气泡</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #FBEFE5"></span><span style="flex: 1; background: #2E2825"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">浅填充</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--surface-2 · #FBEFE5 / #2E2825</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">输入框、次要按钮、分段控件</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #FFE2D1"></span><span style="flex: 1; background: #5C3B2B"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">你的气泡</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--bubble-me · #FFE2D1 / #5C3B2B</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">蜜桃色，暖但不抢</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #F0E2D7"></span><span style="flex: 1; background: #342D29"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">分隔线</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--line · #F0E2D7 / #342D29</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">列表分隔、卡片描边</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #2E2420"></span><span style="flex: 1; background: #F6EDE7"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">墨色</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--ink · #2E2420 / #F6EDE7</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">标题：暖深棕，不用纯黑</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #3B302B"></span><span style="flex: 1; background: #EADFD8"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">正文</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--text · #3B302B / #EADFD8</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">正文</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #7C6B62"></span><span style="flex: 1; background: #B7A79E"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">次要文字</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--text-2 · #7C6B62 / #B7A79E</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">说明、列表第二行</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #A8978D"></span><span style="flex: 1; background: #85766E"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">注脚</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--text-3 · #A8978D / #85766E</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">时间、占位文字（只用于非必要信息）</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #F2704E"></span><span style="flex: 1; background: #FF8A66"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">珊瑚橙 · 主色</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--you · #F2704E / #FF8A66</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">牌子色；主按钮、发送（亮色白字，暗色深字）</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #C8502F"></span><span style="flex: 1; background: #FFAA8C"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">珊瑚 · 文字</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--you-text · #C8502F / #FFAA8C</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">链接、文字按钮、约定里可改的词</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #0E8A80"></span><span style="flex: 1; background: #6FDBD2"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">薄荷青 · 她</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--her · #0E8A80 / #6FDBD2</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">她醒着、在做事：状态文字</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #4CC7BE"></span><span style="flex: 1; background: #4CC7BE"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">薄荷 · 填充</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--her-fill · #4CC7BE / #4CC7BE</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">光环、进度条、图标的环</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #A35F00"></span><span style="flex: 1; background: #FFD08A"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">等你 · 琥珀</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--warn · #A35F00 / #FFD08A</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">待审批、需要处理（填充 #F5A623）</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #18804F"></span><span style="flex: 1; background: #6FD9A4"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">完成 · 绿</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--ok · #18804F / #6FD9A4</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">已开、在线、成功（填充 #2BB673）</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #C9302F"></span><span style="flex: 1; background: #FF8A8A"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">出错 · 红</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--err · #C9302F / #FF8A8A</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">失败、删除、停止（填充 #E5484D / #FF6B6B）</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: #101011"></span><span style="flex: 1; background: #101011"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">灵动岛</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">island · #101011 / #101011</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">岛本身，保持原样</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"><span style="flex: 1; background: rgba(46,36,32,.32)"></span><span style="flex: 1; background: rgba(0,0,0,.5)"></span></div>
+<span style="font-size: 14px; font-weight: 600; color: #1C1D20">遮罩</span>
+<span style="font-size: 11.5px; line-height: 16px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">--scrim · rgba(46,36,32,.32) / rgba(0,0,0,.5)</span>
+<span style="font-size: 12.5px; line-height: 18px; color: #5A5C63">抽屉下面的遮罩</span>
+</div>
+
+</div>
+<span style="font-size: 13px; color: #8E9199">正文和说明文字对比度 ≥ 4.5:1；注脚只放非必要信息。珊瑚主按钮上的白字约 3.1:1，按「大号粗体 / 按钮」的 3:1 标准处理（按钮文字 16 号 650）。薄荷、琥珀、绿、红各有「做文字用」和「做填充用」两个值。</span>
+</div>
+
+<!-- 字号 + 间距圆角 -->
+<div style="display: flex; gap: 32px; align-items: stretch">
+<div style="flex: 1.25; background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; flex-direction: column; gap: 16px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">字号阶梯 · 系统字体（MIUI 上是 MiSans，其它是思源黑体）</span>
+<div style="display: flex; align-items: baseline; gap: 24px; border-bottom: 1px solid #ECEDF0; padding-bottom: 12px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">大标题 30/38 · 700</span><span class="tx-display">应用</span></div>
+<div style="display: flex; align-items: baseline; gap: 24px; border-bottom: 1px solid #ECEDF0; padding-bottom: 12px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">标题 22/30 · 650</span><span class="tx-title">有 2 项需要处理</span></div>
+<div style="display: flex; align-items: baseline; gap: 24px; border-bottom: 1px solid #ECEDF0; padding-bottom: 12px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">小标题 17/24 · 600</span><span class="tx-headline">Ash · 你想订哪一个？</span></div>
+<div style="display: flex; align-items: baseline; gap: 24px; border-bottom: 1px solid #ECEDF0; padding-bottom: 12px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">聊天 15.5/24</span><span style="font-size: 15.5px; line-height: 24px; color: #1C1D20">看了一下，周六比周日好，建议周六去。</span></div>
+<div style="display: flex; align-items: baseline; gap: 24px; border-bottom: 1px solid #ECEDF0; padding-bottom: 12px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">正文 15/24</span><span class="tx-body">列表的第一行、按钮、输入框里的字</span></div>
+<div style="display: flex; align-items: baseline; gap: 24px; border-bottom: 1px solid #ECEDF0; padding-bottom: 12px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">说明 14/21</span><span class="tx-callout">卡片里的一句话说明、页面开头的介绍</span></div>
+<div style="display: flex; align-items: baseline; gap: 24px; border-bottom: 1px solid #ECEDF0; padding-bottom: 12px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">辅助 13/19</span><span class="tx-sub">列表第二行：2 台在线 · 1 台等你批准</span></div>
+<div style="display: flex; align-items: baseline; gap: 24px"><span style="width: 150px; font-size: 12.5px; color: #8E9199; font-family: ui-monospace, Menlo, monospace">注脚 11.5/16</span><span class="tx-caption">今天 09:12 · 已读 · 18 KB</span></div>
+<span style="font-size: 13px; color: #8E9199">数字一律等宽（时间、金额、计时不会跳）。字重只用 400 / 600 / 650 / 700 四档；安卓上 650 落到 600。</span>
+</div>
+<div style="flex: 1; background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; flex-direction: column; gap: 22px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">间距 · 圆角 · 阴影</span>
+<div style="display: flex; align-items: flex-end; gap: 14px">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 4px; height: 4px; background: #5AD8DB; border-radius: 1px"></span><span style="font-size: 11.5px; color: #8E9199">4</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 8px; height: 8px; background: #5AD8DB; border-radius: 2px"></span><span style="font-size: 11.5px; color: #8E9199">8</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 12px; height: 12px; background: #5AD8DB; border-radius: 2px"></span><span style="font-size: 11.5px; color: #8E9199">12</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 16px; height: 16px; background: #5AD8DB; border-radius: 3px"></span><span style="font-size: 11.5px; color: #8E9199">16</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 20px; height: 20px; background: #5AD8DB; border-radius: 3px"></span><span style="font-size: 11.5px; color: #8E9199">20</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 24px; height: 24px; background: #5AD8DB; border-radius: 4px"></span><span style="font-size: 11.5px; color: #8E9199">24</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 32px; height: 32px; background: #5AD8DB; border-radius: 5px"></span><span style="font-size: 11.5px; color: #8E9199">32</span></div>
+<span style="font-size: 13px; line-height: 19px; color: #5A5C63; margin-left: 8px">页面左右 16，列表行内 14，卡片之间 10，分组之间 20</span>
+</div>
+<div style="display: flex; gap: 14px; flex-wrap: wrap">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 56px; height: 56px; background: #EEEFF2; border-radius: 8px"></span><span style="font-size: 11.5px; color: #8E9199">8 · 小标签</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 56px; height: 56px; background: #EEEFF2; border-radius: 12px"></span><span style="font-size: 11.5px; color: #8E9199">12 · 代码块</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 56px; height: 56px; background: #EEEFF2; border-radius: 20px"></span><span style="font-size: 11.5px; color: #8E9199">20 · 列表/气泡</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 56px; height: 56px; background: #EEEFF2; border-radius: 22px"></span><span style="font-size: 11.5px; color: #8E9199">22 · 卡片</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 56px; height: 56px; background: #EEEFF2; border-radius: 28px 28px 0 0"></span><span style="font-size: 11.5px; color: #8E9199">28 · 抽屉</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 84px; height: 40px; margin: 8px 0; background: #EEEFF2; border-radius: 20px"></span><span style="font-size: 11.5px; color: #8E9199">全圆 · 按钮</span></div>
+</div>
+<div style="display: flex; gap: 20px; padding: 18px; background: #F4F5F7; border-radius: 20px">
+<div style="flex: 1; height: 72px; background: #fff; border-radius: 18px; box-shadow: 0 1px 2px rgba(17,17,19,.04), 0 1px 6px rgba(17,17,19,.04); display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: #5A5C63">阴影 1 · 卡片、气泡</div>
+<div style="flex: 1; height: 72px; background: #fff; border-radius: 18px; box-shadow: 0 10px 30px rgba(17,17,19,.12), 0 2px 6px rgba(17,17,19,.06); display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: #5A5C63">阴影 2 · 抽屉、提示</div>
+</div>
+<span style="font-size: 13px; line-height: 19px; color: #8E9199">暗色不用阴影，用一层更亮的底色区分层级（和岛一样）。</span>
+</div>
+</div>
+
+<!-- 动效 + 图标 -->
+<div style="display: flex; gap: 32px; align-items: stretch">
+<div style="flex: 1; background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; flex-direction: column; gap: 14px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">动效 · 和岛同一条曲线</span>
+<div style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: #087F85; background: #F4F5F7; border-radius: 12px; padding: 10px 14px">cubic-bezier(.32, .72, 0, 1)</div>
+<div class="list noic t-light" style="box-shadow: none; border: 1px solid #ECEDF0">
+<div class="li noic"><span class="lt"><span class="t">消息出现</span><span class="s">240ms · 从下方 6px 浮上来并淡入；连续多条错开 40ms</span></span></div>
+<div class="li noic"><span class="lt"><span class="t">在想</span><span class="s">头像外圈呼吸 1.8s；顶栏「正在想」三个点</span></span></div>
+<div class="li noic"><span class="lt"><span class="t">在做事</span><span class="s">头像光环转一圈 2.4s；小胶囊里转圈 0.9s</span></span></div>
+<div class="li noic"><span class="lt"><span class="t">抽屉 / 页面</span><span class="s">360ms · 抽屉从底部升起，二级页从右侧推入</span></span></div>
+<div class="li noic"><span class="lt"><span class="t">卡片答完</span><span class="s">按钮区收成一行结果，高度变化 300ms</span></span></div>
+<div class="li noic"><span class="lt"><span class="t">减少动画</span><span class="s">系统开了「移除动画」时，全部改成直接出现</span></span></div>
+</div>
+</div>
+<div style="flex: 1.3; background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; flex-direction: column; gap: 16px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">图标 · 24 网格，1.8 线宽，圆头圆角</span>
+<div style="display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 14px 10px; color: #1C1D20">
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-chat"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">对话</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-grid"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">应用</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-folder"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">文件</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-more"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">更多</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-back"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">返回</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-chev"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">进入</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-plus"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">附件</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-up"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">发送</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-shield"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">审批</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-ask"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">提问</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-alert"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">出错</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-lock"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">授权</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-check"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">完成</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-x"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">移除</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-key"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">密钥</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-laptop"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">电脑</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-globe"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">浏览器</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-phone"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">手机</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-moon"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">免打扰</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-bell"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">通知</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-pen"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">编辑</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-cpu"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">大脑</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-pause"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">暂停</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-camera"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">拍照</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-image"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">相册</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-file"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">文件</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-trash"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">删除</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-refresh"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">重试</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-eye"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">看屏幕</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-bolt"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">电池</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-clock"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">等待</span></div>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 48px; height: 48px; border-radius: 14px; background: #F4F5F7; display: flex; align-items: center; justify-content: center"><svg class="i"><use href="#i-chat"></use></svg></span><span style="font-size: 11.5px; color: #8E9199">问问她</span></div>
+
+</div>
+<span style="font-size: 13px; color: #8E9199">只用线条图标，不用 emoji、不用彩色插画。选中态（比如列表里的勾）把线宽加到 2.6。</span>
+</div>
+</div>
+
+<!-- 安卓对照 -->
+<div style="background: #FFFFFF; border-radius: 28px; padding: 32px; display: flex; flex-direction: column; gap: 16px">
+<span style="font-size: 22px; font-weight: 650; color: #111113">落到网页和安卓：一套名字</span>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; font-size: 13.5px; line-height: 21px; color: #3A3B40">
+<div style="display: flex; flex-direction: column; gap: 6px"><b style="font-weight: 600">网页（packages/web）</b><span>ash.css 里 .t-light / .t-dark 的变量，放进 :root 和 @media (prefers-color-scheme: dark) 就跟随系统。组件用同名 class。</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><b style="font-weight: 600">安卓（引导、诊断、应用外框）</b><span>values/colors.xml 与 values-night/colors.xml 各一份同名颜色：ash_bg、ash_surface、ash_ink、ash_her、ash_you…；字号用 sp，同一阶梯；圆角写进 dimens.xml（ash_r_card = 22dp）。</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><b style="font-weight: 600">灵动岛</b><span>不动。它是深色的独立物件，App 的暗色改用暖炭灰；新的 App 图标和岛上的青色环同色。岛保持原样（深色、蓝色主按钮）：它浮在任何应用上面，深色最稳；App 本身是亮的、暖的。</span></div>
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>
