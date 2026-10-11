@@ -12,6 +12,9 @@ export async function buildOwner(outfile = join(here, "owner.mjs")) {
     bundle: true, platform: "node", target: "node22", format: "esm", outfile,
     banner: { js: "#!/usr/bin/env node\nimport{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);" },
     legalComments: "none", logLevel: "warning",
+    // Paths in the bundle's comments as seen from here: a node_modules that is a link (a worktree sharing one install)
+    // must give the same file as a real one, or the committed bundle differs from what CI builds.
+    preserveSymlinks: true,
   });
   return outfile;
 }
