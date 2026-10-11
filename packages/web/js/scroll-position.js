@@ -4,18 +4,30 @@ export class ScrollPosition {
     this.root = root;
     this.anchor = null;
     this.top = root.scrollTop;
+    this.compensations = new WeakSet();
     root.style.overflowAnchor = "none";
-    this.onScroll = () => {
+    this.onScroll = event => {
       // Our compensation also emits scroll; it must not overwrite the pre-resize anchor.
-      if (root.scrollTop !== this.top) this.capture();
+      if (this.compensatedTop === root.scrollTop) this.compensations.add(event);
+      else this.capture(true);
+      this.compensatedTop = null;
     };
-    root.addEventListener("scroll", this.onScroll, { passive: true });
+    root.addEventListener("scroll", this.onScroll, { passive: true, capture: true });
     this.observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => this.restore()) : null;
     this.observer?.observe(root);
   }
-  capture() {
+  capture(userScroll = false) {
     const root = this.root;
-    const bottom = root.scrollHeight - root.scrollTop - root.clientHeight < 100;
+    if (userScroll) this.pendingJump = null;
+    const jump = this.pendingJump;
+    // A newly mounted range can still be too short to align the target. Keep its requested anchor until slices create room.
+    if (jump?.isConnected && Math.abs(jump.getBoundingClientRect().top - root.getBoundingClientRect().top) > 1) {
+      this.anchor = { bottom: false, row: jump, node: jump, offset: 0, block: -1, key: jump.dataset.rowKey, top: root.scrollTop };
+      this.top = root.scrollTop;
+      return this.anchor;
+    }
+    this.pendingJump = null;
+    const bottom = this.followTail !== false && root.scrollHeight - root.scrollTop - root.clientHeight < 100;
     const y = root.getBoundingClientRect().top;
     // Siblings are ordered vertically. Do not read every historical element's geometry.
     const visible = nodes => {
@@ -35,26 +47,34 @@ export class ScrollPosition {
   restore() {
     const anchor = this.anchor, root = this.root;
     if (!anchor) return;
-    if (anchor.bottom) root.scrollTop = root.scrollHeight;
+    const clamped = root.scrollTop !== this.top;
+    if (anchor.bottom) this.scrollTo(root.scrollHeight);
     else {
       let node = anchor.node;
       if (!node?.isConnected && anchor.key) {
         const row = Array.from(root.children).find(child => child.dataset.rowKey === anchor.key);
         node = anchor.block >= 0 ? row?.querySelector(".markdown")?.children[anchor.block] ?? row : row;
       }
-      if (node?.isConnected) root.scrollTop += node.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
-      else root.scrollTop = anchor.top;
+      if (node?.isConnected) this.scrollTo(root.scrollTop + node.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset);
+      else this.scrollTo(anchor.top);
     }
+    if (clamped) this.compensatedTop = root.scrollTop;
     this.top = root.scrollTop;
+  }
+  scrollTo(top) {
+    const before = this.root.scrollTop;
+    this.root.scrollTop = top;
+    if (this.root.scrollTop !== before) this.compensatedTop = this.root.scrollTop;
   }
   changed() { this.restore(); this.capture(); }
   observe(nodes) { for (const node of nodes) if (node.nodeType === 1) this.observer?.observe(node); }
   unobserve(nodes) { for (const node of nodes) if (node.nodeType === 1) this.observer?.unobserve(node); }
-  latest() { this.root.scrollTop = this.root.scrollHeight; this.capture(); }
+  latest() { this.pendingJump = null; this.scrollTo(this.root.scrollHeight); this.capture(); }
   jump(node) {
     if (!node?.isConnected) return false;
-    this.root.scrollTop += node.getBoundingClientRect().top - this.root.getBoundingClientRect().top;
+    this.pendingJump = node;
+    this.scrollTo(this.root.scrollTop + node.getBoundingClientRect().top - this.root.getBoundingClientRect().top);
     this.capture(); return true;
   }
-  dispose() { this.observer?.disconnect(); this.root.removeEventListener("scroll", this.onScroll); this.anchor = null; }
+  dispose() { this.observer?.disconnect(); this.root.removeEventListener("scroll", this.onScroll, true); this.anchor = null; }
 }

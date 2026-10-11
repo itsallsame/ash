@@ -14,6 +14,7 @@ export function safeActivityView(view) {
       background: turn.background === true, started: turn.started,
       ended: Number.isFinite(turn.ended) ? turn.ended : undefined,
       outcome: ["completed", "cancelled", "error"].includes(turn.outcome) ? turn.outcome : undefined,
+      ...(Number.isSafeInteger(turn.step_count) && turn.step_count >= 0 ? { step_count: turn.step_count } : {}),
       steps: Array.isArray(turn.steps) ? turn.steps.filter((step) => typeof step.label === "string" && step.label.length <= 180 &&
         (step.tool || step.summary || webDetail.test(step.label) || !rawRoute.test(step.label)))
         .map((step) => ({ label: step.label, ts: step.ts, ended: step.ended, state: step.state, tool: step.tool,

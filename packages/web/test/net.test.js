@@ -20,7 +20,7 @@ test("the page connects as a browser hand, opens a sync and shows an empty conve
   assert.deepEqual(Object.keys(kernel.sessions[0].hello.channels), ["human"]);
   assert.equal(kernel.sessions[0].hello.hand.public_key, undefined, "a browser proves nothing itself; the relay vouches for it");
   assert.equal(events.ready, 1);
-  assert.deepEqual(kernel.synced[0], { t: "sync", ch: "human", sid: kernel.synced[0].sid, limit: 200, follow: true, summary: true });
+  assert.deepEqual(kernel.synced[0], { t: "sync", ch: "human", sid: kernel.synced[0].sid, limit: 1, follow: true, summary: true });
   net.stop(); kernel.close();
 });
 
@@ -28,11 +28,11 @@ test("history is the newest page, then live messages follow without repeats", as
   const kernel = startKernel();
   for (let n = 1; n <= 3; n++) kernel.append(say(n));
   const { net, events } = await ready(kernel);
-  assert.deepEqual(events.histories.flat().map((m) => m.seq), [1, 2, 3]);
+  assert.deepEqual(events.histories.flatMap(page => page.items).map((m) => m.seq), [1, 2, 3]);
   kernel.append(say(4));
   await until(() => events.messages.length === 1);
   assert.equal(events.messages[0].message.seq, 4);
-  assert.equal(events.messages[0].historical, false);
+  assert.equal(events.messages[0].message.type, "owner.say");
   net.stop(); kernel.close();
 });
 
@@ -40,13 +40,15 @@ test("older history pages back from the first seq and says when the start is rea
   const kernel = startKernel();
   for (let n = 1; n <= 250; n++) kernel.append(say(n));
   const { net, events } = await ready(kernel);
-  assert.equal(events.histories.flat().length, 200);
-  const first = Math.min(...events.histories.flat().map((m) => m.seq));
-  assert.equal(first, 51);
+  assert.equal(events.histories.flatMap(page => page.items).length, 10);
+  const first = Math.min(...events.histories.flatMap(page => page.items).map((m) => m.seq));
+  assert.equal(first, 241);
   const page = await net.page(first);
-  assert.equal(page.messages.length, 50);
-  assert.equal(page.end.has_more, false, "fewer than a page means the start of the conversation");
-  assert.deepEqual(page.messages.map((m) => m.seq).slice(0, 2), [1, 2]);
+  assert.equal(page.items.length, 10);
+  assert.equal(page.has_more_before, true);
+  assert.deepEqual(page.items.map((m) => m.seq).slice(0, 2), [231, 232]);
+  const start = await net.window({ after: 0 });
+  assert.equal(start.has_more_before, false);
   net.stop(); kernel.close();
 });
 
@@ -56,7 +58,7 @@ test("a message the owner types is kept, sent as `say` with one client_id, and l
   const clientId = await net.enqueueSay("hello");
   await until(() => kernel.requests.some((r) => r.word === "say"));
   assert.deepEqual(kernel.requests.find((r) => r.word === "say"), { to: "agent:main", kind: "request", word: "say", body: { text: "hello" }, client_id: clientId });
-  await until(() => events.messages.some((entry) => entry.message.word === "say" && entry.message.from === "person:owner"));
+  await until(() => events.messages.some((entry) => entry.message.type === "owner.say"));
   await until(() => net.outbox.length === 0, 2000, "outbox drained");
   assert.equal(net.queue.length, 0);
   net.stop(); kernel.close();
@@ -74,7 +76,7 @@ test("sends go to the primary agent the hub names, and to another agent when pic
   net.stop(); kernel.close();
 });
 
-test("a lost connection keeps the queue; the retry has the same client_id and the sync resumes after the cursor", async () => {
+test("a lost connection keeps the queue and the retry id; reconnect reads a bounded current window", async () => {
   const kernel = startKernel();
   kernel.append(say(1));
   const { net, events } = await ready(kernel);
@@ -83,10 +85,10 @@ test("a lost connection keeps the queue; the retry has the same client_id and th
   kernel.append(say(2, "while away"));
   const clientId = await net.enqueueSay("typed offline");
   await until(() => net.status === "online", 3000, "reconnect");
-  await until(() => events.messages.some((entry) => entry.message.body.text === "while away") || events.histories.flat().some((m) => m.body.text === "while away"));
+  await until(() => events.messages.some((entry) => entry.message.text === "while away") || events.histories.flatMap(page => page.items).some((m) => m.text === "while away"));
   const resumed = kernel.synced.at(-1);
-  assert.equal(resumed.after, 1);
-  assert.equal(resumed.limit, 1000);
+  assert.equal(resumed.after, undefined);
+  assert.equal(resumed.limit, 1);
   await until(() => kernel.requests.some((r) => r.client_id === clientId));
   assert.equal(kernel.requests.filter((r) => r.client_id === clientId).length, 1);
   await until(() => net.outbox.length === 0);
@@ -157,7 +159,7 @@ test("in the app the same page code runs over frames passed through AshNative", 
   net.start();
   await until(() => net.status === "online" && events.ready === 1);
   assert.equal(net.embedded, true);
-  assert.deepEqual(events.histories.flat().map((m) => m.seq), [1]);
+  assert.deepEqual(events.histories.flatMap(page => page.items).map((m) => m.seq), [1]);
   const clientId = await net.enqueueSay("from the app");
   await until(() => kernel.requests.some((r) => r.client_id === clientId));
   net.setVisible(true);

@@ -1,6 +1,6 @@
 // Render selected conversation facts; gate originals appear only in an explicit plain-text disclosure.
 import { cardHead, fileRef, renderCard } from "./cards.js";
-import { appendApprovalOriginal } from "./approval-original.js";
+import { appendApprovalOriginal, appendFullAnswer } from "./approval-original.js";
 import { appendMarkdown } from "./markdown.js";
 import { addIcon, avatarUrl, button, dayStamp, letterOf, text, validUntil } from "./chat-ui.js";
 export { fileRef } from "./cards.js";
@@ -92,7 +92,7 @@ function introduction(fragment, herName) {
   text(root, "span", "刚刚住进你的手机", "tx-caption");
 }
 
-function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName }) {
+function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName, onReadOriginal, onReadAnswer, lifetime }) {
   const ask = item.ask;
   const confirm = ask.from === "service:gate" || ask.human_kind === "confirmation";
   const card = text(fragment, "div", "", "a-card card ask");
@@ -111,7 +111,7 @@ function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, prim
     const detail = review ? lines.join("\n") : String(ask.detail ?? "");
     if (detail) text(card, "small", detail, "card-body ask-detail");
     if (review) text(card, "div", review, "card-note");
-    appendApprovalOriginal(card, ask, "查看完整原文");
+    appendApprovalOriginal(card, ask, "查看完整原文", { onReadOriginal, lifetime });
   }
   const chosen = (ask.options || []).find((option) => option.id === ask.choice);
   const answer = askIntents?.get(ask.id);
@@ -128,6 +128,8 @@ function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, prim
     const outcome = expired ? "已过期，未执行" :
       ask.choice === "deny" ? "已拒绝" : ask.choice === "once" ? "已允许这一次" : chosen ? `已选择：${chosen.label}` : ask.answer_text ? `已回答：${ask.answer_text}` : "已结束";
     const ok = !expired && (ask.choice === "once" || ask.choice === "always");
+    const fullAnswer = !expired && appendFullAnswer(card, ask, { onReadAnswer, lifetime, label: outcome });
+    if (fullAnswer) { fullAnswer.children[0].className = "resolved ask-outcome"; return; }
     const line = text(card, "div", "", `resolved ask-outcome${ok ? " ok" : ""}`);
     if (ok) addIcon(line, "check", "i-xs");
     text(line, "span", outcome);
@@ -197,7 +199,8 @@ function failureCard(fragment, failure, { onRetry }) {
 }
 
 /** Append a stable ledger conversation without inventing an approval or option action. */
-export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, intro, now = Date.now(), previous: previousEntry = null, next: nextEntry = null, previousDisplay = null, omitContent = false, lifetime, renderMarkdown = appendMarkdown } = {}) {
+export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, onReadOriginal, onReadAnswer, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, intro, now = Date.now(), previous: previousEntry = null, next: nextEntry = null, previousDisplay = null, omitContent = false, lifetime, renderMarkdown = appendMarkdown } = {}) {
+
   if (!entries.length && !failures.length) { if (loading) skeleton(fragment); else emptyState(fragment); return; }
   // Only before the owner has said anything: it is the first meeting, and she spoke first.
   if (intro ?? (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some((item) => item.side === "owner"))) introduction(fragment, herName);
@@ -255,6 +258,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
           more.disabled = true; more.textContent = "正在展开…";
           // This button initiates a deliberate body replacement; its focus must not defer that replacement forever.
           more.blur?.();
+
           try { await onExpand(item.full, item.id); } catch { more.disabled = false; more.textContent = "显示全文"; more.title = "全文暂时读不到"; }
         });
       }
@@ -268,7 +272,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
       if (item.side === "owner") text(fragment, "span", deliveryText[item.delivery] || deliveryText.sent, "delivery meta r");
     } else if (item.type === "ask") {
       lastSide = "card";
-      approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName });
+      approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, primary, herName, onReadOriginal, onReadAnswer, lifetime });
     } else if (item.type === "card") {
       lastSide = "card";
       renderCard(fragment, item, { onSelect, onPermission, optionPending, onOpenFile, herName });

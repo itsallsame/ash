@@ -1,12 +1,11 @@
-// The page's side of the kernel: one connection (link.js), the ledger as the page reads it (`sync`), the owner's own
+// The page's side of the kernel: one connection (link.js), bounded display snapshots and safe live facts, the owner's own
 // messages (queued so that nothing typed is lost offline, sent with a stable `client_id`), and every word the sheets call.
 import { openPort, retryable, unwrap, WordFailure } from "./link.js";
 import { MAX_WIRE_BYTES, openPendingStore } from "./pending-store.js";
+import { safeRecord } from "../../sdk/src/conversation.ts";
 
 const AGENT = /^agent:[a-z][a-z0-9_-]{0,31}$/;
-const PAGE = 200;
-/** The longest the page waits for one page of history. */
-const PAGE_WAIT_MS = 20_000;
+const PAGE = 10;
 
 export const OWNER = "person:owner";
 const PRIMARY_KEY = "ash.primary";
@@ -15,14 +14,16 @@ const remembered = () => { try { const id = globalThis.localStorage?.getItem(PRI
 export class Net {
   /**
    * [bridge] is the app's AshNative bridge (absent in a browser). [pendingStore], [connector] and [clock] are for tests.
-   * The callbacks: onMessage(message, {historical}), onHistory(messages), onHistoryReady(), onState(status, detail),
+   * The callbacks: onMessage(safeFact), onHistory(displayPage), onCurrent(currentPage), onHistoryReady(), onState(status, detail),
    * onOpen(info) after every (re)connection, onQueue(count, outbox), onPresent(frame) -> {ok, data?, error?}.
    */
   constructor({ bridge, label = "网页", pendingStore = null, url, connector, clock, random, onMessage = () => {}, onHistory = () => {},
-    onHistoryReady = () => {}, onState = () => {}, onOpen = () => {}, onQueue = () => {}, onPresent = async () => ({ ok: false, error: { code: "unavailable", message: "not shown here" } }) } = {}) {
+    onHistoryReady = () => {}, onCurrent = () => {}, historyTarget = () => ({}), onState = () => {}, onOpen = () => {}, onQueue = () => {}, onPresent = async () => ({ ok: false, error: { code: "unavailable", message: "not shown here" } }) } = {}) {
     this.onMessage = onMessage;
     this.onHistory = onHistory;
     this.onHistoryReady = onHistoryReady;
+    this.onCurrent = onCurrent;
+    this.historyTarget = historyTarget;
     this.onState = onState;
     this.onOpen = onOpen;
     this.onQueue = onQueue;
@@ -37,7 +38,7 @@ export class Net {
     this.primaryLoad = null;
     this.queue = [];
     this.outbox = [];
-    this.seenLedgerIds = new Set();
+    this.seenOwnIds = new Set();
     this.cursor = null;
     this.history = null;
     this.bootstrapped = false;
@@ -61,6 +62,7 @@ export class Net {
     this.history?.close();
     this.history = null;
     clearTimeout(this.retryTimer);
+    clearTimeout(this.historyRetry);
     this.port.stop();
     this.queue = [];
     this.outbox = [];
@@ -84,11 +86,13 @@ export class Net {
       this.client = info.client;
       this.local = info.local === true;
       this.generation++;
+      this.cursor = null;
+      this.seenOwnIds.clear();
       this.visible = null; // the kernel forgets what a connection said about itself when it ends
       this.setStatus("online");
       void this.refreshPrimary(); // before onOpen: whoever reacts to the opening may wait for `primaryLoad`
       this.onOpen(info);
-      this.openHistory();
+      this.beginHistory();
       void this.restorePending().then(() => this.flush());
       return;
     }
@@ -98,6 +102,7 @@ export class Net {
     this.local = false;
     this.generation++;
     clearTimeout(this.retryTimer);
+    clearTimeout(this.historyRetry);
     if (state === "closed") this.setStatus("closed", info?.denied);
     else this.setStatus(state === "connecting" ? "connecting" : "offline");
   }
@@ -133,11 +138,11 @@ export class Net {
   }
 
   /** The text of a long field of the ledger, in full (`service:blobs/read`, in pieces). */
-  async readBlobText(hash) {
+  async readBlobText(hash, options) {
     let text = "";
     let offset = 0;
     for (let pieces = 0; pieces < 200; pieces++) {
-      const piece = await this.data("service:blobs", "read", { hash, offset });
+      const piece = await this.data("service:blobs", "read", { hash, offset }, options);
       text += piece.text;
       if (piece.next_offset === null || piece.next_offset === undefined) return text;
       offset = piece.next_offset;
@@ -159,65 +164,77 @@ export class Net {
 
   // ---- history ----
 
-  openHistory() {
+  beginHistory() {
+    const binding = this.binding();
+    const read = this.historyRead = (this.historyRead ?? 0) + 1;
+    void this.openHistory(binding, read).catch(error => {
+      if (!this.same(binding) || read !== this.historyRead) return;
+      this.onState("history-error", error);
+      this.historyRetry = setTimeout(() => { if (this.same(binding)) this.beginHistory(); }, 5000);
+    });
+  }
+  async openHistory(binding, read) {
     this.history?.close();
-    const params = this.cursor === null ? { limit: PAGE } : { after: this.cursor, limit: 1000 };
-    this.history = this.port.sync({ ...params, follow: true, summary: true }, {
+    const active = () => this.same(binding) && read === this.historyRead;
+    // Establish live observation first. Reconnecting always reads a bounded snapshot, never replays an unbounded gap.
+    this.bootstrapped = false;
+    const buffered = [];
+    let bufferedBytes = 0;
+    let overflow = false;
+    const receive = message => {
+      if (!active() || !this.accept(message)) return;
+      const fact = safeRecord(message);
+      if (!fact) return;
+      if (this.bootstrapped) this.onMessage(fact, { historical: false });
+      else {
+        const bytes = new TextEncoder().encode(JSON.stringify(fact)).byteLength;
+        if (buffered.length < 200 && bufferedBytes + bytes <= 256 * 1024) { buffered.push(fact); bufferedBytes += bytes; }
+        else overflow = true;
+      }
+    };
+    this.history = this.port.sync({ limit: 1, follow: true, summary: true }, {
       page: (frame) => {
-        const messages = frame.messages.filter((m) => this.accept(m));
-        if (messages.length) this.onHistory(messages);
-        if (frame.end) {
-          if (!this.bootstrapped) this.onHistoryReady();
-          this.bootstrapped = true;
-          if (this.cursor === null) this.cursor = 0;
-        }
+        for (const message of frame.messages) receive(message);
       },
-      message: (frame) => { if (this.accept(frame.message)) this.onMessage(frame.message, { historical: false }); },
+      message: (frame) => receive(frame.message),
       error: () => {},
     });
+    const [page, current] = await Promise.all([this.window(this.historyTarget()), this.current()]);
+    if (!active()) return;
+    this.onHistory(page);
+    this.onCurrent(current);
+    this.cursor = Math.max(this.cursor ?? 0, page.snapshot_seq);
+    this.bootstrapped = true;
+    this.onHistoryReady();
+    for (const fact of buffered) if (fact.seq > page.snapshot_seq) this.onMessage(fact, { historical: false });
+    // Overflow carries no rows into a long-lived cache; ask for a fresh bounded picture instead.
+    if (overflow) {
+      const [fresh, latest] = await Promise.all([this.window(this.historyTarget()), this.current()]);
+      if (active()) { this.onHistory(fresh); this.onCurrent(latest); }
+    }
   }
 
   /** Notes a ledger row (cursor, outbox); false for a row the page cannot use or already has. */
   accept(message) {
     if (!Number.isSafeInteger(message?.seq) || message.seq < 1 || typeof message.id !== "string") return false;
-    if (this.cursor !== null && message.seq <= this.cursor && this.seenLedgerIds.has(message.id)) return false;
+    if (this.cursor !== null && message.seq <= this.cursor) return false;
     this.cursor = Math.max(this.cursor ?? 0, message.seq);
-    this.seenLedgerIds.add(message.id);
+    if (this.flushing && message.from === OWNER && message.origin?.client === this.client) {
+      this.seenOwnIds.add(message.id);
+      if (this.seenOwnIds.size > 48) this.seenOwnIds.delete(this.seenOwnIds.values().next().value);
+    }
     const before = this.outbox.length;
     this.outbox = this.outbox.filter((item) => item.id !== message.id);
-    if (this.outbox.length !== before) this.publishOutbox();
-    void this.pendingReady.then((store) => store?.removeAccepted(message.id)).catch(() => {});
+    if (this.outbox.length !== before) {
+      this.publishOutbox();
+      void this.pendingReady.then((store) => store?.removeAccepted(message.id)).catch(() => {});
+    }
     return true;
   }
 
-  /** One page of older history: the messages before seq [before], newest [PAGE] of them. */
-  async page(before, signal) {
-    if (!Number.isSafeInteger(before) || before < 1) throw new Error("invalid page cursor");
-    const messages = await this.collect({ before, limit: PAGE, summary: true }, signal);
-    messages.sort((a, b) => a.seq - b.seq);
-    return { messages: messages.filter((item, index) => index === 0 || item.seq !== messages[index - 1].seq), end: { has_more: messages.length >= PAGE } };
-  }
-
-  /** A one-time sync (no follow): every page of its answer. */
-  collect(params, signal) {
-    return new Promise((resolve, reject) => {
-      const messages = [];
-      let handle = null;
-      const finish = (error) => {
-        clearTimeout(timer);
-        handle?.close();
-        if (error) reject(error); else resolve(messages);
-      };
-      const timer = setTimeout(() => finish(new Error("history timed out")), PAGE_WAIT_MS);
-      signal?.addEventListener("abort", () => finish(new DOMException("Aborted", "AbortError")), { once: true });
-      handle = this.port.sync(params, {
-        page: (frame) => { messages.push(...frame.messages); if (frame.end) finish(); },
-        message: () => {},
-        error: (error) => finish(new Error(error?.message || "history unavailable")),
-      });
-      if (!handle) finish(new Error("not connected"));
-    });
-  }
+  window(params = {}, signal) { return this.data("service:history", "window", { limit: PAGE, ...params }, { signal }); }
+  current(params = {}, signal) { return this.data("service:history", "current", { limit: PAGE, ...params }, { signal }); }
+  page(before, signal) { return this.window({ before }, signal); }
 
   // ---- the owner's own messages ----
 
@@ -226,13 +243,26 @@ export class Net {
   }
 
   async restorePending() {
+    const load = this.pendingLoad = (this.pendingLoad ?? 0) + 1;
+    const binding = this.binding();
     const store = await this.pendingReady;
     if (!store) { this.onState("send-error", new Error("pending storage unavailable")); return; }
-    const items = (await store.list()).filter((item) => {
-      if (!item.id || !this.seenLedgerIds.has(item.id)) return true;
-      void store.removeAccepted(item.id).catch(() => {});
-      return false;
-    });
+    let items = await store.list();
+    // Accepted records are never resent. Their bounded set of ids is checked even after the corresponding window was evicted.
+    if (this.session) {
+      const confirmed = new Set();
+      const ids = items.filter(item => item.id).map(item => item.id);
+      if (ids.length) {
+        try {
+          const data = await this.data("service:history", "confirm", { ids });
+          if (this.same(binding)) {
+            for (const id of data.ids) if (ids.includes(id)) { await store.removeAccepted(id); confirmed.add(id); }
+          }
+        } catch { /* an unavailable confirmation leaves the durable receipt intact */ }
+      }
+      items = items.filter(item => !confirmed.has(item.id));
+    }
+    if (load !== this.pendingLoad || binding.generation !== this.generation) return;
     this.queue = items.filter((item) => item.wire && !item.id).map((item) => item.wire);
     this.outbox = items.map((item) => ({ client_id: item.client_id, text: item.text, attachments: item.attachments,
       in_reply_to: item.wire?.body?.in_reply_to, option_id: item.wire?.body?.option_id,
@@ -314,7 +344,7 @@ export class Net {
           break;
         }
         await store.accept(queued, this.tabOwner, result.message.id, result.message.seq);
-        if (this.seenLedgerIds.has(result.message.id)) await store.removeAccepted(result.message.id);
+        if (this.seenOwnIds.delete(result.message.id)) await store.removeAccepted(result.message.id);
         await this.restorePending();
       }
     } catch { this.onState("send-error", new Error("pending storage unavailable")); }

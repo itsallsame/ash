@@ -12,7 +12,8 @@ const body = (row, options) => {
   const item = row.item;
   if (row.kind === "message" && item.type === "say") {
     const { delivery, reactions, revision, group, byte_size, reactions_more, ...content } = item;
-    return { content, shown: item.full && options.fullTexts?.has(item.full, item.id) ? options.fullTexts.get(item.full) : item.text };
+    return { content, shown: item.full && options.fullTexts?.has(item.full, item.id) ? options.fullTexts.get(item.full) : item.text,
+      expansion: item.full && !options.fullTexts?.has(item.full, item.id) ? options.fullTexts?.expansionLabel?.(item.id) : null };
   }
   if (row.kind === "message") { const { reactions, byte_size, reactions_more, ...content } = item; return content; }
   return item;
@@ -45,11 +46,14 @@ export class WindowView {
   reset() {
     for (const row of this.rows.values()) { this.position.unobserve(row.nodes); dispose(row); }
     this.rows.clear(); this.root.replaceChildren(); this.position.anchor = null;
+    this.position.pendingJump = null;
     this.newest = 0; this.fresh = false; this.latest = null;
   }
   update(entries, outbox = [], options = {}, dirty = null) {
     if (options.epoch !== undefined && options.epoch !== this.epoch) { this.reset(); this.epoch = options.epoch; }
     this.latest = [entries, outbox, options];
+    // A loaded range's bottom is not the history's tail. Old-message jumps stay reading anchors through later slices.
+    this.position.followTail = options.atLatest !== false;
     const plan = conversationRows(entries, options);
     for (const item of outbox) if (typeof item.client_id === "string" && typeof item.text === "string" && ["unsent", "sending", "accepted", "rejected"].includes(item.status)) plan.push({ key: `outbox:${item.client_id}`, kind: "outbox", item });
     const keys = new Set(plan.map(row => row.key));
@@ -80,11 +84,12 @@ export class WindowView {
       const expired = item?.ask?.state === "pending" && item.ask.expires_at <= (options.now ?? Date.now());
       const pending = options.optionPending?.has(item?.id) === true;
       const content = candidate ? body(descriptor, options) : row?.content;
-      const sameBody = row && equal(row.content, content);
+      const sameBody = row && !row.lifetime.controller?.signal.aborted && equal(row.content, content);
       const state = item?.type === "say" ? { delivery: item.delivery, reactions: item.reactions } : null;
       const changed = !row || !sameBody || !equal(row.state, state) || !equal(row.chrome, chrome) || !equal(row.intent, intent) || row.expired !== expired || row.pending !== pending;
       const decided = item?.type === "ask" && (item.ask.state !== "pending" || expired) || item?.type === "card" && item.locked;
-      if (changed && row && this.protected(row, !decided)) row.deferred = true;
+      const expanded = row && item?.type === "say" && row.content?.shown !== content?.shown && item.full && options.fullTexts?.has(item.full, item.id);
+      if (changed && row && this.protected(row, !decided && !expanded)) row.deferred = true;
       else if (changed) {
         const reuse = sameBody && descriptor.kind === "message" && item.type === "say";
         const lifetime = reuse ? row.lifetime : { disposed: false, cleanup: new Set() };
@@ -155,6 +160,7 @@ export class WindowView {
   jump(id) { const row = this.rows.get(`message:${id}`) ?? this.rows.get(`failure:${id}`); return this.position.jump(row?.nodes.find(node => node.matches?.(".msg,.a-card,.atts")) ?? row?.nodes[0]); }
   settled(id) { return id ? this.rows.get(`message:${id}`)?.lifetime.completion ?? Promise.resolve() : Promise.all([...this.rows.values()].map(row => row.lifetime.completion)); }
   cancelExpansion(id) { this.rows.get(`message:${id}`)?.lifetime.controller?.abort(); }
+
   dispose() {
     this.markdown.dispose();
     this.closed = true; this.position.dispose();

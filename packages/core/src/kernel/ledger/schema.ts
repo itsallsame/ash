@@ -1,10 +1,10 @@
 /**
- * Ledger schema 1: the five tables the ledger owns. Every other table (gate rules, hands, bodies, agent runs, the
+ * Ledger schema 2: the tables the ledger owns. Every other table (gate rules, hands, bodies, agent runs, the
  * inbox, the clock...) belongs to its own module, which creates it through `ledger.db()`.
- * There is no migration code: a database whose version is not 1 is refused (see `LedgerVersionError`).
+ * There is no migration code: a database whose version is not 2 is refused (see `LedgerVersionError`).
  */
 
-export const SCHEMA_VERSION = "1";
+export const SCHEMA_VERSION = "2";
 export const SCHEMA_KEY = "schema";
 
 /** The state a request is in; the order is the usual one but nothing here enforces it. */
@@ -25,14 +25,57 @@ CREATE TABLE messages (
   turn TEXT,
   thread TEXT,
   summary TEXT NOT NULL,
-  size INTEGER NOT NULL
+  size INTEGER NOT NULL,
+  display_type TEXT,
+  fact_type TEXT,
+  fact_turn TEXT,
+  lane TEXT,
+  expires_at INTEGER,
+  outcome TEXT,
+  answer_seq INTEGER,
+  turn_end_seq INTEGER,
+  tool_name TEXT,
+  tool_phase TEXT,
+  activity_state TEXT,
+  activity_receipt TEXT,
+  activity_key TEXT,
+  activity_mode TEXT,
+  state_facts TEXT
 );
 CREATE INDEX m_to ON messages("to", seq);
 CREATE INDEX m_from ON messages("from", seq);
-CREATE INDEX m_reply ON messages(reply_to);
+CREATE INDEX m_reply ON messages(reply_to,seq);
 CREATE INDEX m_turn ON messages(turn);
 CREATE INDEX m_thread ON messages(thread) WHERE thread IS NOT NULL;
 CREATE INDEX m_word ON messages(word, seq);
+
+CREATE INDEX m_display ON messages(seq) WHERE display_type IS NOT NULL;
+CREATE INDEX m_turn_display ON messages(fact_turn,seq) WHERE display_type IS NOT NULL;
+CREATE INDEX m_owner_order ON messages(seq) WHERE display_type='owner.say';
+CREATE INDEX m_owner_say ON messages(ts, seq) WHERE display_type='owner.say';
+CREATE INDEX m_facts ON messages(fact_type, seq);
+CREATE INDEX m_fact_turn ON messages(fact_turn, seq);
+CREATE INDEX m_activity_started ON messages(ts,seq) WHERE fact_type='turn.start';
+CREATE INDEX m_agent_activity ON messages("from",ts,seq) WHERE fact_type='turn.start';
+CREATE INDEX m_ended ON messages(ts,seq) WHERE fact_type='turn.end';
+CREATE INDEX m_pending_asks ON messages(expires_at, seq) WHERE display_type='ask' AND answer_seq IS NULL;
+CREATE INDEX m_open_front ON messages(seq) WHERE fact_type='turn.start' AND lane='front' AND turn_end_seq IS NULL;
+CREATE INDEX m_failed ON messages(ts, seq) WHERE fact_type='turn.end' AND outcome='error';
+CREATE INDEX m_tool ON messages(fact_turn,tool_name,tool_phase,seq) WHERE fact_type='tool';
+CREATE INDEX m_pending_tools ON messages(fact_turn,seq) WHERE fact_type='tool' AND tool_phase='start' AND answer_seq IS NULL;
+CREATE INDEX m_pending_activity ON messages(fact_turn,seq) WHERE fact_type='activity.request' AND activity_state='pending';
+CREATE INDEX m_activity_pair ON messages(fact_turn,activity_key,activity_mode,seq) WHERE fact_type='activity.request' AND activity_state='pending';
+CREATE INDEX m_activity_receipt ON messages(activity_receipt) WHERE activity_receipt IS NOT NULL;
+CREATE INDEX m_open_asks ON messages(expires_at, seq) WHERE display_type='ask';
+
+CREATE TABLE message_relations (
+  target TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  source_seq INTEGER NOT NULL REFERENCES messages(seq),
+  position INTEGER,
+  PRIMARY KEY (target, kind, source_seq)
+) WITHOUT ROWID;
+CREATE INDEX relation_source ON message_relations(source_seq);
 
 CREATE TABLE requests (
   id TEXT PRIMARY KEY REFERENCES messages(id),

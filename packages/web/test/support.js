@@ -30,11 +30,12 @@ export async function until(test, ms = 2000, what = "condition") {
 
 /** A Net on the test kernel's memory connection. */
 export function netFor(kernel, options = {}) {
-  const events = { messages: [], histories: [], ready: 0, states: [], opens: [], queues: [], presents: [] };
+  const events = { messages: [], histories: [], current: [], ready: 0, states: [], opens: [], queues: [], presents: [] };
   const net = new Net({
     url: () => "ws://test/link", connector: kernel.connector, clock: quickClock, pendingStore: new MemoryPending(),
     onMessage: (message, context) => events.messages.push({ message, ...context }),
-    onHistory: (messages) => events.histories.push(messages),
+    onHistory: (page) => events.histories.push(page),
+    onCurrent: (current) => events.current.push(current),
     onHistoryReady: () => { events.ready++; },
     onState: (status, detail) => events.states.push(detail === undefined ? status : [status, detail]),
     onOpen: (info) => events.opens.push(info),

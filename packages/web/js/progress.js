@@ -10,7 +10,8 @@ export function renderProgress(root, view, { now = Date.now(), onOpen } = {}) {
   if (!turns.length) { root.hidden = true; return; }
   const [id, turn] = turns[0];
   // A plain reply did nothing worth reporting; "做了 0 步" under every message is noise.
-  if (turn.ended && !turn.steps.length) { root.hidden = true; return; }
+  const stepCount = turn.step_count ?? turn.steps.filter(step => !step.summary).length;
+  if (turn.ended && !stepCount) { root.hidden = true; return; }
   root.hidden = false;
   const pill = document.createElement("button");
   pill.type = "button";
@@ -20,7 +21,7 @@ export function renderProgress(root, view, { now = Date.now(), onOpen } = {}) {
   const seconds = Math.max(0, Math.floor((Math.min(now, turn.ended ?? now) - turn.started) / 1000));
   if (turn.ended) {
     addIcon(pill, "check", "i-xs");
-    text(pill, "b", `做了 ${turn.steps.filter((step) => !step.summary).length} 步`);
+    text(pill, "b", `做了 ${stepCount} 步`);
   } else {
     text(pill, "span", "", "spinner");
     text(pill, "b", turn.steps.at(-1)?.label || "正在处理");

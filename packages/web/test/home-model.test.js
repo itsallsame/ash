@@ -20,16 +20,21 @@ test("a batch of ledger rows projects to the same view as folding them one by on
   assert.deepEqual(batch.conversation, folded.conversation);
 });
 
-test("the feed holds each row once and projects only when asked, once per change", () => {
+test("the home retains only the authoritative current page and ignores late snapshots", () => {
   const feed = new HomeFeed();
-  feed.add(started(1, "t1"));
-  feed.add(started(1, "t1"));
-  assert.equal(feed.rows.size, 1);
+  const page = (seq, id) => ({ dataset_id: "one", snapshot_seq: seq, items: [{ ask: { id, state: "pending" } }], total_count: 10000,
+    presence: { state: "waiting_you" }, progress: null });
+  feed.setCurrent(page(2, "a"));
   const first = feed.view();
-  assert.equal(feed.view(), first, "the same view until something changes");
-  feed.add(started(2, "t2"));
-  assert.notEqual(feed.view(), first);
-  assert.deepEqual(Object.keys(feed.view().turns).sort(), ["t1", "t2"]);
+  assert.equal(feed.view(), first);
+  assert.equal(first.waiting_count, 10000, "counts do not come from the bounded page");
+  feed.setCurrent(page(1, "old"));
+  assert.equal(feed.view(), first);
+  feed.setCurrent(page(3, "b"));
+  assert.deepEqual(feed.view().asks.map(item => item.id), ["b"]);
+  assert.equal(feed.rows, undefined, "the home has no second ledger cache");
+  feed.reset();
+  assert.deepEqual(feed.view().asks, []);
 });
 
 test("what waits for you: approvals first, then questions; answered, expired and other people's rows do not", () => {

@@ -1,7 +1,6 @@
 import { fill } from "./home-dom.js";
 // 她的主页 and the pages under it. The page shell (index.html) knows nothing of them: they hang their own markup on <body> and
 // open when the page says `ash:open` ({page: "home" | "apps", agent?, section?}, see design/app/IMPLEMENTATION.md).
-import { link, feed } from "./home-feed.js";
 import { navbar, h } from "./home-ui.js";
 import { IdentityName } from "./identity-name.js";
 import { unwrap } from "./link.js";
@@ -11,8 +10,9 @@ const stale = () => Object.assign(new Error("连接已经换了"), { code: "stal
 
 /** The shell: a layer over the conversation holding a stack of pages, the first of which is the home page. */
 class HomeShell {
-  constructor(net) {
+  constructor(net, feed) {
     this.net = net;
+    this.feed = feed;
     this.root = h("div", { id: "home", class: "hm-root", hidden: true, "aria-hidden": "true", role: "dialog", "aria-label": "她的主页" });
     this.banner = h("div", { class: "banner hm-banner", role: "status", hidden: true }, "还没连上。连上后这里会自动刷新。");
     this.stage = h("div", { class: "hm-stage" });
@@ -93,13 +93,14 @@ class HomeShell {
   context() {
     const shell = this;
     return {
-      net: this.net, feed, agent: this.agent,
+      net: this.net, feed: this.feed, agent: this.agent,
       get name() { return shell.name; },
       go: (id, arg) => this.go(id, arg),
       /** The name may have changed (her IDENTITY.md was saved): read it again; every other reader of it follows. */
       refreshName: () => { void this.identity.refresh(); },
       back: () => this.back(),
       close: () => this.close(),
+      jump: id => { this.close(); globalThis.dispatchEvent(new CustomEvent("ash:jump", { cancelable: true, detail: { id } })); },
       /** Puts words in the conversation's box (the chat page listens for `ash:compose`; failing that, the plain text box). */
       compose: (text, extra = {}) => {
         const event = new CustomEvent("ash:compose", { cancelable: true, detail: { text, ...extra } });
@@ -128,7 +129,7 @@ class HomeShell {
       onName: (fn) => { subscriptions.push(this.identity.subscribe(() => { if (alive) fn(); })); },
       /** One timer by [key]: [fn] runs at [ts]; calling again with the key moves it. Stopped with the page. */
       wake: (key, fn, ts) => { clearTimeout(wakes.get(key)); if (Number.isFinite(ts)) wakes.set(key, setTimeout(() => { if (alive) fn(); }, Math.min(Math.max(0, ts - Date.now()) + 50, 2_147_000_000))); },
-      onView: (fn) => { subscriptions.push(feed.subscribe(() => { if (alive) fn(); })); },
+      onView: (fn) => { subscriptions.push(this.feed.subscribe(() => { if (alive) fn(); })); },
       listen: (target, event, fn) => { const run = () => { if (alive) fn(); }; target.addEventListener(event, run); subscriptions.push(() => target.removeEventListener(event, run)); },
       every: (fn, ms) => { const timer = setInterval(() => { if (alive && !document.hidden) fn(); }, ms); timers.push(timer); },
       later: (fn, ms) => { const timer = setTimeout(() => { if (alive) fn(); }, ms); timers.push(timer); },
@@ -155,12 +156,15 @@ class HomeShell {
 }
 
 let shell = null;
-const shellFor = (net) => { if (!shell || shell.net !== net) shell = new HomeShell(net); return shell; };
+let connection = null;
+/** Boot owns the connection and explicitly shares the finite current picture. */
+export function connectHome(net, feed) { connection = { net, feed }; }
+const shellFor = (net) => { if (!shell || shell.net !== net) shell = new HomeShell(net, connection.feed); return shell; };
 
 globalThis.addEventListener?.("ash:open", (event) => {
   const { page, agent, section, arg } = event.detail ?? {};
   if (page !== "home" && page !== "apps") return;
-  const net = link.net;
+  const net = connection?.net;
   if (!net) return;
   event.preventDefault();
   shellFor(net).open({ agent, section: page === "apps" ? "apps" : section, arg });

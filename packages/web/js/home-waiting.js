@@ -3,10 +3,8 @@
 import { actionLabel, answerGateAsk, renderEvidence } from "./approvals.js";
 import { ago, dayTime, h, ico, fill } from "./home-dom.js";
 import { group, list, note, row, skeleton, btn } from "./home-ui.js";
+import { appendApprovalOriginal } from "./approval-original.js";
 import { waitingItems } from "./home-model.js";
-
-/** The owner's answers in flight, by ask: a retry after a lost answer sends the same request again. */
-const intents = new Map();
 
 const DECISIONS = { once: "允许了", always: "以后都允许", deny: "拒绝了", timeout: "过期没回答：", cancelled: "取消了", rule: "按规则放行：", review: "她判断后放行：", carry: "刚允许过，沿用：", hand_full: "设备完全放开放行：", declared_none: "无影响，直接放行：", assessed_none: "评估无影响，直接放行：" };
 const decisionText = (item) => `${DECISIONS[item.decision] ?? "已记录："}「${(typeof item.label === "string" && item.label) || actionLabel(item)}」`;
@@ -15,7 +13,8 @@ const valid = (item) => item && typeof item.id === "string" && item.id && Number
 
 /** The same answer the conversation's card gives: a gate approval through the gate's checks, anything else as a plain answer. */
 async function answer(ctx, screen, ask, choice, answerText) {
-  const fresh = ctx.feed.view().asks.find((item) => item.id === ask.id);
+  const intents = ctx.feed.intents;
+  const fresh = ctx.feed.view().asks.find((item) => item.id === ask.id) ?? ask;
   if (!fresh || fresh.seq !== ask.seq || fresh.state !== "pending") throw new Error("待批请求已失效。");
   let intent = intents.get(ask.id);
   if (intent?.choice && (intent.choice !== choice || intent.answerText !== answerText || ["pending", "confirmed", "rejected"].includes(intent.status))) return;
@@ -38,7 +37,8 @@ async function answer(ctx, screen, ask, choice, answerText) {
 }
 
 /** One waiting item as the card of the conversation. */
-function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
+function waitingCard(ctx, screen, item, redraw, originalOptions, now = Date.now()) {
+  const intents = ctx.feed.intents;
   const { kind, ask } = item;
   const approval = kind === "approval";
   const state = intents.get(ask.id);
@@ -46,12 +46,8 @@ function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
     approval ? "需要你确认" : "她问你", h("span", { class: "exp" }, approval ? `${dayTime(ask.expires_at, now)} 前有效` : ago(ask.ts, now)));
   const el = h("article", { class: "a-card hm-wide", dataset: { askId: ask.id } }, head, h("div", { class: "card-title" }, ask.title));
   if (ask.detail) el.append(h("div", { class: "card-body" }, ask.detail));
-  if (approval && typeof ask.original === "string") {
-    const full = h("pre", { class: "hm-original", hidden: true }, ask.original);
-    const link = h("button", { type: "button", class: "card-link" }, "查看完整原文", ico("chev", "i-xs"));
-    link.addEventListener("click", () => { full.hidden = !full.hidden; link.firstChild.textContent = full.hidden ? "查看完整原文" : "收起原文"; });
-    el.append(link, full);
-  }
+  if (typeof ctx.jump === "function") el.append(btn("查看对话", "a-btn btn-ghost btn-sm", () => ctx.jump(ask.id)));
+  if (approval) appendApprovalOriginal(el, ask, "查看完整原文", originalOptions);
   const busy = state?.status === "pending" || state?.status === "confirmed" || state?.status === "rejected";
   const send = (choice, text) => { void answer(ctx, screen, ask, choice, text).then(redraw); redraw(); };
   if (state?.status === "confirmed") {
@@ -78,26 +74,74 @@ function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
 }
 
 export function waitingPage(ctx, screen, arg) {
+  const intents = ctx.feed.intents;
   const agent = typeof arg === "string" ? arg : ctx.agent;
   const cards = h("div", { class: "hm-stack" });
   const settledBox = h("div");
   let history = null;
+  let currentPage = null;
+  let loading = false;
+  const cardRows = new Map();
+  let shownOriginal = null;
+  const disposeRow = entry => { entry.lifetime.disposed = true; for (const clean of entry.lifetime.cleanup) clean(); entry.node.remove(); };
+  const disposeOriginals = () => { for (const entry of cardRows.values()) disposeRow(entry); cardRows.clear(); shownOriginal = null; };
   const draw = () => {
-    const items = waitingItems(ctx.feed.view()).filter((item) => !agent || item.ask.from === agent);
+    const current = currentPage ? { asks: currentPage.items.map(item => item.ask).filter(Boolean) } : ctx.feed.view();
+    const items = waitingItems(current).filter((item) => !agent || item.ask.from === agent);
     screen.wake("expiry", draw, Math.min(...items.map(({ ask }) => ask.expires_at)));
-    fill(cards, ...(items.length ? items.map((item) => waitingCard(ctx, screen, item, draw)) : [list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))]));
+    const ids = new Set(items.map(item => item.ask.id));
+    for (const [id, entry] of cardRows) if (!ids.has(id)) { disposeRow(entry); cardRows.delete(id); }
+    if (!items.length) { fill(cards, list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))); return; }
+    for (const node of [...cards.children]) if (!node.dataset.askId) node.remove();
+    let cursor = cards.firstChild;
+    for (const item of items) {
+      const id = item.ask.id, signature = JSON.stringify([item.ask, intents.get(id)]);
+      let entry = cardRows.get(id);
+      if (entry?.signature !== signature) {
+        if (entry) { if (entry.node === cursor) cursor = cursor.nextSibling; disposeRow(entry); }
+        const lifetime = { disposed: false, cleanup: new Set() };
+        const node = waitingCard(ctx, screen, item, draw, { lifetime, onReadOriginal: async (ask, signal) => {
+          const details = cardRows.get(ask.id)?.node.querySelector("details");
+          if (shownOriginal && shownOriginal !== details) shownOriginal.open = false;
+          shownOriginal = details;
+          const text = await ctx.net.readBlobText(ask.original_full, { signal });
+          if (signal.aborted || lifetime.disposed || !screen.alive()) throw new Error("这条原文已经关闭。");
+          return { text, release: () => { if (shownOriginal === details) shownOriginal = null; } };
+        } });
+        entry = { signature, node, lifetime }; cardRows.set(id, entry);
+      }
+      if (entry.node !== cursor) cards.insertBefore(entry.node, cursor);
+      cursor = entry.node.nextSibling;
+    }
   };
   const drawSettled = () => {
     if (!history || !history.length) { fill(settledBox); return; }
     const last = history[0];
     fill(settledBox, list(row({ icon: "check", tone: "ok", title: `最近处理过 ${history.length} 件`, sub: `最近一件：${decisionText(last)}`, onClick: () => ctx.go("settled") })));
   };
-  screen.onView(draw);
+  const older = btn("更早的问题", "a-btn btn-ghost btn-sm", () => { void load({ before: currentPage.before }); });
+  const newer = btn("更新的问题", "a-btn btn-ghost btn-sm", () => { void load({ after: currentPage.after }); });
+  older.hidden = newer.hidden = true;
+  const load = async (params = {}) => {
+    if (loading) return;
+    loading = true; older.disabled = newer.disabled = true;
+    try {
+      currentPage = await screen.ask("service:history", "current", { limit: 40, ...(agent ? { agent } : {}), ...params });
+      if (!screen.alive()) return;
+      older.hidden = !currentPage.has_more_before; newer.hidden = !currentPage.has_more_after;
+      const active = new Set(currentPage.items.map(item => item.ask?.id));
+      intents.prune(active);
+      draw();
+    } catch { /* connection state remains visible and a later refresh can retry */ }
+    finally { loading = false; older.disabled = newer.disabled = false; }
+  };
+  screen.onView(() => { void load(currentPage?.after ? { before: currentPage.after + 1 } : {}); });
   draw();
   const refresh = async () => {
+    await load();
     try { history = (await screen.ask("service:gate", "history", { limit: 100 })).items?.filter(valid).sort((a, b) => b.at - a.at) ?? []; drawSettled(); } catch { /* the cards above stand */ }
   };
-  return { title: "等你的", body: h("div", { class: "hm-stack" }, cards, settledBox), refresh };
+  return { title: "等你的", body: h("div", { class: "hm-stack" }, cards, h("div", { class: "hm-actions" }, older, newer), settledBox), refresh, dispose: disposeOriginals };
 }
 
 /** The decisions made lately, newest first; "查看依据" opens what the gate saw and said. */

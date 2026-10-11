@@ -63,6 +63,31 @@ test(...withBrowser("receipt, reaction, and burst grouping updates retain the me
   assert.equal(result.files, 1); assert.equal(result.receipt, "已读"); assert.equal(result.reaction, "👍"); assert.match(result.group, /group-first/);
 }));
 
+test(...withBrowser("explicit full-text expansion replaces its focused button while selected text remains protected", async ({ browser }) => {
+  const page = await fixture(browser);
+  const result = await page.evaluate(async () => {
+    options.fullTexts = new Map();
+    window.items = [{ ...say(1, "summary"), full: "source" }];
+    let finish;
+    options.onExpand = () => new Promise(resolve => { finish = () => {
+      options.fullTexts.set("source", "## Full text\n\ncomplete body");
+      const control = document.querySelector(".expand"); control.disabled = false; control.focus();
+      view.update(items, [], options, new Set(["m1"])); resolve();
+    }; });
+    view.update(items, [], options);
+    const more = document.querySelector(".expand"); more.focus(); more.click(); finish();
+    await view.settled('m1');
+    const expanded = document.querySelector(".markdown").textContent;
+    const paragraph = document.querySelector(".markdown p");
+    const range = document.createRange(); range.selectNodeContents(paragraph);
+    const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    options.fullTexts.set("source", "replacement while selected"); view.update(items, [], options, new Set(["m1"]));
+    return { expanded, more: document.querySelector(".expand") !== null, selected: selection.toString(), sameParagraph: paragraph === document.querySelector(".markdown p") };
+  });
+  assert.match(result.expanded, /Full textcomplete body/);
+  assert.equal(result.more, false); assert.equal(result.selected, "complete body"); assert.equal(result.sameParagraph, true);
+}));
+
 test(...withBrowser("prepend, append, eviction, delayed heights and long-message blocks keep the reading anchor", async ({ browser }) => {
   const page = await fixture(browser);
   await page.evaluate(async () => { window.items = Array.from({ length: 60 }, (_, i) => say(i + 100)); view.update(items, [], options); await view.settled(); view.position.jump(document.querySelector('.msg[data-seq="130"]')); window.anchor = document.querySelector('.msg[data-seq="130"]'); window.offset = anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top; });
@@ -232,4 +257,8 @@ test(...withBrowser("automatic full-text slices pause with the live scroll gate 
   await page.evaluate(async () => { view.cancelExpansion('m1'); await view.settled('m1'); });
   assert.equal(await page.evaluate(() => completed), true);
   assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), paused);
+  await page.evaluate(async () => { allowBuild = true; view.update(items, [], options, new Set(['m1'])); await view.settled('m1'); });
+  assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), 1550, "a canceled body must rebuild even when its source and hash did not change");
+  const selected = await page.evaluate(() => { const body = document.querySelector('.msg[data-seq="1"] table'); const range = document.createRange(); range.selectNodeContents(body); const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range); return selection.toString(); });
+  assert.match(selected, /1549/);
 }));

@@ -17,8 +17,8 @@ const noBrowserClient = { name: "no-browser-client", setup(b) {
   b.onResolve({ filter: /link-browser\.js$/ }, () => ({ path: "link-browser", namespace: "app-page" }));
   b.onLoad({ filter: /.*/, namespace: "app-page" }, () => ({ contents: "export const HandClient = undefined; export const browserConnector = undefined;", loader: "js" }));
 } };
-// The page's own code, then the home pages: the hook is evaluated first so it sees the connection start.
-const entry = { contents: 'import "./js/home-hook.js"; import "./js/app.js"; import "./js/home.js";', resolveDir: ui, sourcefile: "page-entry.js", loader: "js" };
+// Boot explicitly supplies the home's connection; no prototype hook or duplicate history reader.
+const entry = { contents: 'import "./js/app.js"; import "./js/home.js";', resolveDir: ui, sourcefile: "page-entry.js", loader: "js" };
 const bundle = async (plugins) => (await build({ stdin: entry, bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent", plugins })).outputFiles[0].text.replaceAll("</script", "<\\/script");
 const app = await bundle([]);
 const appInApp = await bundle([noBrowserClient]);

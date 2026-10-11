@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "324f0329c9875964e74b6428e7c302d47438f5a4f4b4c7fea3e243a416d85843",
+ "hash": "6e1328f12ff856102ffd39f1e0fe0d27422c4ae9c49b8d6db85c5ef677c20acb",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -12522,6 +12522,513 @@
    ],
    "label": {
     "doing": "在看活动详情"
+   }
+  },
+  {
+   "member": "service:history",
+   "word": "window",
+   "kind": "request",
+   "direction": "in",
+   "description": "A bounded window of display items with complete answer, delivery and reaction state at snapshot_seq. Before, after and around_id are mutually exclusive. Long text is a preview and blob reference. Oversized marks one legitimate item returned alone.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "before": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+     },
+     "after": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "around_id": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "dataset_id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "items": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {},
+       "required": [],
+       "additionalProperties": true
+      }
+     },
+     "before": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "after": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "has_more_before": {
+      "type": "boolean"
+     },
+     "has_more_after": {
+      "type": "boolean"
+     },
+     "oversized": {
+      "type": "boolean"
+     },
+     "previous": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "next": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "intro": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "dataset_id",
+     "snapshot_seq",
+     "items",
+     "before",
+     "after",
+     "has_more_before",
+     "has_more_after",
+     "oversized",
+     "previous",
+     "next",
+     "intro"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner"
+   ],
+   "label": {
+    "doing": "在翻聊天记录"
+   }
+  },
+  {
+   "member": "service:history",
+   "word": "current",
+   "kind": "request",
+   "direction": "in",
+   "description": "Authoritative current presence and bounded progress, with independently paginated pending questions and complete total count. Optional agent scopes turns and question publishers; gate approvals remain in the unfiltered owner view. Read without snapshot_seq for current state; old conversation windows do not determine current presence.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "before": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+     },
+     "after": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "agent": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "dataset_id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "items": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {},
+       "required": [],
+       "additionalProperties": true
+      }
+     },
+     "before": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "after": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "has_more_before": {
+      "type": "boolean"
+     },
+     "has_more_after": {
+      "type": "boolean"
+     },
+     "oversized": {
+      "type": "boolean"
+     },
+     "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "as_of": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "next_change_at": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "total_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "presence": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": true
+     },
+     "progress": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "dataset_id",
+     "snapshot_seq",
+     "items",
+     "before",
+     "after",
+     "has_more_before",
+     "has_more_after",
+     "oversized",
+     "revision",
+     "as_of",
+     "next_change_at",
+     "total_count",
+     "presence",
+     "progress"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner"
+   ],
+   "label": {
+    "doing": "在看现在的事"
+   }
+  },
+  {
+   "member": "service:history",
+   "word": "activity.page",
+   "kind": "request",
+   "direction": "in",
+   "description": "Bidirectional bounded turn summaries with an authoritative total count, optionally filtered by inclusive since_ts, exclusive until_ts and agent. With turn, read its safe display steps and complete step count instead; time/agent filters then do not apply. Step details remain on demand through history.activity.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "before": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+     },
+     "after": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "turn": {
+      "type": "string",
+      "minLength": 1
+     },
+     "since_ts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "until_ts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "agent": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "dataset_id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "items": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {},
+       "required": [],
+       "additionalProperties": true
+      }
+     },
+     "before": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "after": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "has_more_before": {
+      "type": "boolean"
+     },
+     "has_more_after": {
+      "type": "boolean"
+     },
+     "oversized": {
+      "type": "boolean"
+     },
+     "total_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "dataset_id",
+     "snapshot_seq",
+     "items",
+     "before",
+     "after",
+     "has_more_before",
+     "has_more_after",
+     "oversized",
+     "total_count"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner"
+   ],
+   "label": {
+    "doing": "在看她做过的事"
+   }
+  },
+  {
+   "member": "service:history",
+   "word": "confirm",
+   "kind": "request",
+   "direction": "in",
+   "description": "Confirm at most 24 owner's outgoing message ids against the authoritative ledger, independently of retained history pages. Does not send or execute anything.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      },
+      "maxItems": 24,
+      "uniqueItems": true
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "ids"
+    ],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "dataset_id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "snapshot_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "ids": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "dataset_id",
+     "snapshot_seq",
+     "ids"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner"
+   ],
+   "label": {
+    "doing": "在确认消息已送达"
    }
   },
   {

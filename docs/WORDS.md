@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `324f0329c9875964`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `6e1328f12ff85610`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -23,7 +23,7 @@
 - [`service:reflex`](#servicereflex) (6)
 - [`service:senses`](#servicesenses) (12)
 - [`service:directory`](#servicedirectory) (2)
-- [`service:history`](#servicehistory) (4)
+- [`service:history`](#servicehistory) (8)
 - [`service:blobs`](#serviceblobs) (2)
 - [`service:host`](#servicehost) (8)
 - [`service:bodies`](#servicebodies) (4)
@@ -299,6 +299,10 @@
 | `read` | owner, agent, app | read / none | - | from_seq*, to_seq* | 在读历史原文 | Read ledger messages by sequence range, as recorded (secret and sensitive fields masked). |
 | `turn` | owner, agent, app | read / none | - | turn* | 在看某一轮做了什么 | What happened in one turn of an agent: the messages it was given, its tool calls and results (summaries), and what it said. |
 | `activity` | owner, agent, app | read / none | - | id*, offset | 在看活动详情 | The detail of one activity entry (a turn's tool calls), paged by offset. |
+| `window` | owner | read / none | - | before, after, limit, snapshot_seq, around_id | 在翻聊天记录 | A bounded window of display items with complete answer, delivery and reaction state at snapshot_seq. Before, after and around_id are mutually exclusive. Long text is a preview and blob reference. Oversized marks one legitimate item returned alone. |
+| `current` | owner | read / none | - | before, after, limit, snapshot_seq, agent | 在看现在的事 | Authoritative current presence and bounded progress, with independently paginated pending questions and complete total count. Optional agent scopes turns and question publishers; gate approvals remain in the unfiltered owner view. Read without snapshot_seq for current state; old conversation windows do not determine current presence. |
+| `activity.page` | owner | read / none | - | before, after, limit, snapshot_seq, turn, since_ts, until_ts, agent | 在看她做过的事 | Bidirectional bounded turn summaries with an authoritative total count, optionally filtered by inclusive since_ts, exclusive until_ts and agent. With turn, read its safe display steps and complete step count instead; time/agent filters then do not apply. Step details remain on demand through history.activity. |
+| `confirm` | owner | read / none | - | ids*, snapshot_seq | 在确认消息已送达 | Confirm at most 24 owner's outgoing message ids against the authoritative ledger, independently of retained history pages. Does not send or execute anything. |
 
 ## `service:blobs`
 
