@@ -223,7 +223,7 @@ export class AgentManager {
     for (const run of on) this.ensureMember(run.id);
     await this.refreshPaused();
     this.stoppers.push(this.timers.every(USAGE_POLL_MS, () => this.bg(this.pollUsage(), "usage poll")));
-    for (const run of on) this.bg(this.startAgent(run.id, "内核重启"), `start ${run.id}`);
+    for (const run of on) this.bg(this.startAgent(run.id, "大脑重启"), `start ${run.id}`);
   }
 
   async stopAll(): Promise<void> {
@@ -264,7 +264,7 @@ export class AgentManager {
   }
   private slot(id: string): Slot {
     let slot = this.slots.get(id);
-    if (!slot) this.slots.set(id, slot = { id, phase: "stopped", gen: 0, failures: 0, troubled: false, gaveUp: false, why: "内核重启", proxy: this.proxy });
+    if (!slot) this.slots.set(id, slot = { id, phase: "stopped", gen: 0, failures: 0, troubled: false, gaveUp: false, why: "大脑重启", proxy: this.proxy });
     return slot;
   }
   /** The process of the attempt in flight or running, with its lanes. */
@@ -321,7 +321,7 @@ export class AgentManager {
    * later one succeeds. A start asked for while a try is waiting does not wait for it. `why` names the reason in the notice an
    * interrupted turn leaves.
    */
-  async startAgent(id: string, why = "内核重启"): Promise<void> {
+  async startAgent(id: string, why = "大脑重启"): Promise<void> {
     const run = this.run(id);
     this.driver(run.spec.decl.runtime.kind); // no driver for the kind: refused here, before anything changes
     const slot = this.slot(id);

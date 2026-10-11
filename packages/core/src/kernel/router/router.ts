@@ -114,7 +114,7 @@ export class HubRouter implements Router {
       // A request this process is handling now is not one the last process left behind (the hub may take calls while it starts).
       if (r.state !== "dispatched" || this.inflight.has(r.id)) continue;
       ledger.setRequest(r.id, "interrupted");
-      const error = errorBody("result_unknown", "内核重启，结果不确定，请先查再决定要不要重做");
+      const error = errorBody("result_unknown", "大脑重启，结果不确定，请先查再决定要不要重做");
       ledger.append({ from: r.to, to: r.from, kind: "response", word: r.word, body: { ok: false, error }, reply_to: r.id });
       // Nobody is messaged: an agent's calls come through the tool surface, which tells it by itself (a `wake` with the request_id for
       // a receipt it gave, SPEC-02 §3.4), and a turn the restart cut off is told by the agents module.
