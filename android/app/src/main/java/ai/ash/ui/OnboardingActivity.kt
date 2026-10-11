@@ -4,9 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -14,10 +11,10 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
-import android.widget.Button
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import ai.ash.R
 import ai.ash.apps.Ui
 import ai.ash.caps.Capabilities
@@ -31,22 +28,38 @@ import ai.ash.host.KernelGate
 import ai.ash.host.KernelInstaller
 import ai.ash.host.KernelLauncher
 import ai.ash.host.KernelState
+import ai.ash.ui.OnboardingContent.Look
+import ai.ash.ui.OnboardingViews.Layout
+import ai.ash.ui.OnboardingPlan.Kind
+import ai.ash.ui.design.AshTokens
+import ai.ash.ui.design.AshUi
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
 /**
- * The first-launch guide (SPEC-05 §9): the kernel package, then the permissions and switches, the system's special
- * accesses, the senses, and done. [OnboardingPlan] decides which step is shown from the state of the kernel package and
- * of `config.status`; this class reads that state (off the main thread, once a second and whenever the owner comes
- * back from a settings page), starts the kernel when it does not run, and shows the step. Every button asks for
- * what the capability of the same name would. Each step can be skipped; nothing here is required.
+ * The first-launch guide (SPEC-05 §9), one thing at a time: she says hello, installs her brain, then asks about each thing
+ * she can have — why she wants it, what the owner gets, and two buttons (open it / not now) — and ends with how many are on.
+ * [OnboardingPlan] decides which screen is next from the state of the kernel package and of `config.status`; this class reads
+ * that state (off the main thread, once a second and whenever the owner comes back from a settings page), starts the kernel
+ * when it does not run, and draws the screen. Every button asks for what the capability of the same name would. Each
+ * screen can be passed on; nothing here is required.
  */
 class OnboardingActivity : Activity() {
-    private class Loaded(val kernel: KernelState, val items: List<ConfigStatus.Item>)
+    private class Loaded(val kernel: KernelState, val items: List<ConfigStatus.Item>) {
+        val rows get() = items.map { OnboardingPlan.Row(it.item, it.state) }
+    }
+
+    /** Where the kernel package is on its way in. */
+    private enum class Install { IDLE, DOWNLOADING, CONFIRM }
 
     private val ui = Handler(Looper.getMainLooper())
     private val reader = Executors.newSingleThreadExecutor { Thread(it, "ash-onboarding-read").apply { isDaemon = true } }
-    private val skipped = mutableSetOf<OnboardingStep>()
+    private val skipped = mutableSetOf<String>()
+    private var kernelSkipped = false
+    /** The owner pressed 「开始」 (the first screen is the greeting). */
+    private var started = true
+    /** Items the owner has been taken to the system's page for (so a switch the phone hides from Ash can then be confirmed). */
+    private val opened = mutableSetOf<String>()
     private var loaded: Loaded? = null
     /** A read is under way (set on the main thread, cleared by the reading thread whatever happens). */
     @Volatile private var loading = false
@@ -55,59 +68,33 @@ class OnboardingActivity : Activity() {
     private var lastStart = 0L
     /** When the kernel step first saw the kernel installed but not running (0: it is running, or not yet seen). */
     private var waitingSince = 0L
-    /** While the kernel package downloads or waits for the owner's confirmation: what to say. */
-    @Volatile private var installing: String? = null
+    @Volatile private var install = Install.IDLE
+    /** How much of the kernel package is down, in percent, or -1 when the size is not known. */
+    @Volatile private var percent = -1
+    @Volatile private var megabytes = 0L
     @Volatile private var installError: String? = null
 
-    private lateinit var count: TextView
-    private lateinit var title: TextView
-    private lateinit var body: TextView
-    private lateinit var list: LinearLayout
-    private lateinit var primary: Button
-    private lateinit var secondary: Button
-    private lateinit var dots: LinearLayout
+    /** The screens shown so far, and which one is on show (earlier than the last when the owner went back). */
+    private val history = mutableListOf<OnboardingPlan.Page>()
+    private var cursor = -1
+    private var shown: String? = null
+    private lateinit var holder: FrameLayout
+    private var ring: OnboardingViews.RingAvatar? = null
+    private var ringLabel: android.widget.TextView? = null
 
     private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-    private val fg get() = if (night) Color.rgb(236, 236, 238) else Color.rgb(28, 28, 30)
-    private val muted get() = if (night) Color.rgb(150, 150, 156) else Color.rgb(110, 110, 116)
-    private val accent get() = getColor(R.color.accent)
+    private val palette get() = AshUi.p(this)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        setTheme(if (night) R.style.Ash_Dark else R.style.Ash_Light)
+        setTheme(if (night) R.style.Ash_Setup_Dark else R.style.Ash_Setup_Light)
         super.onCreate(savedInstanceState)
-        savedInstanceState?.getIntArray(KEY_SKIPPED)?.forEach { skipped += OnboardingStep.entries[it] }
-
-        count = TextView(this).apply { textSize = 13f; setTextColor(muted); gravity = Gravity.CENTER }
-        title = TextView(this).apply { textSize = 24f; setTypeface(typeface, Typeface.BOLD); setTextColor(fg); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(12)) }
-        body = TextView(this).apply { textSize = 15f; setTextColor(fg); gravity = Gravity.CENTER; setLineSpacing(0f, 1.3f) }
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(12), 0, 0) }
-        primary = Button(this).apply {
-            isAllCaps = false; textSize = 16f; setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(accent) }
-            stateListAnimator = null
-        }
-        secondary = Button(this, null, android.R.attr.borderlessButtonStyle).apply { isAllCaps = false; textSize = 15f; setTextColor(muted) }
-        dots = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(12)) }
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(24), dp(24), dp(16))
-            addView(count); addView(title); addView(body); addView(list)
-        }
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(32), 0, dp(32), dp(16))
-            addView(dots)
-            addView(primary, LinearLayout.LayoutParams(-1, dp(48)))
-            addView(secondary, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-        }
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(ScrollView(this@OnboardingActivity).apply { isFillViewport = true; addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
-            addView(bottom, LinearLayout.LayoutParams(-1, -2))
-        }
-        setContentView(root)
-        Ui.insets(root)
+        savedInstanceState?.getStringArray(KEY_SKIPPED)?.let { skipped += it }
+        kernelSkipped = savedInstanceState?.getBoolean(KEY_KERNEL_SKIPPED) ?: false
+        started = savedInstanceState?.getBoolean(KEY_STARTED) ?: !intent.getBooleanExtra(EXTRA_WELCOME, false)
+        holder = FrameLayout(this).apply { setBackgroundColor(palette.bg) }
+        setContentView(holder)
+        Ui.insets(holder)
+        Ui.systemBars(this)
     }
 
     override fun onResume() {
@@ -127,7 +114,9 @@ class OnboardingActivity : Activity() {
 
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out)
-        out.putIntArray(KEY_SKIPPED, skipped.map { it.ordinal }.toIntArray())
+        out.putStringArray(KEY_SKIPPED, skipped.toTypedArray())
+        out.putBoolean(KEY_KERNEL_SKIPPED, kernelSkipped)
+        out.putBoolean(KEY_STARTED, started)
     }
 
     /** Reads the kernel package and `config.status` (which may wait on Health Connect, so not on the main thread). */
@@ -138,7 +127,7 @@ class OnboardingActivity : Activity() {
             reader.execute {
                 try {
                     val read = runCatching { Loaded(KernelLauncher.state(this), items()) }.getOrNull()
-                    ui.post { if (read != null && !isDestroyed) { loaded = read; keepKernelUp(read.kernel); render() } }
+                    ui.post { if (read != null && !isDestroyed) { loaded = read; keepKernelUp(read); render() } }
                 } finally { loading = false }
             }
         }
@@ -152,104 +141,347 @@ class OnboardingActivity : Activity() {
         return ConfigStatus.all(this) + keepAlive + recovery
     }
 
-    private fun plan(l: Loaded) = OnboardingPlan.current(l.kernel, l.items.map { OnboardingPlan.Row(it.item, it.state) }, skipped)
-
-    /** On the kernel step, an installed kernel that does not run is started, a few times, a while apart. */
-    private fun keepKernelUp(kernel: KernelState) {
-        if (kernel != KernelState.NOT_RUNNING) { startsTried = 0; waitingSince = 0; return }
-        val l = loaded ?: return
-        if (plan(Loaded(kernel, l.items)) != OnboardingStep.KERNEL) return
+    /** On the brain screen, an installed kernel that does not run is started, a few times, a while apart. */
+    private fun keepKernelUp(l: Loaded) {
+        if (l.kernel != KernelState.NOT_RUNNING) { startsTried = 0; waitingSince = 0; return }
+        if (!started || kernelSkipped) return
         val now = SystemClock.elapsedRealtime()
         if (waitingSince == 0L) waitingSince = now
-        if (KernelGate.action(kernel, startsTried) == KernelGate.Action.START && now - lastStart > START_GAP_MS) {
+        if (KernelGate.action(l.kernel, startsTried) == KernelGate.Action.START && now - lastStart > START_GAP_MS) {
             KernelLauncher.start(this)
             startsTried++; lastStart = now
         }
     }
 
+    // ---- which screen -----------------------------------------------------------------------------------------------
+
+    private fun live(l: Loaded): OnboardingPlan.Page =
+        if (!started) OnboardingPlan.Page(Kind.WELCOME) else OnboardingPlan.page(l.kernel, l.rows, kernelSkipped, skipped)
+
+    private fun key(p: OnboardingPlan.Page) = "${p.kind}:${p.item ?: ""}"
+
+    /** Keeps [history] up with the live screen; returns the screen to draw. */
+    private fun current(l: Loaded): OnboardingPlan.Page {
+        val now = live(l)
+        val atEnd = cursor == history.lastIndex
+        if (atEnd && (history.isEmpty() || key(history.last()) != key(now))) { history += now; cursor = history.lastIndex }
+        return history[cursor]
+    }
+
+    private fun goBack() {
+        val l = loaded
+        if (l == null || cursor <= 0 || current(l).kind == Kind.DONE) return done()
+        cursor--
+        render()
+    }
+
+    private fun forward() {
+        if (cursor < history.lastIndex) cursor++
+        render()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() = goBack()
+
+    // ---- drawing ----------------------------------------------------------------------------------------------------
+
     private fun render() {
         val l = loaded ?: return
-        val step = plan(l)
-        if (KernelInstaller.failure != null) installing = null
-        dots.removeAllViews()
-        for (s in OnboardingStep.entries) dots.addView(View(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (s == step) accent else (muted and 0x00FFFFFF) or 0x66000000) }
-        }, LinearLayout.LayoutParams(dp(if (s == step) 8 else 6), dp(if (s == step) 8 else 6)).apply { setMargins(dp(4), 0, dp(4), 0); gravity = Gravity.CENTER_VERTICAL })
-        count.text = "第 ${step.ordinal + 1} / ${OnboardingStep.entries.size} 步"
-        list.removeAllViews()
-        primary.visibility = View.VISIBLE
-        secondary.text = "跳过这一步"
-        secondary.setOnClickListener { skipped += step; render() }
-        secondary.visibility = if (step == OnboardingStep.DONE) View.GONE else View.VISIBLE
+        if (KernelInstaller.failure != null && install != Install.IDLE) install = Install.IDLE
+        val page = current(l)
+        val reviewing = cursor < history.lastIndex
+        val signature = signature(page, l, reviewing)
+        if (page.kind == Kind.BRAIN) updateBrain(l)
+        if (signature == shown) return
+        val firstDraw = shown == null
+        val sameScreen = shown?.substringBefore('|') == signature.substringBefore('|')
+        shown = signature
+        val view = when (page.kind) {
+            Kind.WELCOME -> welcomePage()
+            Kind.BRAIN -> brainPage(l, reviewing)
+            Kind.ITEM -> itemPage(page.item!!, l, reviewing)
+            Kind.DONE -> donePage(l)
+        }
+        holder.removeAllViews()
+        holder.addView(view, OnboardingViews.frame())
+        if (!firstDraw && !sameScreen) enter(view)
+    }
 
-        when (step) {
-            OnboardingStep.KERNEL -> kernelStep(l.kernel)
-            OnboardingStep.PERMISSIONS -> rowsStep(l, step, "权限和开关", "这些让提醒准时、让 Ash 在后台一直活着。每一项都可以先不开。")
-            OnboardingStep.SCREEN_ACCESS -> rowsStep(l, step, "无障碍和通知读取", "Ash 看懂屏幕、替你操作手机，靠无障碍；这两项要在系统设置里亲自打开。")
-            OnboardingStep.SENSES -> rowsStep(l, step, "位置和健康", "可以不开。开了，Ash 才知道你在哪、走了多少步；数据只存在手机上。")
-            OnboardingStep.DONE -> {
-                title.text = "准备好了"
-                val on = l.items.count { it.state == ConfigStatus.GRANTED }
-                body.text = "已开启 $on / ${l.items.size} 项。以后可以在「诊断」页随时开启，或再次打开这个引导。"
-                primary.text = "完成"
-                primary.setOnClickListener { done() }
+    /** A new screen comes up from a little below, fading in. */
+    private fun enter(v: View) {
+        if (!AshUi.motionOn(this)) return
+        v.alpha = 0f; v.translationY = AshUi.dpF(this, 6f)
+        v.animate().alpha(1f).translationY(0f).setDuration(AshTokens.Motion.message).setInterpolator(AshTokens.Motion.easing()).start()
+    }
+
+    /** Everything that changes what is drawn, apart from the progress of the download (which moves the ring in place). */
+    private fun signature(p: OnboardingPlan.Page, l: Loaded, reviewing: Boolean): String {
+        val head = key(p)
+        return head + "|" + when (p.kind) {
+            Kind.WELCOME -> ""
+            Kind.BRAIN -> brainPhase(l).name + reviewing + startsTried + (waitingSince != 0L && SystemClock.elapsedRealtime() - waitingSince >= OnboardingPlan.KERNEL_WAIT_MS)
+            Kind.ITEM -> {
+                val item = p.item!!
+                val granted = l.items.firstOrNull { it.item == item }?.state == ConfigStatus.GRANTED
+                "$granted$reviewing${item in opened}${awaitsWord(item)}${OnboardingPlan.dots(l.kernel, l.rows, skipped, history.mapNotNull { it.item }).joinToString(",")}"
             }
+            Kind.DONE -> OnboardingPlan.summary(l.kernel, l.rows).let { "${it.on}/${it.off.joinToString(",")}" }
         }
     }
 
-    private fun kernelStep(state: KernelState) {
-        title.text = "Ash 内核"
-        when (state) {
-            KernelState.NOT_INSTALLED -> {
-                val say = installError ?: KernelInstaller.failure ?: installing
-                body.text = say ?: ("Ash 的大脑在单独的「内核包」里，还没有安装。" +
-                    if (KernelInstaller.configured) "\n\n点下面的按钮下载并安装。" else "\n\n这个版本没有带下载地址，请先自己安装内核包。")
-                primary.visibility = if (KernelInstaller.configured && installing == null) View.VISIBLE else View.GONE
-                primary.text = if (KernelInstaller.mayInstall(this)) "下载并安装" else "先允许 Ash 安装应用"
-                primary.setOnClickListener { installKernel() }
+    private fun dp(v: Int) = AshUi.dp(this, v)
+
+    /** The page's frame: [dots] on top (or nothing), [body] in the middle (centred, scrolls when it does not fit), [bottom] at the foot. */
+    private fun frame(dots: View?, body: View, bottom: View, glow: Boolean = false): View {
+        val c = palette
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true; overScrollMode = View.OVER_SCROLL_NEVER
+            addView(body, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val middle = FrameLayout(this).apply {
+            if (glow) addView(OnboardingViews.glow(this@OnboardingActivity), FrameLayout.LayoutParams(dp(Layout.glow), dp(Layout.glow), Gravity.CENTER))
+            addView(scroll, OnboardingViews.frame())
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(c.bg)
+            if (dots != null) addView(dots, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(Layout.dotsRow)))
+            addView(middle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(bottom, OnboardingViews.fill())
+        }
+    }
+
+    private fun bottom(padBottom: Int, vararg buttons: View): LinearLayout = AshUi.vstack(this, Layout.barGap).apply {
+        setPadding(dp(AshTokens.Space.lg), dp(AshTokens.Space.xs), dp(AshTokens.Space.lg), dp(padBottom))
+        buttons.forEach { addView(it) }
+    }
+
+    private fun centered(gap: Int, padX: Int, vararg views: View): LinearLayout = OnboardingViews.column(this, gap).apply {
+        gravity = Gravity.CENTER; setPadding(dp(padX), 0, dp(padX), dp(AshTokens.Space.xl))
+        views.forEach { addView(it) }
+    }
+
+    private fun primary(label: String, onClick: () -> Unit, enabled: Boolean = true) =
+        AshUi.button(this, label, if (enabled) AshUi.Kind.PRIMARY else AshUi.Kind.NEUTRAL, AshUi.BtnSize.LG, block = true, onClick = if (enabled) onClick else null)
+            .also { if (!enabled) AshUi.disable(it) }
+
+    // 你好
+    private fun welcomePage(): View {
+        val c = palette
+        val face = OnboardingViews.avatar(this, "default", Layout.welcomeAvatar, AshUi.AvatarView.State.THINKING)
+        val title = AshUi.text(this, OnboardingContent.Words.WELCOME_TITLE, OnboardingViews.welcomeTitle).apply { gravity = Gravity.CENTER }
+        val body = AshUi.text(this, OnboardingContent.Words.WELCOME_BODY, OnboardingViews.welcomeBody).apply { gravity = Gravity.CENTER }
+        val stack = centered(14, Layout.sideWide, face, title, body)
+        (title.layoutParams as LinearLayout.LayoutParams).topMargin = dp(Layout.welcomeTitleTop)
+        // the avatar's own margins (its ring) are negative; the column needs the room back
+        return frame(null, stack, bottom(Layout.barSimple, primary(OnboardingContent.Words.START, { started = true; cursorToLive() })), glow = true)
+            .also { it.setBackgroundColor(c.bg) }
+    }
+
+    private fun cursorToLive() {
+        val l = loaded
+        if (l != null) { cursor = history.lastIndex; render() }
+    }
+
+    // 大脑
+    private enum class Brain { IDLE, NO_URL, DOWNLOADING, CONFIRM, ERROR, STARTING, GAVE_UP, READY }
+
+    private fun brainPhase(l: Loaded): Brain = when {
+        l.kernel == KernelState.BOUND -> Brain.READY
+        l.kernel == KernelState.NOT_INSTALLED -> when {
+            installError != null || KernelInstaller.failure != null -> Brain.ERROR
+            install == Install.DOWNLOADING -> Brain.DOWNLOADING
+            install == Install.CONFIRM -> Brain.CONFIRM
+            !KernelInstaller.configured -> Brain.NO_URL
+            else -> Brain.IDLE
+        }
+        KernelGate.action(l.kernel, startsTried) == KernelGate.Action.WAIT -> Brain.GAVE_UP
+        else -> Brain.STARTING
+    }
+
+    private fun brainPage(l: Loaded, reviewing: Boolean): View {
+        val c = palette
+        val phase = brainPhase(l)
+        val rom = KernelAutostart.rom(Build.MANUFACTURER)
+        val face = OnboardingViews.RingAvatar(this, Layout.brainRing, Layout.brainRingRadius).apply {
+            image = OnboardingViews.face(this@OnboardingActivity, if (phase == Brain.READY) "success" else "thinking")
+            spinning = phase == Brain.STARTING
+        }
+        ring = face
+        val label = AshUi.text(this, "", OnboardingViews.brainLabel, c.her).apply { gravity = Gravity.CENTER; visibility = View.GONE }
+        ringLabel = label
+        val (title, body) = when (phase) {
+            Brain.NO_URL -> "我的大脑还没装上" to "这个版本没有带下载地址。请先自己把大脑的安装包装好，再回来。"
+            Brain.ERROR -> "大脑没装上" to (OnboardingPlan.brainWords(installError ?: KernelInstaller.failure ?: "") + "。可以再试一次。")
+            Brain.GAVE_UP -> "大脑还没醒来" to "已经试着叫醒它 $startsTried 次，还是没有起来。"
+            Brain.READY -> "大脑已经装好了" to "它醒着，我随时在。"
+            Brain.CONFIRM -> OnboardingContent.Words.BRAIN_TITLE to "下载好了。请在系统弹出的安装页上点「安装」。"
+            Brain.STARTING -> "大脑装好了" to listOfNotNull("正在叫醒它，一会儿就好。", OnboardingPlan.kernelPrompt(rom)).joinToString("")
+            else -> OnboardingContent.Words.BRAIN_TITLE to listOfNotNull("一两分钟。", OnboardingPlan.kernelPrompt(rom)).joinToString("")
+        }
+        val titleView = AshUi.text(this, title, OnboardingViews.brainTitle).apply { gravity = Gravity.CENTER }
+        val bodyView = AshUi.text(this, body, OnboardingViews.brainBody).apply { gravity = Gravity.CENTER }
+        val stack = centered(14, Layout.sideWide, face, label, titleView, bodyView)
+        val waited = if (waitingSince == 0L) 0L else SystemClock.elapsedRealtime() - waitingSince
+        val refused = phase == Brain.STARTING && OnboardingPlan.showRefusedRetry(rom, waited)
+        val skip = OnboardingViews.ghost(this, OnboardingContent.Words.SKIP) { kernelSkipped = true; render() }
+        val buttons = mutableListOf<View>()
+        when {
+            reviewing -> buttons += primary("继续", { forward() })
+            phase == Brain.IDLE -> {
+                buttons += primary(if (KernelInstaller.mayInstall(this)) "下载并安装" else "去允许安装应用", { installKernel() }); buttons += skip
+            }
+            phase == Brain.ERROR -> { buttons += primary("再试一次", { installKernel() }); buttons += skip }
+            phase == Brain.NO_URL -> buttons += skip
+            phase == Brain.GAVE_UP || refused -> { buttons += primary("再试一次", { retryKernel() }); buttons += skip }
+            else -> buttons += primary("请稍等", {}, enabled = false)
+        }
+        if (refused) OnboardingPlan.kernelRetryHint(rom)?.let { hint -> stack.addView(AshUi.text(this, hint, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }) }
+        return frame(null, stack, bottom(Layout.barSimple, *buttons.toTypedArray())).also { updateBrain(l) }
+    }
+
+    /** The ring and the line under it follow the download without redrawing the screen. */
+    private fun updateBrain(l: Loaded) {
+        val r = ring ?: return
+        val label = ringLabel ?: return
+        when (brainPhase(l)) {
+            Brain.DOWNLOADING -> {
+                r.setProgress(if (percent >= 0) percent / 100f else 0f)
+                label.text = if (percent >= 0) "正在下载 $percent%" else "正在下载 $megabytes MB"; label.visibility = View.VISIBLE
+            }
+            Brain.CONFIRM -> { r.setProgress(1f); label.text = "下载好了"; label.visibility = View.VISIBLE }
+            Brain.STARTING -> { label.text = "正在叫醒大脑…"; label.visibility = View.VISIBLE }
+            Brain.READY -> r.setProgress(1f, animate = false)
+            else -> { r.setProgress(0f, animate = false); label.visibility = View.GONE }
+        }
+    }
+
+    private fun retryKernel() {
+        startsTried = 0; lastStart = 0; waitingSince = SystemClock.elapsedRealtime()
+        loaded?.let { keepKernelUp(it) }
+        render()
+    }
+
+    // 一次一件 / 要你亲手开的
+    private fun itemPage(item: String, l: Loaded, reviewing: Boolean): View {
+        val row = l.items.first { it.item == item }
+        val permission = permissionOf(item)
+        val copy = OnboardingContent.of(item, permission?.title ?: item, permission?.why ?: "")
+        val granted = row.state == ConfigStatus.GRANTED
+        val states = OnboardingPlan.dots(l.kernel, l.rows, skipped, history.mapNotNull { it.item }).let { dots ->
+            val at = dots.indexOf(item)
+            dots.mapIndexed { i, d ->
+                when {
+                    i == at -> OnboardingViews.DotState.ACTIVE
+                    d in history.mapNotNull { it.item } || d in skipped || l.items.firstOrNull { it.item == d }?.state == ConfigStatus.GRANTED -> OnboardingViews.DotState.DONE
+                    else -> OnboardingViews.DotState.UPCOMING
+                }
+            }
+        }
+        val gap = if (copy.look == Look.HAND) Layout.pageGapHand else Layout.pageGapAsk
+        val body = AshUi.vstack(this, gap).apply { setPadding(dp(Layout.sideX), 0, dp(Layout.sideX), dp(Layout.sideX)); gravity = Gravity.CENTER_VERTICAL }
+        body.addView(OnboardingViews.sayRow(this, copy.expression, copy.say))
+        when (copy.look) {
+            Look.ASK -> copy.preview?.let { p ->
+                body.addView(OnboardingViews.previewCard(this, p), OnboardingViews.fill().apply {
+                    topMargin = dp(Layout.previewTop); marginStart = dp(Layout.previewSide); marginEnd = dp(Layout.previewSide)
+                })
+                body.addView(AshUi.text(this, p.caption, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }, OnboardingViews.fill())
+            }
+            Look.HAND -> copy.hand?.let { h ->
+                body.addView(OnboardingViews.handCard(this, h), OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.xs) })
+                body.addView(OnboardingViews.steps(this, h), OnboardingViews.fill())
+            }
+        }
+        if (granted) body.addView(AshUi.resolved(this, "已打开", ok = true))
+        val buttons = mutableListOf<View>()
+        val awaits = awaitsWord(item)
+        when {
+            granted -> buttons += primary("继续", { forward() })
+            awaits && item in opened -> {
+                buttons += primary("我已设好", { permission?.confirm(this); reload() })
+                buttons += AshUi.button(this, "再打开一次", AshUi.Kind.NEUTRAL, AshUi.BtnSize.MD, block = true) { act(item) }
+                buttons += OnboardingViews.ghost(this, OnboardingContent.Words.SKIP) { skip(item) }
             }
             else -> {
-                val gave = KernelGate.action(state, startsTried) == KernelGate.Action.WAIT
-                val rom = KernelAutostart.rom(Build.MANUFACTURER)
-                val waited = if (waitingSince == 0L) 0L else SystemClock.elapsedRealtime() - waitingSince
-                val refused = state == KernelState.NOT_RUNNING && OnboardingPlan.showRefusedRetry(rom, waited)
-                val lines = mutableListOf(if (gave) "内核未运行。已经试着启动 $startsTried 次，还是没有起来。" else "内核未运行，正在启动…")
-                if (state == KernelState.NOT_RUNNING) OnboardingPlan.kernelPrompt(rom)?.let { lines += it }
-                body.text = lines.joinToString("\n\n")
-                primary.visibility = if (gave || refused) View.VISIBLE else View.GONE
-                primary.text = if (refused) OnboardingPlan.kernelRetryHint(rom) else "再试一次"
-                primary.setOnClickListener { startsTried = 0; lastStart = 0; waitingSince = SystemClock.elapsedRealtime(); keepKernelUp(KernelState.NOT_RUNNING); render() }
+                buttons += OnboardingViews.iconButton(this, copy.primary, copy.icon) { opened += item; act(item); render() }
+                buttons += OnboardingViews.ghost(this, OnboardingContent.Words.SKIP) { skip(item) }
+            }
+        }
+        return frame(OnboardingViews.dots(this, states), body, bottom(Layout.barAsk, *buttons.toTypedArray()))
+    }
+
+    private fun awaitsWord(item: String): Boolean = permissionOf(item)?.awaitsWord(this) == true
+
+    /** 「先不用」: the screen is not asked again; skipping accessibility passes on its auto-recovery too. */
+    private fun skip(item: String) {
+        skipped += item
+        if (item == "accessibility") skipped += "screen_recovery"
+        if (cursor < history.lastIndex) forward() else render()
+    }
+
+    // 准备好了
+    private fun donePage(l: Loaded): View {
+        val summary = OnboardingPlan.summary(l.kernel, l.rows)
+        val face = OnboardingViews.RingAvatar(this, Layout.doneRing, Layout.doneRingRadius).apply {
+            image = OnboardingViews.face(this@OnboardingActivity, "success")
+            setProgress(if (summary.total == 0) 1f else summary.on.toFloat() / summary.total)
+        }
+        val title = AshUi.text(this, OnboardingContent.Words.DONE_TITLE, AshTokens.Type.display).apply { gravity = Gravity.CENTER }
+        val said = if (summary.off.isEmpty()) "开了 ${summary.on} 项，该开的都开好了。\n有什么想让我做的，直接跟我说。"
+            else "开了 ${summary.on} 项。这 ${summary.off.size} 项你先没开，\n需要时在我的主页里随时能开："
+        val body = AshUi.text(this, said, OnboardingViews.doneBody).apply { gravity = Gravity.CENTER }
+        val stack = OnboardingViews.column(this, 10).apply {
+            setPadding(dp(Layout.sideX), dp(Layout.doneTop), dp(Layout.sideX), dp(AshTokens.Space.xl))
+            addView(face); addView(title, OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.sm + 2) }); addView(body)
+            if (summary.off.isNotEmpty()) addView(tags(summary.off), OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.xs) })
+        }
+        return frame(null, stack, bottom(Layout.barSimple, primary(OnboardingContent.Words.DONE_BUTTON, { done() })))
+    }
+
+    /** The things that stayed off, as small labels that wrap. */
+    private fun tags(off: List<String>): View {
+        val names = off.map { id ->
+            if (id == OnboardingPlan.BRAIN) "大脑" else permissionOf(id).let { p -> OnboardingContent.of(id, p?.title ?: id, "").name }
+        }
+        val rowGap = dp(AshTokens.Space.xs)
+        return WrapRow(this, rowGap).apply { names.forEach { addView(OnboardingViews.offTag(this@OnboardingActivity, it)) } }
+    }
+
+    /** Children laid out left to right, wrapping, each line centred. */
+    private class WrapRow(ctx: Context, private val gap: Int) : ViewGroup(ctx) {
+        override fun onMeasure(w: Int, h: Int) {
+            val max = MeasureSpec.getSize(w)
+            var x = 0; var y = 0; var line = 0
+            for (i in 0 until childCount) {
+                val v = getChildAt(i); v.measure(MeasureSpec.makeMeasureSpec(max, MeasureSpec.AT_MOST), MeasureSpec.UNSPECIFIED)
+                if (x > 0 && x + v.measuredWidth > max) { x = 0; y += line + gap; line = 0 }
+                x += v.measuredWidth + gap; line = maxOf(line, v.measuredHeight)
+            }
+            setMeasuredDimension(max, y + line)
+        }
+
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            val max = r - l
+            val rows = mutableListOf<MutableList<View>>(mutableListOf())
+            var x = 0
+            for (i in 0 until childCount) {
+                val v = getChildAt(i)
+                if (x > 0 && x + v.measuredWidth > max) { rows.add(mutableListOf()); x = 0 }
+                rows.last().add(v); x += v.measuredWidth + gap
+            }
+            var y = 0
+            for (row in rows) {
+                val width = row.sumOf { it.measuredWidth } + gap * (row.size - 1)
+                var cx = (max - width) / 2
+                for (v in row) { v.layout(cx, y, cx + v.measuredWidth, y + v.measuredHeight); cx += v.measuredWidth + gap }
+                y += (row.maxOfOrNull { it.measuredHeight } ?: 0) + gap
             }
         }
     }
 
-    private fun rowsStep(l: Loaded, step: OnboardingStep, heading: String, intro: String) {
-        title.text = heading
-        body.text = intro
-        primary.visibility = View.GONE
-        val rows = OnboardingPlan.rows(step, l.kernel, l.items.map { OnboardingPlan.Row(it.item, it.state) }).map { r -> l.items.first { it.item == r.item } }
-        for (item in rows) list.addView(rowView(item))
-    }
+    // ---- doing ------------------------------------------------------------------------------------------------------
 
-    private fun rowView(item: ConfigStatus.Item): View {
-        val permission = permissionOf(item.item)
-        val (name, why) = OWN[item.item] ?: ((permission?.title ?: item.item) to (permission?.why ?: ""))
-        val ok = item.state == ConfigStatus.GRANTED || item.state == ConfigStatus.UNSUPPORTED
-        val mark = when (item.state) { ConfigStatus.GRANTED -> "✅"; ConfigStatus.UNSUPPORTED -> "➖"; else -> "⚪️" }
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(10))
-            addView(TextView(context).apply {
-                text = OnboardingPlan.rowText(mark, name, why); textSize = 14f; setTextColor(fg); setLineSpacing(0f, 1.2f)
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            if (!ok) addView(Button(context).apply { text = "去开启"; isAllCaps = false; setOnClickListener { act(item.item) } })
-            if (permission?.awaitsWord(this@OnboardingActivity) == true)
-                addView(Button(context, null, android.R.attr.borderlessButtonStyle).apply {
-                    text = "已设好"; isAllCaps = false; setTextColor(accent); setOnClickListener { permission.confirm(this@OnboardingActivity); reload() }
-                })
-        }
-    }
-
-    /** The button of a row does what the capability of the same name does; the keep-alive switches are the owner's tap on their entry. */
+    /** The button of a screen does what the capability of the same name does; the keep-alive switches are the owner's tap on their entry. */
     private fun act(item: String) {
         if (item !in ConfigStatus.NAMES) return run { permissionOf(item)?.open(this) }
         Thread({
@@ -262,18 +494,22 @@ class OnboardingActivity : Activity() {
 
     private fun installKernel() {
         if (!KernelInstaller.mayInstall(this)) { startActivity(KernelInstaller.allowIntent(this)); return }
-        installError = null; installing = "正在下载…"; render()
+        installError = null; percent = -1; megabytes = 0; install = Install.DOWNLOADING; render()
         Thread({
             try {
+                var last = -2
                 val apk = KernelInstaller.download(this) { done, total ->
-                    installing = if (total > 0) "正在下载 ${done * 100 / total}%" else "正在下载 ${done / 1_000_000} MB"
+                    percent = if (total > 0) (done * 100 / total).toInt() else -1
+                    megabytes = done / 1_000_000
+                    if (percent != last) { last = percent; ui.post { loaded?.let { updateBrain(it) } } }
                 }
                 val bad = KernelInstaller.problem(this, apk)
-                if (bad != null) { installError = bad; installing = null; apk.delete() }
-                else { installing = "下载好了，等你在系统的安装页上确认"; KernelInstaller.install(this, apk) }
+                if (bad != null) { installError = bad; install = Install.IDLE; apk.delete() }
+                else { install = Install.CONFIRM; KernelInstaller.install(this, apk) }
             } catch (e: Exception) {
-                installError = "下载或安装没成功：${e.message ?: e.javaClass.simpleName}"; installing = null
+                installError = "下载没成功，请检查网络后再试"; install = Install.IDLE
             }
+            ui.post { render() }
         }, "ash-kernel-install").start()
     }
 
@@ -282,29 +518,18 @@ class OnboardingActivity : Activity() {
         finish()
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() = done()
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
     companion object {
         private const val KEY_SKIPPED = "skipped"
+        private const val KEY_KERNEL_SKIPPED = "kernel_skipped"
+        private const val KEY_STARTED = "started"
+        /** Set when the guide is the first thing the owner sees: it starts with the greeting. */
+        private const val EXTRA_WELCOME = "ai.ash.ui.onboarding.welcome"
         private const val PREFS = "ash.ui"
         private const val SEEN = "onboarding_seen"
         private const val START_GAP_MS = 20_000L
 
         /** The entries of [Permissions] that stand for items outside `config.status` (the keep-alive switches, the recovery grant). */
         private val EXTRA_KEYS = mapOf("autostart" to "autostart", "kernel_autostart" to "kernel_autostart", "recents_lock" to "lock", "screen_recovery" to "screen_recovery")
-
-        /** Items without an entry in [Permissions]: their name and what they give. */
-        private val OWN = mapOf(
-            "exact_alarm" to ("精确闹钟" to "让日历提醒准时响起；不开的话，提醒可能晚几分钟"),
-            "kernel_battery_optimization" to ("内核不受电池优化限制" to "内核是 Ash 的大脑，系统在后台停掉它，Ash 就失联了"),
-            "location" to ("位置" to "取当前位置、记录轨迹"),
-            "location_background" to ("后台位置（始终允许）" to "锁屏或不在前台时也能取到位置"),
-            "activity_recognition" to ("运动与健身" to "计步、区分静止、步行和跑步"),
-            "health" to ("健康数据（Health Connect）" to "只读：步数、心率、睡眠、体重等"),
-        )
 
         private fun permissionOf(item: String): Permission? {
             val key = ConfigStatus.PERMISSION_KEY[item] ?: EXTRA_KEYS[item] ?: return null
@@ -319,7 +544,7 @@ class OnboardingActivity : Activity() {
             if (prefs.getBoolean(SEEN, false)) return false
             prefs.edit().putBoolean(SEEN, true).apply()
             offered = true
-            from.startActivity(Intent(from, OnboardingActivity::class.java))
+            from.startActivity(Intent(from, OnboardingActivity::class.java).putExtra(EXTRA_WELCOME, true))
             return true
         }
 
