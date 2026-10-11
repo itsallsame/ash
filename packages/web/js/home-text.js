@@ -58,8 +58,26 @@ export function providerName(model) {
   return code;
 }
 
-/** Her files that are not documents she made: her persona, memory and settings (and anything hidden). */
-export const isSettingsFile = (name) => name.startsWith(".") || /^(?:AGENTS|IDENTITY|SOUL|USER|MEMORY|PROACTIVE|TOOLS|HEARTBEAT|BOOTSTRAP)\.md$/i.test(name);
+/**
+ * What the system itself keeps in her work folder, so it is not "her files" (the documents she made for the owner). The list is the
+ * set of names the hub writes or reads there; a test checks it against the sources named here.
+ *   AGENTS.md          the baseline instructions the DSH driver rewrites into the folder before every session
+ *                      (edges/agents/dsh/driver.ts, BASELINE_FILE)
+ *   SOUL.md, IDENTITY.md  her persona, seeded and changed through the persona member (services/semantic/persona.ts, PERSONA_FILES)
+ *   PULSE.md           the guide she reads when woken for her pulse, seeded by the pulse service (services/semantic/pulse.ts, GUIDANCE)
+ *   USER.md, MEMORY.md what she knows of the owner and of things; put into her context (edges/agents/modules.ts), kept by the
+ *                      daily review (skills/daily-review)
+ *   PROACTIVE.md       the owner's words on when she may reach out, written by the promises page
+ *   skills/, memory/   the skills she has (modules.ts) and her diary, memory/YYYY-MM-DD.md (services/semantic/daily.ts)
+ * Other capitalised files (README.md, SPEC.md, ACCEPTANCE.md…) are documents an agent wrote for a job, so they stay; names that
+ * start with a dot are hidden by convention.
+ */
+export const SYSTEM_FILES = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "PULSE.md", "USER.md", "MEMORY.md", "PROACTIVE.md"];
+export const SYSTEM_FOLDERS = ["skills", "memory"];
+
+/** Whether an entry of her work folder is the system's own (see SYSTEM_FILES): a file by name, a folder by name. */
+export const isSystemEntry = ({ name, type }) => name.startsWith(".") ||
+  (type === "directory" ? SYSTEM_FOLDERS.includes(name) : SYSTEM_FILES.some((file) => file.toLowerCase() === name.toLowerCase()));
 
 export const handOf = (device) => (typeof device === "string" ? device.replace(/^device:/, "") : "");
 
@@ -128,9 +146,24 @@ export function quietOf(settings) {
 
 /** 启用 / 停用 / 未授权, and whether it is actually running. */
 export function appState(app) {
+  if (appBroken(app)) return "出错了";
   if (app.granted !== true) return "未授权";
   if (app.enabled !== true) return "已停用";
   return app.running === true ? "已启用 · 运行中" : "已启用 · 还没运行起来";
+}
+
+/** An app whose app.json cannot be read or does not pass: not one that wants in, and it cannot be installed or opened. (An older hub gave no kind: a not-yet-installed app with an error is such a one.) */
+export function appBroken(app) {
+  const error = typeof app.error === "string" && app.error.trim() !== "";
+  return app.problem === "manifest" || (!app.problem && error && app.granted !== true);
+}
+
+/** What the owner reads about an app's trouble — what happened, why, what can be done — or null. Never the hub's own line (it names files and parser errors). */
+export function appTrouble(app) {
+  if (typeof app.error !== "string" || app.error.trim() === "") return null;
+  if (appBroken(app)) return app.granted === true ? "这个应用的说明文件写得不对，打不开；可以点「收回全部权限」把它卸掉。" : "这个应用的说明文件写得不对，装不了；让她帮你改好，改好之后它会出现在这里。";
+  if (app.problem === "folder") return "这个应用的文件夹已经不在了，只剩安装记录；可以点「收回全部权限」把它卸掉。";
+  return "这个应用没能正常跑起来；重新打开试试，还不行可以让她看看原因，或点「收回全部权限」把它卸掉。";
 }
 
 /** The home row's line: how many apps, how many on. */

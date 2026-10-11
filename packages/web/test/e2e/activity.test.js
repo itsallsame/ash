@@ -112,3 +112,19 @@ test(...withBrowser("controls the design draws under 44px still take a tap withi
     assert.equal(reached, true, `${selector} is reachable 22px from its centre`);
   }
 }));
+
+test(...withBrowser("an option button takes a tap just outside its 40px, up to 44px in all", async ({ kernel, browser }) => {
+  const cards = ["甲", "乙"].map((name) => kernel.append({ from: "agent:main", to: OWNER, kind: "request", word: "show", body: { card: { type: "options", prompt: `选${name}`, options: [{ id: name, text: `方案${name}` }] } } }));
+  const { page } = await openPage(browser, kernel);
+  const button = (name) => page.locator(".card", { hasText: `选${name}` }).locator(".opt");
+  await button("甲").waitFor();
+  await button("乙").waitFor();
+  for (const [name, side] of [["甲", "above"], ["乙", "below"]]) {
+    const box = await button(name).boundingBox();
+    assert.equal(box.height, 40, "the button looks as designed");
+    // 1.5px outside the edge: inside the 2px the touch area reaches beyond the button
+    await page.mouse.click(box.x + box.width / 2, side === "above" ? box.y - 1.5 : box.y + box.height + 1.5);
+    await eventually(() => kernel.requests.some((r) => r.word === "say" && r.body.option_id === name), `the tap ${side} the button chose ${name}`);
+  }
+  assert.equal(cards.length, 2);
+}));

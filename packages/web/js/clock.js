@@ -19,14 +19,19 @@ export function normalizeClockList(data) {
 
 /**
  * The plans the system makes for its own upkeep (reloading memory, waking on a pulse, whatever is added later) are not the owner's
- * to read or delete. They are told by what they are, not by a list of names: made by a service; aimed at a service (the owner's
- * and her agents' plans wake an agent or speak to a person); or carrying an internal name, which is a code and not words
- * (`pulse:wake:1791…`: a word, a colon, more, no space; or a bare code with a long run of digits). A name with a space or in
- * Chinese is a person's words.
+ * to read or delete. The clock says who made a plan and what it is aimed at: a plan made by a service, or aimed at a service, is the
+ * system's (the owner's and her agents' plans are made by a person or an agent and wake an agent or speak to a person). A name
+ * that looks like a code (`remind:water`) proves nothing when an agent made it; the name is only a guess for a plan whose maker
+ * and target the clock did not say (`pulse:wake:…`: a word, a colon, more, no space; or a bare code with a long run of digits).
  */
-export const isSystemPlan = (timer) =>
-  /^service:/.test(timer?.by ?? "") || /^service:/.test(timer?.to ?? "") ||
-  /^[a-z][a-z0-9_-]*(:[^\s:]+)+$/i.test(timer?.label ?? "") || /^[\x21-\x7e]*\d{9,}[\x21-\x7e]*$/.test(timer?.label ?? "");
+export const isSystemPlan = (timer) => {
+  const by = timer?.by ?? null;
+  const to = timer?.to ?? null;
+  if (/^service:/.test(by ?? "") || /^service:/.test(to ?? "")) return true;
+  if (by !== null || to !== null) return false;
+  const label = timer?.label ?? "";
+  return /^[a-z][a-z0-9_-]*(:[^\s:]+)+$/i.test(label) || /^[\x21-\x7e]*\d{9,}[\x21-\x7e]*$/.test(label);
+};
 
 /** The plans of [timers] that are the owner's to see. */
 export const userPlans = (timers) => timers.filter((timer) => !isSystemPlan(timer));

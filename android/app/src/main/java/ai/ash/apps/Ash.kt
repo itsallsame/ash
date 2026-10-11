@@ -28,8 +28,22 @@ data class AppInfo(
     val surfaces: List<Pair<String, String>>, val enabled: Boolean, val granted: Boolean,
     /** What it asks of Ash (the detail page lists them), whether it is running, and what went wrong with it (blank: nothing). */
     val needs: List<Need> = emptyList(), val running: Boolean = false, val error: String = "",
+    /** What kind of trouble [error] is (`manifest`, `folder`, `run`; blank when the kernel did not say): [error] itself is for an agent and is never shown. */
+    val problem: String = "",
 ) {
-    val usable get() = enabled && granted
+    /** The app's app.json cannot be read or does not pass: it cannot be installed and cannot be opened. (An older kernel gave no kind: a not-yet-installed app with an error is such a one.) */
+    val broken get() = problem == "manifest" || (problem.isEmpty() && error.isNotBlank() && !granted)
+    val hasTrouble get() = error.isNotBlank()
+    val usable get() = enabled && granted && !broken
+
+    /** What the owner reads about the trouble (what happened, why, what can be done), or null when there is none. Never the kernel's own line, a file name or a parser's message. */
+    val troubleText: String? get() = when {
+        !hasTrouble -> null
+        broken && granted -> "这个应用的说明文件写得不对，打不开；可以点「收回全部权限」把它卸掉。"
+        broken -> "这个应用的说明文件写得不对，装不了；让 Ash 帮你改好，改好之后它会出现在这里。"
+        problem == "folder" -> "这个应用的文件夹已经不在了，只剩安装记录；可以点「收回全部权限」把它卸掉。"
+        else -> "这个应用没能正常跑起来；重新打开试试，还不行可以让 Ash 看看原因，或点「收回全部权限」把它卸掉。"
+    }
 
     /** One thing an app needs from Ash: [kind] is `member` (an ability of Ash's), `notify`, `widgets` or `card`; [why] is its own line for the owner. */
     data class Need(val kind: String, val why: String) {
@@ -54,7 +68,7 @@ data class AppInfo(
                 }
                 AppInfo(id, o.optString("name", id).ifBlank { id }.take(60), o.optString("version").take(40), o.optString("summary").take(300),
                     surfaces, o.optBoolean("enabled", true), o.optBoolean("granted", false),
-                    needs(o.optJSONArray("needs")), o.optBoolean("running", false), o.optString("error").trim().take(300))
+                    needs(o.optJSONArray("needs")), o.optBoolean("running", false), o.optString("error").trim().take(300), o.optString("problem").trim().take(20))
             }
 
         private fun needs(a: JSONArray?): List<Need> = if (a == null) emptyList() else (0 until a.length()).mapNotNull { i ->
