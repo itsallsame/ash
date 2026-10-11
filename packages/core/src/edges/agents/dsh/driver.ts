@@ -18,6 +18,7 @@ import {
   type PromptModule, type RuntimeInfo,
 } from "../../../../../sdk/src/driver";
 import { AcpClient, AcpError, type AcpUpdate, type DriverProcess, type SpawnFn } from "./acp";
+import { toolSummary } from "./tool-label";
 
 /** `dsh` is a name the main body resolves: its own binary on a development machine, /opt/dsh/... in the container. */
 export const DEFAULT_ARGV = ["dsh", "--profile", "acp", "--patch", "/opt/ash/patch.yml"];
@@ -56,7 +57,8 @@ interface Session {
   queue: DriverMessage[];
   speech: string;
   speechId?: string;
-  tools: Map<string, string>;
+  /** The open tool calls: ACP call id to the tool's name and the one line the owner sees. */
+  tools: Map<string, { name: string; summary: string }>;
   cancelled: boolean;
   options: unknown[];
   /** Modules the runtime could not take mid-session (no `_ash/inject`): they go in front of the next turn. */
@@ -152,14 +154,17 @@ export function createDshDriver(deps: DshDriverDeps): AgentDriver {
       case "tool_call": {
         flush(agent, sess);
         const name = String(update.title ?? update.toolCallId ?? "tool");
-        if (update.toolCallId) sess.tools.set(update.toolCallId, name);
-        report({ event: "tool", agent, key: sess.key, turn, phase: "start", name });
+        const summary = toolSummary(update.title, update.kind, update.rawInput);
+        if (update.toolCallId) sess.tools.set(update.toolCallId, { name, summary });
+        report({ event: "tool", agent, key: sess.key, turn, phase: "start", name, summary });
         return;
       }
       case "tool_call_update": {
         if (update.status !== "completed" && update.status !== "failed") return;
-        const name = (update.toolCallId && sess.tools.get(update.toolCallId)) || String(update.title ?? "tool");
-        report({ event: "tool", agent, key: sess.key, turn, phase: "end", name, ok: update.status === "completed" });
+        const open = update.toolCallId ? sess.tools.get(update.toolCallId) : undefined;
+        const name = open?.name ?? String(update.title ?? "tool");
+        const summary = open?.summary ?? toolSummary(update.title, update.kind, update.rawInput);
+        report({ event: "tool", agent, key: sess.key, turn, phase: "end", name, summary, ok: update.status === "completed" });
         return;
       }
       default:

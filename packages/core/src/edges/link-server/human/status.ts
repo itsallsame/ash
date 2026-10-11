@@ -29,6 +29,8 @@ export type Summarize = (steps: string[]) => Promise<string | null>;
 /** A completed turn is "本轮回复" only when the agent said something to the owner in it; otherwise it just ended (frame `reply` is empty). */
 const OUTCOME_TEXT: Record<string, string> = { completed: "本轮回复", cancelled: "已停止" };
 const MAX_STEPS = 5;
+/** The line of a step the agents edge gave no description for (a raw tool name is never shown). */
+const UNDESCRIBED_STEP = "在处理";
 
 interface Step { id: number; label: string; state: "running" | "ok" | "failed" }
 
@@ -79,10 +81,11 @@ export class TaskStatus {
       this.ended = true; this.state = "done"; this.outcome = String(body.outcome ?? "");
       if (this.summarizing) clearTimeout(this.summarizing);
     } else if (m.word === "agent.tool" && !this.ended) {
-      const label = typeof body.summary === "string" && body.summary ? body.summary : String(body.name);
+      // The owner never reads a tool's own name: no summary is a step nobody described.
+      const label = typeof body.summary === "string" && body.summary ? body.summary : UNDESCRIBED_STEP;
       if (body.phase === "start") this.steps.push({ id: this.nextStep++, label, state: "running" });
       else {
-        const open = this.steps.find((s) => s.state === "running" && (s.label === label || s.label === String(body.name)));
+        const open = this.steps.find((s) => s.state === "running" && (s.label === label || s.label === UNDESCRIBED_STEP));
         if (open) { open.state = body.ok === false ? "failed" : "ok"; if (typeof body.summary === "string" && body.summary) open.label = body.summary; }
         else this.steps.push({ id: this.nextStep++, label, state: body.ok === false ? "failed" : "ok" });
       }

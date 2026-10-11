@@ -100,3 +100,24 @@ test("a frame names the agent of the turn, else the primary, else no agent", asy
   assert.equal(last(bare).agent, "agent:helper", "the turn's own agent is kept");
   hub.mini.announce("turn.ended", { turn: "t1", lane: "front", outcome: "completed" }, "agent:helper");
 });
+
+test("a step the agents edge did not describe reads as a plain line, never as the tool's own name", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const island = await Channel.open(hub, { surfaces: ["chat", "status"] });
+  hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] });
+  await eventually(() => last(island).state === "thinking", "thinking");
+
+  hub.mini.announce("agent.tool", { turn: "t1", name: "bash", phase: "start" });
+  await eventually(() => last(island).state === "working", "working");
+  assert.equal(last(island).text, "在处理");
+  assert.ok(!JSON.stringify(last(island)).includes("bash"), "the tool's name is not on the frame");
+  // the end of that call comes with a description the start did not have: it is the same step
+  hub.mini.announce("agent.tool", { turn: "t1", name: "bash", phase: "end", summary: "在跑命令", ok: true });
+  await eventually(() => last(island).steps.includes("✓ 在跑命令"), "the step done");
+  assert.equal(last(island).steps.filter((s: string) => s.includes("在")).length, 1);
+
+  hub.mini.announce("agent.tool", { turn: "t1", name: "mcp__ash__x", phase: "start" });
+  hub.mini.announce("agent.tool", { turn: "t1", name: "mcp__ash__x", phase: "end", ok: false });
+  await eventually(() => last(island).steps.includes("失败 · 在处理"), "an undescribed failed step");
+  assert.ok(!JSON.stringify(last(island)).includes("mcp__"));
+});

@@ -24,8 +24,15 @@ async function prompt(id, params) {
   if (text.includes("DIE") && !text.includes("上一轮中断了")) process.exit(1); // the hub's cut-off notice quotes what was cut off
   update(id, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "hmm" } });
   if (text.includes("TOOL")) {
-    update(id, { sessionUpdate: "tool_call", toolCallId: "c1", title: "read_file", status: "pending" });
+    update(id, { sessionUpdate: "tool_call", toolCallId: "c1", title: "read_file", kind: "read", status: "pending" });
     update(id, { sessionUpdate: "tool_call_update", toolCallId: "c1", status: "completed" });
+  }
+  if (text.includes("MANYCALLS")) { // what DSH 0.2 sends: the raw tool name as the title, kind always "other", the arguments as rawInput
+    const calls = [["bash", { command: "sleep 90" }], ["mcp__ash__human_say", { text: "hi" }], ["mcp__ash__capability_call", { member: "service:history", word: "query", body: {} }], ["mcp__ash__capability_call", { member: "device:x" }], ["some_future_tool", {}]];
+    calls.forEach(([title, rawInput], i) => {
+      update(id, { sessionUpdate: "tool_call", toolCallId: `m${i}`, title, kind: "other", status: "in_progress", rawInput });
+      update(id, { sessionUpdate: "tool_call_update", toolCallId: `m${i}`, status: i === 4 ? "failed" : "completed", content: [] });
+    });
   }
   if (text.includes("SLOW")) await new Promise((resolve) => { s.release = resolve; });
   if (!s.cancelled) {

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import { WordError } from "../../../../sdk/src/message";
+import { wordContract } from "../../../../sdk/src/words";
 import type { AgentEvent, AgentStartSpec, DriverMessage, PromptModule } from "../../../../sdk/src/driver";
 import { createDshDriver, BASELINE_FILE } from "../../../src/edges/agents/dsh";
 
@@ -84,6 +85,23 @@ test("tool calls become tool events with start and end", async () => {
   await waitFor(() => t.of("turn.ended").length === 1);
   const tools = t.of("tool") as Extract<AgentEvent, { event: "tool" }>[];
   assert.deepEqual(tools.map((x) => [x.phase, x.name, x.ok]), [["start", "read_file", undefined], ["end", "read_file", true]]);
+  assert.deepEqual(tools.map((x) => x.summary), ["在读文件", "在读文件"]); // an unknown name falls back on the ACP kind
+});
+
+test("a tool event carries a human line, the same on start and end, and the raw name only as `name`", async () => {
+  const t = setup();
+  await t.driver.start("agent:main", spec());
+  await t.driver.send("agent:main", "front", [msg("MANYCALLS please")]);
+  await waitFor(() => t.of("turn.ended").length === 1);
+  const tools = t.of("tool") as Extract<AgentEvent, { event: "tool" }>[];
+  const history = wordContract("service:history", "query")!.label.doing;
+  assert.deepEqual(tools.map((x) => [x.phase, x.name, x.summary, x.ok]), [
+    ["start", "bash", "在跑命令", undefined], ["end", "bash", "在跑命令", true],
+    ["start", "mcp__ash__human_say", "在回你", undefined], ["end", "mcp__ash__human_say", "在回你", true],
+    ["start", "mcp__ash__capability_call", history, undefined], ["end", "mcp__ash__capability_call", history, true],
+    ["start", "mcp__ash__capability_call", "在用手机/设备能力", undefined], ["end", "mcp__ash__capability_call", "在用手机/设备能力", true],
+    ["start", "some_future_tool", "在处理", undefined], ["end", "some_future_tool", "在处理", false],
+  ]);
 });
 
 test("two lanes run at once; one lane takes one turn at a time (send on a running lane is a conflict)", async () => {
