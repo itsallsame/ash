@@ -34,8 +34,17 @@ class BrowserActivity : Activity() {
     private var space: String? = null
     private val onChange: () -> Unit = { refresh() }
 
+    /** Which of light and dark the bar was drawn in: its colours are taken when it is made, so a switch of the system makes it again. */
+    private var themedNight = false
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (AshUi.night(this) != themedNight) recreate()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        themedNight = AshUi.night(this)
         val c = AshUi.p(this)
         val ink = c.ink
         val muted = c.text2

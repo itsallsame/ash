@@ -51,6 +51,9 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
 
     fun close() { closed = true; sheet.dismiss(animate = false); ash.close() }
 
+    /** The system switched between light and dark: what is on show is drawn again in the other colours (a drawer, built in the old ones, is closed). */
+    fun themeChanged() { sheet.dismiss(animate = false); render() }
+
     /** The back key: closes the drawer, then the page of details; false when the grid itself is showing. */
     fun back(): Boolean {
         if (sheet.showing) { sheet.dismiss(); return true }
