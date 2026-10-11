@@ -10,7 +10,7 @@ import { PAGES } from "./home-pages.js";
 const stale = () => Object.assign(new Error("连接已经换了"), { code: "stale" });
 
 /** The shell: a layer over the conversation holding a stack of pages, the first of which is the home page. */
-export class HomeShell {
+class HomeShell {
   constructor(net) {
     this.net = net;
     this.root = h("div", { id: "home", class: "hm-root", hidden: true, "aria-hidden": "true", role: "dialog", "aria-label": "她的主页" });
@@ -96,6 +96,8 @@ export class HomeShell {
       net: this.net, feed, agent: this.agent,
       get name() { return shell.name; },
       go: (id, arg) => this.go(id, arg),
+      /** The name may have changed (her IDENTITY.md was saved): read it again; every other reader of it follows. */
+      refreshName: () => { void this.identity.refresh(); },
       back: () => this.back(),
       close: () => this.close(),
       /** Puts words in the conversation's box (the chat page listens for `ash:compose`; failing that, the plain text box). */

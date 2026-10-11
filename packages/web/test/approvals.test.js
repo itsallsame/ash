@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fold, initialView } from "../js/project.js";
-import { answerGateAsk, approvalSections, gateRequest, renderApprovalsSheet, renderEvidence } from "../js/sheet-approvals.js";
+import { answerGateAsk, approvalSections, renderEvidence } from "../js/approvals.js";
+import { VERB } from "../js/home-waiting.js";
 import { startKernel } from "./kernel.js";
 import { netFor, until } from "./support.js";
 
@@ -14,29 +15,19 @@ class Node {
   get textContent() { return this.value + this.children.map((child) => child.textContent).join(""); }
 }
 
-function draw(view, now = 5000) {
-  globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment") };
-  try { const root = new Node("root"); const sections = renderApprovalsSheet(root, view, { now }); return { root, sections, nodes: root.children[0].children }; }
-  finally { delete globalThis.document; }
-}
+const sections = (view, now = 5000) => approvalSections(view, now);
 
 const gateAsk = (id, seq, from = "service:gate", expires_at = 9000) => ({ seq, id, ts: seq, from, to: "person:owner", kind: "request", word: "ask",
   body: { title: "Allow sending?", detail: "Send one synthetic note", expires_at,
     options: [{ id: "once", label: "Only once" }, { id: "deny", label: "No" }],
     source: { to: "device:fixture", word: "send", body_preview: "synthetic" } } });
 
-test("the approvals sheet retains the entire original beside its bounded summary", () => {
+test("the approval keeps the entire original beside its bounded summary", () => {
   const original = "x".repeat(65000) + "\nTAIL <img src=x>\t  spaces";
   const message = gateAsk("full-original", 1);
   message.body.source.body_full = original;
   const view = fold(initialView(), message);
-  const { root, sections } = draw(view);
-  assert.equal(sections.pending[0].original, original);
-  const article = root.children[0].children.find((node) => node.tag === "article");
-  const disclosure = article.children.find((node) => node.tag === "details");
-  assert.equal(disclosure.children[0].textContent, "查看原文");
-  assert.equal(disclosure.children[1].textContent, original);
-  assert.equal(disclosure.children[1].children.length, 0);
+  assert.equal(sections(view).pending[0].original, original);
 });
 
 const online = async () => {
@@ -47,23 +38,6 @@ const online = async () => {
   return { kernel, ...handle, stop: () => { handle.net.stop(); kernel.close(); } };
 };
 
-test("a gate word returns its data, and an answer that arrives on another connection is dropped", async () => {
-  const { kernel, net, stop } = await online();
-  try {
-    kernel.on("service:gate", "rules.list", { rules: [], mode: "auto" });
-    kernel.on("service:gate", "history", async () => { await new Promise((resolve) => setTimeout(resolve, 30)); return { items: [] }; });
-    const binding = net.binding();
-    assert.deepEqual(await gateRequest(net, binding, "rules.list", { limit: 100 }), { rules: [], mode: "auto" });
-    const pending = gateRequest(net, binding, "history", { limit: 100 });
-    kernel.drop();
-    await assert.rejects(pending, /连接已经换过|没有收到确认|没有成功|连接/);
-    await assert.rejects(gateRequest(net, binding, "rules.list", {}), /连接已经换过/, "an old binding is never used again");
-    await until(() => net.status === "online" && net.same(net.binding()), 2000, "reconnected");
-    await assert.rejects(gateRequest(net, net.binding(), "pending.list", {}), (error) => error.code === "forbidden",
-      "a word that is not for the owner fails in the kernel and the failure surfaces");
-  } finally { stop(); }
-});
-
 test("only a live gate ask from trusted ledger origin appears; other asks and old answers do not", () => {
   let view = initialView();
   view = fold(view, gateAsk("gate-live", 1));
@@ -72,12 +46,7 @@ test("only a live gate ask from trusted ledger origin appears; other asks and ol
   view = fold(view, gateAsk("gate-answered", 4));
   view = fold(view, { seq: 5, id: "answer", ts: 5, from: "person:owner", to: "service:gate", kind: "response", word: "ask", reply_to: "gate-answered", body: { ok: true, result: { choice: "deny" } } });
   assert.equal(view.asks.find((ask) => ask.id === "gate-live").from, "service:gate");
-  const { nodes, sections } = draw(view);
-  assert.deepEqual(sections.pending.map((ask) => ask.id), ["gate-live"]);
-  assert.deepEqual(nodes.filter((node) => node.tag === "article").map((node) => node.dataset.askId), ["gate-live"]);
-  assert.equal(nodes.some((node) => node.tag === "button"), false);
-  assert.match(nodes.map((node) => node.textContent).join(" "), /暂时读不到审批记录（不代表没有）/);
-  assert.match(nodes.map((node) => node.textContent).join(" "), /暂时读不到这些规则（不代表没有）/);
+  assert.deepEqual(sections(view).pending.map((ask) => ask.id), ["gate-live"]);
 });
 
 test("missing or body-spoofed source fails closed and empty state never claims rules are empty", () => {
@@ -85,10 +54,9 @@ test("missing or body-spoofed source fails closed and empty state never claims r
   let view = fold(initialView(), ordinary);
   view = fold(view, gateAsk("gate", 2));
   assert.deepEqual(approvalSections(view, 9000).pending, [], "at the exact expiry no action is displayed");
-  const { nodes } = draw({ asks: [{ id: "legacy", seq: 3, state: "pending", title: "Legacy", expires_at: 9000, options: [{ id: "deny", label: "No" }] }] });
-  assert.equal(nodes.some((node) => node.tag === "article"), false);
-  assert.match(nodes.map((node) => node.textContent).join(" "), /看不出来自哪里/);
-  assert.match(nodes.map((node) => node.textContent).join(" "), /暂时读不到/);
+  const legacy = sections({ asks: [{ id: "legacy", seq: 3, state: "pending", title: "Legacy", expires_at: 9000, options: [{ id: "deny", label: "No" }] }] });
+  assert.deepEqual(legacy.pending, [], "a row of unknown origin is not shown as an approval");
+  assert.equal(legacy.unknownSource, 1);
 });
 
 test("malformed raw options cannot be laundered into a valid approval by projection", () => {
@@ -100,12 +68,10 @@ test("malformed raw options cannot be laundered into a valid approval by project
   assert.deepEqual(view.conversation.find((item) => item.id === "invalid-raw").ask.options, [{ id: "once", label: "Once" }]);
   assert.equal(view.asks.find((ask) => ask.id === "invalid-raw").options_valid, false);
   assert.equal(view.asks.find((ask) => ask.id === "valid-control").options_valid, true);
-  const { sections, nodes } = draw(view);
-  assert.deepEqual(sections.pending.map((ask) => ask.id), ["valid-control"]);
-  assert.deepEqual(nodes.filter((node) => node.tag === "article").map((node) => node.dataset.askId), ["valid-control"]);
+  assert.deepEqual(sections(view).pending.map((ask) => ask.id), ["valid-control"]);
 });
 
-test("the read-only sheet limits text, rejects malformed option sets and never renders raw markup", () => {
+test("the approvals limit text and reject malformed option sets", () => {
   const view = { asks: [
     { id: "safe", seq: 2, from: "service:gate", state: "pending", options_valid: true, title: "<script>".repeat(100), detail: "synthetic", expires_at: 9000,
       options: [{ id: "once", label: "Once" }, { id: "deny", label: "Deny" }] },
@@ -117,11 +83,9 @@ test("the read-only sheet limits text, rejects malformed option sets and never r
     { id: "safe", seq: 6, from: "service:gate", state: "pending", options_valid: true, expires_at: 9000,
       options: [{ id: "always", label: "Always" }] },
   ] };
-  const { sections, nodes } = draw(view);
-  assert.deepEqual(sections.pending.map((ask) => ask.id), ["safe"]);
-  assert.equal(sections.pending[0].title.length, 240);
-  assert.equal(nodes.some((node) => node.tag === "script" || node.tag === "button"), false);
-  assert.match(nodes.find((node) => node.tag === "article").textContent, /<script>/);
+  const { pending } = sections(view);
+  assert.deepEqual(pending.map((ask) => ask.id), ["safe"]);
+  assert.equal(pending[0].title.length, 240);
 });
 
 const askFor = (kernel, id = "gate-live", extra = {}) => {
@@ -192,48 +156,17 @@ test("a definite refusal and a lost answer are told apart; a connection that cha
   await assert.rejects(answerGateAsk(fake(async () => assert.fail("not sent"), () => false), ask, "once", "c", { now: () => 5000 }), /还没连上/);
 });
 
-test("history says when she judged an action herself and why; a capability-wide rule names no object", () => {
+test("a record's evidence says what was done, what the reviewer saw and said, the card, the answer, and whether it ran", () => {
   globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment") };
   try {
-    const root = new Node("root");
-    renderApprovalsSheet(root, initialView(), { now: 5000, rules: [
-      { id: "rule-star", to: "device:phone", word: "file.delete", object_pattern: "*", risk: "outward", expires_at: 90_000 },
-    ], history: [
-      { id: "h-review", request_id: "m_1", to: "device:phone", word: "browser.click", risk: "outward",
-        decision: "review", reason: "你让她打开推特，你来登录", at: 4000 },
-      { id: "h-carry", request_id: "m_2", to: "device:phone", word: "browser.click", risk: "outward",
-        decision: "carry", reason: "你几分钟前刚允许过同样的操作", at: 4500 },
-      { id: "h-once", request_id: "m_3", to: "device:phone", word: "shell.run", risk: "structure", decision: "once", at: 4800 },
-    ] });
-    const text = root.textContent;
-    assert.match(text, /在网页上点击由她判断后放行 · .*你让她打开推特，你来登录/);
-    assert.match(text, /刚允许过，沿用 · .*你几分钟前刚允许过同样的操作/);
-    assert.match(text, /执行命令仅这一次/);
-    assert.doesNotMatch(text, /\*/);
-  } finally { delete globalThis.document; }
-});
-
-test("a history record opens to its evidence: what was done, what the reviewer saw and said, the card, the answer, and whether it ran", () => {
-  globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment") };
-  try {
-    const history = [{ id: "h1", request_id: "r1", word: "clipboard.set", risk: "outward", label: "改剪贴板", decision: "review", reason: "你要的", at: 4000 },
-      { id: "h2", request_id: "r2", word: "rules.set", risk: "structure", decision: "deny", at: 4100 }];
-    const opened = [];
-    const evidence = new Map([["r1", { status: "ready", entry: { request_id: "r1", requester: "agent:main", word: "clipboard.set", label: "改剪贴板", effect: "act",
+    const entry = { request_id: "r1", requester: "agent:main", word: "clipboard.set", label: "改剪贴板", effect: "act",
       content: "开会", facts: { owner_said: ["把开会复制一下"], context: ["read 日历"] }, review: { decision: "allow", reason: "主人明确要求", ms: 1200 },
-      decision: "review", decided_by: "review", executed: { ok: true } } }], ["r2", { status: "missing" }]]);
+      decision: "review", decided_by: "review", executed: { ok: true } };
     const root = new Node("root");
-    renderApprovalsSheet(root, { asks: [] }, { now: 5000, history, rules: [], name: "小安", evidence, onEvidence: (id) => opened.push(id) });
-    const all = root.children[0].textContent;
-    for (const expected of ["小安", "改剪贴板（操作）", "开会", "「把开会复制一下」", "read 日历", "可以直接做，用了 1.2 秒：主人明确要求", "裁判看到的前几步", "裁判（模型判断）", "做成了", "收起", "修改审批规则", "没有留下依据"])
+    renderEvidence(root, entry, { now: 5000, name: "小安", primary: "agent:main" });
+    const all = root.textContent;
+    for (const expected of ["小安", "改剪贴板（操作）", "开会", "「把开会复制一下」", "read 日历", "可以直接做，用了 1.2 秒：主人明确要求", "裁判看到的前几步"])
       assert.ok(all.includes(expected), expected);
-    const find = (node, label) => node.tag === "button" && node.value === label ? node : node.children.map((child) => find(child, label)).find(Boolean);
-    find(root.children[0], "收起").listeners.click();
-    assert.deepEqual(opened, ["r1"]);
-    const closed = new Node("root");
-    renderApprovalsSheet(closed, { asks: [] }, { now: 5000, history, rules: [], evidence: new Map(), onEvidence: () => {} });
-    assert.ok(closed.children[0].textContent.includes("查看依据"));
-    assert.ok(!closed.children[0].textContent.includes("裁判结论"));
   } finally { delete globalThis.document; }
 });
 
@@ -248,23 +181,10 @@ test("the last line of the evidence says what happened without any answer-progre
     assert.match(last({ decision: "timeout" }), /最后没有做/);
     assert.match(last({ decision: "once" }), /最后还没有结果/);
     assert.match(last({ decision: "rule", decided_by: "hand_full" }), /设备完全放开/);
-    const root = new Node("root");
-    renderApprovalsSheet(root, { asks: [{ id: "a", seq: 1, from: "service:gate", state: "answered", choice: "once", title: "旧问题" }] }, { now: 5000, rules: [], history: [] });
-    assert.doesNotMatch(root.textContent, /回答后的进展|旧问题/);
   } finally { delete globalThis.document; }
 });
 
-test("history names every decision the gate can record and opens evidence for each record", () => {
-  globalThis.document = { createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node("fragment") };
-  try {
-    const decisions = ["once", "always", "deny", "timeout", "cancelled", "rule", "review", "carry", "hand_full", "declared_none", "assessed_none"];
-    const history = decisions.map((decision, n) => ({ id: `h${n}`, request_id: `r${n}`, word: "shell.run", risk: "structure", decision, at: 4000 + n }));
-    const root = new Node("root");
-    renderApprovalsSheet(root, { asks: [] }, { now: 5000, history, rules: [], onEvidence: () => {} });
-    const text = root.textContent;
-    assert.doesNotMatch(text, /已记录/, "no decision falls back to the generic word");
-    assert.match(text, /设备完全放开放行/);
-    assert.equal((text.match(/查看依据/g) ?? []).length, decisions.length);
-    assert.doesNotMatch(text, /较早的审批/);
-  } finally { delete globalThis.document; }
+test("every decision the gate can record has its own words", () => {
+  for (const decision of ["once", "always", "deny", "timeout", "cancelled", "rule", "review", "carry", "hand_full", "declared_none", "assessed_none"])
+    assert.ok(VERB[decision], `${decision} has words`);
 });

@@ -53,8 +53,9 @@ export function homeHub(kernel) {
   on("body:main", "workspace.ls", () => ({ path: "/root/work", entries: [...state.files].map(([name, data]) => ({ name, type: "file", size: data.length })) }));
   on("body:main", "workspace.read", ({ path }) => state.files.has(path) ? { path, text: state.files.get(path), offset: 1, next_offset: 2, truncated: false } : { ok: false, error: { code: "not_found", message: "no such file" } });
   on("body:main", "workspace.write", ({ path, content }) => { state.files.set(path, content); return { path, bytes: content.length }; });
-  on("service:persona", "get", ({ file }) => ({ files: [{ file, content: file === "IDENTITY.md" ? "- 名字：小岛\n- 称呼主人：阿然\n" : "# 灵魂\n我叫小岛。\n", version: "v1" }] }));
-  on("service:persona", "propose", () => ({ proposed: true, applied: true }));
+  state.persona = new Map([["IDENTITY.md", "- 名字：小岛\n- 称呼主人：阿然\n"], ["SOUL.md", "# 灵魂\n我叫小岛。\n"]]);
+  on("service:persona", "get", ({ file }) => ({ files: [{ file, content: state.persona.get(file) ?? "", version: "v1" }] }));
+  on("service:persona", "propose", ({ file, content }) => { state.persona.set(file, content); return { proposed: true, applied: true }; });
   return state;
 }
 

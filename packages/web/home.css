@@ -99,10 +99,10 @@
 .hm-custom{flex:1;min-width:0;width:auto}
 .hm-evrow{display:flex;flex-direction:column}
 .hm-evidence{padding:0 14px 12px 54px}
-.hm-evidence .sheet-evidence{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;background:var(--surface-2)}
-.hm-evidence .sheet-evidence-row{display:flex;flex-direction:column;gap:2px}
-.hm-evidence .sheet-evidence-label{font-size:12px;color:var(--text-3)}
-.hm-evidence .sheet-evidence-value{font-size:13.5px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+.hm-evidence .hm-ev{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;background:var(--surface-2)}
+.hm-evidence .hm-ev-row{display:flex;flex-direction:column;gap:2px}
+.hm-evidence .hm-ev-label{font-size:12px;color:var(--text-3)}
+.hm-evidence .hm-ev-value{font-size:13.5px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
 
 /* activity */
 .hm-activity{display:flex;flex-direction:column;gap:12px}
@@ -227,3 +227,4 @@
   .hm-root,.hm-screen{transition:none}
   .hm-root .av-live::before,.hm-root .av-breath::before,.hm-root .av-wait::before,.hm-root .spinner,.hm-root .sk::after{animation:none}
 }
+.hm-root .li .lt .s.hm-wrap{white-space:normal}

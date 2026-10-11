@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ManagedMarkdownEditor } from "../js/editor.js";
 import { WordFailure } from "../js/link.js";
-import { IdentitySheet, personaStore } from "../js/sheet-identity.js";
-import { MemorySheet, workspaceStore } from "../js/sheet-memory.js";
+import { personaStore, workspaceStore } from "../js/home-stores.js";
 import { startKernel } from "./kernel.js";
 import { netFor, until } from "./support.js";
 
@@ -19,9 +18,6 @@ async function dom(run) {
   globalThis.document = { createElement: (tag) => new Element(tag), createDocumentFragment: () => new Element("fragment") };
   try { return await run(new Element("root")); }
   finally { delete globalThis.document; }
-}
-function findAll(element, predicate) {
-  return [...(predicate(element) ? [element] : []), ...(element.children ?? []).flatMap((child) => findAll(child, predicate))];
 }
 const failure = (code, message = code) => new WordFailure({ code, message });
 
@@ -160,9 +156,8 @@ test("a file that came back truncated is shown read-only and is never written", 
   store.read = async () => ({ content: "the first part", truncated: true });
   const editor = new ManagedMarkdownEditor(root, { path: "MEMORY.md", store });
   await editor.load();
-  const by = (className) => findAll(root, (item) => String(item.className ?? "").split(" ").includes(className))[0];
-  assert.equal(by("editor-edit").hidden, true);
-  assert.match(root.textContent, /内容太长/);
+  assert.equal(editor.editable, false);
+  assert.match(editor.status, /内容太长/);
   assert.throws(() => editor.setDraft("x"), /还不能修改/);
   await assert.rejects(editor.save(), /现在不能修改/);
   assert.deepEqual(store.writes, []);
@@ -173,52 +168,6 @@ test("an unknown path or a store without read and write is refused", () => dom(a
   assert.throws(() => new ManagedMarkdownEditor(root, { path: "../secret", store }), /unsupported/);
   assert.throws(() => new ManagedMarkdownEditor(root, { path: "SOUL.md" }), /unsupported/);
   assert.throws(() => new ManagedMarkdownEditor(root, { path: "SOUL.md", store: { read: async () => null } }), /unsupported/);
-}));
-
-test("identity and memory sheets use only allowlisted managed paths and block dirty tab switches", () => dom(async (root) => {
-  const store = memoryStore({ "SOUL.md": "safe", "IDENTITY.md": "safe", "USER.md": "u", "MEMORY.md": "m" });
-  const identity = new IdentitySheet(root, { store });
-  await identity.open();
-  assert.equal(identity.active, "SOUL.md");
-  identity.editor.setDraft("dirty");
-  await assert.rejects(identity.open("IDENTITY.md"), /先保存或取消/);
-  await assert.rejects(identity.open("../secret"), /unknown/);
-  await assert.rejects(identity.open("USER.md"), /unknown/);
-  const memory = new MemorySheet(root, { store });
-  await memory.open();
-  assert.equal(memory.active, "USER.md");
-  await memory.open("MEMORY.md");
-  assert.equal(memory.active, "MEMORY.md");
-  await assert.rejects(memory.open("SOUL.md"), /unknown/);
-  assert.match(root.textContent, /性格|名片|关于你|她记下的事/);
-}));
-
-test("the file reads as a card; editing sits behind 编辑 and the page shows no versions or hashes", () => dom(async (root) => {
-  const store = memoryStore({ "USER.md": "# 关于你\n- 喜欢清晨跑步\n" });
-  const editor = new ManagedMarkdownEditor(root, { path: "USER.md", store });
-  await editor.load();
-  const by = (className) => findAll(root, (item) => String(item.className ?? "").split(" ").includes(className))[0];
-  assert.equal(by("markdown-source").hidden, true, "the source is not shown until the owner asks to edit");
-  assert.equal(by("editor-edit").hidden, false);
-  assert.match(by("doc-body").textContent, /关于你.*喜欢清晨跑步/s);
-  assert.doesNotMatch(root.textContent, /哈希|版本|回滚|改动记录|恢复/);
-  await by("editor-edit").listeners.click();
-  assert.equal(editor.editing, true);
-  const source = by("markdown-source");
-  assert.equal(source.hidden, false);
-  assert.equal(source.value, "# 关于你\n- 喜欢清晨跑步\n");
-  source.value = "# 关于你\n- 喜欢傍晚散步\n";
-  source.listeners.input();
-  await editor.save();
-  assert.equal(editor.editing, false, "a confirmed save returns to the reading view");
-  assert.equal(by("editor-status").textContent, "已保存。");
-  assert.match(by("doc-body").textContent, /傍晚散步/);
-  await by("editor-edit").listeners.click();
-  by("markdown-source").value = "scratch";
-  by("markdown-source").listeners.input();
-  by("editor-cancel").listeners.click();
-  assert.equal(editor.editing, false);
-  assert.equal(editor.draft, editor.content, "cancel discards the local draft only");
 }));
 
 test("editing starts from what the file says now", () => dom(async (root) => {
@@ -287,7 +236,7 @@ test("the persona store reads with get and changes with propose, with the owner'
     await store.write("SOUL.md", "沉着、好奇", "client-2");
     assert.equal(files["SOUL.md"], "沉着、好奇");
     assert.deepEqual(kernel.requests.find((r) => r.word === "propose"), { to: "service:persona", kind: "request", word: "propose",
-      body: { file: "SOUL.md", content: "沉着、好奇", reason: "主人在人物页修改" }, wait: true, client_id: "client-2" });
+      body: { file: "SOUL.md", content: "沉着、好奇", reason: "主人在她的主页修改" }, wait: true, client_id: "client-2" });
     await assert.rejects(store.write("SOUL.md", "  \n", "client-3"), (error) => error.userMessage === "这份内容不能是空的。");
     assert.equal(kernel.requests.filter((r) => r.word === "propose").length, 1, "empty text never leaves the page");
     kernel.on("service:persona", "propose", { proposed: true, applied: false });
@@ -305,8 +254,8 @@ test("an identity edit end to end: the editor saves through propose, reads back,
     kernel.on("service:persona", "propose", (body) => { content = body.content; return { proposed: true, applied: true }; });
     await dom(async (root) => {
       const changed = [];
-      const sheet = new IdentitySheet(root, { store: personaStore(net, net.binding()), canEdit: net.local, onSaved: (path) => changed.push(path) });
-      const editor = await sheet.open("IDENTITY.md");
+      const editor = new ManagedMarkdownEditor(root, { path: "IDENTITY.md", store: personaStore(net, net.binding()), onSaved: (path) => changed.push(path) });
+      await editor.load();
       editor.setDraft("- 名字：River\n");
       await editor.save();
       assert.equal(editor.status, "已保存。");

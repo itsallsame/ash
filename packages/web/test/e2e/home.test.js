@@ -182,3 +182,16 @@ test(...withBrowser("the promises page: quiet hours are changed in the sentence,
   await eventually(() => hub.settings["delivery.quiet_hours"] === "", "quiet hours off");
 }));
 
+
+test(...withBrowser("renaming her on her home page changes the name in the conversation's top bar at once", async ({ kernel, browser }) => {
+  homeHub(kernel);
+  const { page } = await openPage(browser, kernel);
+  await page.locator("#title", { hasText: "小岛" }).waitFor();
+  const identity = await open(page, "identity");
+  await identity.getByRole("tab", { name: "名片" }).click();
+  await identity.getByRole("button", { name: "编辑" }).click();
+  await identity.locator("textarea").fill("- 名字：River\n");
+  await identity.getByRole("button", { name: "保存", exact: true }).click();
+  await page.locator("#title", { hasText: "River" }).waitFor();
+  await identity.locator(".hm-id-name", { hasText: "River" }).waitFor();
+}));

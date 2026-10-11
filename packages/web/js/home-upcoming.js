@@ -1,10 +1,9 @@
 // 接下来: a week strip, and the plans of the chosen day by time. A plan is removed only after the clock confirmed its cancel.
-import { cancelClock, listClock } from "./sheet-agent.js";
+import { cancelClock, listClock } from "./clock.js";
 import { dayItems, weekStrip } from "./home-model.js";
 import { dayTime, h, hhmm, ico, startOfDay, weekday, weekdayShort, fill } from "./home-dom.js";
 import { btn, list, note, row, skeleton } from "./home-ui.js";
-import { repeatText } from "./sheet-upcoming.js";
-import { named } from "./editor.js";
+import { repeatText } from "./clock.js";
 
 const cancelIntents = new Map();
 

@@ -1,4 +1,4 @@
-import { safeActivityView } from "./sheet-agent.js";
+import { safeActivityView } from "./activity-model.js";
 import { addIcon, text } from "./chat-ui.js";
 
 /** A small pill over the composer for the latest real turn; never reads request bodies or raw tool names. */
