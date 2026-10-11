@@ -14,7 +14,7 @@ for (const readyDelay of [0, 75]) test(`exact APK assets boot with ${readyDelay 
   const browser = await launchBrowser();
   if (!browser) return t.skip("no browser to drive");
   const kernel = startKernel();
-  const errors = [], assets = [], messages = [];
+  const errors = [], assets = [], messages = [], cspViolations = [];
   let native, page;
   try {
     say(kernel, "APK asset history");
@@ -23,6 +23,7 @@ for (const readyDelay of [0, 75]) test(`exact APK assets boot with ${readyDelay 
     await until(native.linked, 2000, "native human channel");
     ({ page } = await newPage(browser));
     page.on("pageerror", error => errors.push(error.message));
+    page.on("console", message => { if (message.type() === "error" && /Content Security Policy/i.test(message.text())) cspViolations.push(message.text()); });
     let link;
     const deliver = value => page.evaluate(value => globalThis.AshNative?.onmessage?.({ data: JSON.stringify(value) }), value).catch(error => errors.push(error.message));
     native.bridge.onLink(value => { link = value; });
@@ -74,6 +75,7 @@ for (const readyDelay of [0, 75]) test(`exact APK assets boot with ${readyDelay 
     await requested(kernel, request => request.reply_to === ask.id && request.kind === "response");
     say(kernel, "APK asset live update");
     await page.getByText("APK asset live update", { exact: true }).waitFor();
+    assert.deepEqual(cspViolations, [], "normal packaged resources and NativePort work without CSP violations");
     await page.evaluate(() => {
       const script = document.createElement("script");
       script.src = "csp-probe.js";
