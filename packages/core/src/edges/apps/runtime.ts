@@ -627,7 +627,7 @@ export class AppRuntime {
   async revoke(id: string, need?: string): Promise<AppInfo> {
     if (!this.found.has(id)) throw fail("not_found", `no app ${id}`);
     const left = this.grants.revoke(id, need);
-    if (!left) await this.stop(id);
+    if (!left) { await this.stop(id); await this.dropTimers(id); }
     return this.info(id)!;
   }
 
@@ -683,11 +683,24 @@ export class AppRuntime {
     return { id, cleared: `${this.agentPath(id)}/${this.manifest(id)!.data_dir}` };
   }
 
+  /**
+   * The app is no longer installed (removed, or all its grants taken back): the timers it set in `service:clock` go out as the
+   * app and could only be refused from now on, so the clock takes them back. A failure is only logged; the clock does the same
+   * by itself the first time one of them is refused. Disabling an app keeps its grants and its timers.
+   */
+  private async dropTimers(id: string): Promise<void> {
+    try {
+      const reply = await this.options.router.send({ to: "service:clock", kind: "request", word: "cancel.owner", body: { member: `app:${id}` } }, SERVICE_CALLER);
+      if (!reply.ok) this.log("apps: clearing the timers of", id, reply.error.code, reply.error.message);
+    } catch (error) { this.log("apps: clearing the timers of", id, error instanceof Error ? error.message : error); }
+  }
+
   async remove(id: string, keepData: boolean): Promise<{ id: string; removed: boolean; kept: string | null }> {
     if (!this.found.has(id)) throw fail("not_found", `no app ${id}`);
     if (this.grants.get(id)?.builtin) throw fail("failed", `${id} 是 Ash 自带的器官：用 apps.disable 停用它（apps.reset 清空它的数据）`);
     await this.stop(id);
     this.grants.revoke(id);
+    await this.dropTimers(id);
     const root = this.root;
     if (!keepData && root && ID.test(id)) {
       rmSync(join(root, id), { recursive: true, force: true });

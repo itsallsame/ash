@@ -4,7 +4,7 @@ import { DEFAULT_APP_ICON } from "../../../src/edges/apps/runtime";
 import { join } from "node:path";
 import test from "node:test";
 import { wordsOf } from "../../../../sdk/src/words";
-import { AGENT, call, dataOf, installFixtureFolder, until, world, type World } from "./helpers";
+import { AGENT, call, dataOf, installFixtureFolder, stubMember, until, world, type World } from "./helpers";
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 async function installed(options: Parameters<typeof world>[0] = {}): Promise<World> {
@@ -105,6 +105,45 @@ test("logs: the starts, stderr and exits; reset empties the data folder and rest
   const removed = dataOf(await words(w, "apps.remove", { id: "fixture" }));
   assert.deepEqual([removed.removed, removed.kept], [true, null]);
   assert.ok(!existsSync(join(w.root, "fixture")));
+});
+
+/** A stand-in for service:clock that records `cancel.owner`; `fails` makes it refuse. */
+function withClock(w: World, fails = false) {
+  const clock = stubMember("service:clock", "service", [{ word: "cancel.owner", callers: ["kernel"] }], {
+    "cancel.owner": () => { if (fails) throw new Error("clock down"); return { data: { cancelled: 1 } }; },
+  });
+  w.registry.add(clock);
+  return clock;
+}
+
+test("the app's timers in service:clock are taken back when it is no longer installed (remove, or every grant revoked); disable and a narrower grant keep them", async () => {
+  const w = await installed();
+  const clock = withClock(w);
+  const cleared = () => clock.received.map((m) => [m.word, m.body, m.from]);
+
+  await words(w, "apps.disable", { id: "fixture" });
+  await words(w, "apps.enable", { id: "fixture" });
+  await words(w, "apps.revoke", { id: "fixture", need: "device:*" });
+  assert.deepEqual(cleared(), [], "disabling, enabling and narrowing leave the timers");
+
+  await words(w, "apps.revoke", { id: "fixture" });
+  assert.deepEqual(cleared(), [["cancel.owner", { member: "app:fixture" }, "service:apps"]]);
+
+  await call(w, "service:apps", "apps.install", { id: "fixture" });
+  await words(w, "apps.remove", { id: "fixture", keep_data: true });
+  assert.equal(clock.received.length, 2);
+  assert.deepEqual(clock.received[1]!.body, { member: "app:fixture" });
+});
+
+test("removing an app does not wait on a failing or absent clock", async () => {
+  const w = await installed();
+  withClock(w, true);
+  const removed = dataOf(await words(w, "apps.remove", { id: "fixture" }));
+  assert.equal(removed.removed, true);
+  assert.ok(!existsSync(join(w.root, "fixture")));
+
+  const w2 = await installed();   // no clock member at all: the router answers offline
+  assert.equal(dataOf(await words(w2, "apps.remove", { id: "fixture" })).removed, true);
 });
 
 test("reset needs a data_dir", async () => {

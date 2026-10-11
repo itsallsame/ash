@@ -357,6 +357,7 @@ function gone(declared: (agent: string) => Reply, code: "forbidden" | "offline" 
     router: { send: async (m): Promise<Reply> => {
       sent.push(m);
       if (m.to === "service:agents" && m.word === "describe") return declared((m.body as { agent: string }).agent);
+      if (m.to === "service:apps" && m.word === "apps.describe") return declared(`app:${(m.body as { id: string }).id}`);
       if (m.to === "service:host") return { ok: true };
       return { ok: false, error: { code, message: "not a declared agent" } };
     } } });
@@ -401,11 +402,35 @@ test("when the check itself fails, nothing is taken back", async () => {
   h.svc.stop();
 });
 
-test("only an agent's timers are checked: an app's refused timer is not probed", async () => {
-  const h = gone(() => notFound());
+test("an app's timer that is refused: the app is gone (not found, or its folder is left but it is not granted): all its timers are taken back", async () => {
+  const noMore = gone((a) => (a === "app:kept" ? { ok: true, result: { data: { id: "kept", granted: false } } } : a === "app:here" ? { ok: true, result: { data: { id: "here", granted: true } } } : notFound()));
+  await noMore.setAs("app:todo", "app", "t1");
+  await noMore.setAs("app:todo", "app", "t2");
+  await noMore.setAs("app:kept", "app", "k");
+  await noMore.setAs("app:here", "app", "h");
+  await noMore.setAs("agent:alive", "agent", "a");   // the agents module is not asked about apps, and vice versa: this one is not found, so it goes too
+  await noMore.fireAll();
+  assert.deepEqual(noMore.labels(), ["h"]);
+  assert.ok(noMore.logs.some((l) => /app:todo is no longer an installed app/.test(l)));
+  assert.ok(noMore.logs.some((l) => /app:kept is no longer an installed app/.test(l)));
+  assert.equal(noMore.sent.filter((m) => m.to === "service:apps").length, 3, "one question per app");
+  noMore.svc.stop();
+});
+
+test("a disabled app is still granted: its refused timer stays", async () => {
+  const h = gone(() => ({ ok: true, result: { data: { id: "todo", enabled: false, granted: true } } }));
   await h.setAs("app:todo", "app", "t");
   await h.fireAll();
-  assert.equal(h.sent.filter((m) => m.to === "service:agents").length, 0);
   assert.deepEqual(h.labels(), ["t"]);
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+  h.svc.stop();
+});
+
+test("a service's refused timer is not probed", async () => {
+  const h = gone(() => notFound());
+  await h.setAs("service:semantic", "service", "s");
+  await h.fireAll();
+  assert.equal(h.sent.filter((m) => m.to === "service:agents" || m.to === "service:apps").length, 0);
+  assert.deepEqual(h.labels(), ["s"]);
   h.svc.stop();
 });

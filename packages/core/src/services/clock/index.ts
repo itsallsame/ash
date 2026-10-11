@@ -11,10 +11,11 @@
  * is due. An agent's timer therefore asks the owner at that time like any call of the agent; an app's timer needs the
  * app's grant; the owner's timer is the owner's; a hub service's timer (the semantic layer's pulse) stays a service's.
  * The turn is not kept: it is over by then. `cancel` takes back one's own timer; the owner may take back any.
- * `cancel.owner` (the hub only) takes back all of one member's timers: the agents module calls it when an agent is deleted.
- * As a second line, a timer an agent set that cannot be sent because the agent is no longer declared (the router's refusal
- * is followed by a `service:agents/describe` that answers not_found) takes all of that agent's timers back, with a log line.
- * An agent that is only stopped or restarting is still declared, so its timers stay.
+ * `cancel.owner` (the hub only) takes back all of one member's timers.
+ * (The agents module calls it when an agent is deleted, the apps module when an app is removed or loses all its grants.)
+ * As a second line, a timer an agent or an app set that cannot be sent because the setter is gone (the refusal is followed by
+ * `service:agents/describe` or `service:apps/apps.describe`, see `dropIfGone`) takes all of that member's timers back, with a
+ * log line. A member that is only stopped, restarting or disabled is still known, so its timers stay.
  * `at` alone fires once; `every`
  * repeats; both together fire first at `at` and then every period. A repeating timer that was missed (the phone
  * slept, the hub was down) fires once for the missed rounds and goes on from the next slot after now. Precision is
@@ -36,6 +37,7 @@ import type { Router } from "../../kernel/types";
 export const CLOCK_ID = "service:clock";
 const HOST_ID = "service:host";
 const AGENTS_ID = "service:agents";
+const APPS_ID = "service:apps";
 /** setTimeout cannot wait longer than this; a longer wait is cut and rechecked. */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
@@ -195,25 +197,29 @@ export class ClockService implements Member {
       const reply: Reply = await this.options.router.send(msg, caller);
       if (!reply.ok) {
         this.log(`timer ${row.id} (${row.label}): ${row.target}/${row.word} answered ${reply.error.code}: ${reply.error.message}`);
-        if (stored.via === "agent" && ["forbidden", "offline", "not_found"].includes(reply.error.code)) await this.dropIfGone(row, stored.member);
+        if ((stored.via === "agent" || stored.via === "app") && ["forbidden", "offline", "not_found"].includes(reply.error.code)) await this.dropIfGone(row, stored.member, stored.via);
       }
     } catch (error) { this.log(`timer ${row.id} (${row.label}): sending to ${row.target}/${row.word} failed`, error); }
   }
 
   /**
-   * The setter was refused or the target was not there. When the setter is an agent that is no longer declared (it was deleted
-   * and its timers were not cleaned, or from before the cleaning existed) none of its timers can ever be sent again: take them back.
-   * Only `not_found` from the agents module says it is gone; a stopped or restarting agent is still declared, and any other answer
-   * or failure leaves the timers alone.
+   * The setter was refused or the target was not there. When the setter is an agent that is no longer declared, or an app that is
+   * no longer installed (it was deleted and its timers were not cleaned, or from before the cleaning existed), none of its timers
+   * can ever be sent again: take them back. Only the owning module's answer says it is gone (`service:agents/describe`: not_found;
+   * `service:apps/apps.describe`: not_found, or found with `granted` false, which is a folder left behind after an uninstall). A stopped,
+   * restarting or only disabled member is still known, and any other answer or failure leaves the timers alone.
    */
-  private async dropIfGone(row: Row, member: string): Promise<void> {
+  private async dropIfGone(row: Row, member: string, via: "agent" | "app"): Promise<void> {
     if (this.probing.has(member)) return; // several of its timers fell due together: one question is enough
     this.probing.add(member);
     try {
-      const probe = await this.options.router.send({ to: AGENTS_ID, kind: "request", word: "describe", body: { agent: member } }, SELF);
-      if (probe.ok || probe.error.code !== "not_found") return;
+      const probe = via === "agent"
+        ? await this.options.router.send({ to: AGENTS_ID, kind: "request", word: "describe", body: { agent: member } }, SELF)
+        : await this.options.router.send({ to: APPS_ID, kind: "request", word: "apps.describe", body: { id: member.replace(/^app:/, "") } }, SELF);
+      const gone = probe.ok ? via === "app" && (probe.result?.data as { granted?: unknown } | undefined)?.granted === false : probe.error.code === "not_found";
+      if (!gone) return;
       const removed = this.removeOwner(member);
-      this.log(`timer ${row.id} (${row.label}): ${member} is no longer a declared agent; took back its ${removed} timer(s)`);
+      this.log(`timer ${row.id} (${row.label}): ${member} is no longer ${via === "agent" ? "a declared agent" : "an installed app"}; took back its ${removed} timer(s)`);
     } catch (error) { this.log(`timer ${row.id} (${row.label}): could not check whether ${member} still exists`, error); }
     finally { this.probing.delete(member); }
   }
