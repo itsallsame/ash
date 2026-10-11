@@ -247,7 +247,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
         more.type = "button";
         more.addEventListener("click", async () => {
           more.disabled = true;
-          try { await onExpand(item.full); } catch { more.disabled = false; more.title = "全文暂时读不到"; }
+          try { await onExpand(item.full, item.id); } catch { more.disabled = false; more.title = "全文暂时读不到"; }
         });
       }
       if (Array.isArray(item.reactions) && item.reactions.length) {

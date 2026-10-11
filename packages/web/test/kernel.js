@@ -8,6 +8,11 @@ import { memoryConnector } from "../../link/test/fixtures/memory.ts";
 import { CLOSE_CODES } from "../../sdk/src/link.ts";
 import { standardAction, standardContract } from "../../sdk/src/namespaces.ts";
 import { wordContract } from "../../sdk/src/words.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Ledger } from "../../core/src/kernel/ledger/index.ts";
+import { createWindowReader } from "../../core/src/services/history/window.ts";
 
 const ajv = new Ajv({ strict: false });
 const checks = new Map();
@@ -57,6 +62,12 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
     now: () => clock,
     tick(ms = 1000) { clock += ms; return clock; },
   };
+  // Display APIs exercise the real append-time indexes and safe reader, rather than a second test-only projector.
+  const directory = mkdtempSync(join(tmpdir(), "web-history-"));
+  const historyLedger = Ledger.open(join(directory, "history.db"));
+  const display = createWindowReader(historyLedger, () => clock);
+  for (const word of ["window", "current", "confirm"]) kernel.on("service:history", word, body => display[word](body));
+  kernel.on("service:history", "activity.page", body => display.activityPage(body));
 
   kernel.handlers.set("service:agents/list", { agents: [{ id: "agent:main", name: "Ash", summary: "", state: "idle", primary: true }] });
 
@@ -66,6 +77,7 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
       ...(partial.origin ? { origin: partial.origin } : {}), ...(partial.turn ? { turn: partial.turn } : {}), ...(partial.thread ? { thread: partial.thread } : {}),
       summary: partial.summary ?? (typeof partial.body?.text === "string" ? partial.body.text : partial.word), size: 1 };
     kernel.ledger.push(message);
+    historyLedger.append(message, { summary: message.summary });
     for (const follower of kernel.followers) follower.push(message);
     return message;
   };
@@ -186,7 +198,8 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
   };
   /** The connection drops (the page should reconnect and sync again). */
   kernel.drop = () => { for (const session of kernel.sessions) session.close(CLOSE_CODES.internal, "test drop"); };
-  kernel.close = () => server.close();
+  let closed = false;
+  kernel.close = () => { if (closed) return; closed = true; server.close(); historyLedger.close(); rmSync(directory, { recursive: true, force: true }); };
   return kernel;
 }
 

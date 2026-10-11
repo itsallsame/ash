@@ -5,9 +5,6 @@ import { ago, dayTime, h, ico, fill } from "./home-dom.js";
 import { group, list, note, row, skeleton, btn } from "./home-ui.js";
 import { waitingItems } from "./home-model.js";
 
-/** The owner's answers in flight, by ask: a retry after a lost answer sends the same request again. */
-const intents = new Map();
-
 const DECISIONS = { once: "允许了", always: "以后都允许", deny: "拒绝了", timeout: "过期没回答：", cancelled: "取消了", rule: "按规则放行：", review: "她判断后放行：", carry: "刚允许过，沿用：", hand_full: "设备完全放开放行：", declared_none: "无影响，直接放行：", assessed_none: "评估无影响，直接放行：" };
 const decisionText = (item) => `${DECISIONS[item.decision] ?? "已记录："}「${(typeof item.label === "string" && item.label) || actionLabel(item)}」`;
 export const VERB = { once: "仅这一次", always: "以后都允许", deny: "已拒绝", timeout: "过期没回答", cancelled: "已取消", rule: "按规则放行", review: "由她判断后放行", carry: "刚允许过，沿用", hand_full: "设备完全放开放行", declared_none: "无影响，直接放行", assessed_none: "评估无影响，直接放行" };
@@ -15,7 +12,8 @@ const valid = (item) => item && typeof item.id === "string" && item.id && Number
 
 /** The same answer the conversation's card gives: a gate approval through the gate's checks, anything else as a plain answer. */
 async function answer(ctx, screen, ask, choice, answerText) {
-  const fresh = ctx.feed.view().asks.find((item) => item.id === ask.id);
+  const intents = ctx.feed.intents;
+  const fresh = ctx.feed.view().asks.find((item) => item.id === ask.id) ?? ask;
   if (!fresh || fresh.seq !== ask.seq || fresh.state !== "pending") throw new Error("待批请求已失效。");
   let intent = intents.get(ask.id);
   if (intent?.choice && (intent.choice !== choice || intent.answerText !== answerText || ["pending", "confirmed", "rejected"].includes(intent.status))) return;
@@ -39,6 +37,7 @@ async function answer(ctx, screen, ask, choice, answerText) {
 
 /** One waiting item as the card of the conversation. */
 function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
+  const intents = ctx.feed.intents;
   const { kind, ask } = item;
   const approval = kind === "approval";
   const state = intents.get(ask.id);
@@ -78,12 +77,16 @@ function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
 }
 
 export function waitingPage(ctx, screen, arg) {
+  const intents = ctx.feed.intents;
   const agent = typeof arg === "string" ? arg : ctx.agent;
   const cards = h("div", { class: "hm-stack" });
   const settledBox = h("div");
   let history = null;
+  let currentPage = null;
+  let loading = false;
   const draw = () => {
-    const items = waitingItems(ctx.feed.view()).filter((item) => !agent || item.ask.from === agent);
+    const current = currentPage ? { asks: currentPage.items.map(item => item.ask).filter(Boolean) } : ctx.feed.view();
+    const items = waitingItems(current).filter((item) => !agent || item.ask.from === agent);
     screen.wake("expiry", draw, Math.min(...items.map(({ ask }) => ask.expires_at)));
     fill(cards, ...(items.length ? items.map((item) => waitingCard(ctx, screen, item, draw)) : [list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))]));
   };
@@ -92,12 +95,29 @@ export function waitingPage(ctx, screen, arg) {
     const last = history[0];
     fill(settledBox, list(row({ icon: "check", tone: "ok", title: `最近处理过 ${history.length} 件`, sub: `最近一件：${decisionText(last)}`, onClick: () => ctx.go("settled") })));
   };
-  screen.onView(draw);
+  const older = btn("更早的问题", "a-btn btn-ghost btn-sm", () => { void load({ before: currentPage.before }); });
+  const newer = btn("更新的问题", "a-btn btn-ghost btn-sm", () => { void load({ after: currentPage.after }); });
+  older.hidden = newer.hidden = true;
+  const load = async (params = {}) => {
+    if (loading) return;
+    loading = true; older.disabled = newer.disabled = true;
+    try {
+      currentPage = await screen.ask("service:history", "current", { limit: 40, ...params });
+      if (!screen.alive()) return;
+      older.hidden = !currentPage.has_more_before; newer.hidden = !currentPage.has_more_after;
+      const active = new Set(currentPage.items.map(item => item.ask?.id));
+      intents.prune(active);
+      draw();
+    } catch { /* connection state remains visible and a later refresh can retry */ }
+    finally { loading = false; older.disabled = newer.disabled = false; }
+  };
+  screen.onView(() => { void load(currentPage?.after ? { before: currentPage.after + 1 } : {}); });
   draw();
   const refresh = async () => {
+    await load();
     try { history = (await screen.ask("service:gate", "history", { limit: 100 })).items?.filter(valid).sort((a, b) => b.at - a.at) ?? []; drawSettled(); } catch { /* the cards above stand */ }
   };
-  return { title: "等你的", body: h("div", { class: "hm-stack" }, cards, settledBox), refresh };
+  return { title: "等你的", body: h("div", { class: "hm-stack" }, cards, h("div", { class: "hm-actions" }, older, newer), settledBox), refresh };
 }
 
 /** The decisions made lately, newest first; "查看依据" opens what the gate saw and said. */

@@ -34,6 +34,8 @@ test("the pill shows the latest safe step and the elapsed time, then a folded su
     turn.ended = 6000;
     renderProgress(root, { turns: { t_one: turn } }, { now: 7000 });
     assert.match(root.textContent, /做了 3 步· 5 秒/);
+    renderProgress(root, { turns: { t_one: { ...turn, step_count: 10000, steps: turn.steps.slice(-1) } } }, { now: 7000 });
+    assert.match(root.textContent, /做了 10000 步· 5 秒/, "a bounded DTO reports the whole turn's count, not the five loaded steps");
     renderProgress(root, { turns: { t_one: turn } }, { now: 70_000 });
     assert.equal(root.hidden, true);
     // A finished turn that did no steps shows nothing rather than "做了 0 步".

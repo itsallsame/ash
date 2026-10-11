@@ -59,7 +59,7 @@ export function homePage(ctx, screen) {
     const v = view();
     const st = stateOf(v, agentId, online());
     const name = isHer ? ctx.name : (state.agents?.find((agent) => agent.id === agentId)?.name ?? agentId.replace(/^agent:/, ""));
-    const waiting = waitingItems(v).filter((item) => !agentId || item.ask.from === agentId).length;
+    const waiting = !agentId && Number.isSafeInteger(v.waiting_count) ? v.waiting_count : waitingItems(v).filter((item) => !agentId || item.ask.from === agentId).length;
     const today = state.usage?.periods?.today?.cost_usd;
     const live = st.state === "working" ? " av-live" : st.state === "thinking" ? " av-breath" : st.state === "waiting_you" ? " av-wait" : "";
     // A quiet dot when she is simply here (green) or away (grey); a ring only while she is doing something, thinking or asking.
@@ -84,7 +84,7 @@ export function homePage(ctx, screen) {
     const rows = items.slice(0, 3).map(({ kind, ask }) => row({ icon: kind === "approval" ? "shield" : "ask", tone: kind === "approval" ? "warn" : "her", tall: true, title: ask.title,
       sub: kind === "approval" ? `${firstLine(ask.detail).slice(0, 24)}${ask.detail ? " · " : ""}${dayTime(ask.expires_at, now)} 前有效` : `${agentId ? "" : "她"}问你 · ${ago(ask.ts, now)}`,
       onClick: () => ctx.go("waiting", agentId) }));
-    fill(waitingBox, section("等你的", { right: items.length ? `${items.length} 件` : null },
+    fill(waitingBox, section("等你的", { right: (v.waiting_count ?? items.length) ? `${v.waiting_count ?? items.length} 件` : null },
       rows.length ? list(...rows) : list(row({ icon: "check", tone: "ok", title: "没有要你决定的事", sub: "有事她会在这里和对话里叫你" }))));
   };
 

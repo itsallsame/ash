@@ -1,10 +1,15 @@
-import { drawsConversation, fold, foldMany, initialView, OWNER } from "./project.js";
+import { ConversationTimeline as Timeline } from "./conversation-timeline.js";
+export { ConversationTimeline as Timeline } from "./conversation-timeline.js";
+import { HomeFeed } from "./home-feed.js";
+import { FullTexts } from "./full-texts.js";
+import { connectHome } from "./home.js";
 import { Net } from "./net.js";
 import { appendConversation, appendOutbox } from "./conversation.js";
 import { renderProgress } from "./progress.js";
 import { presentUiOpen } from "./suggestions.js";
 import { composerContext } from "./composer.js";
 import { openInlineBlob, prepareUploads } from "./attachments.js";
+import { readInlineAttachment } from "./inline-attachment.js";
 import { addPicked, attachMenu } from "./attach-menu.js";
 import { PresenceBar } from "./presence.js";
 import { answerGateAsk } from "./approvals.js";
@@ -19,82 +24,6 @@ const HOME_SECTIONS = new Set(["waiting", "upcoming", "memory", "promises", "han
   "settled", "device", "connect", "browser", "apps", "app", "keys", "model", "usage", "advanced"]);
 const TARGET_SECTION = Object.freeze({ approvals: "waiting", turn: "activity" });
 
-export class Timeline {
-  constructor(net, onChange = () => {}) {
-    this.net = net;
-    this.onChange = onChange;
-    this.reset();
-  }
-  reset() {
-    this.epoch = (this.epoch ?? 0) + 1;
-    this.pageAbort?.abort();
-    this.records = new Map();
-    this.byId = new Map();
-    this.view = initialView();
-    this.loading = false;
-    this.exhausted = false;
-    this.ready = false;
-    this.onChange(this.view, true);
-  }
-  /** The first history page has been applied; an empty conversation is now genuinely empty. */
-  historyReady() {
-    if (this.ready) return;
-    this.ready = true;
-    this.onChange(this.view, true);
-  }
-  add(message) {
-    if (!Number.isSafeInteger(message?.seq) || message.seq < 1 || typeof message.id !== "string") return;
-    if (this.records.has(message.seq)) return;
-    this.records.set(message.seq, message);
-    this.byId.set(message.id, message);
-    this.view = fold(this.view, message);
-    this.onChange(this.view, drawsConversation(message));
-  }
-  addMany(messages) {
-    const accepted = [];
-    let conversation = false;
-    for (const message of messages.sort((a, b) => a.seq - b.seq)) {
-      if (!Number.isSafeInteger(message?.seq) || message.seq < 1 || typeof message.id !== "string" || this.records.has(message.seq)) continue;
-      this.records.set(message.seq, message);
-      this.byId.set(message.id, message);
-      accepted.push(message);
-      if (!conversation && drawsConversation(message)) conversation = true;
-    }
-    if (accepted.length) {
-      this.view = foldMany(this.view, accepted);
-      this.onChange(this.view, conversation);
-    }
-  }
-  async older() {
-    if (this.loading || this.exhausted || !this.records.size) return 0;
-    const before = Math.min(...this.records.keys());
-    const epoch = this.epoch;
-    const controller = new AbortController();
-    this.pageAbort = controller;
-    this.loading = true;
-    try {
-      const page = await this.net.page(before, controller.signal);
-      if (epoch !== this.epoch) return 0;
-      if (!page.end?.has_more) this.exhausted = true;
-      this.addMany(page.messages);
-      if (this.exhausted && !page.messages.length) this.onChange(this.view, true);
-      return page.messages.length;
-    } finally {
-      if (epoch === this.epoch) this.loading = false;
-    }
-  }
-
-  /** The attachment [index] of a message of the owner's conversation: its bytes in the row, or the blob that holds them. */
-  inlineAttachment(messageId, index) {
-    const message = this.byId.get(messageId);
-    const agent = /^agent:[a-z][a-z0-9_-]*$/;
-    if (!message || message.kind !== "request" || message.word !== "say" || !((message.from === OWNER && agent.test(message.to)) || (message.to === OWNER && agent.test(message.from))) || !Number.isSafeInteger(index) || index < 0) return null;
-    const item = message.body?.attachments?.[index];
-    if (!item || typeof item.name !== "string" || typeof item.mime_type !== "string") return null;
-    if (typeof item.data === "string") return { item };
-    return typeof item.data?.$blob === "string" ? { blob: item.data.$blob, name: item.name, mime_type: item.mime_type } : null;
-  }
-}
 
 function text(parent, tag, value, className = "") {
   const node = document.createElement(tag);
@@ -106,6 +35,7 @@ function text(parent, tag, value, className = "") {
 
 /** Turns of the front lane that ended in an error in the last day and were not followed by anything the owner said: each gets a card. */
 export function failedTurns(view, now = Date.now()) {
+  if (Array.isArray(view.failures)) return view.failures;
   const last = [...view.conversation].reverse().find((item) => item.type === "say" && item.side === "owner");
   // A failure from yesterday is history, not something to retry.
   return Object.entries(view.turns ?? {})
@@ -210,22 +140,23 @@ export function boot({ bridge } = {}) {
     chip.append(clear);
     selected.append(chip);
   };
+  const homeFeed = new HomeFeed();
   let timeline;
   let recipient;
   let files;
   /** Ask for her home, or for the apps page (`page: "apps"`): whoever owns that page answers the event. */
   const openHome = ({ page = "home", agent, section } = {}) => window.dispatchEvent(new CustomEvent("ash:open",
     { cancelable: true, detail: { page, ...(agent ? { agent } : {}), ...(section ? { section } : {}) } }));
-  const askIntents = new Map();
+  const askIntents = homeFeed.intents;
   const optionPending = new Set();
   /** Long texts read from the ledger on demand, by blob hash. */
-  const fullTexts = new Map();
+  const fullTexts = new FullTexts();
   const redraw = () => { if (timeline) render(timeline.view, net.outbox, openInline, presenceBar, cardActions); };
   const cardActions = {
     agentName: id => recipient?.name(id) ?? id.replace(/^agent:/, ""),
     get primary() { return net.primary; },
     loading: () => !timeline?.ready,
-    atStart: () => timeline?.exhausted === true,
+    atStart: () => timeline?.store.intro === true,
     herName: () => presenceBar.title.textContent || "Ash",
     onRetry: async (failure) => {
       await net.enqueueSay(failure.retry.text, [], null, failure.retry.to ?? recipient.target());
@@ -234,7 +165,16 @@ export function boot({ bridge } = {}) {
     onOpenFile: (ref) => files.open(ref),
     onFileLink: (href) => files.openLink(href),
     fullTexts,
-    onExpand: async (hash) => { fullTexts.set(hash, await net.readBlobText(hash)); redraw(); },
+    onExpand: async (hash, id) => {
+      id ??= timeline.store.items.find(item => item.full === hash)?.id;
+      if (!id || !timeline.get(id)) return;
+      const dataset = timeline.store.dataset;
+      const entry = await fullTexts.load(id, hash, value => net.readBlobText(value));
+      if (!entry || dataset !== timeline.store.dataset || !timeline.get(id)) { fullTexts.retain(timeline.store.items); return; }
+      const dirty = timeline.store.expand(id, entry.bytes);
+      fullTexts.retain(timeline.store.items);
+      paintView(timeline.view, true, dirty);
+    },
     optionPending,
     askIntents,
     onPermission: /\bAshApp\//.test(navigator.userAgent) ? (permission) => {
@@ -282,30 +222,36 @@ export function boot({ bridge } = {}) {
     return !openHome({ section });
   };
   const openInline = async (messageId, index) => {
-    const ref = timeline.inlineAttachment(messageId, index);
-    if (!ref) return null;
-    if (ref.item) return openInlineBlob(ref.item);
-    // A large attachment is held as a blob whose text is the file's base64.
-    const { data } = await net.readBlob(ref.blob);
-    return openInlineBlob({ name: ref.name, mime_type: ref.mime_type, data: new TextDecoder().decode(data) });
+    const attachment = await readInlineAttachment(net, timeline.get(messageId), messageId, index);
+    return attachment ? openInlineBlob(attachment) : null;
   };
   const net = new Net({
     bridge,
     label: sessionStorage.getItem("ash.web.label")?.trim().slice(0, 80) || (/Android|iPhone|iPad/i.test(navigator.userAgent) ? "手机浏览器" : "电脑浏览器"),
     onMessage: (message) => { timeline.add(message); },
-    onHistory: (messages) => { timeline.addMany(messages); performance.mark("shell.history-rendered"); },
+    onHistory: (page) => { timeline.acceptPage(page); performance.mark("shell.history-rendered"); },
+    onCurrent: (current) => { timeline.acceptCurrent(current); },
+    historyTarget: () => {
+      if (!timeline?.ready || !timeline.store.hasAfter) return {};
+      const first = [...log.querySelectorAll("[data-seq]")].find(node => node.getBoundingClientRect().bottom > log.getBoundingClientRect().top);
+      const id = first?.dataset.rowKey?.replace(/^message:/, "") || first?.dataset.messageId;
+      return id ? { around_id: id } : timeline.store.items[0] ? { around_id: timeline.store.items[0].id } : {};
+    },
     onHistoryReady: () => { timeline.historyReady(); },
     onPresent: async (request) => {
       const opened = await presentUiOpen(suggestions, request, openUiTarget).catch(() => false);
       return { ok: true, data: { opened } };
     },
     onState: (status, detail) => {
+      window.dispatchEvent(new CustomEvent("ash:net-state", { detail: { net, event: "onState" } }));
       if (status !== "online") identityName?.reset();
       presenceBar.network(status, status === "closed" ? detail : "");
       if (status === "send-error" && detail) connection.title = String(detail.message || detail);
       if (status === "online" || status === "connecting") sendable();
     },
     onOpen: () => {
+      homeFeed.reset();
+      window.dispatchEvent(new CustomEvent("ash:net-state", { detail: { net, event: "onOpen" } }));
       void identityName?.refresh();
       void recipient?.refresh();
       net.setVisible(!document.hidden);
@@ -316,10 +262,9 @@ export function boot({ bridge } = {}) {
       if (timeline) render(timeline.view, outbox, openInline, presenceBar, cardActions);
     },
   });
+  connectHome(net, homeFeed);
   files = new Files(net, { save: net.embedded ? (file) => globalThis.__ashFileSave(file) : null });
-  // Pages are counted in ledger records, and a page of background events can hold no conversation at all. Older pages
-  // otherwise load only by scrolling to the top, which a short page cannot do: keep reading back until the conversation
-  // fills the screen or the history ends.
+  // Visible-item pages cannot be drowned by background ledger events; fill a short viewport from finite older pages.
   let filling = false;
   const fillScreen = async () => {
     if (filling || !timeline) return;
@@ -333,12 +278,32 @@ export function boot({ bridge } = {}) {
     finally { filling = false; }
   };
   const paintView = framePainter((view, conversation) => {
-    if (conversation) render(view, net.outbox, openInline, presenceBar, cardActions);
+    // A dataset reset drops texts and transient choices before any new entity is painted.
+    if (fullTexts.dataset !== timeline.store.dataset) {
+      fullTexts.reset(); fullTexts.dataset = timeline.store.dataset;
+      askIntents.clear(); optionPending.clear();
+    }
+    const active = new Set(timeline.store.items.map(item => item.id));
+    askIntents.prune(active);
+    for (const id of optionPending) if (!active.has(id) && !net.outbox.some(item => item.in_reply_to === id)) optionPending.delete(id);
+    fullTexts.retain(timeline.store.items);
+    if (conversation) render(timeline.view, net.outbox, openInline, presenceBar, cardActions);
     else presenceBar?.render(timeline?.ready ? view.presence : { state: "unknown" });
     progress();
     setTimeout(fillScreen, 0);
   });
   timeline = new Timeline(net, paintView);
+  timeline.store.expandedSize = item => item.full ? fullTexts.values.get(item.full)?.bytes ?? 0 : 0;
+  timeline.onCurrent = current => homeFeed.setCurrent(current);
+  const protectWindow = () => {
+    const selection = document.getSelection();
+    const ids = [...log.querySelectorAll("[data-row-key]")].filter(node => node.contains(document.activeElement) || selection?.rangeCount && !selection.isCollapsed && selection.containsNode(node, true))
+      .map(node => node.dataset.rowKey.replace(/^message:/, ""));
+    timeline.store.protect(ids);
+  };
+  document.addEventListener("selectionchange", protectWindow);
+  log.addEventListener("focusin", protectWindow);
+  log.addEventListener("focusout", protectWindow);
   identityName = new IdentityName(net, (name) => {
     presenceBar.setName(name);
   });
@@ -403,12 +368,12 @@ export function boot({ bridge } = {}) {
     if (timeline.view.asks.some((ask) => ask.state === "pending" && ask.expires_at <= Date.now())) redraw();
   }, 1_000);
   log.addEventListener("scroll", async () => {
-    if (log.scrollTop > 80 || timeline.loading) return;
-    const height = log.scrollHeight;
-    const top = log.scrollTop;
-    try { if (await timeline.older()) log.scrollTop = top + log.scrollHeight - height; }
-    catch { presenceBar.problem("更早的对话暂时加载不出来，稍后再往上翻一次。"); }
-  });
+    if (timeline.loading) return;
+    try {
+      if (log.scrollTop < 80) await timeline.older();
+      else if (log.scrollHeight - log.scrollTop - log.clientHeight < 100 && timeline.store.hasAfter) await timeline.newer();
+    } catch { presenceBar.problem("这段对话暂时加载不出来，稍后再翻一次。"); }
+  }, { passive: true });
   attachMenu(document.querySelector("#attachMenu"), attachButton, fileInput);
   fileInput.addEventListener("change", () => {
     picked = addPicked(picked, fileInput.files);

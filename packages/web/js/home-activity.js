@@ -47,7 +47,7 @@ export function activityPage(ctx, screen, arg) {
   const chips = h("div", { class: "hm-chips-row", role: "tablist" });
   const timeline = h("div", { class: "hm-timeline" });
   const empty = h("p", { class: "hm-note", hidden: true }, "还没有活动记录。她做过的事会按天出现在这里。");
-  const state = { latest: null, agents: new Map(), day: null, open: new Set(), seen: new Set(), backgroundOpen: false, details: new Map() };
+  const state = { latest: null, agents: new Map(), day: null, open: new Set(), seen: new Set(), backgroundOpen: false, details: new Map(), items: [], steps: new Map(), page: null, loading: false };
   const loadDetails = async (id, offset = 0) => {
     let data;
     try { data = await screen.ask("service:history", "activity", { id, offset }); } catch { throw new Error("详情暂时无法读取"); }
@@ -59,7 +59,9 @@ export function activityPage(ctx, screen, arg) {
   const turnEl = (turn, now, askable) => {
     const out = outcomeText(turn);
     const open = state.open.has(turn.id) || (!state.seen.has(turn.id) && (out.key === "running" || turn.id === state.latest));
+    const stepPage = state.steps.get(turn.id);
     const steps = Array.isArray(turn.steps) ? turn.steps : [];
+    if (open && !stepPage) { state.steps.set(turn.id, { loading: true, items: [] }); void loadSteps(turn.id); }
     const dot = h("span", { class: `hm-dot ${out.key}` });
     const title = h("button", { type: "button", class: "hm-turn-title", "aria-expanded": String(open), onclick: () => { if (state.open.has(turn.id)) state.open.delete(turn.id); else state.open.add(turn.id); state.seen.add(turn.id); draw(); } }, titleOf(turn));
     const body = h("div", { class: "hm-turn-body" }, title);
@@ -68,13 +70,15 @@ export function activityPage(ctx, screen, arg) {
       body.append(h("ol", { class: "hm-steps" }, steps.map((step) => stepRow(step, turn, now, stepDetail(step, loadDetails, state.details)))));
     } else body.append(outcomeLine);
     if (open && steps.length) body.append(outcomeLine);
+    if (open && stepPage?.has_more_before) body.append(btn("更早的步骤", "a-btn btn-ghost btn-sm", () => { void loadSteps(turn.id, { before: stepPage.before }); }));
+    if (open && stepPage?.has_more_after) body.append(btn("更新的步骤", "a-btn btn-ghost btn-sm", () => { void loadSteps(turn.id, { after: stepPage.after }); }));
     if (open && askable) body.append(btn([ico("chat", "i-xs"), "问问她这件事"].flat(), "a-btn btn-ghost btn-sm hm-ask", () => ctx.compose?.(`关于${turn.title || "这件事"}，`, { turn: turn.id })));
     return h("div", { class: "hm-turn", dataset: { turn: turn.id } }, h("span", { class: "tx-caption tx-num hm-turn-time" }, hhmm(turn.started)), h("span", { class: "hm-rail" }, dot, h("span", { class: "hm-rail-line" })), body);
   };
 
   const draw = () => {
     const now = Date.now();
-    const raw = ctx.feed.view();
+    const raw = { turns: Object.fromEntries(state.items.map(turn => [turn.id, { ...turn, steps: state.steps.get(turn.id)?.items ?? [] }])) };
     const safe = safeActivityView(raw).turns;
     const days = activityByDay(raw, now, agent).map((day) => ({ ...day, front: day.front.filter((turn) => safe[turn.id]).map((turn) => ({ ...turn, ...safe[turn.id], id: turn.id })), back: day.back.filter((turn) => safe[turn.id]).map((turn) => ({ ...turn, ...safe[turn.id], id: turn.id })) }));
     state.running = days.some((day) => [...day.front, ...day.back].some((turn) => !Number.isFinite(turn.ended)));
@@ -93,10 +97,42 @@ export function activityPage(ctx, screen, arg) {
     }
     fill(timeline, ...nodes);
   };
-  screen.onView(draw);
+  const older = btn("更早的记录", "a-btn btn-ghost btn-sm", () => load({ before: state.page.before }));
+  const newer = btn("更新的记录", "a-btn btn-ghost btn-sm", () => load({ after: state.page.after }));
+  const pages = h("div", { class: "hm-actions" }, older, newer);
+  const load = async (params = {}) => {
+    if (state.loading) return;
+    state.loading = true; older.disabled = newer.disabled = true;
+    try {
+      const page = await screen.ask("service:history", "activity.page", { limit: 30, ...params });
+      if (!screen.alive()) return;
+      state.page = page;
+      state.items = page.items;
+      const ids = new Set(page.items.map(item => item.id));
+      for (const id of state.steps.keys()) if (!ids.has(id)) state.steps.delete(id);
+      for (const id of state.open) if (!ids.has(id)) state.open.delete(id);
+      for (const id of state.seen) if (!ids.has(id)) state.seen.delete(id);
+      const detailIds = new Set([...state.steps.values()].flatMap(page => page.items.map(step => step.requestId ?? step.id)));
+      for (const id of state.details.keys()) if (!detailIds.has(id)) state.details.delete(id);
+      older.hidden = !page.has_more_before; newer.hidden = !page.has_more_after;
+      draw();
+    } finally { state.loading = false; older.disabled = newer.disabled = false; }
+  };
+  const loadSteps = async (id, params = {}) => {
+    try {
+      const page = await screen.ask("service:history", "activity.page", { turn: id, limit: 40, ...params });
+      if (!screen.alive() || !state.items.some(turn => turn.id === id)) return;
+      page.items = page.items.map(step => ({ ...step, requestId: step.requestId ?? step.id }));
+      state.steps.set(id, page);
+      const detailIds = new Set([...state.steps.values()].flatMap(page => page.items.map(step => step.requestId ?? step.id)));
+      for (const key of state.details.keys()) if (!detailIds.has(key)) state.details.delete(key);
+      draw();
+    } catch { state.steps.delete(id); }
+  };
+  screen.onView(() => { void load(state.page?.after ? { before: state.page.after + 1 } : {}).catch(() => {}); });
   // Only a turn still running has times that move by themselves.
   screen.every(() => { if (state.running) draw(); }, 5000);
   draw();
-  const refresh = async () => { try { for (const agent of await readAgents(screen)) state.agents.set(agent.id, agent.name); draw(); } catch { /* ids stay */ } };
-  return { title: "她做过的事", body: h("div", { class: "hm-activity" }, chips, empty, timeline), refresh };
+  const refresh = async () => { await load(); try { for (const agent of await readAgents(screen)) state.agents.set(agent.id, agent.name); draw(); } catch { /* ids stay */ } };
+  return { title: "她做过的事", body: h("div", { class: "hm-activity" }, chips, empty, timeline, pages), refresh };
 }
