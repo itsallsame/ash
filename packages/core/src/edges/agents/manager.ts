@@ -352,12 +352,18 @@ export class AgentManager {
     if (slot) { slot.troubled = false; await this.halt(slot, reason); }
   }
 
-  /** Remove an agent altogether: stop it, drop its inbox and its declaration. */
+  /** Remove an agent altogether: stop it, drop its inbox and its declaration, and have the clock take back the timers it set. */
   async forget(id: string, reason: string): Promise<void> {
     await this.stopAgent(id, reason).catch(() => {});
     this.slots.delete(id);
     this.inbox.drop(id);
     this.runs.remove(id);
+    // Timers go out as the agent that set them; with the declaration gone they could only fail. A failure here is only logged:
+    // the clock takes them back by itself the first time one fails for that reason.
+    try {
+      const reply = await this.deps.router.send({ to: "service:clock", kind: "request", word: "cancel.owner", body: { member: id } }, SERVICE_CALLER);
+      if (!reply.ok) this.log(`agents: clearing the timers of ${id}: ${reply.error.code}: ${reply.error.message}`);
+    } catch (error) { this.log(`agents: clearing the timers of ${id}: ${errorText(error)}`); }
   }
 
   /**

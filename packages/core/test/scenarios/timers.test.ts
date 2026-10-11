@@ -70,6 +70,32 @@ test("S084: a timer is listed and can be cancelled; a cancelled timer does not f
   assert.equal(owner.messages.filter((m) => textOf(m) === "不该出现").length, 0);
 });
 
+test("S084, 删 agent: when an agent is deleted its timers are taken back; another agent's and the owner's stay", async (t) => {
+  const s = await startScenario(t, { fakeNow: true, runtimes: ["scripted"] });
+  const HELPER = "agent:helper";
+  const state: { helper?: unknown; main?: unknown } = {};
+  s.driver.scriptFor(HELPER, async (turn) => {
+    if (turn.messages.some((m) => m.text.includes("设提醒"))) {
+      state.helper = await turn.tool("timer_set", { every: 3600, to: HELPER, word: "wake", body: { reason: "timer" }, label: "帮手的提醒" });
+    }
+  });
+  s.driver.scriptFor(MAIN, byOwnerText({
+    "设提醒": async (turn) => { state.main = await turn.tool("timer_set", { every: 3600, to: MAIN, word: "wake", body: { reason: "timer" }, label: "主 agent 的提醒" }); },
+  }));
+  const owner = await s.human();
+  const labels = async () => (dataOf(await owner.call("service:clock", "list")).timers as { label: string }[]).map((t) => t.label).filter((l) => !l.startsWith("semantic:")).sort();
+
+  assert.ok((await owner.call("service:agents", "declare", { id: HELPER, name: "帮手", summary: "做小事", brief: "照吩咐做小事。", runtime: { kind: "scripted" } })).ok);
+  assert.ok((await owner.call("service:agents", "tell", { agent: HELPER, text: "设提醒" })).ok);
+  accepted(await owner.say("设提醒"));
+  await eventually(async () => (await labels()).length === 2, "both agents' timers");
+  assert.deepEqual(await labels(), ["主 agent 的提醒", "帮手的提醒"]);
+
+  assert.ok((await owner.call("service:agents", "remove", { agent: HELPER })).ok);
+
+  assert.deepEqual(await labels(), ["主 agent 的提醒"], "only the deleted agent's timer is gone");
+});
+
 test("S084, 设备: a timer far away asks the host to wake the device then; when the host says it did, the timer fires", async (t) => {
   const s = await startScenario(t, { fakeNow: true });
   s.driver.script(byOwnerText({

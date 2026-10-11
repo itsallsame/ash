@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `8a76a4bfba204a6d`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `250bfaf25fba9100`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -14,7 +14,7 @@
 - [`service:link`](#servicelink) (16)
 - [`service:agents`](#serviceagents) (31)
 - [`service:apps`](#serviceapps) (16)
-- [`service:clock`](#serviceclock) (4)
+- [`service:clock`](#serviceclock) (5)
 - [`service:llm`](#servicellm) (2)
 - [`service:persona`](#servicepersona) (2)
 - [`service:widgets`](#servicewidgets) (13)
@@ -197,6 +197,7 @@
 |---|---|---|---|---|---|---|
 | `set` | owner, agent, app | write / none | - | at, every, to*, word*, body*, label* | 在定提醒 | Set a timer that sends a word to a member at a time (at, Unix ms) or repeatedly (every, seconds, at least 60). Use for a future or repeating message, not for immediate delivery. Keep the returned id to cancel it. |
 | `cancel` | owner, agent, app | write / none | - | id* | 在取消提醒 | Cancel a timer by id; check `cancelled` because it may already have fired. |
+| `cancel.owner` | kernel | write / none | - | member* | 在清理已删成员的提醒 | Internal: take back every timer the given member set, and tell how many there were. The agents module calls it when it deletes an agent, and the apps module when an app is removed or loses all its grants, so their timers do not go on firing as a member that no longer exists. The hub itself calls this; nobody else. |
 | `list` | owner, agent, app | read / none | - | - | 在看提醒 | The active timers, to look at before changing them; the result is a snapshot. An agent or an app sees the timers it set; the owner sees all. |
 | `wake.fired` | kernel | read / none | event in | at* | 在响应唤醒闹钟 | The host's alarm went off (the device woke); the clock checks which timers are due. Sent by the host module. |
 

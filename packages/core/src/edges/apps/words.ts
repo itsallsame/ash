@@ -21,6 +21,9 @@ export function createAppsService(runtime: AppRuntime): Member {
       case "apps.list": return { data: { apps: runtime.list() } };
       case "apps.refresh": await runtime.refresh(); return { data: { apps: runtime.list() } };
       case "apps.describe": {
+        // The hub starts the clock before the apps: until the apps are loaded "not found" would be a guess (the clock asks this to
+        // tell a removed app from one that has not come up yet).
+        if (!runtime.isStarted()) throw new WordError("unavailable", "the apps are still loading", { recovery_hint: "Try again in a moment." });
         const info = runtime.info(id);
         if (!info) throw new WordError("not_found", `no app ${id}`, { recovery_hint: "apps.list shows what exists." });
         return { data: info };

@@ -11,6 +11,11 @@
  * is due. An agent's timer therefore asks the owner at that time like any call of the agent; an app's timer needs the
  * app's grant; the owner's timer is the owner's; a hub service's timer (the semantic layer's pulse) stays a service's.
  * The turn is not kept: it is over by then. `cancel` takes back one's own timer; the owner may take back any.
+ * `cancel.owner` (the hub only) takes back all of one member's timers.
+ * (The agents module calls it when an agent is deleted, the apps module when an app is removed or loses all its grants.)
+ * As a second line, a timer an agent or an app set that cannot be sent because the setter is gone (the refusal is followed by
+ * `service:agents/describe` or `service:apps/apps.describe`, see `dropIfGone`) takes all of that member's timers back, with a
+ * log line. A member that is only stopped, restarting or disabled is still known, so its timers stay.
  * `at` alone fires once; `every`
  * repeats; both together fire first at `at` and then every period. A repeating timer that was missed (the phone
  * slept, the hub was down) fires once for the missed rounds and goes on from the next slot after now. Precision is
@@ -31,6 +36,8 @@ import type { Router } from "../../kernel/types";
 
 export const CLOCK_ID = "service:clock";
 const HOST_ID = "service:host";
+const AGENTS_ID = "service:agents";
+const APPS_ID = "service:apps";
 /** setTimeout cannot wait longer than this; a longer wait is cut and rechecked. */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
@@ -82,6 +89,8 @@ export class ClockService implements Member {
   private readonly log: (message: string, error?: unknown) => void;
   private cancelTimer: (() => void) | null = null;
   private stopped = false;
+  /** Members whose existence is being checked after a failed send. */
+  private readonly probing = new Set<string>();
 
   constructor(private readonly options: ClockOptions) {
     this.db = options.ledger.db();
@@ -113,6 +122,7 @@ export class ClockService implements Member {
     switch (msg.word) {
       case "set": return { data: this.set(body, ctx.caller) };
       case "cancel": return { data: this.remove(body, ctx.caller) };
+      case "cancel.owner": return { data: { cancelled: this.removeOwner(body.member as string) } };
       // An agent or an app sees only the timers it set; the owner and the hub's services see all.
       case "list": return { data: { timers: this.rows().filter((row) => seesAll(ctx.caller) || row.created_by === ctx.caller.member).map(info) } };
       default: throw new WordError("not_found", `service:clock has no word ${msg.word}`);
@@ -147,6 +157,13 @@ export class ClockService implements Member {
     return { cancelled: removed };
   }
 
+  /** Delete every timer that `member` set; the number deleted. */
+  private removeOwner(member: string): number {
+    const removed = Number(this.db.prepare("DELETE FROM timers WHERE created_by=?").run(member).changes);
+    if (removed > 0) this.arm();
+    return removed;
+  }
+
   // ---- firing ----
 
   /** Find the due timers, move or delete them, re-arm, and send their words without waiting for the answers. */
@@ -178,8 +195,33 @@ export class ClockService implements Member {
       const stored = JSON.parse(row.created_as) as Caller;
       const caller = stored.member === OWNER_ID && row.target === OWNER_ID ? SELF : stored;
       const reply: Reply = await this.options.router.send(msg, caller);
-      if (!reply.ok) this.log(`timer ${row.id} (${row.label}): ${row.target}/${row.word} answered ${reply.error.code}: ${reply.error.message}`);
+      if (!reply.ok) {
+        this.log(`timer ${row.id} (${row.label}): ${row.target}/${row.word} answered ${reply.error.code}: ${reply.error.message}`);
+        if ((stored.via === "agent" || stored.via === "app") && ["forbidden", "offline", "not_found"].includes(reply.error.code)) await this.dropIfGone(row, stored.member, stored.via);
+      }
     } catch (error) { this.log(`timer ${row.id} (${row.label}): sending to ${row.target}/${row.word} failed`, error); }
+  }
+
+  /**
+   * The setter was refused or the target was not there. When the setter is an agent that is no longer declared, or an app that is
+   * no longer installed (it was deleted and its timers were not cleaned, or from before the cleaning existed), none of its timers
+   * can ever be sent again: take them back. Only the owning module's answer says it is gone (`service:agents/describe`: not_found;
+   * `service:apps/apps.describe`: not_found, or found with `granted` false, which is a folder left behind after an uninstall; it answers from the install record, so an app whose folder is missing is still installed, and `unavailable` before the apps are loaded, which this leaves alone). A stopped,
+   * restarting or only disabled member is still known, and any other answer or failure leaves the timers alone.
+   */
+  private async dropIfGone(row: Row, member: string, via: "agent" | "app"): Promise<void> {
+    if (this.probing.has(member)) return; // several of its timers fell due together: one question is enough
+    this.probing.add(member);
+    try {
+      const probe = via === "agent"
+        ? await this.options.router.send({ to: AGENTS_ID, kind: "request", word: "describe", body: { agent: member } }, SELF)
+        : await this.options.router.send({ to: APPS_ID, kind: "request", word: "apps.describe", body: { id: member.replace(/^app:/, "") } }, SELF);
+      const gone = probe.ok ? via === "app" && (probe.result?.data as { granted?: unknown } | undefined)?.granted === false : probe.error.code === "not_found";
+      if (!gone) return;
+      const removed = this.removeOwner(member);
+      this.log(`timer ${row.id} (${row.label}): ${member} is no longer ${via === "agent" ? "a declared agent" : "an installed app"}; took back its ${removed} timer(s)`);
+    } catch (error) { this.log(`timer ${row.id} (${row.label}): could not check whether ${member} still exists`, error); }
+    finally { this.probing.delete(member); }
   }
 
   // ---- arming: the in-process timeout and the host alarm follow the earliest timer ----

@@ -5,6 +5,7 @@ import { compileSchema } from "../../../../sdk/src/word";
 import { Ledger } from "../../../src/kernel/ledger";
 import { createClockService, CLOCK_ID } from "../../../src/services/clock";
 import { reconcileTimers } from "../../../src/services/semantic/shared";
+import { call as callApps, world as appsWorld } from "../../edges/apps/helpers";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { agent, app, failure, fake, flush, owner, service, success, word, world } from "../../kernel/router/world";
 
@@ -38,7 +39,7 @@ const set = (extra: Record<string, unknown>) => ({ to: "agent:main", word: "wake
 
 test("the words are the sdk contracts and set/list/cancel work", async () => {
   const s = setup();
-  assert.deepEqual(s.service.words().map((w) => w.word).sort(), ["cancel", "list", "set", "wake.fired"]);
+  assert.deepEqual(s.service.words().map((w) => w.word).sort(), ["cancel", "cancel.owner", "list", "set", "wake.fired"]);
   const setContract = s.service.words().find((w) => w.word === "set")!;
   assert.ok(compileSchema(setContract.input_schema)(set({ at: T0 + 1000 })));
 
@@ -193,7 +194,7 @@ test("a send that fails is logged and does not stop the other timers", async () 
   await svc.handle(msg("set", set({ at: T0, to: "device:phone", word: "ping", body: {}, label: "two" })), ctx);
   svc.check();
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(sent.filter((t) => t !== "service:host").sort(), ["app:x", "device:phone"]);
+  assert.deepEqual(sent.filter((t) => t !== "service:host" && t !== "service:agents").sort(), ["app:x", "device:phone"]);
   assert.equal(logs.filter((l) => l.startsWith("timer")).length, 2);
   svc.stop();
 });
@@ -318,4 +319,182 @@ test("reconcileTimers only counts the timers its own member set: an agent cannot
   assert.equal(all.filter((t) => t.label === "pulse:wake:1" && t.created_by === "agent:main").length, 1, "the agent's own timer is left alone");
   assert.equal(all.filter((t) => t.label === "pulse:wake:1" && t.created_by === "service:pulse").length, 1, "the pulse laid down its own");
   assert.equal(all.filter((t) => t.label === "pulse:wake:2").length, 0, "its stale one was taken away");
+});
+
+// ---- a member that is gone: its timers are taken back ----
+
+test("cancel.owner takes back all of one member's timers and no one else's; it is for the hub alone", async () => {
+  const h = hub();
+  await h.setTimerAs(agent("helper"), "service:quiet", "tick", "h1");
+  await h.setTimerAs(agent("helper"), "service:quiet", "tick", "h2");
+  await h.setTimerAs(agent("main"), "service:quiet", "tick", "m");
+  await h.setTimerAs(owner, "service:quiet", "tick", "o");
+  const cancelOwner = (member: string, caller: Caller) => h.router.send({ to: CLOCK_ID, kind: "request", word: "cancel.owner", body: { member } }, caller);
+  const labels = async () => success(await h.router.send({ to: CLOCK_ID, kind: "request", word: "list", body: {} }, owner)).timers.map((t: any) => t.label).sort();
+
+  for (const caller of [agent("main"), agent("helper"), app(), owner]) assert.equal(failure(await cancelOwner("agent:helper", caller)).code, "forbidden");
+  assert.deepEqual(await labels(), ["h1", "h2", "m", "o"]);
+
+  assert.deepEqual(success(await cancelOwner("agent:helper", service("agents"))), { cancelled: 2 });
+  assert.deepEqual(await labels(), ["m", "o"]);
+  assert.deepEqual(success(await cancelOwner("agent:helper", service("agents"))), { cancelled: 0 });
+});
+
+test("cancel.owner re-arms: with no timer left the in-process timeout is dropped and the host alarm cleared", async () => {
+  const s = setup();
+  await s.call("set", set({ every: 3600, label: "x" }));
+  assert.equal(s.timers.filter((t) => t.live).length, 1);
+  await s.service.handle({ ...msg("cancel.owner", { member: "agent:main" }), from: "service:agents" }, { ...ctx, caller: { member: "service:agents", via: "service", local: true } });
+  assert.equal(s.timers.filter((t) => t.live).length, 0);
+  assert.equal(s.alarms.at(-1), null);
+});
+
+/** A clock whose router says the agent is refused and `service:agents/describe` answers as given. */
+function gone(declared: (agent: string) => Reply, code: "forbidden" | "offline" = "forbidden") {
+  const { ledger } = openLedger();
+  const sent: Outgoing[] = [];
+  const logs: string[] = [];
+  const svc = createClockService({ ledger, now: () => T0, log: (m) => logs.push(m),
+    router: { send: async (m): Promise<Reply> => {
+      sent.push(m);
+      if (m.to === "service:agents" && m.word === "describe") return declared((m.body as { agent: string }).agent);
+      if (m.to === "service:apps" && m.word === "apps.describe") return declared(`app:${(m.body as { id: string }).id}`);
+      if (m.to === "service:host") return { ok: true };
+      return { ok: false, error: { code, message: "not a declared agent" } };
+    } } });
+  const setAs = (member: string, via: Caller["via"], label: string, every: number | undefined = 3600) =>
+    svc.handle(msg("set", set({ every, at: T0, to: "service:quiet", word: "tick", body: {}, label })), { ...ctx, caller: { member, via, local: false } });
+  const labels = () => (svc as any).rows().map((r: any) => r.label).sort();
+  const fireAll = async () => { svc.check(); await flush(); };
+  return { svc, sent, logs, setAs, labels, fireAll };
+}
+const notFound = (): Reply => ({ ok: false, error: { code: "not_found", message: "no such agent" } });
+const found = (): Reply => ({ ok: true, result: { data: {} } });
+
+test("a repeating timer whose agent is no longer declared is taken back with its siblings, with a log; others stay", async () => {
+  const h = gone((a) => (a === "agent:alive" ? found() : notFound()));
+  await h.setAs("agent:dead", "agent", "d1");
+  await h.setAs("agent:dead", "agent", "d2");
+  await h.setAs("agent:alive", "agent", "a");
+  await h.setAs("service:semantic", "service", "s");
+  await h.fireAll();
+  assert.deepEqual(h.labels(), ["a", "s"].sort());
+  assert.ok(h.logs.some((l) => /agent:dead is no longer a declared agent/.test(l)));
+  const probes = h.sent.filter((m) => m.to === "service:agents" && m.word === "describe");
+  assert.deepEqual(probes.map((m) => (m.body as any).agent).sort(), ["agent:alive", "agent:dead"], "timers that fell due together ask once for the same agent");
+  h.svc.stop();
+});
+
+test("a timer of an agent that is only offline (still declared) stays and goes on", async () => {
+  const h = gone(() => found(), "offline");
+  await h.setAs("agent:resting", "agent", "r");
+  await h.fireAll();
+  assert.deepEqual(h.labels(), ["r"], "the repeating timer is kept");
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+  h.svc.stop();
+});
+
+test("when the check itself fails, nothing is taken back", async () => {
+  const h = gone(() => { throw new Error("agents module down"); });
+  await h.setAs("agent:resting", "agent", "r");
+  await h.fireAll();
+  assert.deepEqual(h.labels(), ["r"]);
+  assert.ok(h.logs.some((l) => /could not check whether agent:resting still exists/.test(l)));
+  h.svc.stop();
+});
+
+test("an app's timer that is refused: the app is gone (not found, or its folder is left but it is not granted): all its timers are taken back", async () => {
+  const noMore = gone((a) => (a === "app:kept" ? { ok: true, result: { data: { id: "kept", granted: false } } } : a === "app:here" ? { ok: true, result: { data: { id: "here", granted: true } } } : notFound()));
+  await noMore.setAs("app:todo", "app", "t1");
+  await noMore.setAs("app:todo", "app", "t2");
+  await noMore.setAs("app:kept", "app", "k");
+  await noMore.setAs("app:here", "app", "h");
+  await noMore.setAs("agent:alive", "agent", "a");   // the agents module is not asked about apps, and vice versa: this one is not found, so it goes too
+  await noMore.fireAll();
+  assert.deepEqual(noMore.labels(), ["h"]);
+  assert.ok(noMore.logs.some((l) => /app:todo is no longer an installed app/.test(l)));
+  assert.ok(noMore.logs.some((l) => /app:kept is no longer an installed app/.test(l)));
+  assert.equal(noMore.sent.filter((m) => m.to === "service:apps").length, 3, "one question per app");
+  noMore.svc.stop();
+});
+
+test("a disabled app is still granted: its refused timer stays", async () => {
+  const h = gone(() => ({ ok: true, result: { data: { id: "todo", enabled: false, granted: true } } }));
+  await h.setAs("app:todo", "app", "t");
+  await h.fireAll();
+  assert.deepEqual(h.labels(), ["t"]);
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+  h.svc.stop();
+});
+
+test("a service's refused timer is not probed", async () => {
+  const h = gone(() => notFound());
+  await h.setAs("service:semantic", "service", "s");
+  await h.fireAll();
+  assert.equal(h.sent.filter((m) => m.to === "service:agents" || m.to === "service:apps").length, 0);
+  assert.deepEqual(h.labels(), ["s"]);
+  h.svc.stop();
+});
+
+// ---- the hub starts the clock before the apps: an overdue timer is sent while the apps are not loaded yet ----
+
+const APP_DOC = { doc: "# d", docPath: "/root/apps/APP-CONTRACT.md" };
+/** An app installed in one run of the hub; the next run (same database) has a clock with an overdue timer of the app. */
+async function restarted(options: { fixture?: false; launcher?: null } = {}) {
+  const first = appsWorld({ contract: APP_DOC });
+  await first.apps.start();
+  assert.equal((await callApps(first, "service:apps", "apps.install", { id: "fixture" })).ok, true);
+  await first.apps.stopAll(Date.now() + 3000);
+  const second = appsWorld({ dbPath: first.dbPath, root: first.root, fixture: false, contract: APP_DOC, ...options });
+  const logs: string[] = [];
+  const now = Date.now();
+  const clock = createClockService({ ledger: second.ledger, router: second.router, now: () => now, log: (m) => logs.push(m), setTimer: () => () => {} });
+  second.registry.add(clock);
+  const as = JSON.stringify({ member: "app:fixture", via: "app", local: false });
+  const put = second.ledger.db().prepare("INSERT INTO timers (id,next_at,every_s,target,word,body,label,created_by,created_as,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  put.run("tmr_a", now - 1000, 3600, "app:fixture", "tick", "{}", "overdue", "app:fixture", as, now - 100000);
+  put.run("tmr_b", now + 3_600_000, 3600, "app:fixture", "tick", "{}", "later", "app:fixture", as, now - 100000);
+  const left = () => (second.ledger.db().prepare("SELECT label FROM timers WHERE created_by='app:fixture' ORDER BY label").all() as { label: string }[]).map((r) => r.label);
+  const fire = async () => { clock.check(); await flush(); await new Promise((r) => setTimeout(r, 50)); };
+  return { second, clock, logs, left, fire };
+}
+
+test("restart: an overdue timer of an installed app fires before apps.start(); the app is not loaded, so nothing is taken back", async () => {
+  const h = await restarted();
+  const described = await callApps(h.second, "service:apps", "apps.describe", { id: "fixture" });
+  assert.equal(described.ok, false);
+  assert.equal(described.ok === false && described.error.code, "unavailable", "before the apps are loaded the apps module does not guess");
+
+  await h.fire();
+  assert.deepEqual(h.left(), ["later", "overdue"]);
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+
+  await h.second.apps.start();
+  const after = await callApps(h.second, "service:apps", "apps.describe", { id: "fixture" });
+  assert.equal(after.ok && (after.result?.data as { granted: boolean }).granted, true);
+  h.clock.stop();
+});
+
+test("restart without an apps folder (no launcher): the install record still says the app is installed; its timers stay", async () => {
+  const h = await restarted({ fixture: false, launcher: null });
+  await h.second.apps.start();
+  const described = await callApps(h.second, "service:apps", "apps.describe", { id: "fixture" });
+  assert.equal(described.ok, true, "described from the install record although no folder was found");
+  assert.equal((described.ok && described.result?.data as { granted: boolean }).granted, true);
+  await h.fire();
+  assert.deepEqual(h.left(), ["later", "overdue"]);
+  assert.equal(h.logs.filter((l) => /took back/.test(l)).length, 0);
+  h.clock.stop();
+});
+
+test("after the apps are loaded, an app whose record is gone loses its timers", async () => {
+  const h = await restarted();
+  await h.second.apps.start();
+  await callApps(h.second, "service:apps", "apps.remove", { id: "fixture" });   // the apps module clears its timers itself, but the clock here has the router to it
+  h.second.ledger.db().prepare("INSERT INTO timers (id,next_at,every_s,target,word,body,label,created_by,created_as,created_at) VALUES ('tmr_c',0,3600,'app:fixture','tick','{}','late','app:fixture',?,0)")
+    .run(JSON.stringify({ member: "app:fixture", via: "app", local: false }));
+  await h.fire();
+  assert.deepEqual(h.left(), []);
+  assert.ok(h.logs.some((l) => /app:fixture is no longer an installed app/.test(l)));
+  h.clock.stop();
 });
