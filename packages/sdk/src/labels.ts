@@ -121,8 +121,11 @@ export function serviceLabel(member: string, word: string): string | null {
 /** What an upstream-labelled action is called when nothing readable came with it. */
 export const DOING_FALLBACK_LABEL = "在处理";
 
-/** A name made for programs, not people: no space, and an identifier's punctuation in it (`todo.list`, `get_items`, `a:b`). */
-const rawNameLike = (text: string) => !/\s/.test(text) && /[_.:/]/.test(text);
+/**
+ * A name made for programs, not people: only ASCII identifier characters, with an identifier's punctuation in it
+ * (`todo.list`, `get_items`, `a:b`). A title in words with a slash or a colon in it (「上传/下载」「日程:今天」) is for people.
+ */
+const rawNameLike = (text: string) => /^[A-Za-z0-9_.:/-]+$/.test(text) && /[_.:/]/.test(text);
 /** Text the owner can read as a name: not empty, no control characters, not the program's own name for the thing. */
 const readable = (text: string | undefined, ...raw: string[]): string | null => {
   const value = text?.replace(/\s+/g, " ").trim();

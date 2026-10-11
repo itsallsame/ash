@@ -46,6 +46,8 @@ test("a word with a label shows it in the status line", () => {
 test("an upstream action's label: its own readable title, else the owner's name, else 在处理; the raw name is never in it", () => {
   assert.equal(upstreamDoingLabel({ title: "List todos", word: "todo.list", owner: "待办", noun: "功能" }), "在用 List todos");
   assert.equal(upstreamDoingLabel({ word: "todo.list", owner: "待办", noun: "功能" }), "在用 待办 的功能");
+  // A title in words keeps its slash or colon; only an ASCII identifier is taken for a raw name.
+  for (const title of ["上传/下载", "日程:今天", "A/B测试", "1.5倍速"]) assert.equal(upstreamDoingLabel({ title, word: "todo.list", owner: "待办", noun: "功能" }), `在用 ${title}`);
   assert.equal(upstreamDoingLabel({ word: "camera.snap", owner: "Redmi K30", noun: "能力" }), "在用 Redmi K30 的能力");
   // a title that is only the tool's name (or looks like one) is no title
   for (const title of ["todo.list", "todo_list", "ns:todo", "", "  ", "bad\u202ename"])
