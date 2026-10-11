@@ -6,7 +6,7 @@ export function composerContext(root, input) {
     clear();
     root.hidden = false;
     const chip = document.createElement("div");
-    chip.className = "context-chip";
+    chip.className = "context-chip ctx";
     chip.dataset.turn = turn;
     chip.textContent = "关于这件事";
     const remove = document.createElement("button");

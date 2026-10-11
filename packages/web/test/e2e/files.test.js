@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { openPage, OWNER, withBrowser } from "./support.js";
+import { openHome, openPage, OWNER, withBrowser } from "./support.js";
 
 /** A body with a few files, read and listed through its workspace words. */
 function bodyWithFiles(kernel, files) {
@@ -31,7 +31,7 @@ test(...withBrowser("the file area browses a body, opens a Markdown file, follow
   ]);
   bodyWithFiles(kernel, files);
   const { page } = await openPage(browser, kernel);
-  await page.getByRole("button", { name: "文件", exact: true }).click();
+  await openHome(page, "files");
   const reader = page.getByRole("dialog", { name: "文件", exact: true });
   await reader.locator(".files-row", { hasText: "reports" }).click();
   await reader.locator(".files-row", { hasText: "说明 一.md" }).click();

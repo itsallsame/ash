@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { echoAgent, eventually, gateAsk, openPage, requested, withBrowser } from "./support.js";
+import { echoAgent, eventually, gateAsk, openHome, openPage, requested, withBrowser } from "./support.js";
 
 test(...withBrowser("the owner sends from the page, the agent answers, and a reload shows the same conversation", async ({ kernel, browser }) => {
   echoAgent(kernel);
@@ -72,15 +72,14 @@ test(...withBrowser("an approval can also be answered on the approvals page, and
   const ask = gateAsk(kernel, { title: "改审批规则", ts: Date.now() });
   const question = kernel.append({ from: "agent:main", to: "person:owner", kind: "request", word: "ask", ts: Date.now(), body: { title: "晚饭吃什么？", human_kind: "question", options: [{ id: "noodles", label: "面" }, { id: "rice", label: "饭" }], expires_at: Date.now() + 3_600_000 } });
   const { page } = await openPage(browser, kernel);
-  await page.locator("#presence").click();
-  await page.locator('#agentTabs [data-tab="approvals"]').click();
+  await openHome(page, "waiting");
   const sheet = page.locator('#agentPanel section[data-tab="approvals"]');
   await sheet.locator(".sheet-approval", { hasText: "改审批规则" }).getByRole("button", { name: "不允许" }).click();
   await page.waitForFunction(() => !document.querySelector('#agentPanel [data-ask-id]'));
   assert.deepEqual(kernel.ledger.find((m) => m.reply_to === ask.id).body.result.data, { choice: "deny" });
   await page.locator("#agentClose").click();
   await page.locator(".card.ask", { hasText: "晚饭吃什么" }).getByRole("button", { name: "面" }).click();
-  await page.locator(".card.ask .ask-outcome", { hasText: "已选择：面" }).waitFor();
+  await page.locator(".card.ask .opt.on", { hasText: "面" }).waitFor();
   assert.deepEqual(kernel.ledger.find((m) => m.reply_to === question.id).body.result.data, { choice: "noodles" });
 }));
 
@@ -104,7 +103,7 @@ test(...withBrowser("an option card is settled by one ordinary say on both scree
   await first.page.locator(".card", { hasText: "选一个" }).getByRole("button", { name: "方案乙" }).click();
   const sent = await requested(kernel, (r) => r.word === "say");
   assert.deepEqual(sent.body, { text: "方案乙", in_reply_to: card.id, option_id: "b" });
-  await second.page.locator(".card", { hasText: "选一个" }).getByText("已选择").waitFor();
+  await second.page.locator(".card", { hasText: "选一个" }).locator(".opt.on", { hasText: "方案乙" }).waitFor();
   assert.equal(await second.page.locator(".card", { hasText: "选一个" }).getByRole("button", { name: "方案甲" }).isDisabled(), true);
 }));
 
@@ -118,6 +117,11 @@ test(...withBrowser("a message typed while the connection is down is shown as un
   await page.locator("#send").click();
   await page.locator("#log .msg.pending-local", { hasText: "typed offline" }).waitFor();
   assert.equal(kernel.requests.filter((r) => r.word === "say").length, 0);
+  // Offline says so in the top bar and in a banner under it; what was typed waits under its bubble, with no storage notice.
+  assert.equal(await page.locator("#presence").getAttribute("data-net"), "offline");
+  await page.locator("#netBanner", { hasText: "你写的消息会先存着，连上就发" }).waitFor();
+  await page.locator("#log .meta-pending", { hasText: "等连上就发" }).waitFor();
+  assert.equal(await page.getByText(/暂存在此浏览器/).count(), 0);
   await page.context().setOffline(false);
   await page.locator("#log .msg.ai", { hasText: "echo: typed offline" }).waitFor();
   // A send the dropped connection may have swallowed is sent again with the same client_id, which the hub answers from its first
@@ -128,4 +132,53 @@ test(...withBrowser("a message typed while the connection is down is shown as un
   // the local placeholder gives way to the ledger's own bubble
   await page.locator("#log .msg.pending-local").waitFor({ state: "detached" });
   assert.equal(await page.locator("#log .msg.me", { hasText: "typed offline" }).count(), 1);
+}));
+
+test(...withBrowser("the top bar has her and the apps: tapping her asks for her home (with the helper's id when talking to one), tapping the apps asks for the apps page", async ({ kernel, browser }) => {
+  kernel.on("service:agents", "list", { agents: [{ id: "agent:main", name: "Ash", summary: "", state: "idle", primary: true }, { id: "agent:helper", name: "小研", summary: "", state: "idle" }] });
+  const { page } = await openPage(browser, kernel);
+  assert.equal(await page.locator("#files, #menu").count(), 0, "no files button and no menu button");
+  await page.evaluate(() => { window.opened = []; window.addEventListener("ash:open", (event) => { window.opened.push(event.detail); if (event.detail.page === "apps") event.preventDefault(); }); });
+  await page.locator("#apps").click();
+  assert.deepEqual(await page.evaluate(() => window.opened), [{ page: "apps" }]);
+  // In the app the apps page is native.
+  await page.evaluate(() => { window.nativePages = []; globalThis.__ashOpenNative = (name) => window.nativePages.push(name); });
+  await page.locator("#apps").click();
+  assert.deepEqual(await page.evaluate(() => window.nativePages), ["apps"]);
+  assert.equal((await page.evaluate(() => window.opened)).length, 1, "the app does not announce the event");
+  await page.locator("#presence").click();
+  assert.deepEqual((await page.evaluate(() => window.opened)).at(-1), { page: "home" });
+  // Nobody answered the home event: the old drawer stands in for it.
+  await page.locator("#drawer.open").waitFor();
+  await page.locator("#drawer .set-close").click();
+  // Talking to a helper: her home is the helper's.
+  await page.locator("#f .to").click();
+  await page.locator(".layer .li", { hasText: "小研" }).click();
+  await page.evaluate(() => { window.opened = []; });
+  await page.locator("#presence").click();
+  assert.deepEqual((await page.evaluate(() => window.opened)).at(-1), { page: "home", agent: "agent:helper" });
+}));
+
+test(...withBrowser("a page that answers the home event keeps the old drawer closed", async ({ kernel, browser }) => {
+  const { page } = await openPage(browser, kernel);
+  await page.evaluate(() => { window.addEventListener("ash:open", (event) => event.preventDefault()); });
+  await page.locator("#presence").click();
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator("#drawer.open, #agentSheet.open").count(), 0);
+}));
+
+test(...withBrowser("a turn that ended badly leaves one card with a retry that says the same words again", async ({ kernel, browser }) => {
+  echoAgent(kernel, { tool: false });
+  kernel.append({ from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text: "查一下天气" } });
+  kernel.append({ from: "agent:main", kind: "event", word: "turn.started", turn: "t_bad", body: { turn: "t_bad", lane: "front" } });
+  kernel.append({ from: "agent:main", kind: "event", word: "turn.ended", turn: "t_bad", body: { turn: "t_bad", lane: "front", outcome: "error" } });
+  const { page } = await openPage(browser, kernel);
+  const card = page.locator(".card.failure");
+  await card.locator(".card-hd", { hasText: "没做成" }).waitFor();
+  assert.equal(await card.locator(".opt").count(), 0);
+  await card.getByRole("button", { name: "重试" }).click();
+  const sent = await requested(kernel, (r) => r.word === "say" && r.body.text === "查一下天气" && r.client_id);
+  assert.equal(sent.body.text, "查一下天气");
+  await page.locator("#log .msg.ai", { hasText: "echo: 查一下天气" }).waitFor();
+  assert.equal(await page.locator(".card.failure").count(), 0, "once the owner has said something again the card is gone");
 }));

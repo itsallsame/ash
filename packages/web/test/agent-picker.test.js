@@ -5,7 +5,8 @@ import { startKernel } from "./kernel.js";
 import { netFor, until } from "./support.js";
 
 class Element {
-  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.value = ""; this.placeholder = "跟 Ash 说点什么…"; this.hidden = false; }
+  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.attributes = {}; this.dataset = {}; this.value = ""; this.placeholder = "跟 Ash 说点什么…"; this.hidden = false; }
+  setAttribute(name, value) { this.attributes[name] = value; }
   append(...children) { this.children.push(...children); }
   prepend(...children) { this.children.unshift(...children); }
   before(child) { this.before_ = child; }
@@ -15,6 +16,9 @@ class Element {
   get textContent() { return (this.text ?? "") + this.children.map((child) => child.textContent).join(""); }
   focus() {}
 }
+
+/** The rows of the "who to talk to" sheet: layer > sheet > list. */
+const rows = (form) => form.before_.children[1].children[2];
 
 const setup = async (agents) => {
   const kernel = startKernel();
@@ -41,14 +45,17 @@ test("the recipient is the hub's primary agent until the owner picks another", a
     assert.equal(picker.name("agent:ash"), "小舟");
     assert.equal(picker.name("agent:gone"), "gone");
     const control = t.form.children[0];
-    assert.equal(control.textContent, "@ 小舟");
+    assert.equal(control.attributes["aria-label"], "正在跟 小舟 说，点按换人");
+    assert.equal(picker.picked(), undefined, "the primary agent is not a picked helper");
     await control.onclick();
-    await until(() => t.form.before_.children.length === 2);
+    await until(() => rows(t.form).children.length === 2);
     const panel = t.form.before_;
-    assert.match(panel.textContent, /帮手 · 查资料/);
-    panel.children[1].onclick();
+    assert.equal(panel.hidden, false);
+    assert.match(panel.textContent, /帮手.*查资料/);
+    rows(t.form).children[1].onclick();
     assert.equal(picker.target(), "agent:other");
-    assert.equal(control.textContent, "@ 帮手");
+    assert.equal(picker.picked(), "agent:other");
+    assert.equal(control.attributes["aria-label"], "正在跟 帮手 说，点按换人");
     assert.equal(t.input.placeholder, "跟 帮手 说点什么…");
     assert.equal(panel.hidden, true);
     assert.ok(t.kernel.requests.some((request) => request.to === "service:agents" && request.word === "list"));
@@ -62,22 +69,23 @@ test("a picked agent that is gone from the list falls back to the primary agent;
     const picker = agentPicker(t.form, t.input, t.net);
     const control = t.form.children[0];
     await control.onclick();
-    await until(() => t.form.before_.children.length === 3);
-    assert.equal(t.form.before_.children[1].disabled, true, "a stopped agent is shown but not selectable");
-    assert.equal(t.form.before_.children[2].disabled, false, "one that is starting takes messages (they wait in its inbox): selectable");
-    assert.match(t.form.before_.children[2].textContent, /启动中/);
+    await until(() => rows(t.form).children.length === 3);
+    assert.equal(rows(t.form).children[1].disabled, true, "a stopped agent is shown but not selectable");
+    assert.equal(rows(t.form).children[2].disabled, false, "one that is starting takes messages (they wait in its inbox): selectable");
+    assert.match(rows(t.form).children[2].textContent, /启动中/);
+    assert.match(rows(t.form).children[1].textContent, /暂时用不了/);
     t.kernel.on("service:agents", "list", { agents: [agents[0], { id: "agent:third", name: "第三", summary: "", state: "idle" }] });
-    t.form.before_.children[0].onclick();
+    rows(t.form).children[0].onclick();
     assert.equal(picker.target(), "agent:ash");
     // Pick the third, then have it disappear.
     await control.onclick();
-    await until(() => t.form.before_.children.length === 2);
-    t.form.before_.children[1].onclick();
+    await until(() => rows(t.form).children.length === 2);
+    rows(t.form).children[1].onclick();
     assert.equal(picker.target(), "agent:third");
     t.kernel.on("service:agents", "list", { agents: [agents[0]] });
     await picker.refresh();
     assert.equal(picker.target(), t.net.primary);
-    assert.equal(control.textContent, "@ 小舟");
+    assert.equal(control.attributes["aria-label"], "正在跟 小舟 说，点按换人");
     assert.equal(t.input.placeholder, "跟 Ash 说点什么…");
   } finally { t.stop(); }
 });
@@ -103,10 +111,10 @@ test("a picker made on the first connection waits for the primary agent and then
   try {
     const form = new Element("form");
     const picker = agentPicker(form, new Element("input"), net);
-    assert.match(form.children[0].text, /…/, "nothing is known yet");
+    assert.match(form.children[0].attributes["aria-label"], /…/, "nothing is known yet");
     net.start();
     await until(() => net.status === "online", 2000, "online");
     await picker.refresh();
-    assert.equal(form.children[0].text, "@ 小舟");
+    assert.equal(form.children[0].attributes["aria-label"], "正在跟 小舟 说，点按换人");
   } finally { delete globalThis.document; net.stop(); kernel.close(); }
 });

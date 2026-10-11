@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { eventually, openPage, requested, withBrowser } from "./support.js";
+import { eventually, openHome, openPage, requested, withBrowser } from "./support.js";
 
 /** A hub whose settings words remember what they were told, so a page that reads back sees its own change. */
 function settingsHub(kernel) {
@@ -48,7 +48,7 @@ function settingsHub(kernel) {
   kernel.on("service:persona", "propose", () => ({ proposed: true, applied: true }));
   return state;
 }
-const openSettings = async (page) => { await page.locator("#menu").click(); await page.locator("#settingsHome").waitFor(); };
+const openSettings = async (page) => { await openHome(page); await page.locator("#settingsHome").waitFor(); };
 const sent = (kernel, to, word) => kernel.requests.filter((r) => r.to === to && r.word === word);
 
 test(...withBrowser("pause is at once; resume needs a second, explicit tap", async ({ kernel, browser }) => {
@@ -195,8 +195,7 @@ test(...withBrowser("the memory page edits USER.md on the body, and refuses to o
   const hub = settingsHub(kernel);
   hub.files.set("USER.md", "喜欢喝茶");
   const { page } = await openPage(browser, kernel);
-  await page.locator("#presence").click();
-  await page.locator('#agentTabs [data-tab="memory"]').click();
+  await openHome(page, "memory");
   const memory = page.locator('#agentPanel section[data-tab="memory"]');
   await memory.getByText("喜欢喝茶").waitFor();
   assert.equal(await memory.getByText(/历史|回滚|恢复/).count(), 0, "memory has no history or rollback");
@@ -213,7 +212,7 @@ test(...withBrowser("the memory page edits USER.md on the body, and refuses to o
 test(...withBrowser("the identity page saves SOUL through persona/propose", async ({ kernel, browser }) => {
   settingsHub(kernel);
   const { page } = await openPage(browser, kernel);
-  await page.locator("#presence").click();
+  await openHome(page, "identity");
   const identity = page.locator('#agentPanel section[data-tab="identity"]');
   await identity.getByRole("button", { name: "编辑" }).click();
   await identity.locator("textarea").fill("# 新的灵魂\n温柔一点");

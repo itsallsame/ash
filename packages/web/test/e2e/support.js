@@ -23,9 +23,15 @@ export async function openPage(browser, kernel, { width = 412, height = 915 } = 
   await page.setViewportSize({ width, height });
   await page.goto(kernel.url);
   await page.waitForFunction(() => document.querySelector("#connection")?.textContent.includes("已连接"));
-  await page.waitForFunction(() => !document.querySelector("#log .hello")?.textContent.includes("正在载入"));
+  await page.waitForFunction(() => document.querySelector("#log")?.getAttribute("aria-busy") === "false");
   return { page, context };
 }
+
+/**
+ * What tapping her does: the page announces `ash:open` for her home. Until the home page is built the old screens answer:
+ * no section opens the settings drawer, "files" the file browser, the others the person sheet at that tab.
+ */
+export const openHome = (page, section) => page.evaluate((s) => window.dispatchEvent(new CustomEvent("ash:open", { cancelable: true, detail: { page: "home", ...(s ? { section: s } : {}) } })), section);
 
 /** An agent that reads what the owner says, works a moment (a tool call) and answers `echo: <text>`. */
 export function echoAgent(kernel, { agent = "agent:main", tool = true } = {}) {

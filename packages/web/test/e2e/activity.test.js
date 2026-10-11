@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { echoAgent, eventually, openPage, requested, say, withBrowser, OWNER } from "./support.js";
+import { echoAgent, eventually, openHome, openPage, requested, say, withBrowser, OWNER } from "./support.js";
 
 const turn = (kernel, id, { lane = "front", ids = [], tools = [], outcome = "completed", agent = "agent:main" } = {}) => {
   const event = (word, body) => kernel.append({ from: agent, kind: "event", word, turn: id, body: { turn: id, ...body } });
@@ -9,7 +9,7 @@ const turn = (kernel, id, { lane = "front", ids = [], tools = [], outcome = "com
   if (outcome) event("turn.ended", { lane, outcome });
 };
 const openSheet = async (page, tab) => {
-  await page.locator("#presence").click();
+  await openHome(page, tab === "approvals" ? "waiting" : tab);
   await page.locator(`#agentTabs [data-tab="${tab}"]`).click();
   return page.locator(`#agentPanel section[data-tab="${tab}"]`);
 };
@@ -128,7 +128,7 @@ test(...withBrowser("an attachment in the ledger opens from its bytes, or from t
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
   kernel.append({ from: "agent:main", to: OWNER, kind: "request", word: "say", body: { text: "给你图", kind: "reply", attachments: [{ name: "dot.png", mime_type: "image/png", data: png.toString("base64") }] } });
   const { page } = await openPage(browser, kernel);
-  await page.locator("#log .msg.ai .attachment", { hasText: "dot.png" }).click();
-  await page.locator("#log .msg.ai img").waitFor();
-  assert.match(await page.locator("#log .msg.ai img").getAttribute("src"), /^blob:/);
+  await page.locator("#log .atts .attachment", { hasText: "dot.png" }).click();
+  await page.locator("#log .atts img").waitFor();
+  assert.match(await page.locator("#log .atts img").getAttribute("src"), /^blob:/);
 }));

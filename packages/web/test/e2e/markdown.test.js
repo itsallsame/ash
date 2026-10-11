@@ -28,7 +28,7 @@ test(...withBrowser("hostile Markdown stays inert and wide tables and code scrol
   const sent = say(kernel, `## 安全检查\n\n<script>window.markdownExecuted=true</script>\n\n<img src=x onerror="window.markdownExecuted=true">\n\n[unsafe](javascript:alert%281%29) ![图片](https://markdown-tracker.invalid/pixel)\n\n| A | B | C | D | E | F |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |\n\n\`\`\`\n${long}\n\`\`\`\n`);
   const bubble = page.locator(`.msg[data-seq="${sent.seq}"]`);
   await bubble.locator("h2", { hasText: "安全检查" }).waitFor();
-  assert.equal(await bubble.locator("script,img,iframe,svg").count(), 0);
+  assert.equal(await bubble.locator("script,img,iframe,svg:not(.i)").count(), 0, "markdown draws nothing but the page's own copy icon");
   assert.equal(await bubble.locator('a[href^="javascript:"]').count(), 0);
   assert.equal(await page.evaluate(() => window.markdownExecuted), undefined);
   assert.deepEqual(external, []);

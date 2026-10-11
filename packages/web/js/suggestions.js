@@ -10,7 +10,7 @@ export async function presentUiOpen(root, request, open) {
   if (!Object.hasOwn(labels, target) || !["perform", "suggest"].includes(mode)) return false;
   if (mode === "perform") return (await open(target, request)) === true;
   const chip = document.createElement("div");
-  chip.className = "suggestion";
+  chip.className = "suggestion ctx";
   const label = document.createElement("span");
   label.textContent = `Ash 建议查看${labels[target]}`;
   const show = document.createElement("button");

@@ -1,5 +1,6 @@
 import { marked } from "marked";
 import { decodeHTML } from "entities";
+import { addIcon } from "./chat-ui.js";
 
 // Parse Markdown, never HTML: only these code-owned DOM elements are created.
 // Raw HTML remains visible text; images are opt-in links, not network requests.
@@ -77,22 +78,24 @@ function renderTokens(parent, tokens, depth = 0, options = {}) {
         break;
       }
       case "code": {
-        const block = element(parent, "div", "md-code-block");
-        const bar = element(block, "div", "md-code-bar");
+        const block = element(parent, "div", "md-code-block codeblk");
+        const bar = element(block, "div", "md-code-bar hd");
         literal(element(bar, "span"), String(token.lang || "代码").split(/\s/)[0]);
-        const button = element(bar, "button", "md-copy"); button.type = "button"; button.textContent = "复制代码";
+        const button = element(bar, "button", "md-copy"); button.type = "button";
+        const showIcon = () => { button.textContent = ""; addIcon(button, "copy", "i-s"); };
+        showIcon();
         button.setAttribute("aria-label", "复制代码");
         button.addEventListener("click", async () => {
           button.disabled = true;
           try { await copyCode(token.text); button.textContent = "已复制"; }
           catch { button.textContent = "复制失败，请长按选择"; }
-          finally { button.disabled = false; }
+          finally { button.disabled = false; setTimeout(showIcon, 1800); }
         });
         const pre = element(block, "pre"); literal(element(pre, "code"), token.text);
         break;
       }
       case "table": {
-        const wrap = element(parent, "div", "md-table-wrap");
+        const wrap = element(parent, "div", "md-table-wrap tbl");
         wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "表格，可横向滚动");
         const table = element(wrap, "table");
         const row = (section, cells, tag) => {
