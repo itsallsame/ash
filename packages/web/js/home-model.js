@@ -16,7 +16,6 @@ export function waitingItems(view, now = Date.now()) {
 
 /** How many turns (of her or of one agent) began on the day of [now]. */
 export function turnsToday(view, now = Date.now(), agent = null) {
-  if (Number.isSafeInteger(view?.today_count)) return agent ? view.today_by_agent?.[agent] ?? 0 : view.today_count;
   const from = startOfDay(now);
   return Object.values(view?.turns ?? {}).filter((turn) => Number.isFinite(turn?.started) && turn.started >= from && turn.started < from + DAY && (!agent || turn.agent === agent)).length;
 }

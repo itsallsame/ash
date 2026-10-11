@@ -2,7 +2,7 @@
 // who she is, her files, and the backstage. Every block opens a page of its own (home-pages.js).
 import { ago, dayTime, duration, h, hhmm, ico, startOfDay, weekday, fill } from "./home-dom.js";
 import { card, list, note, row, section, tag } from "./home-ui.js";
-import { groupMemory, memoryCount, nextUp, turnsToday, urgentGroup, waitingItems } from "./home-model.js";
+import { groupMemory, memoryCount, nextUp, urgentGroup, waitingItems } from "./home-model.js";
 import { quoteOf, readApproval, readClock, readDevices, readFile, readPersona, readQuiet, readUsage, readAgents, settled } from "./home-data.js";
 import { usdToCnyText as money } from "./money.js";
 import { repeatText } from "./clock.js";
@@ -47,7 +47,7 @@ const firstLine = (text) => String(text ?? "").split(/\r?\n/).map((line) => line
 export function homePage(ctx, screen) {
   const agentId = ctx.agent;
   const isHer = !agentId;
-  const state = { usage: null, clock: null, memory: null, quiet: undefined, approval: null, proactive: undefined, devices: null, apps: null, soul: null, files: null, agents: null, relay: null };
+  const state = { todayCount: null, usage: null, clock: null, memory: null, quiet: undefined, approval: null, proactive: undefined, devices: null, apps: null, soul: null, files: null, agents: null, relay: null };
   const hero = h("div", { class: "hm-hero" });
   const body = h("div", { class: "hm-blocks" });
   const online = () => ctx.net.status === "online";
@@ -68,7 +68,7 @@ export function homePage(ctx, screen) {
     const since = st.since ? ` · ${duration(Math.max(0, Date.now() - st.since))}` : "";
     const pill = h("span", { class: `tag tag-${st.tone} hm-state`, id: "homeState" }, st.state === "working" || st.state === "thinking" ? h("span", { class: "spinner hm-spin" }) : null, `${st.text}${since}`);
     fill(heroStat, 
-      stat(String(turnsToday(v, Date.now(), agentId)), "今天做的事", { onClick: () => ctx.go("activity", agentId), id: "homeStatDone" }),
+      stat(state.todayCount === null ? "—" : String(state.todayCount), "今天做的事", { onClick: () => ctx.go("activity", agentId), id: "homeStatDone" }),
       stat(String(waiting), "等你", { tone: waiting ? "warn" : "", onClick: () => ctx.go("waiting", agentId), id: "homeStatWaiting" }),
       stat(typeof today === "number" ? money(today) : "—", "今天花的", { onClick: () => ctx.go("backstage"), id: "homeStatSpent" }));
     fill(hero, face, h("span", { class: "hm-name", id: "homeName" }, name), pill, heroStat);
@@ -198,7 +198,19 @@ export function homePage(ctx, screen) {
   else body.append(waitingBox, upcomingBox);
   const drawAll = () => { draw(); drawUpcoming(); drawMemory(); drawPromises(); drawHands(); drawWho(); drawFiles(); drawBackstage(); };
   drawAll();
-  screen.onView(draw);
+  let counting = false, recount = false;
+  const countToday = async () => {
+    if (counting) { recount = true; return; }
+    counting = true;
+    try {
+      const day = new Date(); day.setHours(0, 0, 0, 0);
+      const end = new Date(day); end.setDate(end.getDate() + 1);
+      const page = await screen.ask("service:history", "activity.page", { limit: 1, since_ts: day.getTime(), until_ts: end.getTime(), ...(agentId ? { agent: agentId } : {}) });
+      if (screen.alive() && Number.isSafeInteger(page.total_count)) { state.todayCount = page.total_count; drawHero(); }
+    } catch { /* A missing reply never turns an unknown total into zero. */ }
+    finally { counting = false; if (recount && screen.alive()) { recount = false; void countToday(); } }
+  };
+  screen.onView(() => { draw(); void countToday(); });
   // The seconds she has been at it are the only thing that moves by itself; the name moves when it is changed.
   screen.every(() => { if (stateOf(view(), agentId, online()).since) drawHero(); }, 1000);
   screen.onName(drawHero);
@@ -207,6 +219,7 @@ export function homePage(ctx, screen) {
 
   async function refresh() {
     const loads = [
+      countToday(),
       settled(readUsage(screen)).then((usage) => { if (usage) state.usage = usage; drawHero(); drawBackstage(); }),
       settled(readAgents(screen)).then((agents) => { if (agents) state.agents = agents; drawHero(); drawBackstage(); }),
       settled(readClock(screen)).then((timers) => { if (timers) state.clock = timers; drawUpcoming(); }),

@@ -341,7 +341,7 @@ export function boot({ bridge } = {}) {
   const protectWindow = () => {
     const selection = document.getSelection();
     const ids = [...log.querySelectorAll("[data-row-key]")].filter(node => node.contains(document.activeElement) || selection?.rangeCount && !selection.isCollapsed && selection.containsNode(node, true))
-      .map(node => node.dataset.rowKey.replace(/^message:/, ""));
+      .map(node => node.dataset.rowKey.replace(/^(message|failure):/, ""));
     timeline.store.protect(ids);
   };
   document.addEventListener("selectionchange", protectWindow);

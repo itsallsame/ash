@@ -15,7 +15,7 @@ export class HomeFeed {
     this.current = current;
     this.cached = { conversation: [], asks: current.items.filter(item => item.ask).map(item => item.ask),
       turns: current.progress ? { [current.progress.id]: current.progress } : {}, presence: current.presence,
-      waiting_count: current.total_count, today_count: current.today_count, today_by_agent: current.today_by_agent };
+      waiting_count: current.total_count };
     this.changed();
   }
   changed() {

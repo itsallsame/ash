@@ -3,6 +3,7 @@
 import { actionLabel, answerGateAsk, renderEvidence } from "./approvals.js";
 import { ago, dayTime, h, ico, fill } from "./home-dom.js";
 import { group, list, note, row, skeleton, btn } from "./home-ui.js";
+import { appendApprovalOriginal } from "./approval-original.js";
 import { waitingItems } from "./home-model.js";
 
 const DECISIONS = { once: "允许了", always: "以后都允许", deny: "拒绝了", timeout: "过期没回答：", cancelled: "取消了", rule: "按规则放行：", review: "她判断后放行：", carry: "刚允许过，沿用：", hand_full: "设备完全放开放行：", declared_none: "无影响，直接放行：", assessed_none: "评估无影响，直接放行：" };
@@ -36,7 +37,7 @@ async function answer(ctx, screen, ask, choice, answerText) {
 }
 
 /** One waiting item as the card of the conversation. */
-function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
+function waitingCard(ctx, screen, item, redraw, originalOptions, now = Date.now()) {
   const intents = ctx.feed.intents;
   const { kind, ask } = item;
   const approval = kind === "approval";
@@ -46,12 +47,7 @@ function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
   const el = h("article", { class: "a-card hm-wide", dataset: { askId: ask.id } }, head, h("div", { class: "card-title" }, ask.title));
   if (ask.detail) el.append(h("div", { class: "card-body" }, ask.detail));
   if (typeof ctx.jump === "function") el.append(btn("查看对话", "a-btn btn-ghost btn-sm", () => ctx.jump(ask.id)));
-  if (approval && typeof ask.original === "string") {
-    const full = h("pre", { class: "hm-original", hidden: true }, ask.original);
-    const link = h("button", { type: "button", class: "card-link" }, "查看完整原文", ico("chev", "i-xs"));
-    link.addEventListener("click", () => { full.hidden = !full.hidden; link.firstChild.textContent = full.hidden ? "查看完整原文" : "收起原文"; });
-    el.append(link, full);
-  }
+  if (approval) appendApprovalOriginal(el, ask, "查看完整原文", originalOptions);
   const busy = state?.status === "pending" || state?.status === "confirmed" || state?.status === "rejected";
   const send = (choice, text) => { void answer(ctx, screen, ask, choice, text).then(redraw); redraw(); };
   if (state?.status === "confirmed") {
@@ -85,11 +81,25 @@ export function waitingPage(ctx, screen, arg) {
   let history = null;
   let currentPage = null;
   let loading = false;
+  const originals = new Set();
+  let shownOriginal = null;
+  const disposeOriginals = () => { for (const lifetime of originals) { lifetime.disposed = true; for (const clean of lifetime.cleanup) clean(); } originals.clear(); shownOriginal = null; };
   const draw = () => {
+    disposeOriginals();
     const current = currentPage ? { asks: currentPage.items.map(item => item.ask).filter(Boolean) } : ctx.feed.view();
     const items = waitingItems(current).filter((item) => !agent || item.ask.from === agent);
     screen.wake("expiry", draw, Math.min(...items.map(({ ask }) => ask.expires_at)));
-    fill(cards, ...(items.length ? items.map((item) => waitingCard(ctx, screen, item, draw)) : [list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))]));
+    fill(cards, ...(items.length ? items.map((item) => {
+      const lifetime = { disposed: false, cleanup: new Set() }; originals.add(lifetime);
+      return waitingCard(ctx, screen, item, draw, { lifetime, onReadOriginal: async (ask, signal) => {
+        const details = [...cards.querySelectorAll("[data-ask-id]")].find(node => node.dataset.askId === ask.id)?.querySelector("details");
+        if (shownOriginal && shownOriginal !== details) shownOriginal.open = false;
+        shownOriginal = details;
+        const text = await ctx.net.readBlobText(ask.original_full, { signal });
+        if (signal.aborted || lifetime.disposed || !screen.alive()) throw new Error("这条原文已经关闭。");
+        return { text, release: () => { if (shownOriginal === details) shownOriginal = null; } };
+      } });
+    }) : [list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))]));
   };
   const drawSettled = () => {
     if (!history || !history.length) { fill(settledBox); return; }
@@ -118,7 +128,7 @@ export function waitingPage(ctx, screen, arg) {
     await load();
     try { history = (await screen.ask("service:gate", "history", { limit: 100 })).items?.filter(valid).sort((a, b) => b.at - a.at) ?? []; drawSettled(); } catch { /* the cards above stand */ }
   };
-  return { title: "等你的", body: h("div", { class: "hm-stack" }, cards, h("div", { class: "hm-actions" }, older, newer), settledBox), refresh };
+  return { title: "等你的", body: h("div", { class: "hm-stack" }, cards, h("div", { class: "hm-actions" }, older, newer), settledBox), refresh, dispose: disposeOriginals };
 }
 
 /** The decisions made lately, newest first; "查看依据" opens what the gate saw and said. */

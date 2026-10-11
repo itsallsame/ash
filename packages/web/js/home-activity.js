@@ -105,7 +105,7 @@ export function activityPage(ctx, screen, arg) {
     if (state.loading) return;
     state.loading = true; older.disabled = newer.disabled = true;
     try {
-      const page = await screen.ask("service:history", "activity.page", { limit: 30, ...params });
+      const page = await screen.ask("service:history", "activity.page", { limit: 30, ...(agent ? { agent } : {}), ...params });
       if (!screen.alive()) return;
       state.page = page;
       state.items = page.items;
@@ -117,7 +117,7 @@ export function activityPage(ctx, screen, arg) {
       for (const id of state.details.keys()) if (!detailIds.has(id)) state.details.delete(id);
       older.hidden = !page.has_more_before; newer.hidden = !page.has_more_after;
       draw();
-    } finally { state.loading = false; older.disabled = newer.disabled = false; }
+    } catch { /* Keep the current page until a later refresh succeeds. */ } finally { state.loading = false; older.disabled = newer.disabled = false; }
   };
   const loadSteps = async (id, params = {}) => {
     try {
