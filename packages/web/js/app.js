@@ -107,13 +107,19 @@ function text(parent, tag, value, className = "") {
 
 /** Turns of the front lane that ended in an error in the last day and were not followed by anything the owner said: each gets a card. */
 export function failedTurns(view, now = Date.now()) {
-  const last = [...view.conversation].reverse().find((item) => item.type === "say" && item.side === "owner");
+  const ownerBefore = (at, anyTime = false) => {
+    for (let index = view.conversation.length - 1; index >= 0; index--) { const item = view.conversation[index];
+      if (item.type === "say" && item.side === "owner" && (anyTime || item.ts <= at)) return item;
+    }
+    return null;
+  };
+  const last = ownerBefore(undefined, true);
   // A failure from yesterday is history, not something to retry.
   return Object.entries(view.turns ?? {})
     .filter(([, turn]) => turn.background !== true && turn.outcome === "error" && Number.isFinite(turn.ended) && now - turn.ended < 86_400_000 && !(last && last.ts > turn.ended))
     .map(([turn, info]) => {
       // What to say again: the owner's last words before the turn began, when they were plain text.
-      const said = [...view.conversation].reverse().find((item) => item.type === "say" && item.side === "owner" && item.ts <= info.started);
+      const said = ownerBefore(info.started);
       return { turn, ts: info.ended, retry: said && !said.full && said.text && !(said.attachments?.length) ? { text: said.text, to: said.to } : null };
     });
 }
@@ -130,7 +136,7 @@ export function render(view, outbox = [], openInline, presenceBar, cardActions, 
   const loading = cardActions?.loading?.() === true;
   conversationView(log).update(view.conversation, outbox, { openInline, ...cardActions, loading,
     failures: loading ? [] : failedTurns(view), atStart: cardActions?.atStart?.() === true,
-    herName: cardActions?.herName?.() ?? "Ash" }, dirty);
+    herName: cardActions?.herName?.() ?? "Ash", epoch: cardActions?.epoch?.() }, dirty);
   presenceBar?.render(loading ? { state: "unknown" } : view.presence);
 }
 
@@ -187,11 +193,12 @@ export function boot({ bridge } = {}) {
   const optionPending = new Set();
   /** Long texts read from the ledger on demand, by blob hash. */
   const fullTexts = new Map();
-  const redraw = () => { if (timeline) render(timeline.view, net.outbox, openInline, presenceBar, cardActions); };
+  const redraw = () => { if (timeline) paintView(timeline.view, true); };
   const cardActions = {
     agentName: id => recipient?.name(id) ?? id.replace(/^agent:/, ""),
     get primary() { return net.primary; },
     loading: () => !timeline?.ready,
+    epoch: () => timeline?.epoch,
     atStart: () => timeline?.exhausted === true,
     herName: () => presenceBar.title.textContent || "Ash",
     onRetry: async (failure) => {
@@ -280,7 +287,7 @@ export function boot({ bridge } = {}) {
     onQueue: (count, outbox) => {
       for (const item of outbox) if (item.in_reply_to && item.status === "rejected") optionPending.delete(item.in_reply_to);
       for (const item of outbox) if (item.in_reply_to && item.status !== "rejected") optionPending.add(item.in_reply_to);
-      if (timeline) render(timeline.view, outbox, openInline, presenceBar, cardActions);
+      if (timeline) paintView(timeline.view, true, new Set(outbox.map(item => item.in_reply_to).filter(Boolean)));
     },
   });
   files = new Files(net, { save: net.embedded ? (file) => globalThis.__ashFileSave(file) : null });

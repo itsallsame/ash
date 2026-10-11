@@ -10,9 +10,10 @@ const context = row => ({ previousDisplay: row.previousDisplay, previous: row.pr
 const body = (row, options) => {
   const item = row.item;
   if (row.kind === "message" && item.type === "say") {
-    const { delivery, reactions, ...content } = item;
+    const { delivery, reactions, revision, group, ...content } = item;
     return { content, shown: item.full && options.fullTexts?.has(item.full) ? options.fullTexts.get(item.full) : item.text };
   }
+  if (row.kind === "message") { const { reactions, ...content } = item; return content; }
   return item;
 };
 
@@ -26,17 +27,26 @@ export class WindowView {
     this.fresh = false;
     this.closed = false;
     this.retry = () => {
-      if (!this.closed && this.latest && [...this.rows.values()].some(row => row.deferred)) this.update(...this.latest);
+      if (this.closed || this.retryQueued || !this.latest || ![...this.rows.values()].some(row => row.deferred)) return;
+      this.retryQueued = true;
+      // Focus/selection events can be emitted inside a DOM write; reconcile after it finishes.
+      queueMicrotask(() => { this.retryQueued = false; if (!this.closed && this.latest) this.update(...this.latest); });
     };
     root.ownerDocument.addEventListener("selectionchange", this.retry);
     root.addEventListener("focusout", this.retry);
   }
-  protected(row) {
+  protected(row, keepFocus = true) {
     const selected = this.root.ownerDocument.getSelection();
-    return row.nodes.some(node => node.contains(this.root.ownerDocument.activeElement) || selected?.rangeCount && !selected.isCollapsed && selected.containsNode(node, true));
+    return row.nodes.some(node => keepFocus && node.contains(this.root.ownerDocument.activeElement) || selected?.rangeCount && !selected.isCollapsed && selected.containsNode(node, true));
   }
-  pinnedIds() { return [...this.rows.values()].filter(row => this.protected(row)).map(row => row.descriptor.item?.id).filter(Boolean); }
+  pinnedIds() { return [...this.rows.values()].filter(row => this.protected(row)).map(row => row.descriptor.item?.id ?? row.descriptor.item?.ask?.id ?? row.descriptor.item?.turn).filter(Boolean); }
+  reset() {
+    for (const row of this.rows.values()) { this.position.unobserve(row.nodes); dispose(row); }
+    this.rows.clear(); this.root.replaceChildren(); this.position.anchor = null;
+    this.newest = 0; this.fresh = false; this.latest = null;
+  }
   update(entries, outbox = [], options = {}, dirty = null) {
+    if (options.epoch !== undefined && options.epoch !== this.epoch) { this.reset(); this.epoch = options.epoch; }
     this.latest = [entries, outbox, options];
     const plan = conversationRows(entries, options);
     for (const item of outbox) if (typeof item.client_id === "string" && typeof item.text === "string" && ["unsent", "sending", "accepted", "rejected"].includes(item.status)) plan.push({ key: `outbox:${item.client_id}`, kind: "outbox", item });
@@ -61,17 +71,18 @@ export class WindowView {
       let row = this.rows.get(descriptor.key);
       const item = descriptor.item;
       const candidate = !row || dirty === null || dirty.has(item?.id ?? item?.ask?.id ?? item?.turn) || descriptor.kind !== "message";
-      const chrome = { ...context(descriptor), primary: options.primary, name: options.herName,
-        fromName: item?.from && options.agentName?.(item.from), toName: item?.to && options.agentName?.(item.to),
+      const chrome = { ...context(descriptor), group: item?.group, primary: options.primary, name: options.herName,
+        fromName: (item?.from ?? item?.ask?.from) && options.agentName?.(item.from ?? item.ask.from), toName: item?.to && options.agentName?.(item.to),
         loading: options.loading, day: new Date(options.now ?? Date.now()).toDateString() };
       const intent = item?.ask ? { ...options.askIntents?.get(item.ask.id) } : null;
       const expired = item?.ask?.state === "pending" && item.ask.expires_at <= (options.now ?? Date.now());
       const pending = options.optionPending?.has(item?.id) === true;
       const content = candidate ? body(descriptor, options) : row?.content;
       const sameBody = row && equal(row.content, content);
-      const sameItem = !candidate || row && equal(row.descriptor.item, item);
-      const changed = !row || !sameBody || !sameItem || !equal(row.chrome, chrome) || !equal(row.intent, intent) || row.expired !== expired || row.pending !== pending;
-      if (changed && row && this.protected(row)) row.deferred = true;
+      const state = item?.type === "say" ? { delivery: item.delivery, reactions: item.reactions } : null;
+      const changed = !row || !sameBody || !equal(row.state, state) || !equal(row.chrome, chrome) || !equal(row.intent, intent) || row.expired !== expired || row.pending !== pending;
+      const decided = item?.type === "ask" && (item.ask.state !== "pending" || expired) || item?.type === "card" && item.locked;
+      if (changed && row && this.protected(row, !decided)) row.deferred = true;
       else if (changed) {
         const reuse = sameBody && descriptor.kind === "message" && item.type === "say";
         const lifetime = reuse ? row.lifetime : { disposed: false, cleanup: new Set() };
@@ -96,7 +107,7 @@ export class WindowView {
           if (!reuse) dispose(row);
           for (const node of row.nodes) if (!nodes.includes(node)) { if (node === cursor) cursor = node.nextSibling; node.remove(); }
         }
-        row = { descriptor, content, chrome, intent, expired, pending, nodes, lifetime, before };
+        row = { descriptor, content, state, chrome, intent, expired, pending, nodes, lifetime, before };
         this.rows.set(descriptor.key, row);
         for (const node of nodes) if (node.nodeType === 1) node.dataset.rowKey = descriptor.key;
         this.position.observe(nodes);

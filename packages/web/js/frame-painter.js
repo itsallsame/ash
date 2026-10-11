@@ -6,7 +6,8 @@
  * blank screen. A hidden page gets no animation frames, so nothing is painted until it is shown again, and then once.
  *
  * `change(value, conversation)` says whether this change touches the conversation area; the next paint is told whether
- * any change since the previous paint did.
+ * any change since the previous paint did. The optional third argument is a set of changed entity IDs;
+ * null requests a complete range check (initial history, reset, or local presentation changes).
  */
 export function framePainter(paint, schedule = (frame) => requestAnimationFrame(frame)) {
   let queued = false;

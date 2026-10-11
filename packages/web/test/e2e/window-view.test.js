@@ -38,7 +38,7 @@ test(...withBrowser("stable rows preserve Markdown, card drafts, selection, and 
     const keptSelection = selection.toString();
     items[0] = { ...items[0], text: "changed while selected" }; view.update(items, [], options, new Set(["m1"]));
     const deferred = first.querySelector("p") === paragraph;
-    selection.removeAllRanges(); document.dispatchEvent(new Event("selectionchange"));
+    selection.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); await Promise.resolve();
     const changed = document.querySelector('.msg[data-seq="1"]').textContent;
     const eager = document.createElement("div"); ViewModule.appendConversation(eager, items, options);
     const normalize = root => [...root.children].map(node => { const clone = node.cloneNode(true); clone.removeAttribute("data-row-key"); clone.classList.remove("enter"); return clone.outerHTML; });
@@ -55,7 +55,7 @@ test(...withBrowser("receipt, reaction, and burst grouping updates retain the me
     const owner = { ...say(1), side: "owner", text: "hello", delivery: "sent", attachments: [{ workspace: "main", path: "a.png", name: "a.png" }] };
     window.items = [owner, say(2, "## Title\n\nkeep body")]; view.update(items, [], options);
     const body = document.querySelector('.msg[data-seq="2"]'), paragraph = body.querySelector("p"), attachment = document.querySelector(".atts button");
-    items = [{ ...owner, delivery: "read" }, { ...items[1], reactions: [{ id: "r", emoji: "👍" }] }, say(3)];
+    items = [{ ...owner, delivery: "read", revision: 2 }, { ...items[1], reactions: [{ id: "r", emoji: "👍" }], revision: 2 }, say(3)];
     view.update(items, [], options, new Set(["m1", "m2", "m3"])); attachment.click();
     return { sameBody: body === document.querySelector('.msg[data-seq="2"]'), sameParagraph: paragraph === body.querySelector("p"), sameAttachment: attachment === document.querySelector(".atts button"), files, receipt: document.querySelector(".delivery").textContent, reaction: body.querySelector(".reaction").textContent, group: body.className };
   });
@@ -91,4 +91,19 @@ test(...withBrowser("eviction respects focus and late attachment reads revoke th
   await page.waitForFunction(() => released === 1);
   assert.deepEqual(await page.evaluate(() => pins), ["m1"]);
   assert.equal(await page.locator("#log .atts").count(), 0);
+  const reset = await page.evaluate(() => {
+    view.update([say(2, "old source")], [], { ...options, epoch: 1 });
+    const old = document.querySelector(".msg"); old.tabIndex = 0; old.focus();
+    view.update([say(2, "new source")], [], { ...options, epoch: 2 });
+    return { oldConnected: old.isConnected, text: document.querySelector(".msg").textContent, pins: view.pinnedIds() };
+  });
+  assert.equal(reset.oldConnected, false); assert.equal(reset.text, "new source"); assert.deepEqual(reset.pins, []);
+  const settled = await page.evaluate(() => {
+    options.onAnswerAsk = async () => {};
+    const question = { id: "q", seq: 4, ts: Date.now(), type: "ask", side: "agent", ask: { id: "q", from: "agent:main", title: "question", state: "pending", allow_custom: true, expires_at: Date.now() + 60000, options: [] } };
+    view.update([question], [], options); document.querySelector(".card-custom").focus();
+    view.update([{ ...question, ask: { ...question.ask, state: "answered", choice: "custom", answer_text: "done" } }], [], options, new Set(["q"]));
+    return { inputs: document.querySelectorAll(".card-custom").length, outcome: document.querySelector(".ask-outcome")?.textContent };
+  });
+  assert.equal(settled.inputs, 0); assert.match(settled.outcome, /done/);
 }));
