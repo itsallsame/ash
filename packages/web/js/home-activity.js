@@ -29,16 +29,16 @@ function stepDetail(step, loadDetails, state) {
   const details = h("details", { class: "hm-detail" }, h("summary", {}, "查看调用与结果"));
   details.open = saved.open;
   const pre = h("pre", {}, saved.text);
-  const more = btn("继续查看", "a-btn btn-ghost btn-sm", null, { hidden: saved.next === null });
+  const more = btn("继续查看", "a-btn btn-ghost btn-sm", null, { hidden: !saved.open || saved.next === null });
   details.append(pre, more, h("small", { class: "tx-caption" }, "敏感字段已隐藏；这里展示执行记录，不是审批按钮。"));
   const load = async () => {
     if (saved.loading || saved.next === null) return;
     saved.loading = true; more.disabled = true;
-    try { const result = await loadDetails(step.requestId, saved.next); saved.text += result.text; saved.next = result.next_offset; pre.textContent = saved.text; more.hidden = saved.next === null; }
+    try { const result = await loadDetails(step.requestId, saved.next); saved.text += result.text; saved.next = result.next_offset; pre.textContent = saved.text; more.hidden = !details.open || saved.next === null; }
     catch (error) { pre.textContent = `${saved.text}\n${error.message || "读取失败，请重试"}`; }
     finally { saved.loading = false; more.disabled = false; }
   };
-  details.addEventListener("toggle", () => { saved.open = details.open; if (saved.open && !saved.text) void load(); });
+  details.addEventListener("toggle", () => { saved.open = details.open; more.hidden = !saved.open || saved.next === null; if (saved.open && !saved.text) void load(); });
   more.addEventListener("click", load);
   return details;
 }
