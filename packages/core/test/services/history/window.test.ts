@@ -112,7 +112,7 @@ test("current questions are separately bounded and authority never follows the b
   ledger.append(turn("running", "turn.ended", { outcome: "completed" }));
   assert.equal((await call(service, owner, "current")).presence.state, "waiting_you");
   assert.equal((await call(service, owner, "window", { after: 0, limit: 5 })).items.length, 5);
-  assert.equal((await call(service, owner, "current")).progress, null);
+  assert.ok((await call(service, owner, "current")).progress.ended);
 });
 
 test("failed cards use global later-owner suppression, snapshot and exact existing retry rules", async () => {
@@ -245,7 +245,7 @@ test("a replacement turn overtakes a dead front turn rather than resurrecting it
   const { ledger } = openLedger(); ledger.append(turn("dead"));
   const service = createHistoryService({ ledger }); const old = await call(service, owner, "current");
   ledger.append(turn("replacement")); ledger.append(turn("replacement", "turn.ended", { outcome: "completed" }));
-  assert.equal((await call(service, owner, "current")).progress, null);
+  assert.ok((await call(service, owner, "current")).progress.ended);
   assert.equal((await call(service, owner, "current")).presence.state, "idle");
   assert.equal((await call(service, owner, "current", { snapshot_seq: old.snapshot_seq })).progress.id, "dead");
 });
@@ -305,4 +305,51 @@ test("long gate originals retain an owned reference while other publishers canno
   assert.equal(Buffer.from(ledger.blob.get(page.items[0].ask.original_full)!.bytes).toString(), text);
   assert.equal(page.items[1].ask.original, undefined); assert.equal(page.items[1].ask.original_full, undefined);
   assert.ok(!JSON.stringify(page).includes("private-unselected"));
+});
+
+test("completed progress keeps the complete step count for sixty seconds independently of current presence", async () => {
+  const { ledger } = openLedger(); let time = 1_800_000_000_000;
+  const service = createHistoryService({ ledger, now: () => time });
+  ledger.append({ ...turn("finished"), ts: time - 3000 });
+  for (let i = 0; i < 12; i++) {
+    ledger.append({ ...turn("finished", "agent.tool", { name: "work", phase: "start", summary: String(i) }), ts: time - 2000 });
+    ledger.append({ ...turn("finished", "agent.tool", { name: "work", phase: "end", ok: true }), ts: time - 1000 });
+  }
+  ledger.append({ ...turn("finished", "turn.ended", { outcome: "completed" }), ts: time });
+  const done = await call(service, owner, "current");
+  assert.equal(done.presence.state, "idle"); assert.equal(done.progress.id, "finished");
+  assert.equal(done.progress.step_count, 12); assert.equal(done.progress.steps.length, 5);
+  assert.equal(done.next_change_at, time + 60_000);
+  time += 59_999; assert.equal((await call(service, owner, "current")).progress.step_count, 12);
+  time++; assert.equal((await call(service, owner, "current")).progress, null);
+});
+
+test("activity total counts every turn in a day and agent independently of paged items", async () => {
+  const { ledger } = openLedger(); const day = 1_800_000_000_000;
+  ledger.tx(() => {
+    for (let i = 0; i < 250; i++) ledger.append({ ...turn(`today_${i}`), from: i % 2 ? "agent:other" : "agent:main", ts: day + i });
+    ledger.append({ ...turn("yesterday"), ts: day - 1 });
+    ledger.append({ ...turn("tomorrow"), ts: day + 86_400_000 });
+  });
+  const service = createHistoryService({ ledger });
+  const page = await call(service, owner, "activity.page", { since_ts: day, until_ts: day + 86_400_000, limit: 10 });
+  assert.equal(page.items.length, 10); assert.equal(page.total_count, 250); assert.equal(page.has_more_before, true);
+  const main = await call(service, owner, "activity.page", { since_ts: day, until_ts: day + 86_400_000, agent: "agent:main", limit: 1 });
+  assert.equal(main.total_count, 125); assert.equal(main.items[0].agent, "agent:main");
+  const older = await call(service, owner, "activity.page", { since_ts: day, until_ts: day + 86_400_000, agent: "agent:main", before: main.before, limit: 3 });
+  assert.equal(older.total_count, 125); assert.equal(older.items.length, 3);
+  assert.equal(await code(call(service, owner, "activity.page", { since_ts: day, until_ts: day - 1 })), "bad_request");
+});
+
+test("inline attachment display references retain an on-demand path to exact original bytes", async () => {
+  const { ledger } = openLedger(); const data = Buffer.alloc(12000, 37).toString("base64");
+  const sent = ledger.append({ ...say("附件"), body: { text: "附件", attachments: [{ name: "sample.bin", mime_type: "application/octet-stream", data }] } });
+  const service = createHistoryService({ ledger });
+  const window = await call(service, owner, "window");
+  const attachment = window.items[0].attachments[0];
+  assert.equal(attachment.message_id, sent.id); assert.equal(attachment.index, 0); assert.equal(attachment.size, 12000);
+  assert.ok(!JSON.stringify(window).includes(data));
+  const raw = await call(service, owner, "read", { from_seq: sent.seq, to_seq: sent.seq });
+  const ref = raw.messages[0].body.attachments[attachment.index].data;
+  assert.ok(ref.$blob); assert.equal(Buffer.from(ledger.blob.get(ref.$blob)!.bytes).toString(), data);
 });

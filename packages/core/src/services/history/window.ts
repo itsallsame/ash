@@ -7,7 +7,7 @@ import type { Ledger } from "../../kernel/ledger";
 export const WINDOW_BYTES = 256 * 1024;
 const DAY = 86_400_000;
 type Row = { id: string; seq: number; fact_turn: string; display_type: string; fact_type: string; ts: number };
-type Body = { before?: number; after?: number; around_id?: string; snapshot_seq?: number; limit?: number; turn?: string; ids?: string[] };
+type Body = { before?: number; after?: number; around_id?: string; snapshot_seq?: number; limit?: number; turn?: string; ids?: string[]; since_ts?: number; until_ts?: number; agent?: string };
 type HistoryLedger = Pick<Ledger, "page" | "get" | "db">;
 
 export function createWindowReader(ledger: HistoryLedger, now: () => number = Date.now) {
@@ -177,11 +177,15 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
   }
   function activityPage(b: Body) {
     const snap = snapshot(b), limit = Math.min(200, Math.max(1, b.limit ?? 30));
+    if (b.turn && [b.since_ts, b.until_ts, b.agent].some((x) => x !== undefined)) throw new WordError("bad_request", "time and agent filters apply to turn summaries only");
+    if (b.since_ts !== undefined && b.until_ts !== undefined && b.until_ts < b.since_ts) throw new WordError("bad_request", "until_ts must not precede since_ts");
+    const filters = `${b.since_ts !== undefined ? " AND ts>=?" : ""}${b.until_ts !== undefined ? " AND ts<?" : ""}${b.agent !== undefined ? " AND \"from\"=?" : ""}`;
+    const filterArgs = [b.since_ts, b.until_ts, b.agent].filter((x): x is number | string => x !== undefined);
     const direction = b.after !== undefined ? "ASC" : "DESC";
     const condition = b.after !== undefined ? "seq>?" : "seq<?";
     let candidates: Row[];
     if (b.turn) candidates = rows(`SELECT * FROM messages WHERE fact_turn=? AND (fact_type='activity.request' OR (fact_type='tool' AND tool_phase='start')) AND NOT EXISTS(SELECT 1 FROM message_relations r WHERE r.source_seq=messages.seq AND r.kind='activity.child') AND seq<=? AND ${condition} ORDER BY seq ${direction} LIMIT ?`, b.turn, snap, b.after ?? b.before ?? snap + 1, limit);
-    else candidates = rows(`SELECT * FROM messages WHERE fact_type='turn.start' AND seq<=? AND ${condition} ORDER BY seq ${direction} LIMIT ?`, snap, b.after ?? b.before ?? snap + 1, limit);
+    else candidates = rows(`SELECT * FROM messages WHERE fact_type='turn.start'${filters} AND seq<=? AND ${condition} ORDER BY seq ${direction} LIMIT ?`, ...filterArgs, snap, b.after ?? b.before ?? snap + 1, limit);
     const items = candidates.map((r) => {
       if (!b.turn) return turnSummary(r, snap);
       return stepOf(r, snap);
@@ -189,10 +193,12 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
     const bounded = budget(items.filter((x) => !x.hidden), limit);
     if (b.after === undefined) bounded.items.reverse();
     const first = bounded.items[0]?.seq ?? (candidates.length ? Math.min(...candidates.map((r) => r.seq)) : null), last = bounded.items.at(-1)?.seq ?? (candidates.length ? Math.max(...candidates.map((r) => r.seq)) : null);
-    const scope = b.turn ? "NOT EXISTS(SELECT 1 FROM message_relations r WHERE r.source_seq=messages.seq AND r.kind='activity.child') AND fact_turn=? AND (fact_type='activity.request' OR (fact_type='tool' AND tool_phase='start'))" : "fact_type='turn.start'";
-    const args = b.turn ? [b.turn, snap] : [snap];
+    const scope = b.turn ? "NOT EXISTS(SELECT 1 FROM message_relations r WHERE r.source_seq=messages.seq AND r.kind='activity.child') AND fact_turn=? AND (fact_type='activity.request' OR (fact_type='tool' AND tool_phase='start'))" : `fact_type='turn.start'${filters}`;
+    const args = b.turn ? [b.turn, snap] : [...filterArgs, snap];
+    const start = b.turn ? rows("SELECT * FROM messages WHERE fact_type='turn.start' AND fact_turn=? AND seq<=? ORDER BY seq LIMIT 1", b.turn, snap)[0] : undefined;
+    const total = b.turn ? start ? turnSummary(start, snap).step_count : 0 : Number((db.prepare(`SELECT count(*) AS n FROM messages WHERE ${scope} AND seq<=?`).get(...args) as { n: number }).n);
     const exists = (at: number | null, op: string) => at !== null && !!db.prepare(`SELECT 1 FROM messages WHERE ${scope} AND seq<=? AND seq${op}? LIMIT 1`).get(...args, at);
-    return { dataset_id: dataset, snapshot_seq: snap, ...bounded, before: first, after: last, has_more_before: exists(first, "<"), has_more_after: exists(last, ">") };
+    return { dataset_id: dataset, snapshot_seq: snap, ...bounded, total_count: total, before: first, after: last, has_more_before: exists(first, "<"), has_more_after: exists(last, ">") };
   }
   function current(b: Body) {
     const snap = snapshot(b), time = now(), limit = Math.min(200, Math.max(1, b.limit ?? 40));
@@ -205,7 +211,9 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
     const first = bounded.items[0]?.seq ?? null, last = bounded.items.at(-1)?.seq ?? null;
     const more = (at: number | null, op: string) => at !== null && !!db.prepare(`SELECT 1 FROM messages WHERE ${pending} AND seq${op}? LIMIT 1`).get(...pendingArgs, at);
     const open = rows(`SELECT * FROM messages WHERE fact_type='turn.start' AND lane='front' AND seq<=? AND ${snap === highest() ? "turn_end_seq IS NULL" : "(turn_end_seq IS NULL OR turn_end_seq>?)"} ORDER BY seq DESC LIMIT 1`, ...(snap === highest() ? [snap] : [snap, snap]))[0];
-    const progress = open ? turnSummary(open, snap) : null;
+    const recent = rows("SELECT s.* FROM messages e JOIN messages s ON s.fact_turn=e.fact_turn AND s.fact_type='turn.start' WHERE e.fact_type='turn.end' AND e.ts>? AND e.seq<=? AND s.lane='front' AND s.seq<=? ORDER BY s.seq DESC LIMIT 1", time - 60_000, snap, snap)[0];
+    const progressStart = open && (!recent || open.seq > recent.seq) ? open : recent;
+    const progress = progressStart ? turnSummary(progressStart, snap) : null;
     if (progress) { progress.steps = activityPage({ turn: progress.id, limit: 5, snapshot_seq: snap }).items; progress.steps_more = progress.step_count > progress.steps.length; }
     const pendingTool = open ? rows(`SELECT * FROM messages WHERE fact_turn=? AND fact_type='tool' AND tool_phase='start' AND seq<=? AND ${snap === highest() ? "answer_seq IS NULL" : "(answer_seq IS NULL OR answer_seq>?)"} ORDER BY seq DESC LIMIT 1`, ...(snap === highest() ? [open.fact_turn, snap] : [open.fact_turn, snap, snap]))[0] : undefined;
     let pendingActivity: Row | undefined;
@@ -214,13 +222,14 @@ export function createWindowReader(ledger: HistoryLedger, now: () => number = Da
       const step = stepOf(r, snap); if (step.state === "pending" && !step.hidden) { pendingActivity = r; break; }
     }
     const pendingStep = [pendingTool, pendingActivity].filter((x): x is Row => !!x).sort((a, b) => b.seq - a.seq)[0];
-    const working = pendingStep ? stepOf(pendingStep, snap) : [...(progress?.steps ?? [])].reverse().find((x: DisplayFact) => x.state === "pending");
-    const presence = progress ? { state: working ? "working" : "thinking", text: working?.label ?? "", avatar: working ? "focused" : "thinking" }
+    const working = pendingStep ? stepOf(pendingStep, snap) : open ? [...(progress?.steps ?? [])].reverse().find((x: DisplayFact) => x.state === "pending") : undefined;
+    const presence = open ? { state: working ? "working" : "thinking", text: working?.label ?? "", avatar: working ? "focused" : "thinking" }
       : total ? { state: "waiting_you", text: "", avatar: "listening" } : { state: "idle", text: "", avatar: "default" };
     const askChange = (db.prepare(`SELECT min(expires_at) AS at FROM messages WHERE ${pending}`).get(...pendingArgs) as { at: number | null }).at;
     const failChange = (db.prepare("SELECT min(e.ts+?) AS at FROM messages e WHERE e.fact_type='turn.end' AND e.outcome='error' AND e.seq<=? AND e.ts>? AND e.ts>=? AND EXISTS(SELECT 1 FROM messages s WHERE s.fact_type='turn.start' AND s.fact_turn=e.fact_turn AND s.lane='front' AND s.seq<=?)")
       .get(DAY, snap, time - DAY, lastOwner(snap)?.ts ?? -1, snap) as { at: number | null }).at;
     const nextChange = [askChange, failChange].filter((x): x is number => x !== null);
+    if (progress?.ended && progress.ended + 60_000 > time) nextChange.push(progress.ended + 60_000);
     return { dataset_id: dataset, snapshot_seq: snap, revision: snap, as_of: time, next_change_at: nextChange.length ? Math.min(...nextChange) : null,
       ...bounded, total_count: total, presence, progress, before: first, after: last, has_more_before: more(first, "<"), has_more_after: more(last, ">") };
   }

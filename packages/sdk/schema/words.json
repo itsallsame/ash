@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "e6b15a2c07f9762eded4c4e8bda76a082503516605f1f2837dd51f914176462a",
+ "hash": "b420cc9870e5d0584dbbf85badb3ea2434cbd6fe7d861361b9f1233924d5a116",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -12835,7 +12835,7 @@
    "word": "activity.page",
    "kind": "request",
    "direction": "in",
-   "description": "Bidirectional bounded turn summaries; with turn, read its safe display steps instead. Step details remain on demand through history.activity.",
+   "description": "Bidirectional bounded turn summaries with an authoritative total count, optionally filtered by inclusive since_ts, exclusive until_ts and agent. With turn, read its safe display steps and complete step count instead; time/agent filters then do not apply. Step details remain on demand through history.activity.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -12860,6 +12860,20 @@
       "maximum": 9007199254740991
      },
      "turn": {
+      "type": "string",
+      "minLength": 1
+     },
+     "since_ts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "until_ts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "agent": {
       "type": "string",
       "minLength": 1
      }
@@ -12920,6 +12934,11 @@
      },
      "oversized": {
       "type": "boolean"
+     },
+     "total_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
      }
     },
     "required": [
@@ -12930,7 +12949,8 @@
      "after",
      "has_more_before",
      "has_more_after",
-     "oversized"
+     "oversized",
+     "total_count"
     ],
     "additionalProperties": false
    },
