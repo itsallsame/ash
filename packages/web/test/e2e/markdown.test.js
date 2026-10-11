@@ -4,6 +4,24 @@ import { openPage, say, withBrowser } from "./support.js";
 
 const sample = '# 耳机对比结果\n\n推荐 **Sony XM4**，更适合你在意的降噪。\n\n| 型号 | 降噪 |\n|---|---|\n| XM4 | 强 |\n| AirPods | 中 |\n\n> 价格尚未与卖家确认\n\n- [x] 比价\n- [ ] 下单\n\n```js\nconst message = "<script>文本，不是代码</script>";\n  console.log(message);\n```\n';
 
+test(...withBrowser("bubble shadows preserve native text selection and code-button clicks", async ({ kernel, browser }) => {
+  const { page } = await openPage(browser, kernel);
+  const sent = say(kernel, "阴影下的完整正文。\n\n```js\nconst preserved = 42;\n```\n\n正文的最后一字。");
+  const bubble = page.locator(`.msg[data-seq="${sent.seq}"]`);
+  await bubble.locator("p", { hasText: "正文的最后一字。" }).waitFor();
+  const selected = await bubble.evaluate(el => {
+    const range = document.createRange(); range.selectNodeContents(el.querySelector(".markdown"));
+    const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    const text = selection.toString(); selection.removeAllRanges(); return text;
+  });
+  assert.match(selected, /阴影下的完整正文。[\s\S]*const preserved = 42;[\s\S]*正文的最后一字。/);
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async text => { window.shadowCopied = text; } } }));
+  const button = await bubble.getByRole("button", { name: "复制代码" }).boundingBox();
+  await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2);
+  await bubble.locator(".md-copy", { hasText: "已复制" }).waitFor();
+  assert.equal(await page.evaluate(() => window.shadowCopied), "const preserved = 42;");
+}));
+
 test(...withBrowser("a reply renders as Markdown, copies exact code, and keeps its rendering after a reload", async ({ kernel, browser }) => {
   const { page } = await openPage(browser, kernel);
   const sent = say(kernel, sample);

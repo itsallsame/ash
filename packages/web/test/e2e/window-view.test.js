@@ -21,6 +21,23 @@ async function fixture(browser) {
   return page;
 }
 
+test(...withBrowser("a jump near the history tail stays on the target as its table grows", async ({ browser }) => {
+  const page = await fixture(browser);
+  const top = await page.evaluate(async () => {
+    options.atLatest = true; options.fullTexts = new Map();
+    const target = { ...say(21, "table summary"), full: "tail-table" };
+    const items = [...Array.from({ length: 20 }, (_, i) => say(i + 1)), target, say(22)];
+    view.update(items, [], options); await view.settled(); view.jump(target.id);
+    // Exercise incremental layout on a slow device, including the first slice that makes the target alignable.
+    view.markdown.budget = 0;
+    options.fullTexts.set(target.full, "| Row | Value |\n| --- | --- |\n" + Array.from({ length: 140 }, (_, i) => `| Row ${i} | Complete value |`).join("\n"));
+    view.update(items, [], options, new Set([target.id])); await view.settled();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return document.querySelector('.msg[data-seq="21"]').getBoundingClientRect().top - document.querySelector("#log").getBoundingClientRect().top;
+  });
+  assert.ok(Math.abs(top) < 2, `the explicit target became a bottom-following anchor (${top}px)`);
+}));
+
 test(...withBrowser("stable rows preserve Markdown, card drafts, selection, and the original sibling layout", async ({ browser }) => {
   const page = await fixture(browser);
   const result = await page.evaluate(async () => {
