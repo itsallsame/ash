@@ -42,6 +42,10 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   await home.getByText("DeepSeek", { exact: true }).waitFor();
   assert.equal(await home.locator("#homeCellPhone").count(), 0, "outside the app there is no phone checkup");
   assert.doesNotMatch(await home.textContent(), /service:|agent:|body:|\bJEV\b|DSH/);
+  const upcoming = await open(page, "upcoming");
+  await upcoming.locator('.hm-plan[data-timer="c1"]').waitFor();
+  assert.equal(await upcoming.locator(".hm-plan").count(), 1, "the plans page lists the same plans as the home page: the system's own are in neither");
+  assert.doesNotMatch(await upcoming.textContent(), /semantic|pulse|整理记忆/);
 }));
 
 test(...withBrowser("the page's own state follows her work: working shows what she does, and the back button goes home", async ({ kernel, browser }) => {
