@@ -1,3 +1,5 @@
+import { GatewayError } from "ash-gateway/client/client";
+import type { WordError } from "../../../../sdk/src/message";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
@@ -108,12 +110,27 @@ test("a browser without the web permission is turned away at the handshake, and 
   assert.equal((welcome.channels.human as { accepted?: boolean }).accepted, false);
 });
 
+test("a request the relay does not answer in time is 'unavailable' with the advice to retry, not an internal failure of the hub", async (t) => {
+  const w = await startWorld(t);
+  const relay = (w.control.gateway as unknown as { relay: Record<string, unknown> }).relay;
+  relay.ticket = async () => { throw new GatewayError(0, "timeout", "no matching frame"); };
+  relay.approve = async () => { throw new GatewayError(0, "ws_error", "websocket failed to open"); };
+  const refusal = async (word: string, body: Record<string, unknown>) => {
+    const error = await (w.devices.handle(msg("service:devices", word, body), owner) as Promise<unknown>).then(() => null, (e: unknown) => e as WordError);
+    return error;
+  };
+  const start = await refusal("pair_start", { kind: "computer", name: "Mac" }) as WordError;
+  assert.equal(start.code, "unavailable");
+  assert.match(start.recovery_hint ?? "", /稍后重试/);
+  assert.ok(!/timeout|no matching frame/.test(start.message), "the words of the library are not the owner's");
+});
+
 test("pairing: a non-web permission (lend, body or local agents) gets the relay's expose_capability; the web page alone does not", async (t) => {
   const w = await startWorld(t);
   const code = async (kind: "computer" | "browser", name: string) => {
     const { pair_id } = (await w.devices.handle(msg("service:devices", "pair_start", { kind, name }), owner) as any).data;
     const { code: ticket, url } = (await w.devices.handle(msg("service:devices", "pair_code", { pair_id }), owner) as any).data;
-    assert.equal(url, `${w.gw.url}/p/${ticket}`, "the install page address");
+    assert.equal(url, kind === "browser" ? `${w.gw.url}/` : `${w.gw.url}/p/${ticket}`, "a computer opens the install page that carries the code; a browser opens the relay's front page and types the code in");
     assert.ok(w.gw.tickets.includes(sha256b64u(ticket)), "the relay holds the code's hash, not the code");
     return { pair_id, ticket };
   };

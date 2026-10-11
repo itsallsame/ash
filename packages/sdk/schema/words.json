@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "cb123876bb94ad433921cf014dcb50a521a1c073e7cb87cd3a250a1fdc894616",
+ "hash": "87130331119cb73150fc49082a91c43475c39955f8b7981074e03bdd397658a6",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -3066,6 +3066,28 @@
      },
      "reason": {
       "type": "string"
+     },
+     "accounts": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string",
+         "x-ash-sensitive": {
+          "mask": "email"
+         }
+        }
+       },
+       "required": [
+        "id",
+        "name"
+       ],
+       "additionalProperties": false
+      }
      }
     },
     "required": [
@@ -3089,7 +3111,7 @@
    "word": "gateway.setup.status",
    "kind": "request",
    "direction": "in",
-   "description": "Where a relay setup is: waiting_login, authorized, deploying, claimed, connected, or failed with the reason.",
+   "description": "Where a relay setup is: waiting_login, authorized, deploying, claimed, connected, or failed with the reason. Once authorized it lists the Cloudflare accounts the owner's sign-in can build in (id and name).",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -3123,6 +3145,28 @@
      },
      "reason": {
       "type": "string"
+     },
+     "accounts": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string",
+         "x-ash-sensitive": {
+          "mask": "email"
+         }
+        }
+       },
+       "required": [
+        "id",
+        "name"
+       ],
+       "additionalProperties": false
+      }
      }
     },
     "required": [
@@ -3146,7 +3190,7 @@
    "word": "gateway.setup.deploy",
    "kind": "request",
    "direction": "in",
-   "description": "Deploy the relay in the owner's account, claim it and connect. An agent asking for this is asked about by the owner.",
+   "description": "Deploy the relay in the owner's account, claim it and connect. When the sign-in sees more than one Cloudflare account, `account` (an id from gateway.setup.status) is required: Ash never picks one. Ash does not write over a Worker it did not build: a name that is taken is refused; without a name one is made (ash-relay-xxxxxx). An agent asking for this is asked about by the owner.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -3155,6 +3199,10 @@
       "minLength": 1
      },
      "name": {
+      "type": "string",
+      "minLength": 1
+     },
+     "account": {
       "type": "string",
       "minLength": 1
      }
@@ -3184,6 +3232,28 @@
      },
      "reason": {
       "type": "string"
+     },
+     "accounts": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string",
+         "x-ash-sensitive": {
+          "mask": "email"
+         }
+        }
+       },
+       "required": [
+        "id",
+        "name"
+       ],
+       "additionalProperties": false
+      }
      }
     },
     "required": [
@@ -3241,6 +3311,28 @@
      },
      "reason": {
       "type": "string"
+     },
+     "accounts": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string",
+         "x-ash-sensitive": {
+          "mask": "email"
+         }
+        }
+       },
+       "required": [
+        "id",
+        "name"
+       ],
+       "additionalProperties": false
+      }
      }
     },
     "required": [

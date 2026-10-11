@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { WordError } from "../../../../../sdk/src/message";
 import type { Db } from "../../../kernel/ledger";
 import type { Vault } from "../../../kernel/types";
+import { GatewayError } from "ash-gateway/client/client";
 import { Relay, RelayError, type BrowserOpen, type RelayDevice, type RelayHttpRequest, type RelayHttpResponse, type RelayOptions, type RelayPairRequest } from "../../../../../link/src/gateway";
 import type { LinkSocket } from "../../../../../link/src/socket";
 import type { Devices, PairKind, PairingGateway, RelayPermission } from "../hands/devices";
@@ -281,16 +282,31 @@ export class GatewayControl {
   }
 
   readonly pairing: PairingGateway = {
-    issue: async (_kind: PairKind) => {
+    // A computer opens the install page that carries the code; a browser opens the relay's front page and types the code in.
+    issue: (kind: PairKind) => this.asked(async () => {
       const issued = await this.ready().ticket();
-      return { ticket: issued.ticket, expires_in: issued.expires_in, url: `${issued.origin}/p/${issued.ticket}` };
-    },
-    approve: (requestId: string, permissions: RelayPermission[]) => this.ready().approve(requestId, permissions),
-    reject: (requestId: string) => this.ready().reject(requestId),
-    revoke: async (handId: string) => { await this.ready().revoke(handId); this.tunnels.get(handId)?.socket.close(4003, "revoked"); },
-    setWebUi: (handId: string, allow: boolean) => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => !WEB.includes(p)), ...(allow ? ["web_ui", "chat"] : [])]),
-    setExpose: (handId: string, allow: boolean) => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => p !== "expose_capability"), ...(allow ? ["expose_capability"] : [])]),
+      return { ticket: issued.ticket, expires_in: issued.expires_in, url: kind === "browser" ? `${issued.origin}/` : `${issued.origin}/p/${issued.ticket}` };
+    }),
+    approve: (requestId: string, permissions: RelayPermission[]) => this.asked(() => this.ready().approve(requestId, permissions)),
+    reject: (requestId: string) => this.asked(() => this.ready().reject(requestId)),
+    revoke: (handId: string) => this.asked(async () => { await this.ready().revoke(handId); this.tunnels.get(handId)?.socket.close(4003, "revoked"); }),
+    setWebUi: (handId: string, allow: boolean) => this.asked(() => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => !WEB.includes(p)), ...(allow ? ["web_ui", "chat"] : [])])),
+    setExpose: (handId: string, allow: boolean) => this.asked(() => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => p !== "expose_capability"), ...(allow ? ["expose_capability"] : [])])),
   };
+
+  /**
+   * A request to the relay that gets no answer (a slow or lossy network, the relay restarting) is the relay being unavailable for
+   * now, not a fault of the hub: it is told as such, with the advice to try again.
+   */
+  private async asked<T>(call: () => Promise<T>): Promise<T> {
+    try { return await call(); }
+    catch (error) {
+      if (error instanceof GatewayError && (error.code === "timeout" || error.code === "ws_error")) {
+        throw new WordError("unavailable", "the relay did not answer in time", { recovery_hint: "稍后重试：the connection to the relay is slow or was interrupted; try again in a moment." });
+      }
+      throw error;
+    }
+  }
 
   private ready(): Relay {
     if (!this.relay?.connected) throw new WordError("unavailable", this.relay ? "the hub is not connected to the relay right now" : "no relay is set up", { recovery_hint: "Check service:link/gateway.status." });

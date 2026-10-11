@@ -119,7 +119,9 @@ export function relayText(status) {
 export function setupText(setup) {
   switch (setup?.state) {
     case "waiting_login": return "等你在 Cloudflare 登录：登录卡片已经发到对话里。登录后回到这里点「看看进度」。";
-    case "authorized": return "已登录 Cloudflare，可以开始搭建了。";
+    case "authorized": return Array.isArray(setup.accounts) && setup.accounts.length > 1
+      ? "已登录 Cloudflare。你的登录能看到多个账户，先选一个要搭在哪里，再点「开始搭建」。"
+      : "已登录 Cloudflare，可以开始搭建了。";
     case "deploying": return "正在搭建中转站，需要一两分钟…";
     case "claimed": return "中转站已搭好，正在连接…";
     case "connected": return "中转站已搭好，也连上了。";
@@ -529,6 +531,10 @@ export class SettingsControls {
     const setupName = document.createElement("input");
     setupName.id = "settingsGatewaySetupName";
     setupName.placeholder = "中转站的名字（可不填）";
+    // Several Cloudflare accounts under one sign-in: the owner says which one (one button each); Ash never picks.
+    const setupAccounts = node("div", "", "set-actions");
+    setupAccounts.id = "settingsGatewaySetupAccounts";
+    let chosenAccount = "";
     const setupStart = button("在 Cloudflare 搭一个", "btn gray", "settingsGatewaySetup");
     const setupDeploy = button("开始搭建", "btn", "settingsGatewayDeploy");
     const setupCheck = button("看看进度", "btn gray", "settingsGatewaySetupCheck");
@@ -536,7 +542,7 @@ export class SettingsControls {
     const relayCard = node("div", "", "set-card");
     relayCard.id = "settingsRelay";
     relayCard.append(node("span", "中转站", "set-title"), relayStatus, relayUrl, relayUse, relayResult,
-      node("span", "没有中转站？可以在你的 Cloudflare 账号里搭一个。", "set-sub"), setupState, setupName, setupStart, setupDeploy, setupCheck, setupCancel);
+      node("span", "没有中转站？可以在你的 Cloudflare 账号里搭一个。", "set-sub"), setupState, setupAccounts, setupName, setupStart, setupDeploy, setupCheck, setupCancel);
     let setup = null;
     const showSetup = () => {
       const state = setup?.state;
@@ -544,6 +550,17 @@ export class SettingsControls {
       setupState.textContent = setupText(setup);
       setupStart.hidden = active || state === "connected";
       setupDeploy.hidden = setupName.hidden = state !== "authorized";
+      const accounts = state === "authorized" && Array.isArray(setup.accounts) ? setup.accounts : [];
+      setupAccounts.hidden = accounts.length < 2;
+      if (accounts.length < 2) chosenAccount = "";
+      else {
+        setupAccounts.replaceChildren(...accounts.map((account, index) => {
+          const choice = button(account.name, account.id === chosenAccount ? "btn" : "btn gray", `settingsGatewaySetupAccount${index}`);
+          choice.setAttribute("aria-pressed", account.id === chosenAccount ? "true" : "false");
+          choice.addEventListener("click", () => { chosenAccount = account.id; showSetup(); });
+          return choice;
+        }));
+      }
       setupCheck.hidden = !["waiting_login", "deploying", "claimed"].includes(state);
       setupCancel.hidden = !["waiting_login", "authorized", "deploying"].includes(state);
     };
@@ -589,7 +606,9 @@ export class SettingsControls {
       setupDeploy.disabled = true;
       try {
         const nameText = setupName.value.trim();
-        const state = await ask(LINK, "gateway.setup.deploy", { setup_id: setup.setup_id, ...(nameText ? { name: nameText } : {}) });
+        const manyAccounts = Array.isArray(setup.accounts) && setup.accounts.length > 1;
+        if (manyAccounts && !chosenAccount) { setupState.textContent = "先选一个要搭在哪个 Cloudflare 账户。"; return; }
+        const state = await ask(LINK, "gateway.setup.deploy", { setup_id: setup.setup_id, ...(nameText ? { name: nameText } : {}), ...(manyAccounts ? { account: chosenAccount } : {}) });
         if (live()) await adopt(state);
       } catch (error) { setupFailed("没能开始搭建，请重试。")(error); }
       finally { setupDeploy.disabled = false; }
@@ -668,7 +687,7 @@ export class SettingsControls {
       if (!shown) return;
       if (state === "requested") { pairText.textContent = "配对码已使用。新设备发来的连接请求在上面，确认是你的设备再批准。"; return; }
       if (state === "expired") { pairText.textContent = "配对码已过期。需要时再点「添加设备」。"; return; }
-      const how = !shown.url ? "" : shown.kind === "browser" ? "在新浏览器里打开下面的地址，再回到这里批准：" : "在要连接的电脑上用浏览器打开下面的地址，按页面提示安装，再回到这里批准：";
+      const how = !shown.url ? "" : shown.kind === "browser" ? "在新浏览器里打开下面的地址，把上面的配对码输进去，再回到这里批准：" : "在要连接的电脑上用浏览器打开下面的地址，按页面提示安装，再回到这里批准：";
       pairText.textContent = `配对码：${shown.code}（还剩 ${countdown(left)}，只能用一次）。${how}`;
       pairCommand.textContent = shown.url ?? "";
     };

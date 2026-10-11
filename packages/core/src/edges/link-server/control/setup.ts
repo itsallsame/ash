@@ -19,7 +19,9 @@ import type { RelayProgram } from "./bundle";
 
 export const SETUP_STATES = ["waiting_login", "authorized", "deploying", "claimed", "connected", "failed"] as const;
 export type SetupState = (typeof SETUP_STATES)[number];
-export interface SetupInfo { setup_id: string; state: SetupState; reason?: string }
+/** A Cloudflare account the sign-in can build in. */
+export interface SetupAccount { id: string; name: string }
+export interface SetupInfo { setup_id: string; state: SetupState; reason?: string; /** Once authorized: the accounts the sign-in can see (`deploy` needs one of them when there is more than one). */ accounts?: SetupAccount[] }
 
 /** Where the vault keeps the Cloudflare sign-in (JSON: access token, refresh token, expiry). */
 export const CLOUDFLARE_REF = "CLOUDFLARE_OAUTH";
@@ -79,9 +81,11 @@ export interface SetupDeps {
 const SERVICE_ID = "service:link";
 const SERVICE: Caller = { member: SERVICE_ID, via: "service", local: true };
 const SCRIPT_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const DEFAULT_SCRIPT = "ash-gateway";
 const SCHEMA = `CREATE TABLE IF NOT EXISTS link_setups (
-  setup_id TEXT PRIMARY KEY, initiator TEXT NOT NULL, state TEXT NOT NULL, reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);`;
+  setup_id TEXT PRIMARY KEY, initiator TEXT NOT NULL, state TEXT NOT NULL, reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS link_setup_accounts (setup_id TEXT PRIMARY KEY, accounts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS link_deployed (account TEXT NOT NULL, script TEXT NOT NULL, deployed_at INTEGER NOT NULL, PRIMARY KEY (account, script));`;
+const generatedName = () => `ash-relay-${randomBytes(3).toString("hex")}`;
 
 const OUTCOME: Record<Exclude<SetupState, "failed">, string> = {
   waiting_login: "is waiting for the owner to sign in to Cloudflare",
@@ -168,16 +172,24 @@ export class RelaySetup {
   }
 
   /** Starts the deployment of an authorized setup; the result is `deploying` and the rest is told as it happens. */
-  deploy(id: string, name?: string): SetupInfo {
+  deploy(id: string, name?: string, account?: string): SetupInfo {
     const row = this.row(id);
     if (row.state !== "authorized") {
       throw new WordError("conflict", `relay setup ${id} is ${row.state}, not authorized`, { recovery_hint: row.state === "waiting_login" ? "The owner has not signed in to Cloudflare yet." : "Start a new setup." });
     }
-    const script = name ?? DEFAULT_SCRIPT;
-    if (!SCRIPT_NAME.test(script)) throw new WordError("bad_request", "name must be lowercase letters, digits and dashes");
+    if (name !== undefined && !SCRIPT_NAME.test(name)) throw new WordError("bad_request", "name must be lowercase letters, digits and dashes");
+    const accounts = this.accountsOf(id);
+    if (account !== undefined && accounts.length > 0 && !accounts.some((a) => a.id === account)) {
+      throw new WordError("bad_request", `the sign-in cannot see the account ${account}`, { recovery_hint: "Use gateway.setup.status to see the accounts the owner signed in with." });
+    }
+    if (account === undefined && accounts.length > 1) {
+      throw new WordError("bad_request", `the owner's sign-in sees ${accounts.length} Cloudflare accounts; say which one to build in (account): ${accounts.map((a) => `${a.name} = ${a.id}`).join("; ")}`, {
+        recovery_hint: "Ask the owner which account, then call deploy again with account set to its id (gateway.setup.status lists them).",
+      });
+    }
     this.requireBundle();
     this.move(id, "deploying");
-    void this.runDeploy(id, script).catch((error) => this.fail(id, this.reason(error)));
+    void this.runDeploy(id, name, account).catch((error) => this.fail(id, this.reason(error)));
     return this.info(id);
   }
 
@@ -207,7 +219,13 @@ export class RelaySetup {
   }
   private info(id: string): SetupInfo {
     const row = this.row(id);
-    return { setup_id: row.setup_id, state: row.state, ...(row.reason ? { reason: row.reason } : {}) };
+    const accounts = row.state === "authorized" ? this.accountsOf(id) : [];
+    return { setup_id: row.setup_id, state: row.state, ...(row.reason ? { reason: row.reason } : {}), ...(accounts.length > 0 ? { accounts } : {}) };
+  }
+  private accountsOf(id: string): SetupAccount[] {
+    const row = this.d.db.prepare("SELECT accounts FROM link_setup_accounts WHERE setup_id = ?").get(id) as { accounts: string } | undefined;
+    if (!row) return [];
+    try { return JSON.parse(row.accounts) as SetupAccount[]; } catch { return []; }
   }
   private move(id: string, state: SetupState, reason?: string): void {
     const row = this.row(id);
@@ -264,13 +282,17 @@ export class RelaySetup {
       html(400, "没有授权", "回到 Ash 重新开始。");
       return this.fail(id, denied ? "the owner did not allow access in Cloudflare" : "Cloudflare returned no code");
     }
+    let accounts: SetupAccount[] = [];
     try {
-      await this.exchange({ grant_type: "authorization_code", code, redirect_uri: login.redirect, code_verifier: login.verifier });
+      const token = await this.exchange({ grant_type: "authorization_code", code, redirect_uri: login.redirect, code_verifier: login.verifier });
+      // Which accounts this sign-in can build in: the owner (or the agent) chooses when there are several. Not being able to ask now is not the end: deploy asks again.
+      accounts = await this.listAccounts(token).catch(() => []);
     } catch (error) {
       html(500, "授权没有完成", "回到 Ash 查看原因。");
       return this.fail(id, this.reason(error));
     }
     html(200, "授权成功，回到 Ash", "可以关掉这个页面了。");
+    if (accounts.length > 0) this.d.db.prepare("INSERT OR REPLACE INTO link_setup_accounts (setup_id, accounts) VALUES (?, ?)").run(id, JSON.stringify(accounts));
     this.move(id, "authorized");
   }
 
@@ -314,17 +336,18 @@ export class RelaySetup {
 
   // ---- deploying -----------------------------------------------------------------------------------------------------------
 
-  private async runDeploy(id: string, script: string): Promise<void> {
+  private async runDeploy(id: string, name: string | undefined, chosen: string | undefined): Promise<void> {
     const program = await this.d.bundle!();
     this.alive(id);
     let token = await this.accessToken();
-    const account = await this.account(token);
+    const account = await this.account(token, chosen);
     this.alive(id);
     const email = await this.api<{ email?: string }>(token, "GET", "/user").then((u) => u.email, () => undefined);
     const subdomain = await this.subdomain(token, account);
     this.alive(id);
     token = await this.accessToken();
     const scripts = await this.api<{ id?: string }[]>(token, "GET", `/accounts/${account}/workers/scripts`);
+    const script = this.scriptName(name, account, scripts.map((s) => s.id));
     const secret = b64u(randomBytes(32));
     await this.upload(token, account, script, program, secret, !scripts.some((s) => s.id === script));
     this.alive(id);
@@ -333,16 +356,48 @@ export class RelaySetup {
     await this.reachable(id, url);
     this.alive(id);
     await this.d.activate(url, secret, { email }).catch((error) => { throw new Failure(`the relay was deployed but could not be claimed: ${error instanceof Error ? error.message : "unknown"}`); });
+    // Only now is the Worker this hub's own: a later setup may put a newer program there.
+    this.d.db.prepare("INSERT OR REPLACE INTO link_deployed (account, script, deployed_at) VALUES (?, ?, ?)").run(account, script, this.now());
     this.alive(id);
     this.move(id, "claimed");
     if (!await this.d.connected(30_000)) throw new Failure("the relay was deployed and claimed but the hub could not connect to it");
     this.move(id, "connected");
   }
 
-  private async account(token: string): Promise<string> {
-    const accounts = await this.api<{ id: string }[]>(token, "GET", "/accounts");
-    if (!Array.isArray(accounts) || !accounts[0]?.id) throw new Failure("the Cloudflare account has nothing to build in");
-    return accounts[0].id;
+  private async listAccounts(token: string): Promise<SetupAccount[]> {
+    const accounts = await this.api<{ id?: string; name?: string }[]>(token, "GET", "/accounts");
+    return Array.isArray(accounts) ? accounts.filter((a): a is { id: string; name?: string } => typeof a?.id === "string").map((a) => ({ id: a.id, name: a.name || a.id })) : [];
+  }
+
+  /** The account to build in: the one chosen, or the only one. Never a guess between several. */
+  private async account(token: string, chosen: string | undefined): Promise<string> {
+    const accounts = await this.listAccounts(token);
+    if (accounts.length === 0) throw new Failure("the Cloudflare account has nothing to build in");
+    if (chosen !== undefined) {
+      if (!accounts.some((a) => a.id === chosen)) throw new Failure("the sign-in cannot see the account that was chosen");
+      return chosen;
+    }
+    if (accounts.length > 1) throw new Failure("the sign-in sees more than one Cloudflare account and none was chosen");
+    return accounts[0]!.id;
+  }
+
+  /**
+   * The Worker's name. Ash never writes over a Worker it did not build: the owner's own (even one that is called ash-gateway) is
+   * left alone, whether the name was asked for or made here. Only a Worker this hub deployed and claimed before may be updated.
+   */
+  private scriptName(asked: string | undefined, account: string, existing: (string | undefined)[]): string {
+    const taken = new Set(existing);
+    if (asked !== undefined) {
+      if (taken.has(asked) && !this.d.db.prepare("SELECT 1 FROM link_deployed WHERE account = ? AND script = ?").get(account, asked)) {
+        throw new Failure(`this Cloudflare account already has a Worker called ${asked} that Ash did not build, and Ash does not write over it; choose another name`);
+      }
+      return asked;
+    }
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const name = generatedName();
+      if (!taken.has(name)) return name;
+    }
+    throw new Failure("could not find a free name for the relay in this Cloudflare account");
   }
 
   /** The account's workers.dev name; the account has none until one is made. */
