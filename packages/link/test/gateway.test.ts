@@ -157,6 +157,8 @@ test("pairing: a ticket is registered by its hash, a request arrives, approval a
   assert.equal(requests[0]!.client_id, "mac1");
 
   await relay.approve("req1", ["expose_capability"]);
+  // The owner's key here signs DER (as Android's keystore does); the relay is given r||s, which is what a browser's WebCrypto verifies.
+  assert.equal(Buffer.from(String(gw.ops.find((op) => op.op === "pair.approve")!.sig), "base64url").length, 64, "the approval is signed raw, not DER");
   assert.deepEqual(gw.devices.get("mac1")!.permissions, ["expose_capability"]);
   assert.equal(gw.grantVersion, 1);
   await assert.rejects(relay.approve("nope", []), /unknown pairing request/);
