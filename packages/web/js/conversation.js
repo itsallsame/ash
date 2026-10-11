@@ -197,7 +197,7 @@ function failureCard(fragment, failure, { onRetry }) {
 }
 
 /** Append a stable ledger conversation without inventing an approval or option action. */
-export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, intro, now = Date.now(), previous: previousEntry = null, next: nextEntry = null, previousDisplay = null, omitContent = false, lifetime } = {}) {
+export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, intro, now = Date.now(), previous: previousEntry = null, next: nextEntry = null, previousDisplay = null, omitContent = false, lifetime, renderMarkdown = appendMarkdown } = {}) {
   if (!entries.length && !failures.length) { if (loading) skeleton(fragment); else emptyState(fragment); return; }
   // Only before the owner has said anything: it is the first meeting, and she spoke first.
   if (intro ?? (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some((item) => item.side === "owner"))) introduction(fragment, herName);
@@ -231,7 +231,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
       const continues = grouped(item, entries[index + 1] ?? nextEntry);
       const group = item.side === "agent" && item.group ? ` group-${previous ? continues ? "middle" : "last" : continues ? "first" : "single"}` : "";
       const rich = item.side === "agent";
-      const shown = item.full && fullTexts?.has(item.full) ? fullTexts.get(item.full) : item.text;
+      const shown = item.full && fullTexts?.has(item.full, item.id) ? fullTexts.get(item.full) : item.text;
       const look = side === "me" ? "b b-me" : `b b-her md${previous ? " mid" : ""}`;
       // Attachments stand above the words, as their own blocks; a message of attachments alone has no bubble.
       const attached = Array.isArray(item.attachments) && item.attachments.length > 0;
@@ -245,15 +245,17 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
         continue;
       }
       const bubble = text(fragment, "div", rich ? "" : shown, `msg ${side} ${look}${runStart && !attached ? " run-start" : ""}${group}`);
-      if (rich && !omitContent) appendMarkdown(bubble, shown, { onFileLink });
+      if (rich && !omitContent) renderMarkdown(bubble, shown, { onFileLink }, item, lifetime);
       bubble.dataset.seq = String(item.seq);
-      if (!omitContent && item.full && !fullTexts?.has(item.full) && onExpand) {
+      if (!omitContent && item.full && !fullTexts?.has(item.full, item.id) && onExpand) {
         // The ledger holds only the start and the end of a long text; the page reads the rest on demand and draws again.
-        const more = text(bubble, "button", "显示全文", "expand");
+        const more = text(bubble, "button", fullTexts?.expansionLabel?.(item.id) ?? "显示全文", "expand");
         more.type = "button";
         more.addEventListener("click", async () => {
-          more.disabled = true;
-          try { await onExpand(item.full); } catch { more.disabled = false; more.title = "全文暂时读不到"; }
+          more.disabled = true; more.textContent = "正在展开…";
+          // This button initiates a deliberate body replacement; its focus must not defer that replacement forever.
+          more.blur?.();
+          try { await onExpand(item.full, item.id); } catch { more.disabled = false; more.textContent = "显示全文"; more.title = "全文暂时读不到"; }
         });
       }
       if (Array.isArray(item.reactions) && item.reactions.length) {

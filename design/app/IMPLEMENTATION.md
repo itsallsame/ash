@@ -57,3 +57,12 @@ History window items may include `type: "failed"` retry facts and aggregated rea
 `ScrollPosition` is the sole owner of reading compensation: it captures a visible Markdown block, restores it after writes and delayed height changes, and follows the bottom only when already there. It supports mounted-ID jumps and returning to the bottom; network paging/around lookup belongs to the data source. Selected or focused entities defer replacement/eviction until the interaction ends. `pinnedIds()` lets the caller protect corresponding data. A changed `options.epoch` resets old source entities even when selected; `dispose()` releases observers, listeners and attachment resources.
 
 The existing Timeline still retains its loaded history. Stable DOM alone does not bound data or total node count: the data source must supply a limited range and manage its independent cache budget. The synchronous safe Markdown renderer is unchanged; this change does not claim to eliminate cold long-message parsing/layout tasks.
+
+
+### Markdown frame work
+
+`WindowView` gives every mounted rich message one shared `MarkdownQueue`, with a 4 ms script budget between frame boundaries. The safe renderer builds the same complete DOM: tables pause between rows, lists between items, and other blocks remain intact. Table borders keep the existing collapsed layout. Parser work counts against that budget, but an individual parser call or block can exceed it; the budget is a scheduling target, not a wall-clock guarantee.
+
+Expanded text shows a quiet “正在展开…” line until its DOM is complete. Clicking the expand button releases that button's focus before requesting a body replacement; ordinary text selection and input drafts remain protected. `settled(id)` lets the caller await a row's current work, and `cancelExpansion(id)` stops unfinished work. The caller then discards the canceled text and repaints its preview. Eviction, source reset and disposal cancel jobs and release their tokens. Metadata-only updates preserve both the body and any work in progress.
+
+The data source owns the independent expansion-choice LRU, full-text cache and idle restoration policy. It decides which nearby row to fetch after scrolling settles, then waits for `settled(id)` before restoring the next one. Rendering does not introduce another prefetch/restoration scheduler, worker, persistent token cache or partial-body eviction.
