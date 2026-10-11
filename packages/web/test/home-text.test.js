@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appState, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
+import { HELPER, appState, isSettingsFile, pluginName, providerName, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
 
 const dev = (letter) => `device:${letter.repeat(22)}`;
 
@@ -54,4 +54,16 @@ test("quiet hours: a missing key means the default, an empty one means none, a m
   assert.equal(quietOf({ "delivery.quiet_hours": "" }), "");
   assert.equal(quietOf({ "delivery.quiet_hours": "22:00-08:30" }), "22:00-08:30");
   assert.equal(quietOf({ "delivery.quiet_hours": "later" }), null);
+});
+
+test("plugin names, providers and her settings files read the way the page says them", () => {
+  assert.equal(pluginName("@deepseek-ai/dsh-plugin-manager/tools"), "manager tools");
+  assert.equal(pluginName("@deepseek-ai/dsh-llm"), "llm");
+  assert.equal(pluginName("cordis:include"), "cordis include");
+  assert.equal(providerName("deepseek-chat"), "DeepSeek");
+  assert.equal(providerName("some-new-model"), "some-new-model");
+  assert.equal(providerName(undefined), "");
+  assert.ok(["AGENTS.md", "identity.md", "SOUL.md", "USER.md", "MEMORY.md", "PROACTIVE.md", ".hidden"].every(isSettingsFile));
+  assert.ok(["装备清单.xlsx", "notes.md", "README.md"].every((name) => !isSettingsFile(name)));
+  assert.equal(HELPER, "一个帮手");
 });

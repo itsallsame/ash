@@ -1,14 +1,14 @@
 // The reads the home pages share. Each takes the `screen` of its page (see home.js), so an answer that arrives after the
 // page or the connection moved on throws `{code: "stale"}` instead of being drawn.
 import { BODY_MAIN } from "./body.js";
-import { normalizeClockList } from "./clock.js";
+import { normalizeClockList, userPlans } from "./clock.js";
 import { quietOf, QUIET_KEY } from "./home-text.js";
 
 export const settled = (work) => Promise.resolve(work).then((value) => value, () => null);
 
 /** The clock's timers, checked (`service:clock/list`). */
 export async function readClock(screen) {
-  return normalizeClockList(await screen.ask("service:clock", "list", {}));
+  return userPlans(normalizeClockList(await screen.ask("service:clock", "list", {})));
 }
 
 /** A text file of her work directory: its text, null when it is not there; anything else is thrown. */

@@ -1,8 +1,7 @@
 import { fill } from "./home-dom.js";
 // 幕后: what runs her. Keys (and whether they work), the model, what she costs, and the developer options. The spending card
 // is the same on the page and on 花了多少.
-import { KEYS, keyProblems, keyStateText } from "./home-text.js";
-import { balanceSentence } from "./home-text.js";
+import { HELPER, KEYS, balanceSentence, keyProblems, keyStateText, pluginName, providerName } from "./home-text.js";
 import { readAgents, readUsage, settled } from "./home-data.js";
 import { pauseControl } from "./home-pause.js";
 import { btn, card, group, h, list, localHint, note, row, skeleton, tag, twoTap } from "./home-ui.js";
@@ -12,7 +11,7 @@ import { balanceText, usdToCnyText as money, CNY_ESTIMATE_NOTE } from "./money.j
 const tokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
 const num = (value) => typeof value === "number" && Number.isFinite(value) ? value : 0;
 /** Who made a call, in words: an agent by its name, the quick judge, any other service as "后台服务". */
-const callerName = (names, caller) => names[caller] ?? (caller === "service:reflex" ? "快速判断" : caller.startsWith("service:") ? "后台服务" : caller.replace(/^[a-z]+:/, ""));
+const callerName = (names, caller) => names[caller] ?? (caller === "service:reflex" ? "快速判断" : caller.startsWith("service:") ? "后台服务" : HELPER);
 const KEY_COPY = { deepseek: ["DeepSeek Key", "跟你对话用", "没有它，她没法跟你说话。"], openrouter: ["OpenRouter Key", "快速判断要不要问你", "没有它，快速判断只能靠关键词。"] };
 
 /** The spending card: the last seven days as a number and as bars, and what today and the balance are. */
@@ -45,7 +44,7 @@ export function backstagePage(ctx, screen) {
       return row({ icon: "key", title, sub: use, right: state.vault === null ? null : tag(bad ? (health.status === "rejected" ? "已失效" : "余额不足") : saved(ref) ? "已保存" : "还没保存", bad || !saved(ref) ? "warn" : "ok"), onClick: () => ctx.go("keys") });
     });
     const model = state.agents?.find((agent) => agent.primary === true)?.runtime?.model;
-    fill(keysBox, group("让她能说话", list(...rows, row({ icon: "cpu", title: "模型", value: model ?? "", onClick: () => ctx.go("model") }))));
+    fill(keysBox, group("让她能说话", list(...rows, row({ icon: "cpu", title: "模型", value: model ? providerName(model) : saved("DEEPSEEK_API_KEY") ? "DeepSeek" : "", onClick: () => ctx.go("model") }))));
     fill(advancedBox, group("高级", list(row({ icon: "slider", title: "开发者选项", sub: "主模型、插件", onClick: () => ctx.go("advanced") }))));
   };
   draw();
@@ -215,7 +214,7 @@ export function modelPage(ctx, screen) {
   return { title: "模型", body: h("div", { class: "hm-stack" }, note(`她现在用的主模型。改错了可能让她无法正常工作。`), card("hm-promise", provider, model), save, status), refresh };
 }
 
-/** 开发者选项: the main model and the DSH plugins. */
+/** 开发者选项: the main model and the extensions (plugins) she runs with. */
 export function advancedPage(ctx, screen) {
   const status = h("p", { class: "hm-note", id: "homePluginsStatus", role: "status" });
   const listBox = h("div");
@@ -229,7 +228,7 @@ export function advancedPage(ctx, screen) {
       const entry = plugin?.entryId ?? plugin?.id;
       const title = plugin?.moduleName ?? plugin?.name;
       if (typeof entry !== "string" || typeof title !== "string") continue;
-      const toggle = switchRow({ title, sub: plugin.enabled ? "已启用" : "已停用", checked: plugin.enabled === true, disabled: Boolean(plugin.readOnlyReason), onChange: async (next) => {
+      const toggle = switchRow({ title: pluginName(title), sub: plugin.enabled ? "已启用" : "已停用", checked: plugin.enabled === true, disabled: Boolean(plugin.readOnlyReason), onChange: async (next) => {
         status.textContent = "正在保存…";
         try {
           const result = await screen.ask("service:admin", "plugins.op", { op: "plugin", id: entry, enabled: next });
@@ -244,6 +243,6 @@ export function advancedPage(ctx, screen) {
     fill(listBox, rows.length ? h("div", { class: "list noic" }, rows) : list(row({ title: "没有安装插件" })));
     status.textContent = `已安装 ${plugins.length} 个插件。`;
   };
-  return { title: "开发者选项", body: h("div", { class: "hm-stack" }, note(`给开发和排查问题用。改错了可能让她无法正常工作。`), group("", list(row({ icon: "cpu", title: "主模型", onClick: () => ctx.go("model") }))), group("DSH 插件", listBox), status),
+  return { title: "开发者选项", body: h("div", { class: "hm-stack" }, note(`给开发和排查问题用。改错了可能让她无法正常工作。`), group("", list(row({ icon: "cpu", title: "主模型", onClick: () => ctx.go("model") }))), group("她的扩展", listBox), status),
     refresh: () => read().catch((error) => { if (screen.alive() && error?.code !== "stale") status.textContent = "插件读取失败，请重试。"; }) };
 }
