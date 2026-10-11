@@ -9,9 +9,9 @@ import { openLedger, say, tempDir } from "./helpers";
 const tables = (ledger: Ledger) =>
   (ledger.db().prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
 
-test("an empty database gets exactly the five tables and the schema version", () => {
+test("an empty database gets the ledger tables and the schema version", () => {
   const { ledger } = openLedger();
-  assert.deepEqual(tables(ledger), ["blobs", "kv", "message_blobs", "messages", "requests"].sort());
+  assert.deepEqual(tables(ledger), ["blobs", "kv", "message_blobs", "message_relations", "messages", "requests"].sort());
   assert.equal((ledger.db().prepare("SELECT value FROM kv WHERE key='schema'").get() as { value: string }).value, SCHEMA_VERSION);
   assert.equal(ledger.get("nothing"), null);
   assert.deepEqual(ledger.page({ limit: 10 }), []);

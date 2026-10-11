@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { HumanOrigin, Message } from "../../../../sdk/src/message";
 import { BlobStore } from "./blob-store";
 import { externalize } from "./externalize";
+import { indexMessage } from "./relations";
 import { REQUEST_STATES, SCHEMA_KEY, SCHEMA_SQL, SCHEMA_VERSION } from "./schema";
 import { messageSummary, MESSAGE_SUMMARY_MAX, textSummary } from "./summary";
 
@@ -157,6 +158,7 @@ class SqliteLedger implements Ledger {
           m.origin ? JSON.stringify(m.origin) : null, m.turn ?? null, m.thread ?? null, summary, out.size);
       const link = this.conn.prepare("INSERT OR IGNORE INTO message_blobs(message_id,hash,path) VALUES(?,?,?)");
       for (const ref of out.refs) link.run(id, ref.hash, ref.path);
+      indexMessage(this.conn, m, out.stored, id, ts, Number(info.lastInsertRowid));
       if (m.kind === "request") {
         const state = options.request?.state ?? "dispatched";
         if (!(REQUEST_STATES as readonly string[]).includes(state)) throw new RangeError(`unknown request state: ${state}`);
@@ -234,6 +236,7 @@ function open(path: string): Ledger {
       try {
         conn.exec(SCHEMA_SQL);
         conn.prepare("INSERT INTO kv(key,value) VALUES(?,?)").run(SCHEMA_KEY, SCHEMA_VERSION);
+        conn.prepare("INSERT INTO kv(key,value) VALUES(?,?)").run("dataset_id", randomBytes(18).toString("base64url"));
         conn.exec("COMMIT");
       } catch (error) { conn.exec("ROLLBACK"); throw error; }
     }
