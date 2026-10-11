@@ -14,7 +14,7 @@ const TIME_GAP = 3_600_000;
 const LETTER_FILLS = Object.freeze(["her", "you", "warn", "ok"]);
 const letterFill = (id) => LETTER_FILLS[[...String(id)].reduce((sum, ch) => sum + ch.codePointAt(0), 0) % LETTER_FILLS.length];
 
-function attachment(parent, item, openInline, onOpenFile) {
+function attachment(parent, item, openInline, onOpenFile, lifetime) {
   const name = typeof item?.name === "string" ? item.name : "附件";
   const file = (label) => {
     const chip = button(parent, "", "attachment att-file");
@@ -31,20 +31,22 @@ function attachment(parent, item, openInline, onOpenFile) {
       try {
         const opened = await openInline?.(item.message_id, item.index);
         if (!opened) throw new Error("attachment unavailable");
+        if (lifetime?.disposed) { opened.revoke(); return; }
+        const later = (ms) => { const timer = setTimeout(opened.revoke, ms); lifetime?.cleanup.add(() => { clearTimeout(timer); opened.revoke(); }); };
         if (opened.preview) {
           const image = document.createElement("img");
           image.alt = opened.name;
           image.src = opened.url;
           image.addEventListener("load", opened.revoke, { once: true });
           image.addEventListener("error", opened.revoke, { once: true });
-          setTimeout(opened.revoke, 60_000);
+          later(60_000);
           parent.append(image);
         } else {
           const download = document.createElement("a");
           download.href = opened.url;
           download.download = opened.name;
           download.click();
-          setTimeout(opened.revoke, 1000);
+          later(1000);
         }
         chip.dataset.opened = "true";
         chip.title = "";
@@ -192,13 +194,13 @@ function failureCard(fragment, failure, { onRetry }) {
 }
 
 /** Append a stable ledger conversation without inventing an approval or option action. */
-export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, now = Date.now() } = {}) {
+export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, now = Date.now(), previous: previousEntry = null, next: nextEntry = null, previousDisplay = null, omitContent = false, lifetime } = {}) {
   if (!entries.length && !failures.length) { if (loading) skeleton(fragment); else emptyState(fragment); return; }
   // Only before the owner has said anything: it is the first meeting, and she spoke first.
   if (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some((item) => item.side === "owner")) introduction(fragment, herName);
   const pendingFailures = [...failures].sort((a, b) => a.ts - b.ts);
-  let lastTs = null;
-  let lastSide = null;
+  let lastTs = previousDisplay?.ts ?? null;
+  let lastSide = previousDisplay?.side ?? null;
   const flushFailures = (before) => {
     while (pendingFailures.length && (before === undefined || pendingFailures[0].ts <= before)) { failureCard(fragment, pendingFailures.shift(), { onRetry }); lastSide = null; }
   };
@@ -212,7 +214,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
     if (Number.isFinite(item.ts)) lastTs = item.ts;
     if (item.type === "say") {
       const side = item.side === "owner" ? "me" : "ai";
-      const previous = grouped(item, entries[index - 1]);
+      const previous = grouped(item, entries[index - 1] ?? previousEntry);
       const runStart = side === "me" ? lastSide !== "me" : !previous;
       lastSide = side;
       if (item.side === "owner" && item.origin?.label) text(fragment, "small", `来自 ${item.origin.label}`, "from r");
@@ -222,8 +224,8 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
         text(byline, "span", `${agentName(item.from)}${primary ? ` · ${agentName(primary)} 的帮手` : ""}`);
       }
       if (item.side === "owner" && item.to && item.to !== primary) text(fragment, "small", `@ ${agentName(item.to)}`, "from r");
-      const next = grouped(item, entries[index + 1]);
-      const group = item.side === "agent" && item.group ? ` group-${previous ? next ? "middle" : "last" : next ? "first" : "single"}` : "";
+      const continues = grouped(item, entries[index + 1] ?? nextEntry);
+      const group = item.side === "agent" && item.group ? ` group-${previous ? continues ? "middle" : "last" : continues ? "first" : "single"}` : "";
       const rich = item.side === "agent";
       const shown = item.full && fullTexts?.has(item.full) ? fullTexts.get(item.full) : item.text;
       const look = side === "me" ? "b b-me" : `b b-her md${previous ? " mid" : ""}`;
@@ -232,16 +234,16 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
       if (attached) {
         const attachments = text(fragment, "div", "", `atts ${side}${runStart ? " run-start" : ""}`);
         attachments.dataset.seq = String(item.seq);
-        for (const ref of item.attachments) attachment(attachments, ref, openInline, onOpenFile);
+        if (!omitContent) for (const ref of item.attachments) attachment(attachments, ref, openInline, onOpenFile, lifetime);
       }
       if (attached && !String(shown ?? "").trim() && !item.full) {
         if (item.side === "owner") text(fragment, "span", deliveryText[item.delivery] || deliveryText.sent, "delivery meta r");
         continue;
       }
       const bubble = text(fragment, "div", rich ? "" : shown, `msg ${side} ${look}${runStart && !attached ? " run-start" : ""}${group}`);
-      if (rich) appendMarkdown(bubble, shown, { onFileLink });
+      if (rich && !omitContent) appendMarkdown(bubble, shown, { onFileLink });
       bubble.dataset.seq = String(item.seq);
-      if (item.full && !fullTexts?.has(item.full) && onExpand) {
+      if (!omitContent && item.full && !fullTexts?.has(item.full) && onExpand) {
         // The ledger holds only the start and the end of a long text; the page reads the rest on demand and draws again.
         const more = text(bubble, "button", "显示全文", "expand");
         more.type = "button";
@@ -279,4 +281,31 @@ export function appendOutbox(fragment, outbox) {
     addIcon(meta, item.status === "rejected" ? "alert" : "clock", "i-xs");
     text(meta, "span", labels[item.status]);
   }
+}
+
+/** Ordered entities retain the existing sibling layout; neighbors need no body text. */
+export function conversationRows(entries, { failures = [], atStart = false, previous = null, next = null } = {}) {
+  const rows = [];
+  if (!entries.length && !failures.length) return [{ key: "state", kind: "state" }];
+  if (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some(item => item.side === "owner")) rows.push({ key: "intro", kind: "intro" });
+  const pending = [...failures].sort((a, b) => a.ts - b.ts);
+  let ts = previous?.ts ?? null, side = previous?.side === "owner" ? "me" : previous?.type === "say" ? "ai" : null;
+  const flush = before => { while (pending.length && pending[0].ts <= before) { const item = pending.shift(); rows.push({ key: `failure:${item.turn}`, kind: "failure", item }); side = null; } };
+  for (let index = 0; index < entries.length; index++) {
+    const item = entries[index]; flush(item.ts ?? Infinity);
+    rows.push({ key: `message:${item.id ?? item.ask?.id ?? item.seq}`, kind: "message", item,
+      previous: entries[index - 1] ?? previous, next: entries[index + 1] ?? next, previousDisplay: { ts, side } });
+    if (Number.isFinite(item.ts)) { if (ts === null || item.ts - ts >= TIME_GAP || new Date(item.ts).toDateString() !== new Date(ts).toDateString()) side = null; ts = item.ts; }
+    side = item.type === "say" ? item.side === "owner" ? "me" : "ai" : "card";
+  }
+  flush(Infinity); return rows;
+}
+
+/** Render just one entity with the time/group context supplied by its range. */
+export function appendConversationRow(parent, row, options = {}) {
+  if (row.kind === "intro") introduction(parent, options.herName ?? "Ash");
+  else if (row.kind === "failure") failureCard(parent, row.item, options);
+  else if (row.kind === "state") { if (options.loading) skeleton(parent); else emptyState(parent); }
+  else if (row.kind === "outbox") appendOutbox(parent, [row.item]);
+  else appendConversation(parent, [row.item], { ...options, atStart: false, failures: [], previous: row.previous, next: row.next, previousDisplay: row.previousDisplay });
 }

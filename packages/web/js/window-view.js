@@ -1,0 +1,143 @@
+import { appendConversationRow, conversationRows } from "./conversation.js";
+import { ScrollPosition } from "./scroll-position.js";
+
+// Projected facts are immutable; compare their small structures without copying text into JSON cache keys.
+const equal = (a, b) => a === b || !!a && !!b && typeof a === "object" && typeof b === "object" &&
+  Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(key => Object.hasOwn(b, key) && equal(a[key], b[key]));
+const motion = () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches !== true;
+const dispose = row => { row.lifetime.disposed = true; for (const cleanup of row.lifetime.cleanup) cleanup(); row.lifetime.cleanup.clear(); };
+const context = row => ({ previousDisplay: row.previousDisplay, previous: row.previous && { type: row.previous.type, side: row.previous.side, group: row.previous.group }, next: row.next && { type: row.next.type, side: row.next.side, group: row.next.group } });
+const body = (row, options) => {
+  const item = row.item;
+  if (row.kind === "message" && item.type === "say") {
+    const { delivery, reactions, ...content } = item;
+    return { content, shown: item.full && options.fullTexts?.has(item.full) ? options.fullTexts.get(item.full) : item.text };
+  }
+  return item;
+};
+
+/** Stable entities own sibling nodes, so the existing flex layout/selection remains intact. */
+export class WindowView {
+  constructor(root) {
+    this.root = root;
+    this.rows = new Map();
+    this.position = new ScrollPosition(root);
+    this.newest = 0;
+    this.fresh = false;
+    this.closed = false;
+    this.retry = () => {
+      if (!this.closed && this.latest && [...this.rows.values()].some(row => row.deferred)) this.update(...this.latest);
+    };
+    root.ownerDocument.addEventListener("selectionchange", this.retry);
+    root.addEventListener("focusout", this.retry);
+  }
+  protected(row) {
+    const selected = this.root.ownerDocument.getSelection();
+    return row.nodes.some(node => node.contains(this.root.ownerDocument.activeElement) || selected?.rangeCount && !selected.isCollapsed && selected.containsNode(node, true));
+  }
+  pinnedIds() { return [...this.rows.values()].filter(row => this.protected(row)).map(row => row.descriptor.item?.id).filter(Boolean); }
+  update(entries, outbox = [], options = {}, dirty = null) {
+    this.latest = [entries, outbox, options];
+    const plan = conversationRows(entries, options);
+    for (const item of outbox) if (typeof item.client_id === "string" && typeof item.text === "string" && ["unsent", "sending", "accepted", "rejected"].includes(item.status)) plan.push({ key: `outbox:${item.client_id}`, kind: "outbox", item });
+    const keys = new Set(plan.map(row => row.key));
+    // A selected/focused entity stays at its ordered position until its interaction ends.
+    for (const [key, row] of this.rows) if (!keys.has(key) && this.protected(row)) {
+      const empty = plan.findIndex(item => item.kind === "state"); if (empty >= 0) plan.splice(empty, 1);
+      const after = plan.findIndex(item => item.item?.seq > row.descriptor.item?.seq);
+      plan.splice(after < 0 ? plan.length : after, 0, row.descriptor);
+      keys.add(key); row.deferred = true;
+    }
+    const oldLocal = [...this.rows.values()].filter(row => row.descriptor.kind === "outbox").length;
+    let settled = oldLocal;
+    this.position.capture();
+    // First paint owns the root, including any shell placeholder left before boot.
+    if (!this.rows.size) this.root.replaceChildren();
+    for (const [key, row] of this.rows) if (!keys.has(key)) {
+      this.position.unobserve(row.nodes); dispose(row); for (const node of row.nodes) node.remove(); this.rows.delete(key);
+    }
+    let cursor = this.root.firstChild;
+    for (const descriptor of plan) {
+      let row = this.rows.get(descriptor.key);
+      const item = descriptor.item;
+      const candidate = !row || dirty === null || dirty.has(item?.id ?? item?.ask?.id ?? item?.turn) || descriptor.kind !== "message";
+      const chrome = { ...context(descriptor), primary: options.primary, name: options.herName,
+        fromName: item?.from && options.agentName?.(item.from), toName: item?.to && options.agentName?.(item.to),
+        loading: options.loading, day: new Date(options.now ?? Date.now()).toDateString() };
+      const intent = item?.ask ? { ...options.askIntents?.get(item.ask.id) } : null;
+      const expired = item?.ask?.state === "pending" && item.ask.expires_at <= (options.now ?? Date.now());
+      const pending = options.optionPending?.has(item?.id) === true;
+      const content = candidate ? body(descriptor, options) : row?.content;
+      const sameBody = row && equal(row.content, content);
+      const sameItem = !candidate || row && equal(row.descriptor.item, item);
+      const changed = !row || !sameBody || !sameItem || !equal(row.chrome, chrome) || !equal(row.intent, intent) || row.expired !== expired || row.pending !== pending;
+      if (changed && row && this.protected(row)) row.deferred = true;
+      else if (changed) {
+        const reuse = sameBody && descriptor.kind === "message" && item.type === "say";
+        const lifetime = reuse ? row.lifetime : { disposed: false, cleanup: new Set() };
+        const fragment = document.createDocumentFragment();
+        appendConversationRow(fragment, descriptor, { ...options, omitContent: reuse, lifetime });
+        let nodes = Array.from(fragment.childNodes);
+        const before = row?.nodes.find(node => node.matches?.(".ask"))?.offsetHeight;
+        if (reuse) {
+          nodes = nodes.map(node => {
+            const saved = node.matches?.(".msg") ? row.nodes.find(old => old.matches?.(".msg")) : node.matches?.(".atts") ? row.nodes.find(old => old.matches?.(".atts")) : null;
+            if (!saved) return node;
+            saved.className = node.className;
+            if (saved.matches(".msg")) {
+              saved.querySelector(".reactions")?.remove();
+              const reactions = node.querySelector(".reactions"); if (reactions) saved.append(reactions);
+            }
+            return saved;
+          });
+        }
+        if (row) {
+          this.position.unobserve(row.nodes);
+          if (!reuse) dispose(row);
+          for (const node of row.nodes) if (!nodes.includes(node)) { if (node === cursor) cursor = node.nextSibling; node.remove(); }
+        }
+        row = { descriptor, content, chrome, intent, expired, pending, nodes, lifetime, before };
+        this.rows.set(descriptor.key, row);
+        for (const node of nodes) if (node.nodeType === 1) node.dataset.rowKey = descriptor.key;
+        this.position.observe(nodes);
+        const seq = Number(item?.seq);
+        if (this.fresh && motion() && (!Number.isFinite(seq) || seq > this.newest) && !before) {
+          const localCopy = descriptor.kind === "message" && item.side === "owner" && settled > 0;
+          if (localCopy) settled--;
+          else if (descriptor.kind !== "state" && descriptor.kind !== "intro") for (const node of nodes) if (node.matches?.(".msg,.a-card")) node.classList.add("enter");
+        }
+        if (Number.isFinite(seq)) this.newest = Math.max(this.newest, seq);
+      }
+      // Reuse nodes in place; detaching a selected subtree into a fragment would destroy the range.
+      for (const node of row.nodes) { if (node !== cursor) this.root.insertBefore(node, cursor); cursor = node.nextSibling; }
+      if (row.before !== undefined) {
+        const card = row.nodes.find(node => node.matches?.(".ask"));
+        const height = card?.offsetHeight;
+        if (motion() && row.before > height + 4) {
+          const css = getComputedStyle(document.documentElement);
+          card.animate?.([{ height: `${row.before}px`, overflow: "hidden" }, { height: `${height}px`, overflow: "hidden" }], { duration: parseInt(css.getPropertyValue("--dur-resolve"), 10) || 300, easing: css.getPropertyValue("--ease").trim() || "ease" });
+        }
+        delete row.before;
+      }
+    }
+    this.fresh ||= entries.length > 0 || outbox.length > 0;
+    this.root.setAttribute("aria-busy", options.loading ? "true" : "false");
+    this.position.changed();
+  }
+  jump(id) { const row = this.rows.get(`message:${id}`) ?? this.rows.get(`failure:${id}`); return this.position.jump(row?.nodes.find(node => node.matches?.(".msg,.a-card,.atts")) ?? row?.nodes[0]); }
+  dispose() {
+    this.closed = true; this.position.dispose();
+    this.root.ownerDocument.removeEventListener("selectionchange", this.retry); this.root.removeEventListener("focusout", this.retry);
+    for (const row of this.rows.values()) dispose(row); this.rows.clear(); this.latest = null;
+  }
+}
+
+/** Changed stable entities; the future window store can supply these IDs directly. */
+export function changedIds(messages) {
+  const ids = new Set();
+  for (const message of messages) {
+    for (const id of [message.id, message.reply_to, message.body?.message_id, message.body?.in_reply_to, message.turn, message.body?.turn]) if (typeof id === "string") ids.add(id);
+    for (const id of message.word === "turn.started" && Array.isArray(message.body?.ids) ? message.body.ids : []) if (typeof id === "string") ids.add(id);
+  }
+  return ids;
+}

@@ -12,16 +12,23 @@ export function framePainter(paint, schedule = (frame) => requestAnimationFrame(
   let queued = false;
   let latest;
   let conversationDirty = false;
-  return (value, conversation = true) => {
+  let dirtyIds = new Set();
+  return (value, conversation = true, ids = null) => {
     latest = value;
-    if (conversation) conversationDirty = true;
+    if (conversation) {
+      conversationDirty = true;
+      if (ids === null) dirtyIds = null;
+      else if (dirtyIds) for (const id of ids) dirtyIds.add(id);
+    }
     if (queued) return;
     queued = true;
     schedule(() => {
       queued = false;
       const redraw = conversationDirty;
+      const changed = dirtyIds;
       conversationDirty = false;
-      paint(latest, redraw);
+      dirtyIds = new Set();
+      paint(latest, redraw, changed);
     });
   };
 }
