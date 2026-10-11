@@ -174,7 +174,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const senses = createSensesService({ dataDir, now });
   const cost = createCostService({ ledger, now });
   const reflex = createReflexService({ ledger, router, registry, jev: createJev({ post: (req) => llm.post("service:reflex", req) }) });
-  const history = createHistoryService({ ledger });
+  const history = createHistoryService({ ledger, now });
   const admin = createAdminService({ ledger, router, registry, version: hubVersion(), now, startedAt });
   const widgets = createWidgetsService({ ledger, router, now });
   const directory = createDirectoryService({ registry, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords, appGranted: (app, member, word) => late.apps!.runtime.granted(app, member, word) });

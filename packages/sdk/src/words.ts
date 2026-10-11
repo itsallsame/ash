@@ -539,6 +539,20 @@ add("service:history", "turn", "request", obj({ turn: id }, ["turn"]), obj({ tur
   { label: "在看某一轮做了什么", description: "What happened in one turn of an agent: the messages it was given, its tool calls and results (summaries), and what it said." });
 add("service:history", "activity", "request", obj({ id, offset: nonnegativeSafe }, ["id"]), obj({ items: array(free), next_offset: nullable(nonnegativeSafe) }, ["items"]),
   { label: "在看活动详情", description: "The detail of one activity entry (a turn's tool calls), paged by offset." });
+const historyPageInput = { before: positiveSafe, after: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 200 }, snapshot_seq: nonnegativeSafe };
+const historyPageResult = { dataset_id: nonempty, snapshot_seq: nonnegativeSafe, items: array(free), before: nullable(positiveSafe), after: nullable(positiveSafe), has_more_before: bool, has_more_after: bool, oversized: bool };
+const historyPageRequired = ["dataset_id", "snapshot_seq", "items", "before", "after", "has_more_before", "has_more_after", "oversized"];
+add("service:history", "window", "request", obj({ ...historyPageInput, around_id: nonempty }),
+  obj({ ...historyPageResult, previous: nullable(free), next: nullable(free), intro: bool }, [...historyPageRequired, "previous", "next", "intro"]),
+  { callers: OWNER, label: "在翻聊天记录", description: "A bounded window of display items with complete answer, delivery and reaction state at snapshot_seq. Before, after and around_id are mutually exclusive. Long text is a preview and blob reference. Oversized marks one legitimate item returned alone." });
+add("service:history", "current", "request", obj(historyPageInput),
+  obj({ ...historyPageResult, revision: nonnegativeSafe, as_of: nonnegativeSafe, next_change_at: nullable(nonnegativeSafe), total_count: nonnegativeSafe, presence: free, progress: nullable(free) }, [...historyPageRequired, "revision", "as_of", "next_change_at", "total_count", "presence", "progress"]),
+  { callers: OWNER, label: "在看现在的事", description: "Authoritative current presence and bounded progress, with independently paginated pending questions and total count. Read without snapshot_seq for current state; old conversation windows do not determine current presence." });
+add("service:history", "activity.page", "request", obj({ ...historyPageInput, turn: nonempty }), obj(historyPageResult, historyPageRequired),
+  { callers: OWNER, label: "在看她做过的事", description: "Bidirectional bounded turn summaries; with turn, read its safe display steps instead. Step details remain on demand through history.activity." });
+add("service:history", "confirm", "request", obj({ ids: { type: "array", items: nonempty, maxItems: 24, uniqueItems: true }, snapshot_seq: nonnegativeSafe }, ["ids"]),
+  obj({ dataset_id: nonempty, snapshot_seq: nonnegativeSafe, ids: strings }, ["dataset_id", "snapshot_seq", "ids"]),
+  { callers: OWNER, label: "在确认消息已送达", description: "Confirm at most 24 owner's outgoing message ids against the authoritative ledger, independently of retained history pages. Does not send or execute anything." });
 add("service:blobs", "read", "request", obj({ hash: sha, offset: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 200000 } }, ["hash"]),
   obj({ text: str, offset: nonnegativeSafe, next_offset: nullable(nonnegativeSafe), size: nonnegativeSafe, mime: str }, ["text", "size"]),
   { label: "在读附件", description: "Read a text attachment of a ledger message in pieces. You can read an attachment only when you may read the message that holds it." });

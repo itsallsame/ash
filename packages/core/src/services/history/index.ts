@@ -15,6 +15,7 @@ import { WordError, type HandleContext, type Message, type WordResult } from "..
 import type { Member, WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger, LedgerMessage } from "../../kernel/ledger";
+import { createWindowReader } from "./window";
 
 export const HISTORY_ID = "service:history";
 export const DEFAULT_QUERY_LIMIT = 30;
@@ -26,6 +27,7 @@ const LANE_TURNS = 500;
 
 export interface HistoryOptions {
   ledger: Pick<Ledger, "page" | "get" | "db">;
+  now?: () => number;
 }
 
 const MAX_SEQ = Number.MAX_SAFE_INTEGER;
@@ -35,6 +37,7 @@ const MAX_BATCHES = 20;
 export function createHistoryService(options: HistoryOptions): Member {
   const { ledger } = options;
   const db = ledger.db();
+  const windows = createWindowReader(ledger, options.now);
 
   /** The turns and the messages delivered in them, for the turns that ran on a lane. */
   function laneScope(lane: string): { turns: Set<string>; ids: Set<string> } {
@@ -119,7 +122,12 @@ export function createHistoryService(options: HistoryOptions): Member {
     words: (): WordContract[] => wordsOf(HISTORY_ID),
     async handle(msg: Message, _ctx: HandleContext): Promise<WordResult | void> {
       const body = (msg.body ?? {}) as Record<string, unknown>;
+      if (["window", "current", "activity.page", "confirm"].includes(msg.word) && _ctx.caller.member !== "person:owner") throw new WordError("forbidden", "only the owner may read display history");
       switch (msg.word) {
+        case "confirm": return { data: windows.confirm(body) };
+        case "window": return { data: windows.window(body) };
+        case "current": return { data: windows.current(body) };
+        case "activity.page": return { data: windows.activityPage(body) };
         case "query": return { data: query(body) };
         case "read": return { data: read(body) };
         case "turn": return { data: turn(body) };
