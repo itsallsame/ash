@@ -97,6 +97,8 @@ const OUTCOME: Record<Exclude<SetupState, "failed">, string> = {
 
 /** A setup step that failed with something the owner can read. Never carries a credential. */
 class Failure extends Error {}
+/** The sign-in sees several accounts and none was chosen: the setup goes back to waiting for the choice. */
+class NeedAccount extends Error { constructor(readonly accounts: SetupAccount[]) { super("choose an account"); } }
 const b64u = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
 const page = (title: string, body: string) =>
   `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><body style="font-family:sans-serif;text-align:center;padding:3em 1em"><h2>${title}</h2><p>${body}</p>`;
@@ -189,7 +191,12 @@ export class RelaySetup {
     }
     this.requireBundle();
     this.move(id, "deploying");
-    void this.runDeploy(id, name, account).catch((error) => this.fail(id, this.reason(error)));
+    void this.runDeploy(id, name, account).catch((error) => {
+      if (!(error instanceof NeedAccount)) return this.fail(id, this.reason(error));
+      // The list could not be read at sign-in (or the owner's accounts changed): keep it now and ask.
+      this.d.db.prepare("INSERT OR REPLACE INTO link_setup_accounts (setup_id, accounts) VALUES (?, ?)").run(id, JSON.stringify(error.accounts));
+      this.move(id, "authorized");
+    });
     return this.info(id);
   }
 
@@ -286,7 +293,7 @@ export class RelaySetup {
     try {
       const token = await this.exchange({ grant_type: "authorization_code", code, redirect_uri: login.redirect, code_verifier: login.verifier });
       // Which accounts this sign-in can build in: the owner (or the agent) chooses when there are several. Not being able to ask now is not the end: deploy asks again.
-      accounts = await this.listAccounts(token).catch(() => []);
+      accounts = await this.listAccounts(token).catch((error) => { this.d.log?.("could not list the Cloudflare accounts", error); return []; });
     } catch (error) {
       html(500, "授权没有完成", "回到 Ash 查看原因。");
       return this.fail(id, this.reason(error));
@@ -377,7 +384,7 @@ export class RelaySetup {
       if (!accounts.some((a) => a.id === chosen)) throw new Failure("the sign-in cannot see the account that was chosen");
       return chosen;
     }
-    if (accounts.length > 1) throw new Failure("the sign-in sees more than one Cloudflare account and none was chosen");
+    if (accounts.length > 1) throw new NeedAccount(accounts);
     return accounts[0]!.id;
   }
 

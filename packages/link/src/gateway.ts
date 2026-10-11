@@ -38,6 +38,8 @@ export function rawSignature(sig: string): string {
   if (!raw) throw new Error("the owner's signature is neither raw nor DER");
   return Buffer.from(raw).toString("base64url");
 }
+/** True when a request to the relay got no answer (a slow or lost connection): the relay is unavailable for now, not broken. */
+export const relayUnanswered = (error: unknown): boolean => error instanceof GatewayError && (error.code === "timeout" || error.code === "ws_error");
 const problemOf = (error: unknown): RelayProblem => {
   if (error instanceof RelayError) return error.problem;
   if (error instanceof GatewayError) {

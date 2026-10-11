@@ -252,6 +252,23 @@ test("several Cloudflare accounts under one sign-in: they are listed, none is gu
   assert.deepEqual(cf.calls.filter((c) => /accounts\/acc2\/workers/.test(c)), [], "the other account was never touched");
 });
 
+test("when the accounts could not be read at sign-in and there turn out to be several, deploy does not guess: the setup goes back to waiting for the choice, with the list", async (t) => {
+  const b = await build(t);
+  b.cf.accounts = [{ id: "acc1", name: "Personal" }, { id: "acc2", name: "Work" }];
+  b.cf.failures.set("GET /accounts", { status: 500, message: "try later" });
+  const started = await b.setup.start("person:owner");
+  await b.cf.signIn(b.card()!.url);
+  await eventually(() => b.setup.status(started.setup_id).state === "authorized", "authorized");
+  assert.equal(b.setup.status(started.setup_id).accounts, undefined, "the list could not be read");
+  b.setup.deploy(started.setup_id, "my-relay");
+  await eventually(() => b.setup.status(started.setup_id).accounts?.length === 2, "back to waiting, with the list");
+  assert.equal(b.setup.status(started.setup_id).state, "authorized");
+  assert.equal(b.cf.uploads.length, 0);
+  b.setup.deploy(started.setup_id, "my-relay", "acc2");
+  await eventually(() => b.setup.status(started.setup_id).state === "connected", "connected");
+  assert.deepEqual(b.cf.uploads.map((u) => u.account), ["acc2"]);
+});
+
 test("one Cloudflare account is used without asking, and then the status lists nothing to choose", async (t) => {
   const { cf, setup, id } = await authorized(t);
   assert.deepEqual(setup.status(id).accounts, [{ id: "acc1", name: "Owner's account" }]);

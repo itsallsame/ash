@@ -13,8 +13,7 @@ import { createHash } from "node:crypto";
 import { WordError } from "../../../../../sdk/src/message";
 import type { Db } from "../../../kernel/ledger";
 import type { Vault } from "../../../kernel/types";
-import { GatewayError } from "ash-gateway/client/client";
-import { Relay, RelayError, type BrowserOpen, type RelayDevice, type RelayHttpRequest, type RelayHttpResponse, type RelayOptions, type RelayPairRequest } from "../../../../../link/src/gateway";
+import { Relay, RelayError, relayUnanswered, type BrowserOpen, type RelayDevice, type RelayHttpRequest, type RelayHttpResponse, type RelayOptions, type RelayPairRequest } from "../../../../../link/src/gateway";
 import type { LinkSocket } from "../../../../../link/src/socket";
 import type { Devices, PairKind, PairingGateway, RelayPermission } from "../hands/devices";
 import type { HandRegistry } from "../hands/registry";
@@ -301,7 +300,7 @@ export class GatewayControl {
   private async asked<T>(call: () => Promise<T>): Promise<T> {
     try { return await call(); }
     catch (error) {
-      if (error instanceof GatewayError && (error.code === "timeout" || error.code === "ws_error")) {
+      if (relayUnanswered(error)) {
         throw new WordError("unavailable", "the relay did not answer in time", { recovery_hint: "稍后重试：the connection to the relay is slow or was interrupted; try again in a moment." });
       }
       throw error;
