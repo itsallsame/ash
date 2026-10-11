@@ -41,9 +41,6 @@ export class PresenceBar {
     this.notice = root.querySelector("#presenceNotice");
     this.banner = root.querySelector("#netBanner");
     this.bannerText = root.querySelector("#netBannerText");
-    // The home page repeats the same face and state in its header; it is optional in reduced shells.
-    this.sheetAvatar = root.querySelector("#agentAvatar");
-    this.sheetState = root.querySelector("#agentState");
     this.look = LOOK.idle;
     this.known = false;
     this.net = "connecting";
@@ -69,7 +66,6 @@ export class PresenceBar {
       this.state.title = "";
       this.avatar.src = avatarUrl("default");
       this.paint();
-      this.mirror();
       return;
     }
     const value = typeof presence.text === "string" && presence.text ? presence.text : DEFAULT_TEXT[presence.state];
@@ -80,7 +76,6 @@ export class PresenceBar {
     this.state.title = value;
     this.avatar.src = avatarUrl(face);
     this.paint();
-    this.mirror();
   }
 
   /** Face, dot and which state line shows: offline dims the face and shows the connection line; so does connecting. */
@@ -94,14 +89,6 @@ export class PresenceBar {
     if (this.face) this.face.className = `av av-36${kind === "online" ? this.look.ring : ""}`;
     if (this.state) this.state.className = `state${kind === "online" ? this.look.tone : ""}`;
     this.dot.className = kind === "offline" ? "dot off" : kind === "connecting" ? "dot gone" : this.look.dot;
-  }
-
-  mirror() {
-    if (this.sheetAvatar && this.sheetAvatar.src !== this.avatar.src) this.sheetAvatar.src = this.avatar.src;
-    if (this.sheetState) {
-      this.sheetState.textContent = this.state.textContent || "在线";
-      this.sheetState.dataset.dot = this.look === LOOK.working || this.look === LOOK.thinking || this.look === LOOK.listening || this.look === LOOK.waiting_you ? "running" : this.known && this.look.dot === "dot" ? "idle" : "";
-    }
   }
 
   network(status, detail = "") {

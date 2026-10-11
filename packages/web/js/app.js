@@ -6,9 +6,7 @@ import { presentUiOpen } from "./suggestions.js";
 import { composerContext } from "./composer.js";
 import { openInlineBlob, prepareUploads } from "./attachments.js";
 import { addPicked, attachMenu } from "./attach-menu.js";
-import { SettingsControls } from "./settings.js";
 import { PresenceBar } from "./presence.js";
-import { AgentSheet } from "./sheet-agent.js";
 import { answerGateAsk } from "./sheet-approvals.js";
 import { IdentityName } from "./identity-name.js";
 import { Files } from "./files.js";
@@ -16,8 +14,10 @@ import { framePainter } from "./frame-painter.js";
 import { agentPicker } from "./agent-picker.js";
 import { addIcon, avatarUrl } from "./chat-ui.js";
 
-/** While the home page is not built: which tab of the old person sheet a home section stands for. */
-const SECTION_TAB = Object.freeze({ waiting: "approvals", upcoming: "upcoming", memory: "memory", identity: "identity", activity: "activity" });
+/** The pages of her home that the kernel (or the agent) can ask this page to open, by the name it uses; others are aliases. */
+const HOME_SECTIONS = new Set(["waiting", "upcoming", "memory", "promises", "hands", "backstage", "identity", "files", "activity",
+  "settled", "device", "connect", "browser", "apps", "app", "keys", "model", "usage", "advanced"]);
+const TARGET_SECTION = Object.freeze({ approvals: "waiting", turn: "activity" });
 
 export class Timeline {
   constructor(net, onChange = () => {}) {
@@ -137,7 +137,6 @@ export function render(view, outbox = [], openInline, presenceBar, cardActions) 
   if (nearEnd) log.scrollTop = log.scrollHeight;
   else log.scrollTop = oldTop + Math.max(0, log.scrollHeight - oldHeight);
   presenceBar?.render(loading ? { state: "unknown" } : view.presence);
-  cardActions?.onDrawn?.();
 }
 
 /** Motion of the design: a new message rises 6px and fades in (240 ms), an answered card folds up (300 ms). */
@@ -170,7 +169,6 @@ export function boot({ bridge } = {}) {
   performance.mark("shell.boot");
   const form = document.querySelector("#f");
   const input = document.querySelector("#t");
-  let agentSheet;
   let identityName;
   const presenceBar = new PresenceBar(document, { onOpen: () => openHome({ agent: recipient?.picked() }) });
   const connection = document.querySelector("#connection");
@@ -211,30 +209,11 @@ export function boot({ bridge } = {}) {
     selected.append(chip);
   };
   let timeline;
-  let settings;
   let recipient;
   let files;
   /** Ask for her home, or for the apps page (`page: "apps"`): whoever owns that page answers the event. */
   const openHome = ({ page = "home", agent, section } = {}) => window.dispatchEvent(new CustomEvent("ash:open",
     { cancelable: true, detail: { page, ...(agent ? { agent } : {}), ...(section ? { section } : {}) } }));
-  /**
-   * Until the home page is built, an event nobody answered opens the old screens: the settings drawer for the home itself,
-   * the file browser for the section "files", and the matching tab of the person sheet for the others. It waits one turn of
-   * the event loop so that the page that does answer has had its say first.
-   */
-  window.addEventListener("ash:open", (event) => setTimeout(() => {
-    const { page, section } = event.detail ?? {};
-    if (event.defaultPrevented || page !== "home" || !agentSheet || !settings) return;
-    if (section === "files") { files.browse(); return; }
-    const tab = SECTION_TAB[section];
-    if (tab && agentSheet.open()) {
-      document.querySelector("#drawer").classList.remove("open");
-      void agentSheet.show(tab);
-      return;
-    }
-    if (!agentSheet.close()) return;
-    if (document.querySelector("#drawer").classList.toggle("open")) settings.opened();
-  }));
   const askIntents = new Map();
   const optionPending = new Set();
   /** Long texts read from the ledger on demand, by blob hash. */
@@ -245,12 +224,6 @@ export function boot({ bridge } = {}) {
     get primary() { return net.primary; },
     loading: () => !timeline?.ready,
     atStart: () => timeline?.exhausted === true,
-    // A conversation she began and the owner has not answered yet: the field asks for a name.
-    onDrawn: () => {
-      if (recipient?.picked()) return;
-      const first = log.querySelector?.(".intro") && !log.querySelector(".msg.me, .atts.me");
-      input.placeholder = first ? "叫我什么都行…" : `跟 ${presenceBar.title.textContent || "Ash"} 说点什么…`;
-    },
     herName: () => presenceBar.title.textContent || "Ash",
     onRetry: async (failure) => {
       await net.enqueueSay(failure.retry.text, [], null, failure.retry.to ?? recipient.target());
@@ -292,28 +265,19 @@ export function boot({ bridge } = {}) {
     },
   };
   const clearContext = context.clear;
-  const progress = () => renderProgress(progressRoot, timeline?.view, { onOpen: () => {
-    if (agentSheet?.open()) void agentSheet.show("activity");
-  } });
-  /** The kernel (or the agent) asks the page to open a page: settings, the activity of a turn, a file... */
+  const progress = () => renderProgress(progressRoot, timeline?.view, { onOpen: () => { openHome({ section: "activity" }); } });
+  /** The kernel (or the agent) asks the page to open a page: her home or one of its pages, a file... */
   const openUiTarget = async (target, request = {}) => {
     if (!net.session) return false;
-    if (target === "settings") {
-      if (!agentSheet.close()) return false;
-      document.querySelector("#drawer").classList.add("open");
-      settings.opened();
-      return true;
-    }
     if (target === "file") {
       if (typeof request.id !== "string" || !request.id) return false;
       void files.open({ workspace: "main", path: request.id });
       return true;
     }
-    const tab = target === "turn" ? "activity" : target;
-    if (!agentSheet.open()) return false;
-    document.querySelector("#drawer").classList.remove("open");
-    await agentSheet.show(tab);
-    return agentSheet.activeTab === tab;
+    const section = TARGET_SECTION[target] ?? (HOME_SECTIONS.has(target) ? target : undefined);
+    if (target !== "settings" && !section) return false;
+    // The answer is whether the home page took the event.
+    return !openHome({ section });
   };
   const openInline = async (messageId, index) => {
     const ref = timeline.inlineAttachment(messageId, index);
@@ -334,16 +298,12 @@ export function boot({ bridge } = {}) {
       return { ok: true, data: { opened } };
     },
     onState: (status, detail) => {
-      settings?.network(status);
-      agentSheet?.network(status);
       if (status !== "online") identityName?.reset();
       presenceBar.network(status, status === "closed" ? detail : "");
       if (status === "send-error" && detail) connection.title = String(detail.message || detail);
       if (status === "online" || status === "connecting") sendable();
     },
     onOpen: () => {
-      settings?.connected();
-      agentSheet?.connected();
       void identityName?.refresh();
       void recipient?.refresh();
       net.setVisible(!document.hidden);
@@ -374,30 +334,21 @@ export function boot({ bridge } = {}) {
     if (conversation) render(view, net.outbox, openInline, presenceBar, cardActions);
     else presenceBar?.render(timeline?.ready ? view.presence : { state: "unknown" });
     progress();
-    agentSheet?.update();
     setTimeout(fillScreen, 0);
   });
   timeline = new Timeline(net, paintView);
   identityName = new IdentityName(net, (name) => {
     presenceBar.setName(name);
-    document.querySelector("#agentSheetHeader h2").textContent = name;
-    agentSheet?.setName(name);
-    settings?.setName(name);
   });
-  settings = new SettingsControls(document.querySelector("#panel"), net,
-    { onClose: () => document.querySelector("#drawer").classList.remove("open") });
-  agentSheet = new AgentSheet(document.querySelector("#agentSheet"), net, { getView: () => timeline.view,
-    onAskAbout: ({ turn, text: prefill }) => {
-      if (!agentSheet.close()) return;
-      context.askAbout({ turn, text: prefill });
-      sendable();
-    }, onPrefill: (prefill) => {
-      if (!agentSheet.close()) return;
-      clearContext();
-      input.value = prefill;
-      sendable();
-      input.focus();
-    }, onIdentityChanged: () => { void identityName.refresh(); } });
+  // Her home puts words in the box with `ash:compose` ({text, turn?}); with a turn they come as a question about that turn.
+  window.addEventListener("ash:compose", (event) => {
+    const { text: words, turn } = event.detail ?? {};
+    if (typeof words !== "string" || event.defaultPrevented) return;
+    event.preventDefault();
+    if (typeof turn === "string" && turn) context.askAbout({ turn, text: words });
+    else { clearContext(); input.value = words; input.focus(); }
+    sendable();
+  });
 
   // The owner is typing to an agent: said while there is text, every few seconds, and unsaid when it is sent or cleared.
   let lastTyping = 0;
@@ -468,7 +419,6 @@ export function boot({ bridge } = {}) {
     else openHome({ page: "apps" });
   });
   window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); net.stop(); });
-  window.addEventListener("offline", () => agentSheet.reset());
   window.addEventListener("online", () => net.reconnect());
   window.addEventListener("pageshow", (event) => { if (event.persisted) net.start(); });
   net.start();

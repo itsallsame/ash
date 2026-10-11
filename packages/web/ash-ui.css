@@ -14,10 +14,13 @@
   /* Earlier names, kept so pages not yet moved over take the new colours. New code uses the token names on the right. */
   --fg:var(--text); --mute:var(--text-2); --muted:var(--text-2);
   --me:var(--you); --me-fg:var(--on-you); --accent:var(--you);
-  --card:var(--surface); --chip:var(--surface-2); --seg:var(--surface-3);
+  --card:var(--surface); --chip:var(--surface-2); --seg:var(--elev);
   /* --bg --line --ok --warn --err keep their names with the new meaning: --ok/--warn/--err are text tones; for a dot, badge or
      button fill use --ok-fill/--warn-fill/--err-fill. */
 }
+
+/* The page's base text: the design's font, text colour, tabular numbers (the design puts these on the screen wrapper). */
+body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
 
 /* ---------- 2. Type scale（中文为主，行高偏松） ---------- */
 .tx-display{font-size:30px;line-height:38px;font-weight:700;letter-spacing:.01em;color:var(--ink)}
@@ -202,3 +205,11 @@
 @keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 .hr{height:.5px;background:var(--line);flex:none}
 
+@media (prefers-reduced-motion:reduce){.av-live::before,.av-breath::before,.av-wait::before,.a-typing i,.spinner,.sk::after{animation:none}}
+
+/* 滚动区里的直接子元素不被压缩，超出部分就是「还能往下滑」 */
+.page>*,.stream>*{flex-shrink:0}
+
+/* The design draws these with the browser's default box model (padding and border outside the stated size); the page's
+   `* { box-sizing: border-box }` would make them smaller than the reference. */
+.spinner,.pill,.av .dot,.codeblk .hd{box-sizing:content-box}

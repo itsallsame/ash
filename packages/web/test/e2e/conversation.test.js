@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { echoAgent, eventually, gateAsk, openHome, openPage, requested, withBrowser } from "./support.js";
+import { echoAgent, eventually, gateAsk, openPage, requested, withBrowser } from "./support.js";
+import { homeHub, openHome } from "./home-support.js";
 
 test(...withBrowser("the owner sends from the page, the agent answers, and a reload shows the same conversation", async ({ kernel, browser }) => {
   echoAgent(kernel);
@@ -69,15 +70,17 @@ test(...withBrowser("an approval card is answered from the conversation: one res
 }));
 
 test(...withBrowser("an approval can also be answered on the approvals page, and a question from an agent with its own options on the card", async ({ kernel, browser }) => {
+  homeHub(kernel);
   const ask = gateAsk(kernel, { title: "改审批规则", ts: Date.now() });
   const question = kernel.append({ from: "agent:main", to: "person:owner", kind: "request", word: "ask", ts: Date.now(), body: { title: "晚饭吃什么？", human_kind: "question", options: [{ id: "noodles", label: "面" }, { id: "rice", label: "饭" }], expires_at: Date.now() + 3_600_000 } });
   const { page } = await openPage(browser, kernel);
-  await openHome(page, "waiting");
-  const sheet = page.locator('#agentPanel section[data-tab="approvals"]');
-  await sheet.locator(".sheet-approval", { hasText: "改审批规则" }).getByRole("button", { name: "不允许" }).click();
-  await page.waitForFunction(() => !document.querySelector('#agentPanel [data-ask-id]'));
+  await openHome(page, { page: "home", section: "waiting" }, '#home .hm-screen[data-page="waiting"]');
+  await page.locator("#home article", { hasText: "改审批规则" }).getByRole("button", { name: "不允许" }).click();
+  await requested(kernel, (r) => r.kind === "response" && r.reply_to === ask.id);
   assert.deepEqual(kernel.ledger.find((m) => m.reply_to === ask.id).body.result.data, { choice: "deny" });
-  await page.locator("#agentClose").click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.locator("#home").waitFor({ state: "hidden" });
   await page.locator(".card.ask", { hasText: "晚饭吃什么" }).getByRole("button", { name: "面" }).click();
   await page.locator(".card.ask .opt.on", { hasText: "面" }).waitFor();
   assert.deepEqual(kernel.ledger.find((m) => m.reply_to === question.id).body.result.data, { choice: "noodles" });
@@ -134,37 +137,48 @@ test(...withBrowser("a message typed while the connection is down is shown as un
   assert.equal(await page.locator("#log .msg.me", { hasText: "typed offline" }).count(), 1);
 }));
 
-test(...withBrowser("the top bar has her and the apps: tapping her asks for her home (with the helper's id when talking to one), tapping the apps asks for the apps page", async ({ kernel, browser }) => {
-  kernel.on("service:agents", "list", { agents: [{ id: "agent:main", name: "Ash", summary: "", state: "idle", primary: true }, { id: "agent:helper", name: "小研", summary: "", state: "idle" }] });
+test(...withBrowser("the top bar has her and the apps: tapping her opens her home (the helper's when talking to one), tapping the apps asks for the apps page", async ({ kernel, browser }) => {
+  homeHub(kernel);
   const { page } = await openPage(browser, kernel);
-  assert.equal(await page.locator("#files, #menu").count(), 0, "no files button and no menu button");
-  await page.evaluate(() => { window.opened = []; window.addEventListener("ash:open", (event) => { window.opened.push(event.detail); if (event.detail.page === "apps") event.preventDefault(); }); });
+  assert.equal(await page.locator("#files, #menu, #drawer, #agentSheet").count(), 0, "no files button, no menu, no old sheets");
+  await page.evaluate(() => { window.opened = []; window.addEventListener("ash:open", (event) => { window.opened.push(event.detail); }); });
+  await page.locator("#presence").click();
+  await page.locator('#home .hm-screen[data-page="home"]').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.opened), [{ page: "home" }]);
+  await page.keyboard.press("Escape");
+  await page.locator("#home").waitFor({ state: "hidden" });
+  // The apps page: in a browser it is the home's apps page; in the app it is native and no event is announced.
   await page.locator("#apps").click();
-  assert.deepEqual(await page.evaluate(() => window.opened), [{ page: "apps" }]);
-  // In the app the apps page is native.
-  await page.evaluate(() => { window.nativePages = []; globalThis.__ashOpenNative = (name) => window.nativePages.push(name); });
+  await page.locator('#home .hm-screen[data-page="apps"]').waitFor();
+  assert.deepEqual((await page.evaluate(() => window.opened)).at(-1), { page: "apps" });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.locator("#home").waitFor({ state: "hidden" });
+  await page.evaluate(() => { window.opened = []; window.nativePages = []; globalThis.__ashOpenNative = (name) => window.nativePages.push(name); });
   await page.locator("#apps").click();
   assert.deepEqual(await page.evaluate(() => window.nativePages), ["apps"]);
-  assert.equal((await page.evaluate(() => window.opened)).length, 1, "the app does not announce the event");
-  await page.locator("#presence").click();
-  assert.deepEqual((await page.evaluate(() => window.opened)).at(-1), { page: "home" });
-  // Nobody answered the home event: the old drawer stands in for it.
-  await page.locator("#drawer.open").waitFor();
-  await page.locator("#drawer .set-close").click();
+  assert.deepEqual(await page.evaluate(() => window.opened), []);
   // Talking to a helper: her home is the helper's.
   await page.locator("#f .to").click();
   await page.locator(".layer .li", { hasText: "小研" }).click();
-  await page.evaluate(() => { window.opened = []; });
   await page.locator("#presence").click();
-  assert.deepEqual((await page.evaluate(() => window.opened)).at(-1), { page: "home", agent: "agent:helper" });
+  await page.locator('#home .hm-screen[data-page="home"]').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.opened), [{ page: "home", agent: "agent:xiaoyan" }]);
 }));
 
-test(...withBrowser("a page that answers the home event keeps the old drawer closed", async ({ kernel, browser }) => {
+test(...withBrowser("her home puts words in the box with ash:compose: plain words fill it, words about a turn come as a removable chip", async ({ kernel, browser }) => {
   const { page } = await openPage(browser, kernel);
-  await page.evaluate(() => { window.addEventListener("ash:open", (event) => event.preventDefault()); });
-  await page.locator("#presence").click();
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator("#drawer.open, #agentSheet.open").count(), 0);
+  const compose = (detail) => page.evaluate((d) => !window.dispatchEvent(new CustomEvent("ash:compose", { cancelable: true, detail: d })), detail);
+  assert.equal(await compose({ text: "帮我看看这个" }), true, "the page took the words");
+  assert.equal(await page.locator("#t").inputValue(), "帮我看看这个");
+  assert.equal(await page.evaluate(() => document.activeElement.id), "t");
+  assert.equal(await page.locator("#send").evaluate((el) => el.classList.contains("idle")), false, "there is something to send now");
+  assert.equal(await compose({ text: "关于查资料，", turn: "t_one" }), true);
+  assert.equal(await page.locator("#t").inputValue(), "关于查资料，");
+  await page.locator("#context .context-chip", { hasText: "关于这件事" }).waitFor();
+  await page.locator("#context .context-chip button").click();
+  assert.equal(await page.locator("#context").isHidden(), true);
+  assert.equal(await page.locator("#t").inputValue(), "关于查资料，", "removing the chip keeps what was written");
 }));
 
 test(...withBrowser("a turn that ended badly leaves one card with a retry that says the same words again", async ({ kernel, browser }) => {

@@ -27,11 +27,6 @@ export async function openPage(browser, kernel, { width = 412, height = 915 } = 
   return { page, context };
 }
 
-/**
- * What tapping her does: the page announces `ash:open` for her home. Until the home page is built the old screens answer:
- * no section opens the settings drawer, "files" the file browser, the others the person sheet at that tab.
- */
-export const openHome = (page, section) => page.evaluate((s) => window.dispatchEvent(new CustomEvent("ash:open", { cancelable: true, detail: { page: "home", ...(s ? { section: s } : {}) } })), section);
 
 /** An agent that reads what the owner says, works a moment (a tool call) and answers `echo: <text>`. */
 export function echoAgent(kernel, { agent = "agent:main", tool = true } = {}) {

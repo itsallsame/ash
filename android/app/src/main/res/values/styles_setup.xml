@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The first-launch guide: the page colour is the design's own (ash_bg flips with the system's dark mode). -->
+    <style name="Ash.Setup.Dark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ash_bg</item>
+        <item name="android:statusBarColor">@color/ash_bg</item>
+        <item name="android:navigationBarColor">@color/ash_bg</item>
+    </style>
+    <style name="Ash.Setup.Light" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ash_bg</item>
+        <item name="android:statusBarColor">@color/ash_bg</item>
+        <item name="android:navigationBarColor">@color/ash_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
