@@ -19,7 +19,7 @@ export class LlmError extends Error {
  * What the hub knows about one model key's standing with its provider. `ok`: the provider accepted it (a check or a call).
  * `rejected`: the provider refused the key itself (a 401 on a call; 401 or 403 on the key check): `reason` is a short
  * Chinese label (已过期, 无效, ...) and `detail` the provider's own words. `low_balance`: the key is accepted but the
- * account has no balance left (DeepSeek's `is_available: false`), so calls will fail; it is not a bad key. `unknown`: not
+ * account has no balance left (DeepSeek's `is_available: false`, or a 402 on a call), so calls will fail; it is not a bad key. `unknown`: not
  * checked yet, or the check could not reach the provider. Never holds the key.
  */
 export interface KeyHealth {
@@ -88,8 +88,8 @@ const MAX_MESSAGE_CHARS = 200_000;
 const MAX_BODY_CHARS = 200_000;
 const MAX_ANSWER_CHARS = 1_000_000;
 /**
- * A call that comes back 403 or 402 says little about the key: OpenRouter also answers 403 for a guardrail, a moderation
- * block or a spent budget, and 402 is a payment problem. Such a call only makes the hub ask the key check, at most this often.
+ * A call that comes back 403 says little about the key: OpenRouter also answers 403 for a guardrail, a moderation block or a
+ * spent budget. Such a call only makes the hub ask the key check, at most this often. (A 402 is plain: the account has no money.)
  */
 const RECHECK_AFTER_MS = 30_000;
 /** A free, authenticated GET on each provider (DeepSeek: account balance; OpenRouter: the key's own info). 401/403 means the key is refused. */
@@ -201,13 +201,15 @@ export function createLlm(options: LlmOptions): Llm {
     const report: LlmUsageReport = { caller, provider: tally.provider, model: tally.model, input_tokens: tally.input, output_tokens: tally.output,
       ...(tally.cost === undefined ? {} : { cost: tally.cost }), ok: !failure, at };
     try { options.report(report); } catch { /* accounting never changes the answer */ }
-    // What the provider said about the key: a 401 marks it, a success clears the mark, a 402 or 403 sends the key check to
-    // find out whether the key itself is at fault (in the background), anything else changes nothing.
+    // What the provider said about the key: a 401 marks it rejected, a 402 marks it low_balance (the key works, the account has
+    // no money), a success clears the mark, a 403 sends the key check to find out whether the key itself is at fault (in the
+    // background), anything else changes nothing.
     if (tally.key) {
       const status = httpStatus(failure);
       if (status === 401) { const http = (failure as LlmError).http!; remember(tally.provider, tally.epoch, { status: "rejected", reason: refusal(401, http.detail), detail: http.detail }); }
+      else if (status === 402) remember(tally.provider, tally.epoch, { status: "low_balance", reason: "余额不足" });
       else if (!failure) remember(tally.provider, tally.epoch, { status: "ok" });
-      else if (status === 402 || status === 403) void verifyNow(tally.provider, RECHECK_AFTER_MS).catch(() => {});
+      else if (status === 403) void verifyNow(tally.provider, RECHECK_AFTER_MS).catch(() => {});
     }
     if (failure) throw failure;
     return value as T;
@@ -258,7 +260,9 @@ export function createLlm(options: LlmOptions): Llm {
     } catch (error) {
       found = { status: "unknown", reason: error instanceof LlmError && error.code === "timeout" ? "连接服务商超时" : "连不上服务商" };
     }
-    // Not being able to reach the provider says nothing about the key: it never replaces a verdict already known.
+    // Not being able to reach the provider says nothing about the key: it never replaces a verdict already known. OpenRouter's key
+    // info answers 200 even when the credits are spent, so it cannot clear the low balance a call found; only a good call does.
+    if (found.status === "ok" && provider === "openrouter" && health.get(provider)?.status === "low_balance") return snapshot(provider);
     if (found.status !== "unknown" || (health.get(provider)?.status ?? "unknown") === "unknown") remember(provider, epoch, found);
     return snapshot(provider);
   }

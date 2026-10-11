@@ -10,7 +10,7 @@ import { DEFAULT_MODEL, KEY_REF, LlmError, type Llm, type LlmMessage, type LlmEr
 export const LLM_ID = "service:llm";
 /** A completion asked for through the word may take longer than the hub's own quick judgements (5 s), within the word's 60 s. */
 export const SERVICE_TIMEOUT_MS = 30_000;
-/** An agent or an app asking `keys.check` again within this long gets the last answer, so none can loop on the provider. The owner always asks afresh. */
+/** An agent asking `keys.check` again within this long gets the last answer, so none can loop on the provider (an app cannot call it at all). The owner always asks afresh. */
 export const KEY_CHECK_COOLDOWN_MS = 30_000;
 
 const CODES: Record<LlmErrorCode, ErrorCode> = {
