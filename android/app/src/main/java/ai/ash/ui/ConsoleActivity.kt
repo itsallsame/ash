@@ -39,7 +39,7 @@ import org.json.JSONObject
 class ConsoleActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var root: LinearLayout
-    private var part: Checkup.Part? = null
+    private var part: OnboardingPlan.Part? = null
     private var items: List<Checkup.Item>? = null
     private var kernelLine = ""
     private var appLine = ""
@@ -54,7 +54,7 @@ class ConsoleActivity : Activity() {
         setTheme(if (night) R.style.Ash_Dark else R.style.Ash_Light)
         super.onCreate(savedInstanceState)
         ai.ash.apps.Ui.systemBars(this)
-        part = Checkup.Part.of(savedInstanceState?.getString(STATE_PART) ?: intent?.getStringExtra(EXTRA_PART))
+        part = Checkup.part(savedInstanceState?.getString(STATE_PART) ?: intent?.getStringExtra(EXTRA_PART))
         root = AshPage.screen(this)
         setContentView(root.also { ai.ash.apps.Ui.insets(it) }) // edge to edge (targetSdk 35)
         render()
@@ -63,7 +63,7 @@ class ConsoleActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        part = Checkup.Part.of(intent.getStringExtra(EXTRA_PART))
+        part = Checkup.part(intent.getStringExtra(EXTRA_PART))
         render()
     }
 
@@ -121,7 +121,7 @@ class ConsoleActivity : Activity() {
         val list = items
         val p = part
         val c = AshUi.p(this)
-        val sig = "${p?.id}|${night}|" + (list?.joinToString(",") { "${it.id}:${it.state}:${it.note}:${it.awaitsWord}" } ?: "-") + "|$kernelLine" + switchSig()
+        val sig = "${p?.id}|$night|" + (list?.joinToString(",") { "${it.id}:${it.state}:${it.note}:${it.awaitsWord}" } ?: "-") + "|$kernelLine" + switchSig()
         if (sig == shown) return
         shown = sig
         val y = scroll?.scrollY ?: 0
@@ -132,7 +132,7 @@ class ConsoleActivity : Activity() {
             scroll = s
             root.addView(s, LinearLayout.LayoutParams(-1, 0, 1f))
         } else {
-            root.addView(AshPage.navbar(this, p.title, "返回") { if (intent?.getStringExtra(EXTRA_PART) == null) { part = null; render() } else finish() })
+            root.addView(AshPage.navbar(this, Checkup.title(p), "返回") { if (intent?.getStringExtra(EXTRA_PART) == null) { part = null; render() } else finish() })
             val s = AshPage.scroll(this, 14, partPage(p, list), topDp = 6)
             scroll = s
             root.addView(s, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -143,14 +143,14 @@ class ConsoleActivity : Activity() {
 
     private fun switchSig() = "|${ScreenRecovery.enabled(this)}|${TaskCapsule.residentKept(this)}|${NotificationSenseSettings.enabled(this)}|${NotificationSenseSettings.granted(this)}"
 
-    private fun partIcon(p: Checkup.Part) = when (p) {
-        Checkup.Part.BRAIN -> R.drawable.ash_ic_cpu
-        Checkup.Part.ALARM -> R.drawable.ash_ic_alarm
-        Checkup.Part.NOTIFY -> R.drawable.ash_ic_bell
-        Checkup.Part.AWAKE -> R.drawable.ash_ic_bolt
-        Checkup.Part.EYES -> R.drawable.ash_ic_eye
-        Checkup.Part.FILES -> R.drawable.ash_ic_image
-        Checkup.Part.LOCATION -> R.drawable.ash_ic_pin
+    private fun partIcon(p: OnboardingPlan.Part) = when (p.id) {
+        "brain" -> R.drawable.ash_ic_cpu
+        "alarm" -> R.drawable.ash_ic_alarm
+        "notify" -> R.drawable.ash_ic_bell
+        "awake" -> R.drawable.ash_ic_bolt
+        "eyes" -> R.drawable.ash_ic_eye
+        "files" -> R.drawable.ash_ic_image
+        else -> R.drawable.ash_ic_pin
     }
 
     private fun overview(list: List<Checkup.Item>?): List<View> {
@@ -172,7 +172,7 @@ class ConsoleActivity : Activity() {
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             })
             if (sum != null) addView(AshUi.vstack(this@ConsoleActivity, 8).apply {
-                Checkup.Part.entries.chunked(2).forEach { pair ->
+                OnboardingPlan.PARTS.chunked(2).forEach { pair ->
                     addView(AshUi.hstack(this@ConsoleActivity, 8).apply {
                         pair.forEach { addView(partCell(it, sum.todo(it)), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
                         if (pair.size == 1) addView(View(this@ConsoleActivity), LinearLayout.LayoutParams(0, 0, 1f))
@@ -220,9 +220,9 @@ class ConsoleActivity : Activity() {
             (getChildAt(0) as? LinearLayout)?.let { col -> for (i in 0 until col.childCount) (col.getChildAt(i) as? TextView)?.apply { maxLines = 3; ellipsize = null } }
         }
 
-    private fun partCell(p: Checkup.Part, todo: Int): View {
+    private fun partCell(p: OnboardingPlan.Part, todo: Int): View {
         val c = AshUi.p(this)
-        val trouble = todo > 0 && !p.optional
+        val trouble = todo > 0 && !Checkup.optional(p)
         val line = Checkup.cellText(p, todo)
         // 14dp is the design's own radius for these cells (HomePages 「她的手和眼」); it is between the tokens' 12 and 16.
         return AshUi.vstack(this, 6).apply {
@@ -233,19 +233,19 @@ class ConsoleActivity : Activity() {
             addView(AshUi.hstack(this@ConsoleActivity, 6).apply {
                 addView(View(this@ConsoleActivity).apply { background = AshPage.icon(this@ConsoleActivity, partIcon(p)).apply { setTint(if (trouble) c.warn else c.text2) } },
                     LinearLayout.LayoutParams(d(AshTokens.Size.iconXs), d(AshTokens.Size.iconXs)))
-                addView(AshUi.text(this@ConsoleActivity, p.title.removeSuffix("（可选）"), AshType(13f, 18f, 400, null), if (trouble) c.warn else c.text2, maxLines = 1))
+                addView(AshUi.text(this@ConsoleActivity, p.title, AshType(13f, 18f, 400, null), if (trouble) c.warn else c.text2, maxLines = 1))
             })
             addView(AshUi.text(this@ConsoleActivity, line, AshType(14f, 20f, 600, null), if (trouble) c.warn else if (todo == 0) c.ok else c.text3))
         }
     }
 
-    private fun partPage(p: Checkup.Part, list: List<Checkup.Item>?): List<View> {
+    private fun partPage(p: OnboardingPlan.Part, list: List<Checkup.Item>?): List<View> {
         val c = AshUi.p(this)
-        val mine = list?.filter { it.part == p }.orEmpty()
+        val mine = list?.filter { it.part.id == p.id }.orEmpty()
         val todo = mine.count { it.state == Checkup.State.OFF }
         val blocks = mutableListOf<View>()
-        blocks += AshUi.text(this, if (list == null) "正在看…" else if (todo == 0) "这一格都好着。" else if (p.optional) "$todo 项没开，不开也行，开了她会更懂你。" else "$todo 项要处理，不然她可能做不好这一块。",
-            AshTokens.Type.callout, if (todo > 0 && !p.optional) c.warn else null).apply { setPadding(d(6), 0, d(6), 0) }
+        blocks += AshUi.text(this, if (list == null) "正在看…" else if (todo == 0) "这一格都好着。" else if (Checkup.optional(p)) "$todo 项没开，不开也行，开了她会更懂你。" else "$todo 项要处理，不然她可能做不好这一块。",
+            AshTokens.Type.callout, if (todo > 0 && !Checkup.optional(p)) c.warn else null).apply { setPadding(d(6), 0, d(6), 0) }
         if (mine.isNotEmpty()) blocks += AshUi.group(this, rows = mine.map { itemRow(it) }, iconInset = true)
         return blocks
     }
@@ -254,7 +254,7 @@ class ConsoleActivity : Activity() {
     private fun itemRow(item: Checkup.Item): View {
         val c = AshUi.p(this)
         val on = item.state == Checkup.State.ON
-        val warn = !on && !item.part.optional
+        val warn = !on && !Checkup.optional(item.part)
         val tone = if (on) AshUi.Tone.OK else if (warn) AshUi.Tone.WARN else AshUi.Tone.MUTE
         val (soft, strong) = AshUi.toneColors(this, tone)
         return AshUi.hstack(this, 12).apply {
@@ -368,7 +368,7 @@ class ConsoleActivity : Activity() {
     }
 
     companion object {
-        /** Open straight onto one part ([Checkup.Part.id]). */
+        /** Open straight onto one part ([OnboardingPlan.Part.id]). */
         const val EXTRA_PART = "ai.ash.extra.CHECKUP_PART"
         private const val STATE_PART = "ai.ash.state.PART"
         private const val REFRESH_MS = 2_500L

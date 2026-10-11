@@ -49,7 +49,7 @@ class HomeRouteTest {
     @Test fun theWebPageMayOpenOnlyTheAppsAndTheCheckup() {
         assertTrue(HomeRoute.nativeFor("apps") is HomeRoute.Native.Apps)
         assertNull((HomeRoute.nativeFor("checkup") as HomeRoute.Native.Checkup).part)
-        for (p in Checkup.Part.entries) assertEquals(p, (HomeRoute.nativeFor("checkup/${p.id}") as HomeRoute.Native.Checkup).part)
+        for (p in OnboardingPlan.PARTS) assertEquals(p, (HomeRoute.nativeFor("checkup/${p.id}") as HomeRoute.Native.Checkup).part)
         for (bad in listOf(null, "", "home", "checkup/", "checkup/sleep", "checkup/brain/x", "Apps", "ash://console", "../apps"))
             assertNull("$bad", HomeRoute.nativeFor(bad))
     }

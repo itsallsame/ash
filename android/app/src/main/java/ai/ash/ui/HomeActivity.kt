@@ -477,7 +477,8 @@ class HomeActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (tab == HomeTab.APPS) { if (appsPane?.back() != true) showTab(HomeTab.CHAT); return }
-        web.evaluateJavascript("(() => { const f = document.querySelector('.files-view[open]'); if (!f) return false; f.close(); return true; })()") { closed ->
+        // The page's home pages come first (`__ashHomeBack` closes the top-most layer of 「她的主页」 and says so; false: none is open), then the file view, then the page history.
+        web.evaluateJavascript(BACK_SCRIPT) { closed ->
             if (closed != "true") { if (web.canGoBack()) web.goBack() else moveTaskToBack(true) }
         }
     }
@@ -503,6 +504,8 @@ class HomeActivity : Activity() {
         private const val STATE_TAB = "ai.ash.state.TAB"
         private const val CHAT_TAG = "ash.chat"
         private const val CHECKUP_MS = 5_000L
+        private const val BACK_SCRIPT = "(() => { try { if (typeof window.__ashHomeBack === 'function' && window.__ashHomeBack() === true) return true; } catch (e) {} " +
+            "const f = document.querySelector('.files-view[open]'); if (!f) return false; f.close(); return true; })()"
         private const val UI_ASSET_ORIGIN = "https://appassets.androidplatform.net"
         private const val UI_ASSET_URL = "$UI_ASSET_ORIGIN/assets/ash-ui/index.html"
         private const val REQ_FILES = 7101

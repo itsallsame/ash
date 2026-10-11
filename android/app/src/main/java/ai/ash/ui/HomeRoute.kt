@@ -48,14 +48,14 @@ object HomeRoute {
     /** What the web page may ask the app to open (`open_native`, UI-SPLIT §3): the apps grid, or the checkup (`checkup`, `checkup/<part>`). */
     sealed class Native {
         object Apps : Native()
-        class Checkup(val part: ai.ash.ui.Checkup.Part?) : Native()
+        class Checkup(val part: OnboardingPlan.Part?) : Native()
     }
 
     /** The page named by an `open_native` message, or null for anything that is not one of the few names. */
     fun nativeFor(page: String?): Native? = when {
         page == "apps" -> Native.Apps
         page == "checkup" -> Native.Checkup(null)
-        page != null && page.startsWith("checkup/") -> ai.ash.ui.Checkup.Part.of(page.removePrefix("checkup/"))?.let { Native.Checkup(it) }
+        page != null && page.startsWith("checkup/") -> ai.ash.ui.Checkup.part(page.removePrefix("checkup/"))?.let { Native.Checkup(it) }
         else -> null
     }
 
