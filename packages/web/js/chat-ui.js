@@ -55,3 +55,10 @@ export function validUntil(ts, now = Date.now()) {
   const day = sameDay(d, today) ? "今天" : sameDay(d, tomorrow) ? "明天" : `${d.getMonth() + 1}月${d.getDate()}日`;
   return `${day} ${hhmm(d)} 前有效`;
 }
+
+/** The letter on a helper's face: the first character of its name that tells it apart ("小研" is 研, not 小). */
+export function letterOf(name) {
+  const chars = [...String(name ?? "").trim()];
+  if (!chars.length) return "?";
+  return (chars.length > 1 ? chars.find((ch) => !"小阿老大".includes(ch)) : undefined) ?? chars[0];
+}

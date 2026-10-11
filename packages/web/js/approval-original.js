@@ -5,9 +5,9 @@ export function appendApprovalOriginal(parent, ask, label = "查看原文", { on
 }
 
 /** A custom answer is a separate complete text, read only when the owner opens it. */
-export function appendFullAnswer(parent, ask, { onReadAnswer, lifetime } = {}) {
+export function appendFullAnswer(parent, ask, { onReadAnswer, lifetime, label = "查看完整回答" } = {}) {
   if (ask?.state !== "answered" || typeof ask.answer_text !== "string" || !ask.answer_full) return;
-  appendPlainText(parent, ask.answer_text, ask.answer_full, "查看完整回答", { read: signal => onReadAnswer?.(ask, signal), lifetime });
+  return appendPlainText(parent, ask.answer_text, ask.answer_full, label, { read: signal => onReadAnswer?.(ask, signal), lifetime });
 }
 
 function appendPlainText(parent, preview, hash, label, { read, lifetime }) {
@@ -40,4 +40,5 @@ function appendPlainText(parent, preview, hash, label, { read, lifetime }) {
   details.append(summary);
   details.append(original);
   parent.append(details);
+  return details;
 }

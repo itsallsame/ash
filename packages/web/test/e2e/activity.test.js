@@ -82,3 +82,33 @@ test(...withBrowser("an attachment in the ledger opens from its bytes, or from t
   await page.locator("#log .atts img").waitFor();
   assert.match(await page.locator("#log .atts img").getAttribute("src"), /^blob:/);
 }));
+
+test(...withBrowser("the progress pill appearing leaves the last message in view, not under the pill", async ({ kernel, browser }) => {
+  for (let n = 1; n <= 40; n++) say(kernel, `message ${n}`);
+  const { page } = await openPage(browser, kernel);
+  await page.locator("#log .msg", { hasText: "message 40" }).waitFor();
+  kernel.append({ from: "agent:main", kind: "event", word: "turn.started", turn: "t_pill", body: { turn: "t_pill", lane: "front" } });
+  kernel.append({ from: "agent:main", kind: "event", word: "agent.tool", turn: "t_pill", body: { turn: "t_pill", name: "web_fetch", phase: "start", summary: "在看网页" } });
+  await page.locator("#progress .pill").waitFor();
+  await eventually(async () => await page.evaluate(() => {
+    const last = [...document.querySelectorAll("#log .msg")].pop().getBoundingClientRect();
+    const log = document.querySelector("#log").getBoundingClientRect();
+    return last.bottom <= log.bottom + 1;
+  }), "the last message above the pill");
+}));
+
+test(...withBrowser("controls the design draws under 44px still take a tap within 44px", async ({ kernel, browser }) => {
+  kernel.append({ from: "agent:main", to: OWNER, kind: "request", word: "show", body: { card: { type: "options", prompt: "选一个", options: [{ id: "a", text: "方案甲" }] } } });
+  const { page } = await openPage(browser, kernel);
+  await page.locator(".opt", { hasText: "方案甲" }).waitFor();
+  for (const selector of ["#f .to", ".opt", ".topbar .who"]) {
+    const reached = await page.evaluate((s) => {
+      const el = document.querySelector(s);
+      const r = el.getBoundingClientRect();
+      const grow = (44 - r.height) / 2 - 0.5;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top - Math.max(grow, 0));
+      return grow <= 0 || el.contains(hit);
+    }, selector);
+    assert.equal(reached, true, `${selector} is reachable 22px from its centre`);
+  }
+}));

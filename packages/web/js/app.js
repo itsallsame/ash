@@ -427,6 +427,8 @@ export function boot({ bridge } = {}) {
     if (!progressRoot.hidden) progress();
     if (timeline.view.asks.some((ask) => ask.state === "pending" && ask.expires_at <= Date.now())) redraw();
   }, 1_000);
+  // The whole field is the target of a tap, not only the text line.
+  document.querySelector("#field").addEventListener("click", (event) => { if (event.target === event.currentTarget) input.focus(); });
   log.addEventListener("scroll", async () => {
     restorer.scroll();
     if (timeline.loading) return;
