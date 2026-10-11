@@ -3,7 +3,7 @@ import { fill } from "./home-dom.js";
 import { Files } from "./files.js";
 import { listBodies, listDirectory } from "./body.js";
 import { btn, group, h, list, note, row, skeleton } from "./home-ui.js";
-import { isSettingsFile } from "./home-text.js";
+import { isSystemEntry } from "./home-text.js";
 
 let reader = null;
 /** The one file reader of the page (a dialog); the conversation's links use their own instance of the same class. */
@@ -19,7 +19,7 @@ export function filesPage(ctx, screen, arg) {
     if (state.failed) { fill(box, note(state.failed, "warn"), btn("重试", "a-btn btn-neutral btn-sm", () => void load())); return; }
     if (!state.listing) return;
     const where = state.bodies.length > 1 ? h("div", { class: "seg", role: "tablist" }, state.bodies.map((body) => btn(body.body === "body:main" ? "她的容器" : body.name || body.body, state.body === body.body ? "on" : "", () => { state.body = body.body; state.path = ""; void load(); }, { role: "tab", "aria-selected": String(state.body === body.body) }))) : null;
-    const entries = [...state.listing.entries].filter((entry) => state.path || !isSettingsFile(entry.name)).sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name));
+    const entries = [...state.listing.entries].filter((entry) => state.path || !isSystemEntry(entry)).sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name));
     const rows = entries.map((entry) => {
       const dir = entry.type === "directory";
       const child = state.path ? `${state.path}/${entry.name}` : entry.name;

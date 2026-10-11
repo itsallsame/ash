@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HELPER, appState, isSettingsFile, pluginName, providerName, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
+import { readFileSync } from "node:fs";
+import { HELPER, appState, isSystemEntry, SYSTEM_FILES, SYSTEM_FOLDERS, pluginName, providerName, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
 
 const dev = (letter) => `device:${letter.repeat(22)}`;
 
@@ -63,7 +64,22 @@ test("plugin names, providers and her settings files read the way the page says 
   assert.equal(providerName("deepseek-chat"), "DeepSeek");
   assert.equal(providerName("some-new-model"), "some-new-model");
   assert.equal(providerName(undefined), "");
-  assert.ok(["AGENTS.md", "identity.md", "SOUL.md", "USER.md", "MEMORY.md", "PROACTIVE.md", ".hidden"].every(isSettingsFile));
-  assert.ok(["装备清单.xlsx", "notes.md", "README.md"].every((name) => !isSettingsFile(name)));
+  const file = (name) => ({ name, type: "file" });
+  assert.ok(["AGENTS.md", "identity.md", "SOUL.md", "PULSE.md", "USER.md", "MEMORY.md", "PROACTIVE.md", ".hidden"].every((name) => isSystemEntry(file(name))));
+  assert.ok(["装备清单.xlsx", "notes.md", "README.md", "SPEC.md", "ACCEPTANCE.md"].every((name) => !isSystemEntry(file(name))), "documents for a job stay");
+  assert.ok(isSystemEntry({ name: "memory", type: "directory" }) && isSystemEntry({ name: "skills", type: "directory" }));
+  assert.ok(!isSystemEntry({ name: "reports", type: "directory" }) && !isSystemEntry({ name: "memory", type: "file" }));
   assert.equal(HELPER, "一个帮手");
+});
+
+test("the system's files named here are the ones the hub's sources name", () => {
+  const read = (path) => readFileSync(new URL(`../../core/src/${path}`, import.meta.url), "utf8");
+  const baseline = /BASELINE_FILE = "([^"]+)"/.exec(read("edges/agents/dsh/driver.ts"))?.[1];
+  const persona = [.../PERSONA_FILES = \[([^\]]+)\]/.exec(read("services/semantic/persona.ts"))[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const pulse = /GUIDANCE = "([^"]+)"/.exec(read("services/semantic/pulse.ts"))?.[1];
+  const memory = [...read("edges/agents/modules.ts").matchAll(/this\.text\("([A-Z]+\.md)"\)/g)].map((m) => m[1]);
+  for (const name of [baseline, ...persona, pulse, ...memory]) assert.ok(SYSTEM_FILES.includes(name), `${name} is written or read by the hub but is not in SYSTEM_FILES`);
+  assert.deepEqual([...memory].sort(), ["MEMORY.md", "USER.md"]);
+  assert.ok(read("edges/agents/modules.ts").includes('path: "skills"') && SYSTEM_FOLDERS.includes("skills"));
+  assert.ok(read("services/semantic/daily.ts").includes("memory/YYYY-MM-DD.md") && SYSTEM_FOLDERS.includes("memory"));
 });

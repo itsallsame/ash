@@ -58,8 +58,26 @@ export function providerName(model) {
   return code;
 }
 
-/** Her files that are not documents she made: her persona, memory and settings (and anything hidden). */
-export const isSettingsFile = (name) => name.startsWith(".") || /^(?:AGENTS|IDENTITY|SOUL|USER|MEMORY|PROACTIVE|TOOLS|HEARTBEAT|BOOTSTRAP)\.md$/i.test(name);
+/**
+ * What the system itself keeps in her work folder, so it is not "her files" (the documents she made for the owner). The list is the
+ * set of names the hub writes or reads there; a test checks it against the sources named here.
+ *   AGENTS.md          the baseline instructions the DSH driver rewrites into the folder before every session
+ *                      (edges/agents/dsh/driver.ts, BASELINE_FILE)
+ *   SOUL.md, IDENTITY.md  her persona, seeded and changed through the persona member (services/semantic/persona.ts, PERSONA_FILES)
+ *   PULSE.md           the guide she reads when woken for her pulse, seeded by the pulse service (services/semantic/pulse.ts, GUIDANCE)
+ *   USER.md, MEMORY.md what she knows of the owner and of things; put into her context (edges/agents/modules.ts), kept by the
+ *                      daily review (skills/daily-review)
+ *   PROACTIVE.md       the owner's words on when she may reach out, written by the promises page
+ *   skills/, memory/   the skills she has (modules.ts) and her diary, memory/YYYY-MM-DD.md (services/semantic/daily.ts)
+ * Other capitalised files (README.md, SPEC.md, ACCEPTANCE.md…) are documents an agent wrote for a job, so they stay; names that
+ * start with a dot are hidden by convention.
+ */
+export const SYSTEM_FILES = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "PULSE.md", "USER.md", "MEMORY.md", "PROACTIVE.md"];
+export const SYSTEM_FOLDERS = ["skills", "memory"];
+
+/** Whether an entry of her work folder is the system's own (see SYSTEM_FILES): a file by name, a folder by name. */
+export const isSystemEntry = ({ name, type }) => name.startsWith(".") ||
+  (type === "directory" ? SYSTEM_FOLDERS.includes(name) : SYSTEM_FILES.some((file) => file.toLowerCase() === name.toLowerCase()));
 
 export const handOf = (device) => (typeof device === "string" ? device.replace(/^device:/, "") : "");
 
