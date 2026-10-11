@@ -16,13 +16,12 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 
 /**
  * 「应用」: the owner's apps as Ash lists them, as a grid of icons like a phone's home screen (Apps.html). Tap one to open it in
  * its own task (in the isolated process, as before); long-press for 「添加到桌面」 and the app's own page of details (what it
  * may use, its switch, taking everything back). It lives in Ash's own process, so the list comes straight from Ash ([Ash] with
- * `inProcess`, which is also what lets it say the owner's words on an app) and the pages of the apps stay where they were.
+ * `inProcess`; the owner's words on an app go the way the web page's do, see [Ash.owner]) and the pages of the apps stay where they were.
  * [view] goes into the home screen's content area (which already keeps clear of the system bars and the keyboard); call
  * [refresh] whenever it is shown, [close] when the screen goes, [back] for the back key (false: nothing of its own to close,
  * go to the chat). [toChat] leaves for the chat.
@@ -38,6 +37,10 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
     private var detail: String? = null
     /** The second tap of a two-tap button (take back, install) has been asked for. */
     private var sure = false
+    /** An owner's word is on its way: the switch and the buttons wait for the answer. */
+    private var busy = false
+    /** What the last word did (or did not), under the buttons of the detail page. */
+    private var note: String? = null
     @Volatile private var loading = false
     @Volatile private var closed = false
 
@@ -51,7 +54,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
     /** The back key: closes the drawer, then the page of details; false when the grid itself is showing. */
     fun back(): Boolean {
         if (sheet.showing) { sheet.dismiss(); return true }
-        if (detail != null) { detail = null; sure = false; render(); return true }
+        if (detail != null) { detail = null; sure = false; note = null; render(); return true }
         return false
     }
 
@@ -131,7 +134,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
                     addView(AshUi.text(activity, "${a.name}想装进来", AshType(15f, 20f, 600, Role.INK), maxLines = 1))
                     addView(AshUi.text(activity, "先看看它要用什么，再决定", AshTokens.Type.caption))
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(AshPage.smallButton(activity, "看看", AshUi.Kind.PRIMARY) { detail = a.id; sure = false; render() })
+                addView(AshPage.smallButton(activity, "看看", AshUi.Kind.PRIMARY) { detail = a.id; sure = false; note = null; render() })
             })
         }
     }
@@ -192,7 +195,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
         sheet.show { s ->
             s.addView(AshUi.text(activity, a.name, AshTokens.Type.headline).apply { gravity = Gravity.CENTER })
             if (a.usable) s.addView(AshUi.button(activity, "添加到桌面", AshUi.Kind.PRIMARY, block = true) { sheet.dismiss(); Pin.request(activity, a.id, a.name, icons[a.id]) })
-            s.addView(AshUi.button(activity, "看看它的详情", if (a.usable) AshUi.Kind.NEUTRAL else AshUi.Kind.PRIMARY, block = true) { sheet.dismiss(); detail = a.id; sure = false; render() })
+            s.addView(AshUi.button(activity, "看看它的详情", if (a.usable) AshUi.Kind.NEUTRAL else AshUi.Kind.PRIMARY, block = true) { sheet.dismiss(); detail = a.id; sure = false; note = null; render() })
             s.addView(cancel())
         }
     }
@@ -202,7 +205,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
     private fun detailPage(a: AppInfo): View {
         val c = AshUi.p(activity)
         val screen = AshPage.screen(activity)
-        screen.addView(AshPage.navbar(activity, null, "返回应用") { detail = null; sure = false; render() })
+        screen.addView(AshPage.navbar(activity, null, "返回应用") { detail = null; sure = false; note = null; render() })
         val blocks = mutableListOf<View>()
 
         // The icon, the name, one line of how it is, and the one thing to do: open it.
@@ -239,22 +242,24 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
         if (a.granted) blocks += AshUi.group(activity, rows = listOf(
             AshUi.AshSwitch(activity).let { sw ->
                 sw.set(a.enabled)
-                sw.onChange = { on -> owner(if (on) "apps.enable" else "apps.disable", a.id, if (on) "没能打开「${a.name}」" else "没能停下「${a.name}」") }
+                if (busy) AshUi.disable(sw)
+                sw.onChange = { on -> if (on) owner("apps.enable", a, "已启用「${a.name}」。") else owner("apps.disable", a, "已停用「${a.name}」，它的权限还留着。") }
                 // The whole row is the switch's to tap (the switch itself is only 28dp high).
-                AshUi.row(activity, "在用", "关掉后先停着，它用的东西还留着", trailing = sw) { sw.performClick() }
+                AshUi.row(activity, "在用", "关掉后先停着，它用的东西还留着", trailing = sw, onClick = if (busy) null else ({ sw.performClick() }))
             }), iconInset = false)
 
         if (!a.granted) {
             blocks += twoTap(if (sure) "确认安装" else "安装", AshUi.Kind.PRIMARY,
                 if (sure) "安装后「${a.name}」可以用上面列出的这些；你随时可以停用或收回。" else null) {
-                if (!sure) { sure = true; render() } else { sure = false; owner("apps.install", a.id, "没能安装「${a.name}」") }
+                if (!sure) { sure = true; render() } else { sure = false; owner("apps.install", a, "已安装「${a.name}」。") }
             }
         } else {
             blocks += twoTap(if (sure) "再点一次，确认收回" else "收回全部权限", AshUi.Kind.DANGER,
                 if (sure) "收回后「${a.name}」会停止运行，再用要重新安装。" else null) {
-                if (!sure) { sure = true; render() } else { sure = false; owner("apps.revoke", a.id, "没能收回「${a.name}」的权限") }
+                if (!sure) { sure = true; render() } else { sure = false; owner("apps.revoke", a, "已收回「${a.name}」的全部权限。") }
             }
         }
+        note?.let { blocks += AshPage.foot(activity, it) }
         screen.addView(AshPage.scroll(activity, 16, blocks), LinearLayout.LayoutParams(-1, 0, 1f))
         return screen
     }
@@ -268,17 +273,29 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
 
     /** A block button (the second tap says what will happen, under it) — the pattern for taking something away or giving reach. */
     private fun twoTap(label: String, kind: AshUi.Kind, consequence: String?, onTap: () -> Unit): View = AshUi.vstack(activity, 8).apply {
-        addView(AshUi.button(activity, label, kind, block = true, onClick = onTap))
+        addView(AshUi.button(activity, label, kind, block = true, onClick = { if (!busy) onTap() }).also { if (busy) AshUi.disable(it) })
         consequence?.let { addView(AshPage.foot(activity, it)) }
     }
 
-    /** One of the owner's words on an app, then the list again; if Ash did not do it, say so and show what is true now. */
-    private fun owner(word: String, id: String, failed: String) {
+    /**
+     * One of the owner's words on an app, then the list again. While it is on its way the switch and the buttons wait; what it did is
+     * said under the buttons, in the web page's words (an enable that finds the app's folder gone says so and points at taking it back).
+     */
+    private fun owner(word: String, app: AppInfo, done: String) {
+        if (busy) return
+        busy = true; note = "正在处理…"; render()
         Thread({
-            val done = ash.owner(word, id)
+            val reply = ash.owner(word, app.id)
             activity.runOnUiThread {
+                busy = false
                 if (closed || activity.isDestroyed) return@runOnUiThread
-                if (!done) Toast.makeText(activity, "$failed，再试一次", Toast.LENGTH_SHORT).show()
+                note = when {
+                    reply.optBoolean("ok") -> done
+                    word == "apps.enable" && reply.optJSONObject("error")?.optString("code") == "not_found" ->
+                        "「${app.name}」的文件夹已经不在了，启用不了；可以点「收回全部权限」把它卸掉。"
+                    else -> "「${app.name}」没有确认完成；上面是现在的状态，可以再试一次。"
+                }
+                render()
                 refresh()
             }
         }, "apps-owner").start()

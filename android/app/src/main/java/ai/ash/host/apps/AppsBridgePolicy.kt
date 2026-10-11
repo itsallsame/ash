@@ -16,13 +16,8 @@ internal object AppsBridgePolicy {
     const val SURFACE = "apps.surface"
     const val ICON = "apps.icon"
 
-    /** What the owner does to an app from the list screen: install it, switch it on or off, take everything back, look in the apps folder again. */
-    val OWNER_WORDS = setOf("apps.install", "apps.enable", "apps.disable", "apps.revoke", "apps.refresh")
-
-    /** [owner]: the caller is the list screen inside Ash's own process (it may say [OWNER_WORDS]); a binder caller never is. */
-    fun allows(app: String?, to: String, word: String, body: JSONObject, owner: Boolean = false): Boolean {
+    fun allows(app: String?, to: String, word: String, body: JSONObject): Boolean {
         if (to == SERVICE) {
-            if (word in OWNER_WORDS) return owner && app == null && (word == "apps.refresh" || AppIds.valid(body.opt("id") as? String))
             // A page asks for its own page and icon only; the list screen asks for any icon, never for a page.
             val id = body.opt("id") as? String
             return when (word) {

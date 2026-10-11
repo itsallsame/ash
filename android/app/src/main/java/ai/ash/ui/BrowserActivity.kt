@@ -2,10 +2,10 @@ package ai.ash.ui
 
 import ai.ash.caps.browser.BrowserArguments
 import ai.ash.caps.browser.BrowserSession
+import ai.ash.ui.design.AshUi
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.Gravity
@@ -36,9 +36,10 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val ink = Color.parseColor("#1c1c1e")
-        val muted = Color.parseColor("#6e6e73")
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE) }
+        val c = AshUi.p(this)
+        val ink = c.ink
+        val muted = c.text2
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(c.bg) }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(24, 16, 24, 0) }
         reason = TextView(this).apply { textSize = 15f; setTextColor(ink) }
         val done = Button(this).apply { text = "完成"; setOnClickListener { finish() } }

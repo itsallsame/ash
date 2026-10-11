@@ -205,6 +205,7 @@ class OnboardingPlanTest {
         for (item in items) assertEquals(item, 1, OnboardingPlan.PARTS.count { item in it.items })
         assertEquals("brain", OnboardingPlan.partOf("kernel_battery_optimization").id)
         assertEquals("alarm", OnboardingPlan.partOf("exact_alarm").id)
+        assertEquals("location", OnboardingPlan.partOf("calendar").id) // optional: reading the calendar is no part of an alarm being on time
         assertEquals("notify", OnboardingPlan.partOf("notifications").id)
         assertEquals("notify", OnboardingPlan.partOf("alerts").id) // not a row of config.status: the checkup lists it, under 叫你 (HANDOFF §3)
         assertEquals("awake", OnboardingPlan.partOf("recents_lock").id)
@@ -221,6 +222,9 @@ class OnboardingPlanTest {
         // a part whose items are all granted before the guide starts has no dot; one just finished keeps its dot
         assertEquals(listOf("eyes", "files", "location"), OnboardingPlan.dotParts(bound, rows("accessibility", "photos", "location"), emptySet(), emptyList()))
         assertEquals(listOf("notify", "eyes", "files", "location"), OnboardingPlan.dotParts(bound, rows("accessibility", "photos", "location"), emptySet(), listOf("notifications")))
+        // the calendar is one of the optional ones: a missing calendar is a dot under 位置和健康, not under 闹钟
+        assertEquals(listOf("location"), OnboardingPlan.dotParts(bound, rows("calendar"), emptySet(), emptyList()))
+        assertEquals(listOf("alarm"), OnboardingPlan.dotParts(bound, rows("exact_alarm"), emptySet(), emptyList()))
         assertTrue(OnboardingPlan.dotParts(KernelState.NOT_RUNNING, rows(unsupported = emptySet()) + Row("kernel_autostart", "missing"), emptySet(), emptyList()).size <= 7)
     }
 

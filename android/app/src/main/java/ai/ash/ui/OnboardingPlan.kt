@@ -85,18 +85,18 @@ object OnboardingPlan {
 
     /**
      * The parts in the checkup's order. Where HANDOFF §3 lists an item it is in that part; the rest are put by meaning:
-     * reading notifications is one of her eyes ([eyes]); the calendar is read so that she can remind ahead ([alarm]); the alert sound and vibration
+     * reading notifications is one of her eyes ([eyes]); the calendar is only read so that she can remind ahead, which is no part of an alarm being on time, so it is one of the optional ones ([location]); the alert sound and vibration
      * (not a row of `config.status`, the checkup lists it) is how she calls the owner ([notify]).
      * An item no part lists belongs to the last part ([partOf]).
      */
     val PARTS = listOf(
         Part("brain", "大脑", listOf("kernel_battery_optimization", "kernel_autostart")),
-        Part("alarm", "闹钟", listOf("exact_alarm", "calendar")),
+        Part("alarm", "闹钟", listOf("exact_alarm")),
         Part("notify", "叫你", listOf("notifications", "alerts")),
         Part("awake", "在后台醒着", listOf("battery_optimization", "autostart", "recents_lock")),
         Part("eyes", "眼睛和手", listOf("accessibility", "notification_listener", "screen_recovery", "overlay", "shizuku")),
         Part("files", "照片和文件", listOf("photos", "all_files", "write_settings", "usage_access")),
-        Part("location", "位置和健康", listOf("location", "location_background", "activity_recognition", "health")),
+        Part("location", "位置和健康", listOf("location", "location_background", "activity_recognition", "health", "calendar")),
     )
 
     /** The part an item belongs to (an item no part lists: the last part). */
