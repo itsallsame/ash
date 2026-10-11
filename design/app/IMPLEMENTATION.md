@@ -16,7 +16,7 @@
 - 旧颜色变量保留为别名，指向新令牌：`--fg=--text`、`--mute/--muted=--text-2`、`--me/--accent=--you`、`--me-fg=--on-you`、`--card=--surface`、`--chip=--surface-2`、`--seg=--surface-3`。`--bg --line --ok --warn --err` 同名但含义变了：`--ok/--warn/--err` 是**文字色**；圆点、角标、按钮底色用 `--ok-fill/--warn-fill/--err-fill`。新写的代码一律用令牌名，不用别名。
 - 图标：`import { icon } from "./ash-icons.js"`，`icon("chev", "i-s")` 返回 `<svg class="i i-s">`（尺寸 `.i-s 18 / .i-xs 16 / .i-l 26`，默认 22，跟随文字色）。图标集 = `design/app/icons/*.svg`，换图标改 svg 后 `npm run gen:tokens`。
 - 打包：`tools/gen-ui.mjs` 把 `ash-tokens.css` + `ash-ui.css` 内联到 `index.html` 的 `<!-- ash-style -->` 处（在页面自己的 `<style>` 之前）；改了任何网页文件要 `npm run gen:ui` 并提交生成文件。
-- 字体：`--font`（系统字体）、`--mono`；圆角 `--r-xs … --r-pill`；缓动 `--ease`；阴影 `--shadow-1/-2`。
+- 字体：`ash-ui.css` 给整页 `body` 设了 `font-family:var(--font)`、`color:var(--text)`、等宽数字、抗锯齿；`index.html` 的 `body` 规则只留字号和行高，不再自己写 font-family。可用 `--font`（系统字体）、`--mono`；圆角 `--r-xs … --r-pill`；缓动 `--ease`；阴影 `--shadow-1/-2`。
 
 ## 原生
 
