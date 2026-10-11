@@ -19,7 +19,9 @@ export class IdleExpansion {
     this.scheduled = this.timer(() => { void this.run(); }, Math.max(0, this.idleAt - this.now()));
   }
   async run() {
-    if (!this.idle() || this.active) return;
+    if (this.active) return;
+    // A fractional timeout may fire just before idleAt; keep a wakeup until the quiet interval actually ends.
+    if (!this.idle()) { this.wake(); return; }
     const item = this.candidates().find(item => this.attempts.get(item.id) !== item.full);
     if (!item) return;
     const active = this.active = { item, controller: new AbortController(), phase: "reading" };

@@ -6,9 +6,22 @@ function clock() {
   let at = 0, sequence = 0;
   const timers = new Map();
   return { now: () => at, timer: (callback, wait) => { const id = ++sequence; timers.set(id, { callback, at: at + wait }); return id; }, clear: id => timers.delete(id),
-    async advance(ms) { at += ms; for (const [id, task] of [...timers]) if (task.at <= at) { timers.delete(id); task.callback(); } await Promise.resolve(); await Promise.resolve(); } };
+    async advance(ms, early = 0) { at += ms; for (const [id, task] of [...timers]) if (task.at <= at + early) { timers.delete(id); task.callback(); } await Promise.resolve(); await Promise.resolve(); } };
 }
 const item = { id: "old", full: "hash" };
+
+test("a timeout that fires half a millisecond early rearms instead of losing the restoration", async () => {
+  const time = clock(); let started = 0, finish;
+  const restore = new IdleExpansion({ ...time, candidates: () => [item], contains: () => true,
+    restore: () => { started++; return new Promise(resolve => { finish = resolve; }); } });
+  restore.wake();
+  await time.advance(149.5, 0.5);
+  assert.equal(started, 0, "the full 150ms quiet gate still applies");
+  await time.advance(0.5);
+  assert.equal(started, 1, "the early callback must have scheduled another wakeup");
+  await time.advance(1000); assert.equal(started, 1, "only one restoration may be active");
+  restore.dispose(); finish();
+});
 
 test("fast scrolling does not restore text; stopping for 150ms starts exactly one restoration", async () => {
   const time = clock(); let started = 0, finish;

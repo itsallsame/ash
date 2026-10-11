@@ -89,3 +89,5 @@ The APK CSP permits only same-origin scripts (`script-src 'self'`); inline scrip
 Conversation bubble shadows use an equal-radius pseudo-element while the bubble retains its asymmetric corners and the existing shadow token. The pseudo-element ignores pointer events and adds no text or DOM children. This avoids per-tile blur scratch textures on older Android WebView; cards keep their existing shadows.
 
 An explicit message jump remains a reading anchor while incremental bodies grow, including near the history tail. A replacement preview/body resolves the pending target by its stable row key. Actual user scrolling or returning to latest releases that reading intent.
+
+If a quiet-interval timer fires fractionally early, restoration rearms it rather than losing its wakeup. Shrinking content can clamp the last compensated scroll position to the end before ResizeObserver runs; that event preserves the requested reading anchor. Genuine scrolling towards the end or upwards still releases a jump.

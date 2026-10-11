@@ -8,7 +8,9 @@ export class ScrollPosition {
     root.style.overflowAnchor = "none";
     this.onScroll = event => {
       // Our compensation also emits scroll; it must not overwrite the pre-resize anchor.
-      if (this.compensatedTop === root.scrollTop || this.top === root.scrollTop) this.compensations.add(event);
+      const clampedEnd = root.scrollTop >= root.scrollHeight - root.clientHeight - 1 && Math.max(this.top, this.compensatedTop ?? -1) > root.scrollTop;
+      // A shorter tail clamps our previous position before ResizeObserver can restore the reading anchor.
+      if (this.compensatedTop === root.scrollTop || this.top === root.scrollTop || clampedEnd) this.compensations.add(event);
       else this.capture(true);
       this.compensatedTop = null;
     };

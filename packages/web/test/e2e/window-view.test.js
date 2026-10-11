@@ -9,7 +9,7 @@ async function fixture(browser) {
   const web = new URL("../../", import.meta.url);
   const html = await readFile(new URL("index.html", web), "utf8");
   const css = (await Promise.all(["ash-tokens.css", "ash-ui.css"].map(path => readFile(new URL(path, web), "utf8")))).join("\n") + [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(match => match[1]).join("\n");
-  const bundle = await build({ stdin: { contents: 'export { WindowView, changedIds } from "./window-view.js"; export { appendConversation } from "./conversation.js";', resolveDir: fileURLToPath(new URL("js/", web)) }, bundle: true, write: false, format: "iife", globalName: "ViewModule" });
+  const bundle = await build({ stdin: { contents: 'export { WindowView, changedIds } from "./window-view.js"; export { ScrollPosition } from "./scroll-position.js"; export { appendConversation } from "./conversation.js";', resolveDir: fileURLToPath(new URL("js/", web)) }, bundle: true, write: false, format: "iife", globalName: "ViewModule" });
   const page = await browser.newPage({ viewport: { width: 393, height: 852 }, reducedMotion: "reduce" });
   await page.setContent(`<style>${css}body{display:block;height:852px}#log{height:740px}</style><main id="log" class="stream"></main><button id="outside">outside</button>`);
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
@@ -20,6 +20,47 @@ async function fixture(browser) {
   });
   return page;
 }
+
+test(...withBrowser("tail shrinkage clamping before resize compensation preserves a jump, while genuine wheel scrolling releases it", async ({ browser }) => {
+  const page = await fixture(browser);
+  const result = await page.evaluate(async () => {
+    view.dispose();
+    const root = document.querySelector("#log");
+    root.style.cssText = "height:200px;display:block;padding:0;overflow-y:auto;gap:0";
+    const leading = document.createElement("div"), target = document.createElement("div"), tail = document.createElement("div");
+    leading.style.height = "1000px"; target.style.height = "173px"; target.dataset.rowKey = "target"; tail.style.height = "27px";
+    root.replaceChildren(leading, target, tail);
+    window.position = new ViewModule.ScrollPosition(root);
+    // Hold back resize compensation to reproduce the browser's scroll event arriving first.
+    position.observer.disconnect(); position.jump(target);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const before = root.scrollTop;
+    const scrolled = new Promise(resolve => root.addEventListener("scroll", event => resolve({ compensation: position.compensations.has(event), pending: position.pendingJump === target, bottom: position.anchor.bottom }), { once: true }));
+    tail.remove();
+    const clamped = root.scrollTop;
+    const event = await scrolled;
+    target.style.height = "800px";
+    position.restore();
+    const rowTop = target.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return { before, clamped, rowTop, ...event };
+  });
+  assert.equal(result.before - result.clamped, 27, "actual DOM shrinkage clamps scrollTop");
+  assert.deepEqual([result.compensation, result.pending, result.bottom], [true, true, false]);
+  assert.ok(Math.abs(result.rowTop) < 1, "later growth must keep the requested row rather than follow the tail");
+  const bounds = await page.locator("#log").boundingBox();
+  await page.mouse.move(bounds.x + 30, bounds.y + 30);
+  await page.mouse.wheel(0, 10000);
+  await page.waitForFunction(() => !position.pendingJump);
+  assert.equal(await page.evaluate(() => position.anchor.bottom), true, "ordinary downward wheel scrolling to the end remains user intent");
+  await page.evaluate(async () => {
+    position.jump(document.querySelector('[data-row-key="target"]'));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await page.mouse.wheel(0, -100);
+  await page.waitForFunction(() => !position.pendingJump);
+  assert.equal(await page.evaluate(() => position.anchor.bottom), false, "ordinary upward scrolling also releases the jump");
+}));
 
 test(...withBrowser("a jump near the history tail stays on the target as its table grows", async ({ browser }) => {
   const page = await fixture(browser);
