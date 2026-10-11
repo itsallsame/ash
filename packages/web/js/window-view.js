@@ -46,11 +46,14 @@ export class WindowView {
   reset() {
     for (const row of this.rows.values()) { this.position.unobserve(row.nodes); dispose(row); }
     this.rows.clear(); this.root.replaceChildren(); this.position.anchor = null;
+    this.position.pendingJump = null;
     this.newest = 0; this.fresh = false; this.latest = null;
   }
   update(entries, outbox = [], options = {}, dirty = null) {
     if (options.epoch !== undefined && options.epoch !== this.epoch) { this.reset(); this.epoch = options.epoch; }
     this.latest = [entries, outbox, options];
+    // A loaded range's bottom is not the history's tail. Old-message jumps stay reading anchors through later slices.
+    this.position.followTail = options.atLatest !== false;
     const plan = conversationRows(entries, options);
     for (const item of outbox) if (typeof item.client_id === "string" && typeof item.text === "string" && ["unsent", "sending", "accepted", "rejected"].includes(item.status)) plan.push({ key: `outbox:${item.client_id}`, kind: "outbox", item });
     const keys = new Set(plan.map(row => row.key));

@@ -84,3 +84,53 @@ test(...withBrowser("home totals and a child agent's pending page include entrie
   await eventually(async () => (await page.locator('#home .hm-screen[data-page="waiting"] [data-ask-id]').count()) === 13);
   assert.ok(kernel.requests.some(row => row.word === "current" && row.body.agent === "agent:helper"));
 }));
+
+test(...withBrowser("a cached expanded body revisits as a preview until scrolling settles, without rereading its source", async ({ kernel, browser }) => {
+  homeHub(kernel);
+  const paragraphs = Array.from({ length: 180 }, (_, i) => `第${i}段：` + "原文保持完整。".repeat(15));
+  const original = [...paragraphs, "恢复后的完整结尾。"].join("\n\n");
+  for (let i = 1; i <= 220; i++) say(kernel, i === 100 ? original : `History ${i}`, { id: `restore_${i}` });
+  const { page } = await openPage(browser, kernel);
+  const jump = id => page.evaluate(id => window.dispatchEvent(new CustomEvent("ash:jump", { cancelable: true, detail: { id } })), id);
+  await jump("restore_100");
+  const message = page.locator('#log .msg[data-seq="100"]');
+  await message.locator(".expand").click();
+  await page.waitForFunction(() => document.querySelector('#log .msg[data-seq="100"] .markdown')?.textContent.endsWith("恢复后的完整结尾。"));
+  const reads = kernel.requests.filter(row => row.to === "service:blobs" && row.word === "read").length;
+  assert.ok(reads > 0);
+  await jump("restore_5");
+  await page.locator('#log .msg[data-seq="5"]').waitFor();
+  assert.equal(await message.count(), 0, "the earlier body was actually evicted");
+  await page.evaluate(() => { window.wheelPulses = 0; window.scrollPulse = setInterval(() => { const log = document.querySelector("#log"); log.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 })); wheelPulses++; }, 20); });
+  try {
+    await jump("restore_100");
+    await message.locator(".expand").waitFor();
+    await page.waitForTimeout(350);
+    assert.ok((await message.locator(".markdown p").count()) < paragraphs.length, "cached source does not bypass the idle gate");
+    const preview = await page.evaluate(() => ({ pulses: wheelPulses, label: document.querySelector('#log .msg[data-seq="100"] .expand')?.textContent, count: document.querySelectorAll('#log .msg[data-seq="100"] .markdown p').length }));
+    assert.equal(preview.label, "正在展开…", JSON.stringify(preview));
+  } finally { await page.evaluate(() => clearInterval(scrollPulse)); }
+  await page.waitForFunction(() => document.querySelector('#log .msg[data-seq="100"] .markdown')?.textContent.endsWith("恢复后的完整结尾。"));
+  assert.equal(await message.locator(".markdown p").count(), paragraphs.length + 1);
+  assert.equal(kernel.requests.filter(row => row.to === "service:blobs" && row.word === "read").length, reads);
+  assert.equal(await message.locator(".markdown").textContent(), paragraphs.join("") + "恢复后的完整结尾。");
+}));
+
+test(...withBrowser("an old-message jump does not page itself away as inline Markdown and live arrivals change layout", async ({ kernel, browser }) => {
+  homeHub(kernel);
+  const inline = Array.from({ length: 60 }, (_, i) => `Paragraph ${i}: keep the reading position.`).join("\n\n");
+  for (let i = 1; i <= 240; i++) say(kernel, i <= 10 && i !== 5 ? inline : `Reading target ${i}`, { id: `reading_${i}` });
+  const { page } = await openPage(browser, kernel);
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("ash:jump", { cancelable: true, detail: { id: "reading_5" } })));
+  const target = page.locator('#log .msg[data-seq="5"]');
+  await target.waitFor();
+  await page.evaluate(() => { window.readingTarget = document.querySelector('#log .msg[data-seq="5"]'); });
+  for (let i = 0; i < 100; i++) say(kernel, `Live arrival ${i}`);
+  await page.locator("#returnLatest", { hasText: /100 条新消息/ }).waitFor();
+  await page.waitForFunction(() => document.querySelector('#log .msg[data-seq="1"] .markdown p:last-child')?.textContent.includes("Paragraph 59"));
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => readingTarget === document.querySelector('#log .msg[data-seq="5"]')), true);
+  assert.equal(kernel.requests.filter(row => row.word === "window" && row.body.after !== undefined).length, 0, "position compensation must not initiate newer-page reads");
+  const offset = await page.evaluate(() => readingTarget.getBoundingClientRect().top - document.querySelector("#log").getBoundingClientRect().top);
+  assert.ok(Math.abs(offset) < 3, `reading target shifted ${offset}px`);
+}));

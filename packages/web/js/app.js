@@ -59,7 +59,7 @@ export function render(view, outbox = [], openInline, presenceBar, cardActions, 
   const log = document.querySelector("#log");
   const loading = cardActions?.loading?.() === true;
   conversationView(log).update(view.conversation, outbox, { openInline, ...cardActions, loading,
-    failures: loading ? [] : failedTurns(view), atStart: cardActions?.atStart?.() === true,
+    failures: loading ? [] : failedTurns(view), atStart: cardActions?.atStart?.() === true, atLatest: cardActions?.atLatest?.() !== false,
     herName: cardActions?.herName?.() ?? "Ash", epoch: cardActions?.epoch?.() }, dirty);
   presenceBar?.render(loading ? { state: "unknown" } : view.presence);
 }
@@ -177,6 +177,7 @@ export function boot({ bridge } = {}) {
     loading: () => !timeline?.ready,
     epoch: () => timeline?.store.dataset,
     atStart: () => timeline?.store.intro === true,
+    atLatest: () => !timeline?.store.hasAfter,
     get previous() { return timeline?.store.previous; },
     get next() { return timeline?.store.next; },
     shouldBuild: id => restorer?.active?.item.id !== id || restorer.idle(),
@@ -313,7 +314,7 @@ export function boot({ bridge } = {}) {
     filling = true;
     try {
       const log = document.querySelector("#log");
-      for (let pages = 0; pages < 20 && !timeline.exhausted && log && log.scrollHeight <= log.clientHeight + 80; pages++) {
+      for (let pages = 0; pages < 20 && !timeline.exhausted && timeline.store.items.length < timeline.store.maxItems && timeline.store.bytes < timeline.store.maxBytes && log && log.scrollHeight <= log.clientHeight + 80; pages++) {
         retainReadingAnchor();
         if (!await timeline.older()) break;
       }
@@ -446,7 +447,8 @@ export function boot({ bridge } = {}) {
   }, 1_000);
   // The whole field is the target of a tap, not only the text line.
   document.querySelector("#field").addEventListener("click", (event) => { if (event.target === event.currentTarget) input.focus(); });
-  log.addEventListener("scroll", async () => {
+  log.addEventListener("scroll", async event => {
+    if (views.get(log)?.position.compensations.has(event)) return;
     restorer.scroll();
     if (timeline.loading) return;
     retainReadingAnchor();
