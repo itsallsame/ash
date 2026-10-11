@@ -124,6 +124,42 @@ test("clearing the browser's logins is asked of the native layer, which owns the
   assert.equal(sandbox.__ashNativeRequest, undefined);
 });
 
+test("a page asks the app to open its apps or the checkup; only the few known names go out, and not before ready", () => {
+  const { deliver, sent, sandbox } = page();
+  assert.equal(sandbox.__ashOpenNative("apps"), false, "not before ready");
+  deliver({ type: "ready" });
+  assert.equal(sandbox.__ashOpenNative("apps"), true);
+  assert.equal(sandbox.__ashOpenNative("checkup"), true);
+  assert.equal(sandbox.__ashOpenNative("checkup/notify"), true);
+  for (const part of ["brain", "alarm", "notify", "awake", "eyes", "files", "location"]) assert.equal(sandbox.__ashOpenNative(`checkup/${part}`), true);
+  assert.deepEqual(sent.splice(0, 3), [{ type: "open_native", page: "apps" }, { type: "open_native", page: "checkup" }, { type: "open_native", page: "checkup/notify" }]);
+  sent.length = 0;
+  for (const bad of ["home", "checkup/", "checkup/sleep", "checkup/brain/x", "Apps", "ash://console", "apps ", undefined, null, 3, {}])
+    assert.equal(sandbox.__ashOpenNative(bad), false, String(bad));
+  assert.deepEqual(sent, []);
+});
+
+test("the checkup the app tells is kept for the page and announced; nothing odd is believed", () => {
+  const { deliver, sandbox } = page();
+  const heard = [];
+  sandbox.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = init?.detail; } };
+  sandbox.dispatchEvent = (event) => { heard.push(event); return true; };
+  assert.equal(sandbox.__ashCheckup(), null, "nothing told yet");
+  deliver({ type: "ready" });
+  deliver({ type: "checkup", todo: 2, groups: [{ id: "awake", todo: 1 }, { id: "eyes", todo: 1 }, { id: "brain", todo: 0 }, { todo: 1 }, "x"] });
+  assert.deepEqual(plain(sandbox.__ashCheckup()), { todo: 2, groups: [{ id: "awake", todo: 1 }, { id: "eyes", todo: 1 }, { id: "brain", todo: 0 }] });
+  assert.equal(heard.length, 1);
+  assert.equal(heard[0].type, "ash:checkup");
+  assert.deepEqual(plain(heard[0].detail), plain(sandbox.__ashCheckup()));
+  deliver({ type: "checkup", todo: "many", groups: [] });
+  deliver({ type: "checkup", todo: 1, groups: "none" });
+  assert.equal(heard.length, 1, "a malformed one is ignored");
+  assert.equal(sandbox.__ashCheckup().todo, 2);
+  deliver({ type: "checkup", todo: 0, groups: [] });
+  assert.equal(sandbox.__ashCheckup().todo, 0);
+  assert.equal(heard.length, 2);
+});
+
 test("outside the app's own origin the bootstrap does nothing", () => {
   const sent = [];
   runInNewContext(source, { AshNative: { postMessage: (wire) => sent.push(wire) }, location: { origin: "https://example.com" } });

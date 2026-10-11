@@ -35,7 +35,7 @@ class HomeRouteTest {
     @Test fun anUnknownTabNameIsNone() {
         assertNull(HomeTab.of("settings")); assertNull(HomeTab.of(null)); assertNull(HomeTab.of(""))
         assertEquals(APPS, HomeTab.of(APPS.key))
-        assertEquals(listOf("对话", "应用"), HomeTab.values().map { it.label })
+        assertEquals(listOf("chat", "apps"), HomeTab.values().map { it.key })
     }
 
     @Test fun theLauncherIntentIsMainPlusLauncher() {
@@ -45,9 +45,13 @@ class HomeRouteTest {
         assertFalse(HomeRoute.isLauncher(null, setOf("android.intent.category.LAUNCHER")))
     }
 
-    @Test fun theTabBarGivesWayToTheKeyboard() {
-        assertTrue(HomeRoute.tabBarVisible(keyboardUp = false))
-        assertFalse(HomeRoute.tabBarVisible(keyboardUp = true))
+    /** UI-SPLIT §3: the web page asks for the apps grid or the checkup (a whole page or one part of it); anything else is nothing. */
+    @Test fun theWebPageMayOpenOnlyTheAppsAndTheCheckup() {
+        assertTrue(HomeRoute.nativeFor("apps") is HomeRoute.Native.Apps)
+        assertNull((HomeRoute.nativeFor("checkup") as HomeRoute.Native.Checkup).part)
+        for (p in Checkup.Part.entries) assertEquals(p, (HomeRoute.nativeFor("checkup/${p.id}") as HomeRoute.Native.Checkup).part)
+        for (bad in listOf(null, "", "home", "checkup/", "checkup/sleep", "checkup/brain/x", "Apps", "ash://console", "../apps"))
+            assertNull("$bad", HomeRoute.nativeFor(bad))
     }
 
     @Test fun onlyTheChatInFrontCountsAsAshInFront() {

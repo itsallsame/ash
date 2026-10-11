@@ -26,8 +26,19 @@ import org.json.JSONObject
 data class AppInfo(
     val id: String, val name: String, val version: String, val summary: String,
     val surfaces: List<Pair<String, String>>, val enabled: Boolean, val granted: Boolean,
+    /** What it asks of Ash (the detail page lists them), whether it is running, and what went wrong with it (blank: nothing). */
+    val needs: List<Need> = emptyList(), val running: Boolean = false, val error: String = "",
 ) {
     val usable get() = enabled && granted
+
+    /** One thing an app needs from Ash: [kind] is `member` (an ability of Ash's), `notify`, `widgets` or `card`; [why] is its own line for the owner. */
+    data class Need(val kind: String, val why: String) {
+        companion object {
+            /** What the owner reads for it when the app gave no line of its own. */
+            fun fallback(kind: String) = when (kind) { "notify" -> "到点提醒你"; "widgets" -> "在桌面放一个小组件"; "card" -> "在对话里放一个入口卡片"; else -> "使用 Ash 的能力" }
+        }
+        val text get() = why.ifBlank { fallback(kind) }
+    }
 
     companion object {
         /** `apps` of the result of `service:apps/apps.list`; entries with an id the shell cannot give an origin to are left out. */
@@ -42,8 +53,21 @@ data class AppInfo(
                     sid to so.optString("title", sid).ifBlank { sid }.take(40)
                 }
                 AppInfo(id, o.optString("name", id).ifBlank { id }.take(60), o.optString("version").take(40), o.optString("summary").take(300),
-                    surfaces, o.optBoolean("enabled", true), o.optBoolean("granted", false))
+                    surfaces, o.optBoolean("enabled", true), o.optBoolean("granted", false),
+                    needs(o.optJSONArray("needs")), o.optBoolean("running", false), o.optString("error").trim().take(300))
             }
+
+        private fun needs(a: JSONArray?): List<Need> = if (a == null) emptyList() else (0 until a.length()).mapNotNull { i ->
+            val n = a.optJSONObject(i) ?: return@mapNotNull null
+            val kind = when {
+                n.opt("member") is String -> "member"
+                n.optBoolean("notify") -> "notify"
+                n.optBoolean("widgets") -> "widgets"
+                n.optBoolean("card") -> "card"
+                else -> return@mapNotNull null
+            }
+            Need(kind, n.optString("why").replace(Regex("[\\p{Cc}\\p{Cf}]+"), " ").trim().take(200))
+        }
     }
 }
 
@@ -66,7 +90,7 @@ class AshUnavailable(message: String) : Exception(message)
 class Ash(ctx: Context, private val app: String?, private val inProcess: Boolean = false) {
     private val ctx = ctx.applicationContext
     /** [inProcess]: the screen is in Ash's own process (the list in the apps tab), so it asks the bridge's policy directly instead of binding to it. */
-    private val direct by lazy { AppsBridge(app, Process.myUid(), { Process.myUid() }) { request -> HumanSend.send(this.ctx, request) } }
+    private val direct by lazy { AppsBridge(app, Process.myUid(), { Process.myUid() }, owner = inProcess && app == null) { request -> HumanSend.send(this.ctx, request) } }
     private val lock = Object()
     private var bridge: IAppsBridge? = null
     private var bound = false
@@ -158,6 +182,13 @@ class Ash(ctx: Context, private val app: String?, private val inProcess: Boolean
         val d = data(call("service:apps", "apps.list", JSONObject()), "Ash 没给出应用列表")
         return AppInfo.list(d.optJSONArray("apps") ?: throw AshUnavailable("应用列表看不懂"))
     }
+
+    /**
+     * One of the owner's words on an app (`apps.install`, `apps.enable`, `apps.disable`, `apps.revoke`, `apps.refresh`): true when
+     * Ash did it. Only the list screen, which lives in Ash's own process, may say these (see [AppsBridgePolicy]).
+     */
+    fun owner(word: String, id: String? = null): Boolean =
+        call("service:apps", word, JSONObject().apply { if (id != null) put("id", id) }).optBoolean("ok")
 
     fun icon(id: String): Bitmap? = runCatching {
         val bytes = Base64.decode(Replies.data(call("service:apps", "apps.icon", JSONObject().put("id", id)))?.optString("data") ?: return null, Base64.DEFAULT)

@@ -15,6 +15,8 @@ internal class AppsBridge(
     private val app: String?,
     private val myUid: Int,
     private val callingUid: () -> Int,
+    /** The caller is Ash's own list screen, in Ash's process: it may also say the owner's words on an app ([AppsBridgePolicy.OWNER_WORDS]). Never true over the binder. */
+    private val owner: Boolean = false,
     /** Sends a human-channel `send` request and gives the `send.result` frame; see [HumanSend.send]. */
     private val send: (JSONObject) -> JSONObject,
 ) {
@@ -25,7 +27,7 @@ internal class AppsBridge(
         if (to == null || word == null || bodyJson == null) return Replies.error("bad_request", "请求不完整")
         if (bodyJson.length > MAX_BODY) return Replies.error("too_large", "请求太大")
         val body = try { JSONObject(bodyJson.ifBlank { "{}" }) } catch (_: JSONException) { return Replies.error("bad_request", "请求内容看不懂") }
-        if (!AppsBridgePolicy.allows(app, to, word, body)) return Replies.error("forbidden", "这里不能这样调用")
+        if (!AppsBridgePolicy.allows(app, to, word, body, owner)) return Replies.error("forbidden", "这里不能这样调用")
         return try {
             val sent = send(JSONObject().put("to", to).put("kind", "request").put("word", word).put("body", body).put("wait", true))
             HumanSend.reply(sent) ?: Replies.error("result_unknown", "Ash 没有及时回复，结果不确定")

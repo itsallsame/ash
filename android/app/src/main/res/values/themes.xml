@@ -3,5 +3,9 @@
     <!-- Dark status-bar icons over the light pages (Ui.systemBars keeps them right when the theme flips in place). -->
     <style name="AppsShell" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
         <item name="android:windowLightStatusBar">true</item>
+        <!-- The frame is Ash's own: the design's page colour (ash_bg has a night variant) behind and under the system bars. -->
+        <item name="android:windowBackground">@color/ash_bg</item>
+        <item name="android:statusBarColor">@color/ash_bg</item>
+        <item name="android:navigationBarColor">@color/ash_bg</item>
     </style>
 </resources>

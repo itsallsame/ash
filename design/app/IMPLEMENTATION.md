@@ -23,6 +23,8 @@
 - 组件：`ai.ash.ui.design.AshUi`（按钮、图标按钮、卡片、卡片头、分组列表 + 行、标签、选项、答完的结果行、分段、气泡、进度小胶囊、抽屉底、审批卡、`Spinner`、`AvatarView`、`AshSwitch`）。颜色 `AshUi.p(ctx)`（按系统暗色取 `AshPalette`），数值 `AshTokens.Space/Radius/Size/Type/Motion`；也可用资源 `@color/ash_*`、`@dimen/ash_*`。
 - 图标：`R.drawable.ash_ic_<名字>`（50 个，名字同 `design/app/icons/<名字>.svg`），用 `setTint` 着色。
 - 页面里不写 `Color.rgb(…)`、`0xFF…`、魔法数字；缺组件先加进 `AshUi`。
+- 整页的骨架：`ai.ash.ui.design.AshPage`（顶栏 `navbar`、大标题 `largeTitle`、滚动页 `scroll`、空状态 `empty`、底部抽屉 `Sheet`、应用图标块 `appIcon`、小号按钮的 44dp 点击区 `smallButton`）。原生页不要自己拼这些。
+- 网页 ↔ 原生：网页调 `__ashOpenNative("apps" | "checkup" | "checkup/<部位>")` 让原生打开应用网格 / 体检页；原生把体检摘要 `{todo, groups:[{id, todo}]}` 推给网页（`__ashCheckup()` 取最后一份，`ash:checkup` 事件）。`todo` 不含「位置和健康（可选）」那一格，`groups` 里含。分组表在 `ui/Checkup.kt`。
 - 单测：`AshTokensTest`（`android/app/src/test/java/ai/ash/ui/design/`）检查两套调色板、数值、字阶、动效、图标文件和 `ash_colors.xml` 都和 `tokens.json` 一致。`AshUi` 本身是 View 代码，JVM 单测测不到，要在真机/模拟器上看。
 
 ## App 图标
