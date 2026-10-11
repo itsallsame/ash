@@ -102,7 +102,9 @@ class HomeActivity : Activity() {
         if (BuildConfig.ISOLATED_PROBE) WebView.setWebContentsDebuggingEnabled(true)
         web = WebView(this)
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            setContentView(TextView(this).apply { text = "当前 WebView 不支持 Ash 安全通信"; textSize = 15f; gravity = Gravity.CENTER })
+            val sorry = AshUi.text(this, "这台手机的网页组件太旧，聊天页打不开。请在应用商店里把「Android System WebView」更新到新版，再回来打开 Ash。", ai.ash.ui.design.AshTokens.Type.body)
+                .apply { gravity = Gravity.CENTER; setPadding(AshUi.dp(this@HomeActivity, 40), 0, AshUi.dp(this@HomeActivity, 40), 0); setBackgroundColor(AshUi.p(this@HomeActivity).bg) }
+            setContentView(sorry)
             return
         }
         web.settings.apply {
@@ -470,8 +472,20 @@ class HomeActivity : Activity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // The system switched between light and dark: the page's prefers-color-scheme follows the theme it was made with, so the screen is made again (it keeps its page).
-        if (((newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES) != themedNight) recreate()
+        // The system switched between light and dark: the screen is not made again (that would drop what the page has open, the home
+        // page's layers); the parts the app draws itself take the other colours, and the page's own prefers-color-scheme follows the system.
+        val nowNight = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        if (nowNight == themedNight || !::content.isInitialized) return
+        themedNight = nowNight
+        val bg = AshUi.p(this).bg
+        window.statusBarColor = bg; window.navigationBarColor = bg; window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg))
+        ai.ash.apps.Ui.systemBars(this)
+        content.setBackgroundColor(bg)
+        web.setBackgroundColor(bg)
+        // The WebView takes the page's prefers-color-scheme from the theme's isLightTheme: the new theme goes over the old one, and the WebView is told the configuration changed.
+        theme.applyStyle(if (themedNight) R.style.Ash_Dark else R.style.Ash_Light, true)
+        web.dispatchConfigurationChanged(newConfig)
+        appsPane?.themeChanged()
     }
 
     @Deprecated("Deprecated in Java")

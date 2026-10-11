@@ -117,9 +117,7 @@ class AppActivity : Activity() {
 
     private fun build() {
         root = AshPage.screen(this)
-        titleBox = AshUi.hstack(this, 8).apply { gravity = Gravity.CENTER }
-        val more = AshUi.iconButton(this, AshPage.icon(this, R.drawable.ash_ic_more), "更多") { menu(titleBox) }
-        root.addView(AshPage.navbar(this, null, "返回", trailing = more, center = titleBox) { moveTaskToBack(true) })
+        root.addView(buildBar(), 0)
         tabHost = FrameLayout(this).apply { visibility = View.GONE }
         root.addView(tabHost)
         content = FrameLayout(this)
@@ -131,12 +129,24 @@ class AppActivity : Activity() {
         setContentView(root)
     }
 
+    /** The frame's bar: back, who this is, 「更多」. Made again by [paint] (its icons take their colour when they are made). */
+    private fun buildBar(): View {
+        titleBox = AshUi.hstack(this, 8).apply { gravity = Gravity.CENTER }
+        val more = AshUi.iconButton(this, AshPage.icon(this, R.drawable.ash_ic_more), "更多") { menu(titleBox) }
+        return AshPage.navbar(this, null, "返回", trailing = more, center = titleBox) { moveTaskToBack(true) }
+    }
+
+    /** Everything the frame draws itself, in the colours of the system's light or dark now (also called when the system switches in place). */
     private fun paint() {
         Ui.systemBars(this)
-        root.setBackgroundColor(AshUi.p(this).bg)
-        content.setBackgroundColor(AshUi.p(this).bg)
+        val bg = AshUi.p(this).bg
+        window.statusBarColor = bg; window.navigationBarColor = bg; window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg))
+        root.setBackgroundColor(bg)
+        content.setBackgroundColor(bg)
+        if (root.childCount > 0 && root.getChildAt(0) !== tabHost) { root.removeViewAt(0); root.addView(buildBar(), 0) }
         paintTitle()
         renderTabs()
+        if (notice.visibility == View.VISIBLE) drawNotice()
     }
 
     /** Who this is, always on show (so a page cannot pass itself off as Ash): the app's icon and its name. */
@@ -165,14 +175,23 @@ class AppActivity : Activity() {
     /** Nothing to show: the empty state's own structure (what happened, why in plain words, what you can do), or a spinner while it opens. */
     private fun say(title: String?, body: String = "", button: String? = null, act: (() -> Unit)? = null) {
         drop()
+        noticeNow = Notice(title, body, button, act)
         notice.visibility = View.VISIBLE
+        drawNotice()
+    }
+
+    private class Notice(val title: String?, val body: String, val button: String?, val act: (() -> Unit)?)
+    private var noticeNow: Notice? = null
+
+    private fun drawNotice() {
+        val n = noticeNow ?: return
         notice.removeAllViews()
-        if (title == null) {
+        if (n.title == null) {
             notice.addView(AshUi.Spinner(this), FrameLayout.LayoutParams(d(AshTokens.Size.icon), d(AshTokens.Size.icon), Gravity.CENTER))
             return
         }
-        val action = button?.let { AshUi.button(this, it, AshUi.Kind.PRIMARY) { act?.invoke() } }
-        notice.addView(AshPage.empty(this, title, body, action), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        val action = n.button?.let { AshUi.button(this, it, AshUi.Kind.PRIMARY) { n.act?.invoke() } }
+        notice.addView(AshPage.empty(this, n.title, n.body, action), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
     }
 
     /** What Ash says about this app now; then its page. */
@@ -211,10 +230,13 @@ class AppActivity : Activity() {
         tabHost.visibility = if (a != null && a.usable && surfaces.size > 1) View.VISIBLE else View.GONE
         if (tabHost.visibility != View.VISIBLE) return
         tabHost.setPadding(d(AshTokens.Space.md), d(AshTokens.Space.xxs), d(AshTokens.Space.md), d(AshTokens.Space.sm))
-        tabHost.addView(AshUi.segmented(this, surfaces.map { it.second }, surfaces.indexOfFirst { it.first == surface }) { i ->
+        val seg = AshUi.segmented(this, surfaces.map { it.second }, surfaces.indexOfFirst { it.first == surface }) { i ->
             val id = surfaces[i].first
             if (id != surface) { surface = id; renderTabs(); open(id) }
-        })
+        }
+        tabHost.addView(seg)
+        // The tabs are drawn 32dp high; they are tapped from 44dp.
+        AshPage.widenTouch(tabHost, (0 until seg.childCount).map { seg.getChildAt(it) })
     }
 
     private fun open(surfaceId: String) {

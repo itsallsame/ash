@@ -1,15 +1,19 @@
 package ai.ash.ui.design
 
 import ai.ash.R
+import ai.ash.screen.island.IslandTokens
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.drawable.Drawable
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.TouchDelegate
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -47,6 +51,8 @@ object AshPage {
         AshUi.hstack(ctx, 4).apply {
             minimumHeight = AshUi.dp(ctx, AshTokens.Size.navBar)
             setPadding(AshUi.dp(ctx, 6), 0, AshUi.dp(ctx, 6), 0)
+            // A centred title sits where the island's pill may be: the bar moves down until the title is clear of it.
+            if (title != null || center != null) clearOfIsland(this)
             addView(AshUi.iconButton(ctx, icon(ctx, R.drawable.ash_ic_back), backLabel, onClick = onBack))
             val mid = center ?: AshUi.text(ctx, title ?: "", AshTokens.Type.headline).apply {
                 gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
@@ -55,6 +61,88 @@ object AshPage {
             val size = AshUi.dp(ctx, AshTokens.Size.iconButton)
             addView(trailing ?: View(ctx), LinearLayout.LayoutParams(size, size))
         }
+
+    /**
+     * 灵动岛常驻（或有任务）时，药丸在屏幕顶部正中。居中的标题要让开它：这里只读岛的尺寸（[IslandTokens]，和引导页一样），
+     * 岛本身一行不动。药丸下沿 = 状态栏下沿 + [IslandTokens.SIZE_TOP_BELOW_STATUS_BAR] + 药丸高；有摄像头孔的机器它贴着摄像头，下沿更靠上。
+     * 页面已经给系统栏和摄像头孔让过位了（[ai.ash.apps.Ui.insets]），所以只补还差的那一截，让标题（一行 24dp）的上沿落在药丸下沿以下。
+     */
+    fun clearOfIsland(bar: View) {
+        val ctx = bar.context
+        val place = {
+            val insets = ViewCompat.getRootWindowInsets(bar)
+            val d = ctx.resources.displayMetrics.density
+            val bars = (insets?.getInsets(WindowInsetsCompat.Type.systemBars())?.top ?: 0) / d
+            val hole = (insets?.getInsets(WindowInsetsCompat.Type.displayCutout())?.top ?: 0) / d
+            bar.setPadding(bar.paddingLeft, AshUi.dp(ctx, islandPaddingDp(bars, hole)), bar.paddingRight, bar.paddingBottom)
+        }
+        if (bar.isAttachedToWindow) place() else bar.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) { v.removeOnAttachStateChangeListener(this); place() }
+            override fun onViewDetachedFromWindow(v: View) {}
+        })
+    }
+
+    /**
+     * How far down a bar with a centred title must start (dp) to be clear of the island: the pill's lower edge (below the status bar by
+     * [IslandTokens.SIZE_TOP_BELOW_STATUS_BAR] and the pill's height; on a phone with a camera hole the pill hugs the camera, higher up) less
+     * what the page already leaves free at the top ([bars], [hole]: the insets), so that the title line starts below it. Never negative.
+     */
+    internal fun islandPaddingDp(bars: Float, hole: Float): Float {
+        val pillBottom = if (hole > 0f) IslandTokens.SIZE_TOP_HUG_CAMERA + IslandTokens.SIZE_COMPACT_HUG_CAMERA_H
+            else bars + IslandTokens.SIZE_TOP_BELOW_STATUS_BAR + IslandTokens.SIZE_PILL_NO_CUTOUT_H
+        val clear = pillBottom - maxOf(bars, hole)
+        // The bar's controls are 44dp tall and the 24dp title line is centred in them: it starts (44 - 24) / 2 below the bar's own top padding.
+        val titleTop = (AshTokens.Size.iconButton - 24) / 2f
+        return (clear - titleTop).coerceAtLeast(0f)
+    }
+
+    /**
+     * 可点的东西不小于 44dp：把 [parent] 里这些 [children]（可见尺寸不变）的点击区向上下扩到 [AshTokens.Size.touch]。
+     * 点击区不能超出 [parent] 自己的范围：上面留得不够就多往下扩。
+     */
+    fun widenTouch(parent: ViewGroup, children: List<View>) {
+        fun inside(c: View): Boolean { var v: View? = c; while (v != null && v !== parent) v = v.parent as? View; return v === parent }
+        fun apply() {
+            val group = TouchGroup(parent)
+            val min = AshUi.dp(parent.context, AshTokens.Size.touch)
+            for (c in children) {
+                if (c.height <= 0 || !inside(c)) continue          // a child taken out since (the parent was filled again) has nothing to widen
+                val r = Rect(0, 0, c.width, c.height)
+                parent.offsetDescendantRectToMyCoords(c, r)
+                val need = (min - c.height).coerceAtLeast(0)
+                val up = minOf(need / 2, r.top)           // as far up as the parent lets it, the rest down
+                r.top -= up
+                r.bottom = minOf(r.bottom + (need - up), parent.height)
+                group.add(TouchDelegate(r, c))
+            }
+            parent.touchDelegate = group
+        }
+        // One listener per parent: asking again for the same parent (its children changed) replaces the one before.
+        widened.remove(parent)?.let { parent.removeOnLayoutChangeListener(it) }
+        val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> apply() }
+        widened[parent] = listener
+        parent.addOnLayoutChangeListener(listener)
+        parent.post { apply() }
+    }
+
+    private val widened = java.util.WeakHashMap<ViewGroup, View.OnLayoutChangeListener>()
+
+    /** 一个 view 只能有一个 TouchDelegate；这个把几个合起来，谁认领这次触摸就给谁。 */
+    private class TouchGroup(host: View) : TouchDelegate(Rect(), host) {
+        private val parts = mutableListOf<TouchDelegate>()
+        private var active: TouchDelegate? = null
+        fun add(d: TouchDelegate) { parts += d }
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                active = parts.firstOrNull { d -> MotionEvent.obtain(event).let { copy -> d.onTouchEvent(copy).also { copy.recycle() } } }
+                return active != null
+            }
+            val a = active ?: return false
+            val handled = a.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) active = null
+            return handled
+        }
+    }
 
     /** 大标题（30 号）：「应用」。 */
     fun largeTitle(ctx: Context, text: CharSequence): TextView = AshUi.text(ctx, text, AshTokens.Type.display).apply {
