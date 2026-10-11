@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Ledger } from "../../core/src/kernel/ledger/index.ts";
 import { createWindowReader } from "../../core/src/services/history/window.ts";
+import { createBlobsService } from "../../core/src/services/blobs/index.ts";
 
 const ajv = new Ajv({ strict: false });
 const checks = new Map();
@@ -68,18 +69,21 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
   const display = createWindowReader(historyLedger, () => clock);
   for (const word of ["window", "current", "confirm"]) kernel.on("service:history", word, body => display[word](body));
   kernel.on("service:history", "activity.page", body => display.activityPage(body));
+  kernel.on("service:history", "read", body => ({ messages: historyLedger.page({ after: (body.from_seq ?? 1) - 1, before: body.to_seq === undefined ? undefined : body.to_seq + 1, limit: 1000 }), next_offset: null }));
+  const blobs = createBlobsService(historyLedger);
+  kernel.on("service:blobs", "read", async body => (await blobs.handle({ word: "read", body }, {})).data);
 
   kernel.handlers.set("service:agents/list", { agents: [{ id: "agent:main", name: "Ash", summary: "", state: "idle", primary: true }] });
 
   const row = (partial) => {
     const message = { seq: ++seq, id: partial.id ?? `m_${seq}`, ts: partial.ts ?? (clock += 1000), from: partial.from, to: partial.to ?? null,
-      kind: partial.kind ?? "request", word: partial.word, body: partial.body ?? {}, ...(partial.reply_to ? { reply_to: partial.reply_to } : {}),
+      kind: partial.kind ?? (partial.to ? "request" : "event"), word: partial.word, body: partial.body ?? {}, ...(partial.reply_to ? { reply_to: partial.reply_to } : {}),
       ...(partial.origin ? { origin: partial.origin } : {}), ...(partial.turn ? { turn: partial.turn } : {}), ...(partial.thread ? { thread: partial.thread } : {}),
       summary: partial.summary ?? (typeof partial.body?.text === "string" ? partial.body.text : partial.word), size: 1 };
-    kernel.ledger.push(message);
-    historyLedger.append(message, { summary: message.summary });
-    for (const follower of kernel.followers) follower.push(message);
-    return message;
+    const recorded = historyLedger.append(message, { summary: message.summary });
+    kernel.ledger.push(recorded);
+    for (const follower of kernel.followers) follower.push(recorded);
+    return recorded;
   };
   /** Something another member said or did: it goes into the ledger and to every following sync. */
   kernel.append = (partial) => row(partial);
