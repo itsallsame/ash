@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, renameSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { Scenario, MAIN, type TurnContext, type Human } from "./harness";
+import { CLOUDFLARE_REF } from "../../src/edges/link-server/control/setup";
 import { hubKey } from "../edges/link-server/control-harness";
 
 const CMD_DIR = process.env.CMD_DIR!;
@@ -47,8 +48,8 @@ await s.boot();
 await s.passFirstMeeting();
 useRealBundle();
 let owner: Human = await s.human({ name: "owner-cli", surfaces: ["chat", "notification"] });
-const saved = await owner.call("service:vault", "set", { ref: "cloudflare.oauth", value: readFileSync(process.env.CF_TOKEN_FILE!, "utf8") });
-log("vault set cloudflare.oauth:", saved.ok ? "ok" : JSON.stringify(saved));
+const saved = await owner.call("service:vault", "set", { ref: CLOUDFLARE_REF, value: readFileSync(process.env.CF_TOKEN_FILE!, "utf8") });
+log(`vault set ${CLOUDFLARE_REF}:`, saved.ok ? "ok" : JSON.stringify(saved));
 writeFileSync(join(CMD_DIR, "READY"), String(Date.now()));
 log("ready; commands in", CMD_DIR);
 

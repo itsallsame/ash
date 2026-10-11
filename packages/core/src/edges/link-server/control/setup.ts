@@ -185,8 +185,8 @@ export class RelaySetup {
       throw new WordError("bad_request", `the sign-in cannot see the account ${account}`, { recovery_hint: "Use gateway.setup.status to see the accounts the owner signed in with." });
     }
     if (account === undefined && accounts.length > 1) {
-      throw new WordError("bad_request", `the owner's sign-in sees ${accounts.length} Cloudflare accounts; say which one to build in (account): ${accounts.map((a) => `${a.name} = ${a.id}`).join("; ")}`, {
-        recovery_hint: "Ask the owner which account, then call deploy again with account set to its id (gateway.setup.status lists them).",
+      throw new WordError("bad_request", `the owner's sign-in sees ${accounts.length} Cloudflare accounts; say which one to build in (account)`, {
+        recovery_hint: "Use gateway.setup.status to see the accounts, ask the owner which one, then call deploy again with account set to its id.",
       });
     }
     this.requireBundle();
@@ -357,14 +357,14 @@ export class RelaySetup {
     const script = this.scriptName(name, account, scripts.map((s) => s.id));
     const secret = b64u(randomBytes(32));
     await this.upload(token, account, script, program, secret, !scripts.some((s) => s.id === script));
+    // From here the Worker is one this hub put there, claimed or not: a retry under the same name may write over it, and a later setup may update it.
+    this.d.db.prepare("INSERT OR REPLACE INTO link_deployed (account, script, deployed_at) VALUES (?, ?, ?)").run(account, script, this.now());
     this.alive(id);
     await this.api(token, "POST", `/accounts/${account}/workers/scripts/${script}/subdomain`, { enabled: true, previews_enabled: false });
     const url = this.cf.siteUrl?.(script, subdomain) ?? `https://${script}.${subdomain}.workers.dev`;
     await this.reachable(id, url);
     this.alive(id);
     await this.d.activate(url, secret, { email }).catch((error) => { throw new Failure(`the relay was deployed but could not be claimed: ${error instanceof Error ? error.message : "unknown"}`); });
-    // Only now is the Worker this hub's own: a later setup may put a newer program there.
-    this.d.db.prepare("INSERT OR REPLACE INTO link_deployed (account, script, deployed_at) VALUES (?, ?, ?)").run(account, script, this.now());
     this.alive(id);
     this.move(id, "claimed");
     if (!await this.d.connected(30_000)) throw new Failure("the relay was deployed and claimed but the hub could not connect to it");
@@ -390,7 +390,7 @@ export class RelaySetup {
 
   /**
    * The Worker's name. Ash never writes over a Worker it did not build: the owner's own (even one that is called ash-gateway) is
-   * left alone, whether the name was asked for or made here. Only a Worker this hub deployed and claimed before may be updated.
+   * left alone, whether the name was asked for or made here. Only a Worker this hub uploaded before may be updated.
    */
   private scriptName(asked: string | undefined, account: string, existing: (string | undefined)[]): string {
     const taken = new Set(existing);
@@ -400,6 +400,10 @@ export class RelaySetup {
       }
       return asked;
     }
+    // No name asked: update the relay this hub already built in this account, if it is still there, instead of building another.
+    const mine = this.d.db.prepare("SELECT script FROM link_deployed WHERE account = ? ORDER BY deployed_at DESC, rowid DESC").all(account) as { script: string }[];
+    const again = mine.find((row) => taken.has(row.script));
+    if (again) return again.script;
     for (let attempt = 0; attempt < 5; attempt++) {
       const name = generatedName();
       if (!taken.has(name)) return name;

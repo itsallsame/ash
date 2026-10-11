@@ -234,16 +234,22 @@ test("a name that is taken by a Worker Ash did not build is refused in words, wi
 
 test("several Cloudflare accounts under one sign-in: they are listed, none is guessed, and the one chosen is the only one touched", async (t) => {
   const { cf, setup, id, w } = await authorized(t);
-  cf.accounts = [{ id: "acc1", name: "Personal" }, { id: "acc2", name: "I AM ZY" }];
+  cf.accounts = [{ id: "acc1", name: "someone@example.com's Account" }, { id: "acc2", name: "I AM ZY" }];
   cf.scriptsBy.set("acc2", []);
   // the sign-in's accounts are read when it is authorized: this one was authorized with the single account, so list again through a new sign-in
   const again = await setup.start("person:owner");
   await cf.signIn(w.card()!.url);
   await eventually(() => setup.status(again.setup_id).state === "authorized", "authorized with two accounts");
-  assert.deepEqual(setup.status(again.setup_id).accounts, [{ id: "acc1", name: "Personal" }, { id: "acc2", name: "I AM ZY" }]);
+  assert.deepEqual(setup.status(again.setup_id).accounts, [{ id: "acc1", name: "someone@example.com's Account" }, { id: "acc2", name: "I AM ZY" }]);
   assert.deepEqual((await w.link("gateway.setup.status", { setup_id: again.setup_id })).accounts?.map((a: { id: string }) => a.id), ["acc1", "acc2"]);
+  const errors: string[] = [];
+  for (const body of [{ name: "my-relay" }, { account: "acc9" }]) {
+    try { setup.deploy(again.setup_id, (body as { name?: string }).name, (body as { account?: string }).account); assert.fail("refused"); }
+    catch (error) { assert.equal((error as { code?: string }).code, "bad_request"); errors.push(JSON.stringify(error), String((error as Error).message)); }
+  }
   assert.equal(await w.refused("gateway.setup.deploy", { setup_id: again.setup_id, name: "my-relay" }), "bad_request", "no account chosen");
   assert.equal(await w.refused("gateway.setup.deploy", { setup_id: again.setup_id, account: "acc9" }), "bad_request", "an account the sign-in cannot see");
+  for (const text of [...errors, everythingSaid(w)]) assert.ok(!/someone@example\.com|I AM ZY/.test(text), "no account name or e-mail in an error or a message (they are masked for agents in the status, not in free text)");
   assert.equal(setup.status(again.setup_id).state, "authorized", "refusing leaves the setup waiting for the choice");
   assert.deepEqual(cf.calls.filter((c) => /accounts\/acc2\/workers/.test(c)), [], "nothing was asked of the other account");
   await w.link("gateway.setup.deploy", { setup_id: again.setup_id, account: "acc1", name: "my-relay" });
@@ -267,6 +273,34 @@ test("when the accounts could not be read at sign-in and there turn out to be se
   b.setup.deploy(started.setup_id, "my-relay", "acc2");
   await eventually(() => b.setup.status(started.setup_id).state === "connected", "connected");
   assert.deepEqual(b.cf.uploads.map((u) => u.account), ["acc2"]);
+});
+
+test("without a name a later setup updates the relay this hub already built; a Worker uploaded but not claimed may be written over by a retry", async (t) => {
+  const first = await authorized(t);
+  first.setup.deploy(first.id);
+  await eventually(() => first.setup.status(first.id).state === "connected", "connected");
+  const built = first.cf.uploads[0]!.script;
+  const second = await first.setup.start("person:owner");
+  await first.cf.signIn(first.card()!.url);
+  await eventually(() => first.setup.status(second.setup_id).state === "authorized", "authorized again");
+  first.setup.deploy(second.setup_id);
+  await eventually(() => first.setup.status(second.setup_id).state === "connected", "connected again");
+  assert.deepEqual(first.cf.uploads.map((u) => u.script), [built, built], "the same Worker, not a new one");
+  assert.equal(first.cf.scripts.length, 1);
+
+  // uploaded, but the relay never answers: the claim does not happen; the Worker is still this hub's to retry
+  const b = await authorized(t);
+  await b.w.gw.stop();
+  b.setup.deploy(b.id, "my-relay");
+  await eventually(() => b.setup.status(b.id).state === "failed", "failed");
+  assert.match(b.setup.status(b.id).reason!, /does not answer/);
+  const retry = await b.setup.start("person:owner");
+  await b.cf.signIn(b.card()!.url);
+  await eventually(() => b.setup.status(retry.setup_id).state === "authorized", "authorized for the retry");
+  b.setup.deploy(retry.setup_id, "my-relay");
+  await eventually(() => b.setup.status(retry.setup_id).state === "failed", "failed again");
+  assert.doesNotMatch(b.setup.status(retry.setup_id).reason!, /did not build/, "the retry was allowed to write over its own upload");
+  assert.equal(b.cf.uploads.length, 2);
 });
 
 test("one Cloudflare account is used without asking, and then the status lists nothing to choose", async (t) => {

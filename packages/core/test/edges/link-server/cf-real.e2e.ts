@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { startHub } from "./harness";
 import { createLinkControl } from "../../../src/edges/link-server/control/words";
+import { CLOUDFLARE_REF } from "../../../src/edges/link-server/control/setup";
 import { relayBundleFile } from "../../../src/edges/link-server/control/bundle";
 import { Devices } from "../../../src/edges/link-server/hands/devices";
 import { MemoryVault, hubKey, owner } from "./control-harness";
@@ -14,7 +15,7 @@ const name = process.env.CF_NAME!;
 const hub = await startHub();
 const key = await hubKey();
 const vault = new MemoryVault();
-vault.set("cloudflare.oauth", readFileSync(process.env.CF_TOKEN_FILE!, "utf8"));
+vault.set(CLOUDFLARE_REF, readFileSync(process.env.CF_TOKEN_FILE!, "utf8"));
 const bundle = relayBundleFile(`${process.env.RELAY_DIST}/ash-gateway.mjs`);
 const control = createLinkControl({
   db: hub.db, router: hub.router, link: hub.server, hands: hub.hands, vault, identity: key.identity,
