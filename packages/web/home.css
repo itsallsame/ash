@@ -236,5 +236,5 @@
 /* the small controls the design draws under 44 high keep their look and get a 44 high area */
 .hm-root .seg>*,.hm-root .opt,.hm-root .card-link,.hm-turn-title,.hm-quote-hint,.hm-detail summary{position:relative}
 .hm-root .seg>*::after{content:"";position:absolute;left:0;right:0;top:-3px;bottom:-9px}
-.hm-root .opt::after{content:"";position:absolute;left:0;right:0;top:-2px;bottom:-2px}
+.hm-root .opt::after{content:"";position:absolute;left:0;right:0;top:-3px;bottom:-3px}
 .hm-root .card-link::after,.hm-turn-title::after,.hm-quote-hint::after,.hm-detail summary::after{content:"";position:absolute;left:0;right:0;top:-8px;bottom:-8px}

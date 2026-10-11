@@ -72,19 +72,17 @@ test("a list that arrives after the connection changed is not adopted, and a can
   void fresh;
 });
 
-test("a plan the system made for itself carries an internal name and is not the owner's to see", () => {
-  assert.equal(isSystemPlan({ label: "semantic:reload:1760" }), true);
-  assert.equal(isSystemPlan({ label: "ash:tick" }), true);
+test("a plan is the system's by who made it or what it is aimed at; a code-like name is only a guess when the clock says neither", () => {
+  assert.equal(isSystemPlan({ label: "每日整理", by: "service:semantic", to: "agent:main" }), true, "made by a service");
+  assert.equal(isSystemPlan({ label: "整理", by: "agent:main", to: "service:semantic" }), true, "aimed at a service");
+  assert.equal(isSystemPlan({ label: "semantic:reload:1760", by: "service:semantic", to: "service:semantic" }), true);
+  assert.equal(isSystemPlan({ label: "remind:water", by: "agent:main", to: "agent:main" }), false, "an agent's own code-like name is hers to show");
+  assert.equal(isSystemPlan({ label: "pulse:wake:7", by: "person:owner", to: "agent:main" }), false);
+  assert.equal(isSystemPlan({ label: "吃药", by: "agent:main", to: "agent:main" }), false);
+  assert.equal(isSystemPlan({ label: "pulse:wake:1791734193803", by: null, to: null }), true, "no maker or target said: the name is the guess");
+  assert.equal(isSystemPlan({ label: "heartbeat_1791734193803" }), true);
   assert.equal(isSystemPlan({ label: "带伞" }), false);
-  assert.equal(isSystemPlan({ label: "提醒: 开会" }), false, "words with a space are a person's");
+  assert.equal(isSystemPlan({ label: "提醒: 开会" }), false);
   assert.equal(isSystemPlan({ label: "" }), false);
-  assert.equal(isSystemPlan({ label: "每日整理", by: "service:semantic" }), true, "told by who made it");
-  assert.equal(isSystemPlan({ label: "pulse:wake:7", by: "agent:main" }), true, "or by the name it carries");
-  assert.equal(isSystemPlan({ label: "吃药", by: "agent:main" }), false);
-  assert.equal(isSystemPlan({ label: "整理", to: "service:semantic" }), true, "aimed at a service");
-  assert.equal(isSystemPlan({ label: "heartbeat_1791734193803" }), true, "a bare code with a timestamp in it");
-  assert.equal(isSystemPlan({ label: "给小李打电话 1791734193", to: "agent:main" }), false);
-  assert.equal(isSystemPlan({ label: "wake-up", to: "agent:main" }), false);
-  assert.equal(isSystemPlan({ label: "吃药", by: "person:owner" }), false);
-  assert.deepEqual(userPlans([{ id: "a", label: "semantic:x:1" }, { id: "b", label: "吃药" }]).map((p) => p.id), ["b"]);
+  assert.deepEqual(userPlans([{ id: "a", label: "x", by: "service:semantic" }, { id: "b", label: "remind:water", by: "agent:main", to: "agent:main" }]).map((p) => p.id), ["b"]);
 });

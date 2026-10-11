@@ -9,7 +9,7 @@ import { repeatText } from "./clock.js";
 import { pauseControl } from "./home-pause.js";
 import { listDirectory } from "./body.js";
 import { BODY_MAIN } from "./body.js";
-import { HELPER, isSettingsFile, KEYS, appsSummary, providerName } from "./home-text.js";
+import { HELPER, isSystemEntry, KEYS, appsSummary, providerName } from "./home-text.js";
 
 const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars";
 const FACE = { idle: "default", resting: "resting", listening: "listening", thinking: "thinking", working: "focused", done: "success", waiting_you: "listening" };
@@ -174,7 +174,7 @@ export function homePage(ctx, screen) {
   const filesBox = h("div");
   const drawFiles = () => {
     const entries = state.files;
-    const files = entries ? entries.filter((entry) => entry.type !== "directory" && !isSettingsFile(entry.name)).slice(0, 2) : [];
+    const files = entries ? entries.filter((entry) => entry.type !== "directory" && !isSystemEntry(entry)).slice(0, 2) : [];
     fill(filesBox, section("她的文件", { right: "全部", onOpen: () => ctx.go("files") },
       !entries ? note("正在读取…") : files.length ? list(...files.map((file) => row({ icon: "file", tone: "you", title: file.name, sub: Number.isFinite(file.size) ? `${Math.max(1, Math.ceil(file.size / 1024))} KB` : null, onClick: () => ctx.go("files", file.name) })))
         : list(row({ icon: "file", title: "还没有文件", sub: "她做出来的文档会放在这里", onClick: () => ctx.go("files") }))));

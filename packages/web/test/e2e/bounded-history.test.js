@@ -101,7 +101,7 @@ test(...withBrowser("a cached expanded body revisits as a preview until scrollin
   await jump("restore_5");
   await page.locator('#log .msg[data-seq="5"]').waitFor();
   assert.equal(await message.count(), 0, "the earlier body was actually evicted");
-  await page.evaluate(() => { window.wheelPulses = 0; window.scrollPulse = setInterval(() => { const log = document.querySelector("#log"); log.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 })); wheelPulses++; }, 20); });
+  await page.evaluate(() => { window.wheelPulses = 0; const pulse = () => { const log = document.querySelector("#log"); log.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 })); wheelPulses++; }; pulse(); window.scrollPulse = setInterval(pulse, 20); });
   try {
     await jump("restore_100");
     await message.locator(".expand").waitFor();

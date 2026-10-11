@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HELPER, appState, isSettingsFile, pluginName, providerName, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
+import { readFileSync } from "node:fs";
+import { HELPER, appState, appBroken, appTrouble, isSystemEntry, SYSTEM_FILES, SYSTEM_FOLDERS, pluginName, providerName, appsSummary, balanceSentence, deviceDiagnosis, keyProblems, keyStateText, quietOf, relayText, setupText } from "../js/home-text.js";
 
 const dev = (letter) => `device:${letter.repeat(22)}`;
 
@@ -45,6 +46,7 @@ test("an app's state and the line for the apps read in plain words", () => {
   assert.equal(appState({ granted: true, enabled: false }), "已停用");
   assert.equal(appState({ granted: true, enabled: true, running: true }), "已启用 · 运行中");
   assert.equal(appState({ granted: true, enabled: true }), "已启用 · 还没运行起来");
+  assert.equal(appState({ granted: false, problem: "manifest", error: "app.json: x" }), "出错了");
   assert.equal(appsSummary([]), "还没有应用");
   assert.equal(appsSummary([{ granted: true, enabled: true }, { granted: false }]), "2 个应用 · 1 个已启用");
 });
@@ -63,7 +65,36 @@ test("plugin names, providers and her settings files read the way the page says 
   assert.equal(providerName("deepseek-chat"), "DeepSeek");
   assert.equal(providerName("some-new-model"), "some-new-model");
   assert.equal(providerName(undefined), "");
-  assert.ok(["AGENTS.md", "identity.md", "SOUL.md", "USER.md", "MEMORY.md", "PROACTIVE.md", ".hidden"].every(isSettingsFile));
-  assert.ok(["装备清单.xlsx", "notes.md", "README.md"].every((name) => !isSettingsFile(name)));
+  const file = (name) => ({ name, type: "file" });
+  assert.ok(["AGENTS.md", "identity.md", "SOUL.md", "PULSE.md", "USER.md", "MEMORY.md", "PROACTIVE.md", ".hidden"].every((name) => isSystemEntry(file(name))));
+  assert.ok(["装备清单.xlsx", "notes.md", "README.md", "SPEC.md", "ACCEPTANCE.md"].every((name) => !isSystemEntry(file(name))), "documents for a job stay");
+  assert.ok(isSystemEntry({ name: "memory", type: "directory" }) && isSystemEntry({ name: "skills", type: "directory" }));
+  assert.ok(!isSystemEntry({ name: "reports", type: "directory" }) && !isSystemEntry({ name: "memory", type: "file" }));
   assert.equal(HELPER, "一个帮手");
+});
+
+test("an app whose app.json is broken is not one that wants in, and its trouble is told in plain words, not the hub's line", () => {
+  const bad = { granted: false, problem: "manifest", error: "app.json: 不是合法的 JSON：Unexpected token" };
+  assert.equal(appBroken(bad), true);
+  assert.equal(appBroken({ granted: false, error: "app.json: x" }), true, "an older hub gave no kind");
+  assert.equal(appBroken({ granted: true, enabled: true, error: "start failed: x" }), false);
+  assert.equal(appBroken({ granted: false }), false);
+  assert.match(appTrouble(bad), /说明文件写得不对，装不了/);
+  assert.match(appTrouble({ ...bad, granted: true }), /说明文件写得不对，打不开.*收回全部权限/);
+  assert.match(appTrouble({ granted: true, problem: "folder", error: "x" }), /文件夹已经不在了/);
+  assert.match(appTrouble({ granted: true, enabled: true, error: "start failed: ENOENT" }), /没能正常跑起来/);
+  assert.equal(appTrouble({ granted: true }), null);
+  for (const app of [bad, { ...bad, granted: true }]) assert.doesNotMatch(appTrouble(app), /app\.json|JSON|Unexpected/);
+});
+
+test("the system's files named here are the ones the hub's sources name", () => {
+  const read = (path) => readFileSync(new URL(`../../core/src/${path}`, import.meta.url), "utf8");
+  const baseline = /BASELINE_FILE = "([^"]+)"/.exec(read("edges/agents/dsh/driver.ts"))?.[1];
+  const persona = [.../PERSONA_FILES = \[([^\]]+)\]/.exec(read("services/semantic/persona.ts"))[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const pulse = /GUIDANCE = "([^"]+)"/.exec(read("services/semantic/pulse.ts"))?.[1];
+  const memory = [...read("edges/agents/modules.ts").matchAll(/this\.text\("([A-Z]+\.md)"\)/g)].map((m) => m[1]);
+  for (const name of [baseline, ...persona, pulse, ...memory]) assert.ok(SYSTEM_FILES.includes(name), `${name} is written or read by the hub but is not in SYSTEM_FILES`);
+  assert.deepEqual([...memory].sort(), ["MEMORY.md", "USER.md"]);
+  assert.ok(read("edges/agents/modules.ts").includes('path: "skills"') && SYSTEM_FOLDERS.includes("skills"));
+  assert.ok(read("services/semantic/daily.ts").includes("memory/YYYY-MM-DD.md") && SYSTEM_FOLDERS.includes("memory"));
 });
