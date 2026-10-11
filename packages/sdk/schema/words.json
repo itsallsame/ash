@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "ce68e40ba4f670efb276d02cc4f8861a8a4ac9b12e64b05a385981fef42d5f9e",
+ "hash": "6e1328f12ff856102ffd39f1e0fe0d27422c4ae9c49b8d6db85c5ef677c20acb",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -12674,7 +12674,7 @@
    "word": "current",
    "kind": "request",
    "direction": "in",
-   "description": "Authoritative current presence and bounded progress, with independently paginated pending questions and total count. Read without snapshot_seq for current state; old conversation windows do not determine current presence.",
+   "description": "Authoritative current presence and bounded progress, with independently paginated pending questions and complete total count. Optional agent scopes turns and question publishers; gate approvals remain in the unfiltered owner view. Read without snapshot_seq for current state; old conversation windows do not determine current presence.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -12697,6 +12697,10 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+     },
+     "agent": {
+      "type": "string",
+      "minLength": 1
      }
     },
     "required": [],
