@@ -197,10 +197,10 @@ function failureCard(fragment, failure, { onRetry }) {
 }
 
 /** Append a stable ledger conversation without inventing an approval or option action. */
-export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, now = Date.now(), previous: previousEntry = null, next: nextEntry = null, previousDisplay = null, omitContent = false, lifetime } = {}) {
+export function appendConversation(fragment, entries, { openInline, onOpenFile, onFileLink, onExpand, fullTexts, onSelect, onAnswerAsk, onPermission, onRetry, optionPending, askIntents, agentName = id => id.replace(/^agent:/, ""), primary = null, loading = false, herName = "Ash", failures = [], atStart = false, intro, now = Date.now(), previous: previousEntry = null, next: nextEntry = null, previousDisplay = null, omitContent = false, lifetime } = {}) {
   if (!entries.length && !failures.length) { if (loading) skeleton(fragment); else emptyState(fragment); return; }
   // Only before the owner has said anything: it is the first meeting, and she spoke first.
-  if (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some((item) => item.side === "owner")) introduction(fragment, herName);
+  if (intro ?? (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some((item) => item.side === "owner"))) introduction(fragment, herName);
   const pendingFailures = [...failures].sort((a, b) => a.ts - b.ts);
   let lastTs = previousDisplay?.ts ?? null;
   let lastSide = previousDisplay?.side ?? null;
@@ -210,6 +210,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
   for (let index = 0; index < entries.length; index++) {
     const item = entries[index];
     flushFailures(item.ts ?? Infinity);
+    if (item.type === "failed") { failureCard(fragment, item, { onRetry }); lastSide = null; continue; }
     if (Number.isFinite(item.ts) && (lastTs === null || item.ts - lastTs >= TIME_GAP || new Date(item.ts).toDateString() !== new Date(lastTs).toDateString())) {
       text(fragment, "span", dayStamp(item.ts, now), "daysep");
       lastSide = null;
@@ -257,7 +258,10 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
       }
       if (Array.isArray(item.reactions) && item.reactions.length) {
         const reactions = text(bubble, "span", "", "reactions");
-        for (const reaction of item.reactions) if (typeof reaction?.emoji === "string" && reaction.emoji) text(reactions, "span", reaction.emoji, "reaction");
+        for (const reaction of item.reactions) if (typeof reaction?.emoji === "string" && reaction.emoji) {
+          const count = Number.isSafeInteger(reaction.count) && reaction.count > 1 ? ` ${reaction.count}` : "";
+          text(reactions, "span", `${reaction.emoji}${count}`, "reaction");
+        }
       }
       if (item.side === "owner") text(fragment, "span", deliveryText[item.delivery] || deliveryText.sent, "delivery meta r");
     } else if (item.type === "ask") {
@@ -287,15 +291,16 @@ export function appendOutbox(fragment, outbox) {
 }
 
 /** Ordered entities retain the existing sibling layout; neighbors need no body text. */
-export function conversationRows(entries, { failures = [], atStart = false, previous = null, next = null } = {}) {
+export function conversationRows(entries, { failures = [], atStart = false, intro, previous = null, next = null, previousDisplay = null } = {}) {
   const rows = [];
   if (!entries.length && !failures.length) return [{ key: "state", kind: "state" }];
-  if (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some(item => item.side === "owner")) rows.push({ key: "intro", kind: "intro" });
+  if (intro ?? (atStart && entries.length <= 8 && entries[0]?.side === "agent" && !entries.some(item => item.side === "owner"))) rows.push({ key: "intro", kind: "intro" });
   const pending = [...failures].sort((a, b) => a.ts - b.ts);
-  let ts = previous?.ts ?? null, side = previous?.side === "owner" ? "me" : previous?.type === "say" ? "ai" : null;
+  let ts = previousDisplay?.ts ?? previous?.ts ?? null, side = previous?.side === "owner" ? "me" : previous?.type === "say" ? "ai" : null;
   const flush = before => { while (pending.length && pending[0].ts <= before) { const item = pending.shift(); rows.push({ key: `failure:${item.turn}`, kind: "failure", item }); side = null; } };
   for (let index = 0; index < entries.length; index++) {
     const item = entries[index]; flush(item.ts ?? Infinity);
+    if (item.type === "failed") { rows.push({ key: `failure:${item.id ?? item.turn}`, kind: "failure", item }); side = null; continue; }
     rows.push({ key: `message:${item.id ?? item.ask?.id ?? item.seq}`, kind: "message", item,
       previous: entries[index - 1] ?? previous, next: entries[index + 1] ?? next, previousDisplay: { ts, side } });
     if (Number.isFinite(item.ts)) { if (ts === null || item.ts - ts >= TIME_GAP || new Date(item.ts).toDateString() !== new Date(ts).toDateString()) side = null; ts = item.ts; }
@@ -310,5 +315,5 @@ export function appendConversationRow(parent, row, options = {}) {
   else if (row.kind === "failure") failureCard(parent, row.item, options);
   else if (row.kind === "state") { if (options.loading) skeleton(parent); else emptyState(parent); }
   else if (row.kind === "outbox") appendOutbox(parent, [row.item]);
-  else appendConversation(parent, [row.item], { ...options, atStart: false, failures: [], previous: row.previous, next: row.next, previousDisplay: row.previousDisplay });
+  else appendConversation(parent, [row.item], { ...options, atStart: false, intro: false, failures: [], previous: row.previous, next: row.next, previousDisplay: row.previousDisplay });
 }
