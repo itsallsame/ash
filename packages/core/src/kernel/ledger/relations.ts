@@ -52,7 +52,7 @@ export function indexMessage(db: Db, m: NewMessage, stored: unknown, id: string,
       }
     }
     if (normalized.type === "activity.response") {
-      const targets = db.prepare("SELECT * FROM messages WHERE fact_type='activity.request' AND (id=? OR activity_receipt=?)").all(normalized.reply_to, normalized.reply_to) as Row[];
+      const targets = db.prepare("SELECT * FROM messages WHERE id=? AND fact_type='activity.request' UNION SELECT * FROM messages INDEXED BY m_activity_receipt WHERE activity_receipt=? AND fact_type='activity.request'").all(normalized.reply_to, normalized.reply_to) as Row[];
       for (const target of targets) {
         const parent = db.prepare("SELECT target FROM message_relations WHERE source_seq=? AND kind='activity.child' LIMIT 1").get(Number(target.seq)) as { target: string } | undefined;
         const root = parent ? db.prepare("SELECT * FROM messages WHERE id=?").get(parent.target) as Row : target;
