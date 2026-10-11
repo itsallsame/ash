@@ -505,5 +505,6 @@ async function answerAsk(net, ask, choice, clientId, { answerText } = {}) {
 // In the app the page waits for the native bridge; in a browser it opens its own connection.
 if (typeof document !== "undefined") {
   if (globalThis.location?.origin === "https://appassets.androidplatform.net") globalThis.__ashNativeBoot = (bridge) => boot({ bridge });
-  else boot();
+  // Module initialization (including Markdown grammar) must finish before DOM/connection setup starts its own task.
+  else setTimeout(() => boot(), 0);
 }
