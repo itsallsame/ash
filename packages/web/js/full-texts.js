@@ -7,6 +7,7 @@ export class FullTexts {
   }
   reset() { this.values = new Map(); this.choices = new Map(); this.pending = new Map(); this.bytes = 0; this.generation = (this.generation ?? 0) + 1; }
   has(hash) { return this.values.has(hash); }
+  discard(hash) { const entry = this.values.get(hash); if (entry) { this.values.delete(hash); this.bytes -= entry.bytes; } }
   get(hash) {
     const entry = this.values.get(hash);
     if (!entry) return undefined;

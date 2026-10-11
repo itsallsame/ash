@@ -172,6 +172,7 @@ export function boot({ bridge } = {}) {
       const entry = await fullTexts.load(id, hash, value => net.readBlobText(value));
       if (!entry || dataset !== timeline.store.dataset || !timeline.get(id)) { fullTexts.retain(timeline.store.items); return; }
       const dirty = timeline.store.expand(id, entry.bytes);
+      if (!dirty) { fullTexts.discard(hash); throw new Error("结束当前文字选择后，再展开这条消息。"); }
       fullTexts.retain(timeline.store.items);
       paintView(timeline.view, true, dirty);
     },

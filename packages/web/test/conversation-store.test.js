@@ -75,3 +75,14 @@ test("a selected window stops prefetching rather than retaining growing pages", 
   store.protect([]); store.apply(page(80, 20), "before");
   assert.equal(store.before, 80); assert.equal(store.items.length, 20);
 });
+
+test("expanding cannot turn a protected selection into an unbounded mounted-text cache", () => {
+  const store = new ConversationStore({ maxBytes: 1000 });
+  store.apply(page(1, 10)); store.protect(["m1", "m10"]);
+  const original = [...store.items];
+  assert.equal(store.expand("m5", 10000), null);
+  assert.deepEqual(store.items, original); assert.equal(store.bytes, 1000);
+  assert.equal(store.byId.get("m5").expandedBytes, 0);
+  store.protect([]); store.expand("m5", 10000);
+  assert.deepEqual(store.items, [original[4]]); assert.equal(store.bytes, 10100);
+});

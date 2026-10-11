@@ -90,11 +90,15 @@ export class ConversationStore {
   expand(id, bytes, anchor = id) {
     const entry = this.byId.get(id);
     if (!entry) return new Set();
+    const saved = { items: [...this.items], byId: new Map([...this.byId].map(([key, value]) => [key, { ...value }])),
+      bytes: this.bytes, previous: this.previous, next: this.next, hasBefore: this.hasBefore, hasAfter: this.hasAfter, intro: this.intro };
     this.bytes += bytes - entry.expandedBytes;
     entry.expandedBytes = bytes;
     entry.bytes = entry.baseBytes + bytes;
     const index = this.items.findIndex(item => item.id === anchor);
-    return this.trim(index < this.items.length / 2 ? "before" : "after", new Set([id]), id);
+    const changed = this.trim(index < this.items.length / 2 ? "before" : "after", new Set([id]), id);
+    if (this.items.length > 1 && this.bytes > this.maxBytes) { Object.assign(this, saved); return null; }
+    return changed;
   }
 
   get before() { return this.items[0]?.seq ?? null; }
