@@ -851,14 +851,18 @@ export class SettingsControls {
       if (quiet) [start.value, end.value] = quiet.split("-");
       quietRow.sub.textContent = quiet ? `每天 ${quiet.replace("-", " 到 ")} 不主动找你` : "没有设置免打扰";
     };
+    // Until the saved hours are read, the fields wait: what the owner typed is never overwritten by a late read.
+    const quietControls = [start, end, save, quietOff];
     const loadQuiet = async () => {
       quietStatus.textContent = "正在读取…";
+      for (const control of quietControls) control.disabled = true;
       try {
         const quiet = quietOf((await ask(ADMIN, "settings.get", { keys: [QUIET_KEY] })).settings);
         if (quiet === null) throw new Error("unreadable");
         showQuiet(quiet);
         quietStatus.textContent = "";
       } catch { if (live()) quietStatus.textContent = "读取失败，请返回后重试。"; }
+      finally { for (const control of quietControls) control.disabled = false; }
     };
     const saveQuiet = async (quiet) => {
       quietStatus.textContent = "正在保存…";
@@ -956,8 +960,10 @@ export class SettingsControls {
     modelStatus.setAttribute("role", "status");
     // The hub has no getter for the model: it is what the primary agent runs. Only the model is known there, so the
     // provider is left for the owner to fill in rather than guessed.
+    const modelControls = [provider, model, modelSave];
     const loadModel = async () => {
       modelStatus.textContent = "正在读取…";
+      for (const control of modelControls) control.disabled = true;
       try {
         const { agents } = await ask(AGENTS, "list", {});
         const runtime = (Array.isArray(agents) ? agents : []).find((agent) => agent.primary === true)?.runtime;
@@ -965,6 +971,7 @@ export class SettingsControls {
         model.value = typeof runtime?.model === "string" ? runtime.model : "";
         modelStatus.textContent = model.value ? "" : "没有读到现在用的模型，请直接填写。";
       } catch { if (live()) modelStatus.textContent = "读取失败，请返回后重试。"; }
+      finally { for (const control of modelControls) control.disabled = false; }
     };
     modelSave.addEventListener("click", () => { void (async () => {
       modelStatus.textContent = "正在保存…";
