@@ -1,5 +1,5 @@
 import { appendConversationRow, conversationRows } from "./conversation.js";
-import { appendMarkdownInSlices, MarkdownQueue } from "./markdown.js";
+import { appendMarkdown, appendMarkdownInSlices, MarkdownQueue } from "./markdown.js";
 import { ScrollPosition } from "./scroll-position.js";
 
 // Projected facts are immutable; compare their small structures without copying text into JSON cache keys.
@@ -94,10 +94,13 @@ export class WindowView {
             const controller = new AbortController();
             lifetime.controller = controller;
             const cancel = () => controller.abort(); lifetime.cleanup.add(cancel);
-            lifetime.completion = appendMarkdownInSlices(parent, source, { ...markdownOptions, queue: this.markdown, signal: controller.signal });
-            if (message.full && options.fullTexts?.has(message.full, message.id)) {
+            const expanded = message.full && options.fullTexts?.has(message.full, message.id);
+            const preview = expanded ? appendMarkdown(parent, message.text, markdownOptions) : null;
+            const shouldBuild = expanded ? () => this.latest?.[2].shouldBuild?.(message.id) !== false : undefined;
+            lifetime.completion = appendMarkdownInSlices(parent, source, { ...markdownOptions, queue: this.markdown, signal: controller.signal, shouldBuild, onStart: () => preview?.remove() });
+            if (expanded) {
               const progress = document.createElement("small"); progress.className = "meta"; progress.textContent = "正在展开…"; parent.append(progress);
-              lifetime.completion.then(() => { if (!controller.signal.aborted && !lifetime.disposed) progress.remove(); });
+              lifetime.completion.then(() => { if (!controller.signal.aborted && !lifetime.disposed) { preview?.remove(); progress.remove(); } });
             }
             lifetime.completion.finally(() => { lifetime.cleanup.delete(cancel); });
           },

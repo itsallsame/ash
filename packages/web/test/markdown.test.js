@@ -85,3 +85,25 @@ test("sliced Markdown retains the synchronous structure and cancels queued parsi
     assert.equal(queue.jobs.length, 0);
   } finally { delete globalThis.document; delete globalThis.requestAnimationFrame; }
 });
+
+test("paused full-text work neither parses nor blocks inline work, and cancellation releases its completion", async () => {
+  const { appendMarkdownInSlices, MarkdownQueue } = await import("../js/markdown.js");
+  const frames = [];
+  globalThis.requestAnimationFrame = callback => frames.push(callback);
+  globalThis.document = { createElement: tag => new Node(tag), createTextNode: value => { const n = new Node("#text"); n.textContent = value; return n; } };
+  const advance = async count => { for (let i = 0; i < count && frames.length; i++) { frames.shift()(0); await new Promise(resolve => setTimeout(resolve, 5)); } };
+  try {
+    const queue = new MarkdownQueue({ budget: 0 }), paused = new Node("root"), inline = new Node("root");
+    let allowed = false, completed = false;
+    const pending = appendMarkdownInSlices(paused, '# restored text', { queue, shouldBuild: () => allowed }).then(() => { completed = true; });
+    const normal = appendMarkdownInSlices(inline, 'ordinary inline', { queue });
+    await advance(5); await normal;
+    assert.equal(inline.textContent, 'ordinary inline'); assert.equal(paused.textContent, ''); assert.equal(completed, false);
+    allowed = true; await advance(5); await pending;
+    assert.equal(paused.textContent, 'restored text');
+    const controller = new AbortController();
+    const stop = appendMarkdownInSlices(new Node("root"), '# canceled', { queue, shouldBuild: () => false, signal: controller.signal });
+    await advance(1); controller.abort(); await stop;
+    assert.equal(queue.jobs.length, 0);
+  } finally { delete globalThis.document; delete globalThis.requestAnimationFrame; }
+});

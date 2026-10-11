@@ -208,3 +208,28 @@ test(...withBrowser("partial long-message work is serial and cancellable while t
   const after = await page.evaluate(() => ({ count: document.querySelector('.msg[data-seq="1"]').querySelectorAll('tr').length, second: document.querySelector('.msg[data-seq="2"]').querySelectorAll('tbody tr').length, offset: anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top - offset }));
   assert.equal(after.count, mid.before); assert.equal(after.second, 1550); assert.ok(Math.abs(after.offset) < 1);
 }));
+
+test(...withBrowser("automatic full-text slices pause with the live scroll gate and settle when canceled", async ({ browser }) => {
+  const page = await fixture(browser);
+  await page.evaluate(async () => {
+    window.allowBuild = false;
+    options.shouldBuild = () => allowBuild;
+    options.fullTexts = new Map([['restored', '|key|value|\n|---|---|\n' + Array.from({ length: 1550 }, (_, i) => `|${i}|**value** ${i}|`).join('\n')]]);
+    window.items = [{ ...say(1, 'preview'), full: 'restored' }, say(2, 'inline during scrolling')];
+    view.update(items, [], options);
+    window.completed = false; view.settled('m1').then(() => { completed = true; });
+    await view.settled('m2');
+  });
+  assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), 0);
+  assert.match(await page.locator('.msg[data-seq="1"]').textContent(), /preview.*正在展开/s);
+  assert.match(await page.locator('.msg[data-seq="2"]').textContent(), /inline during scrolling/);
+  assert.equal(await page.evaluate(() => completed), false);
+  await page.evaluate(() => { allowBuild = true; });
+  await page.waitForFunction(() => document.querySelector('.msg[data-seq="1"] tbody tr'));
+  const paused = await page.evaluate(() => { allowBuild = false; return document.querySelectorAll('.msg[data-seq="1"] tbody tr').length; });
+  await page.evaluate(async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+  assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), paused);
+  await page.evaluate(async () => { view.cancelExpansion('m1'); await view.settled('m1'); });
+  assert.equal(await page.evaluate(() => completed), true);
+  assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), paused);
+}));

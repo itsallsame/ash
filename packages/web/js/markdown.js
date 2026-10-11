@@ -141,9 +141,9 @@ export class MarkdownQueue {
     Object.assign(this, { budget, before, after });
     this.jobs = []; this.scheduled = false;
   }
-  add(iterator, signal) {
+  add(iterator, signal, shouldBuild = () => true) {
     return new Promise(resolve => {
-      const job = { iterator, signal, resolve };
+      const job = { iterator, signal, resolve, shouldBuild };
       job.finish = complete => {
         signal?.removeEventListener("abort", job.abort);
         iterator.return?.();
@@ -163,11 +163,13 @@ export class MarkdownQueue {
     requestAnimationFrame(() => setTimeout(() => {
       this.scheduled = false;
       if (!this.jobs.length) return;
+      if (!this.jobs.some(job => job.shouldBuild())) { this.schedule(); return; }
       this.before();
       const end = performance.now() + this.budget;
       try {
         do {
-          const job = this.jobs[0];
+          const job = this.jobs.find(candidate => candidate.shouldBuild());
+          if (!job) break;
           if (job.iterator.next().done) job.finish(true);
         } while (this.jobs.length && performance.now() < end);
       } finally { this.after(); this.schedule(); }
@@ -181,6 +183,7 @@ function* markdownSteps(content, raw, options) {
   try {
     const tokens = lex(raw);
     yield; // The parser's work counts against the same slice budget as DOM construction.
+    options.onStart?.();
     const children = childrenOf(0, options);
     for (const token of tokens) {
       if (token.type === "table") {
@@ -191,10 +194,10 @@ function* markdownSteps(content, raw, options) {
         for (const item of token.items) { listItem(list, item, children); yield; }
       } else { renderTokens(content, [token], 0, options); yield; }
     }
-  } catch { content.className = "markdown md-plain"; content.textContent = raw; }
+  } catch { options.onStart?.(); content.className = "markdown md-plain"; content.textContent = raw; }
 }
 
-export function appendMarkdownInSlices(parent, source, { queue = new MarkdownQueue(), signal, ...options } = {}) {
+export function appendMarkdownInSlices(parent, source, { queue = new MarkdownQueue(), signal, shouldBuild, ...options } = {}) {
   const content = element(parent, "div", "markdown");
-  return queue.add(markdownSteps(content, String(source ?? ""), options), signal).then(() => content);
+  return queue.add(markdownSteps(content, String(source ?? ""), options), signal, shouldBuild).then(() => content);
 }
