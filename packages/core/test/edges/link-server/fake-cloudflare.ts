@@ -8,7 +8,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type { FakeGateway } from "../../../../link/test/fixtures/fake-gateway";
 
-export interface Upload { script: string; metadata: Record<string, any>; source: string }
+export interface Upload { account: string; script: string; metadata: Record<string, any>; source: string }
 
 export class FakeCloudflare {
   readonly base: string;
@@ -22,7 +22,12 @@ export class FakeCloudflare {
   readonly calls: string[] = [];
   refreshes = 0;
   subdomain: string | null = null;
-  scripts: string[] = [];
+  /** The accounts the sign-in can see (the first, `acc1`, is where the single-account tests build). */
+  accounts: { id: string; name: string }[] = [{ id: "acc1", name: "Owner's account" }];
+  /** The Workers each account already has. */
+  readonly scriptsBy = new Map<string, string[]>([["acc1", []]]);
+  get scripts(): string[] { return this.scriptsBy.get("acc1")!; }
+  set scripts(value: string[]) { this.scriptsBy.set("acc1", value); }
   /** Seconds a token lives. */
   expiresIn = 3600;
   /** `METHOD /path` (without the base) → a failure to answer with once. */
@@ -109,22 +114,28 @@ export class FakeCloudflare {
     if (failure) { this.failures.delete(`${req.method} ${path}`); return fail(failure.status, failure.message); }
 
     if (key === "GET /client/v4/user") return ok({ email: this.email });
-    if (key === "GET /client/v4/accounts") return ok([{ id: "acc1", name: "Owner's account" }]);
-    if (key === "GET /client/v4/accounts/acc1/workers/subdomain") return this.subdomain ? ok({ subdomain: this.subdomain }) : fail(404, "subdomain not found");
-    if (key === "PUT /client/v4/accounts/acc1/workers/subdomain") { this.subdomain = JSON.parse(raw.toString("utf8")).subdomain; return ok({ subdomain: this.subdomain }); }
-    if (key === "GET /client/v4/accounts/acc1/workers/scripts") return ok(this.scripts.map((id) => ({ id })));
-    const upload = /^PUT \/client\/v4\/accounts\/acc1\/workers\/scripts\/([a-z0-9-]+)$/.exec(key);
-    if (upload) {
-      const form = await new Response(raw, { headers: { "content-type": String(req.headers["content-type"]) } }).formData();
-      const metadata = JSON.parse(await (form.get("metadata") as File).text());
-      const source = await (form.get(metadata.main_module) as File).text();
-      this.uploads.push({ script: upload[1]!, metadata, source });
-      if (!this.scripts.includes(upload[1]!)) this.scripts.push(upload[1]!);
-      this.relay.secret = metadata.bindings.find((b: any) => b.name === "BOOTSTRAP_SECRET")?.text ?? null;
-      return ok({ id: upload[1] });
+    if (key === "GET /client/v4/accounts") return ok(this.accounts);
+    const inAccount = /^(GET|PUT|POST) \/client\/v4\/accounts\/([^/]+)\/workers\/(.+)$/.exec(key);
+    if (inAccount) {
+      const [, method, account, rest] = inAccount as unknown as [string, string, string, string];
+      if (!this.accounts.some((a) => a.id === account)) return fail(403, "account not found");
+      const scripts = this.scriptsBy.get(account) ?? (this.scriptsBy.set(account, []), this.scriptsBy.get(account)!);
+      if (method === "GET" && rest === "subdomain") return this.subdomain ? ok({ subdomain: this.subdomain }) : fail(404, "subdomain not found");
+      if (method === "PUT" && rest === "subdomain") { this.subdomain = JSON.parse(raw.toString("utf8")).subdomain; return ok({ subdomain: this.subdomain }); }
+      if (method === "GET" && rest === "scripts") return ok(scripts.map((id) => ({ id })));
+      const upload = method === "PUT" ? /^scripts\/([a-z0-9-]+)$/.exec(rest) : null;
+      if (upload) {
+        const form = await new Response(raw, { headers: { "content-type": String(req.headers["content-type"]) } }).formData();
+        const metadata = JSON.parse(await (form.get("metadata") as File).text());
+        const source = await (form.get(metadata.main_module) as File).text();
+        this.uploads.push({ account, script: upload[1]!, metadata, source });
+        if (!scripts.includes(upload[1]!)) scripts.push(upload[1]!);
+        this.relay.secret = metadata.bindings.find((b: any) => b.name === "BOOTSTRAP_SECRET")?.text ?? null;
+        return ok({ id: upload[1] });
+      }
+      const subdomainOn = method === "POST" ? /^scripts\/([a-z0-9-]+)\/subdomain$/.exec(rest) : null;
+      if (subdomainOn) { this.enabled.push(subdomainOn[1]!); return ok({ enabled: true }); }
     }
-    const subdomainOn = /^POST \/client\/v4\/accounts\/acc1\/workers\/scripts\/([a-z0-9-]+)\/subdomain$/.exec(key);
-    if (subdomainOn) { this.enabled.push(subdomainOn[1]!); return ok({ enabled: true }); }
     return fail(404, `no such route ${key}`);
   }
 }

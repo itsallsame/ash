@@ -13,14 +13,14 @@ import { createHash } from "node:crypto";
 import { WordError } from "../../../../../sdk/src/message";
 import type { Db } from "../../../kernel/ledger";
 import type { Vault } from "../../../kernel/types";
-import { Relay, RelayError, type BrowserOpen, type RelayDevice, type RelayHttpRequest, type RelayHttpResponse, type RelayOptions, type RelayPairRequest } from "../../../../../link/src/gateway";
+import { Relay, RelayError, relayUnanswered, type BrowserOpen, type RelayDevice, type RelayHttpRequest, type RelayHttpResponse, type RelayOptions, type RelayPairRequest } from "../../../../../link/src/gateway";
 import type { LinkSocket } from "../../../../../link/src/socket";
 import type { Devices, PairKind, PairingGateway, RelayPermission } from "../hands/devices";
 import type { HandRegistry } from "../hands/registry";
 import type { HubLinkServer } from "../index";
 
 /** Where the vault keeps a claim secret the owner set for an unclaimed relay they run themselves. */
-export const BOOTSTRAP_REF = "gateway.bootstrap";
+export const BOOTSTRAP_REF = "GATEWAY_BOOTSTRAP";
 
 /** The hub's key. It lives in the host's keystore; only signing is asked of it. */
 export interface OwnerIdentity {
@@ -62,7 +62,7 @@ const WEB: readonly string[] = ["web_ui", "chat"];
 const PROBLEM_TEXT: Record<string, string> = {
   claimed_by_other: "The relay is claimed by another owner.",
   bad_secret: "The relay did not accept the claim secret.",
-  missing_secret: "The relay is not claimed and there is no claim secret; set one in the vault as gateway.bootstrap.",
+  missing_secret: "The relay is not claimed and there is no claim secret; set one in the vault as GATEWAY_BOOTSTRAP.",
   unsupported: "The relay speaks a protocol this hub does not.",
   unreachable: "The relay cannot be reached.",
 };
@@ -99,7 +99,7 @@ export class GatewayControl {
   stop(): void { this.end(); }
 
   /**
-   * Makes [url] the relay: reaches it, claims it with [claimSecret] (or the vault's `gateway.bootstrap`) when it is
+   * Makes [url] the relay: reaches it, claims it with [claimSecret] (or the vault's `GATEWAY_BOOTSTRAP`) when it is
    * unclaimed, remembers it and connects. Throws a `WordError` saying what is wrong when it cannot be reached or claimed.
    */
   async use(url: string, opts: { claimSecret?: string; account?: { email?: string } } = {}): Promise<string> {
@@ -110,7 +110,7 @@ export class GatewayControl {
       relay.stop();
       const problem = error instanceof RelayError ? error.problem : "unreachable";
       throw new WordError(problem === "claimed_by_other" || problem === "missing_secret" || problem === "bad_secret" ? "forbidden" : "unavailable", PROBLEM_TEXT[problem] ?? "The relay cannot be used.", {
-        recovery_hint: problem === "missing_secret" ? "Store the relay's claim secret with service:vault/set (ref gateway.bootstrap), then use it again." : "Check the address, or build a new relay with gateway.setup.start.",
+        recovery_hint: problem === "missing_secret" ? "Store the relay's claim secret with service:vault/set (ref GATEWAY_BOOTSTRAP), then use it again." : "Check the address, or build a new relay with gateway.setup.start.",
       });
     }
     this.end();
@@ -281,16 +281,31 @@ export class GatewayControl {
   }
 
   readonly pairing: PairingGateway = {
-    issue: async (_kind: PairKind) => {
+    // A computer opens the install page that carries the code; a browser opens the relay's front page and types the code in.
+    issue: (kind: PairKind) => this.asked(async () => {
       const issued = await this.ready().ticket();
-      return { ticket: issued.ticket, expires_in: issued.expires_in, url: `${issued.origin}/p/${issued.ticket}` };
-    },
-    approve: (requestId: string, permissions: RelayPermission[]) => this.ready().approve(requestId, permissions),
-    reject: (requestId: string) => this.ready().reject(requestId),
-    revoke: async (handId: string) => { await this.ready().revoke(handId); this.tunnels.get(handId)?.socket.close(4003, "revoked"); },
-    setWebUi: (handId: string, allow: boolean) => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => !WEB.includes(p)), ...(allow ? ["web_ui", "chat"] : [])]),
-    setExpose: (handId: string, allow: boolean) => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => p !== "expose_capability"), ...(allow ? ["expose_capability"] : [])]),
+      return { ticket: issued.ticket, expires_in: issued.expires_in, url: kind === "browser" ? `${issued.origin}/` : `${issued.origin}/p/${issued.ticket}` };
+    }),
+    approve: (requestId: string, permissions: RelayPermission[]) => this.asked(() => this.ready().approve(requestId, permissions)),
+    reject: (requestId: string) => this.asked(() => this.ready().reject(requestId)),
+    revoke: (handId: string) => this.asked(async () => { await this.ready().revoke(handId); this.tunnels.get(handId)?.socket.close(4003, "revoked"); }),
+    setWebUi: (handId: string, allow: boolean) => this.asked(() => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => !WEB.includes(p)), ...(allow ? ["web_ui", "chat"] : [])])),
+    setExpose: (handId: string, allow: boolean) => this.asked(() => this.ready().setPermissions(handId, (cur) => [...cur.filter((p) => p !== "expose_capability"), ...(allow ? ["expose_capability"] : [])])),
   };
+
+  /**
+   * A request to the relay that gets no answer (a slow or lossy network, the relay restarting) is the relay being unavailable for
+   * now, not a fault of the hub: it is told as such, with the advice to try again.
+   */
+  private async asked<T>(call: () => Promise<T>): Promise<T> {
+    try { return await call(); }
+    catch (error) {
+      if (relayUnanswered(error)) {
+        throw new WordError("unavailable", "the relay did not answer in time", { recovery_hint: "稍后重试：the connection to the relay is slow or was interrupted; try again in a moment." });
+      }
+      throw error;
+    }
+  }
 
   private ready(): Relay {
     if (!this.relay?.connected) throw new WordError("unavailable", this.relay ? "the hub is not connected to the relay right now" : "no relay is set up", { recovery_hint: "Check service:link/gateway.status." });

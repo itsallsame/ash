@@ -228,7 +228,8 @@ add("service:devices", "config.changed", "event", obj({ item: nonempty, state: n
 const LINK_CALLERS = OWNER_AGENT;
 const conn = obj({ conn: id, hand: handRef, name: str, kind: str, channels: strings, via: choice("local", "gateway"), since: nonnegativeSafe, heartbeat_ms: nonnegativeSafe, address: sensitive(str, "ip") }, ["conn", "hand"], true);
 const setupState = choice("waiting_login", "authorized", "deploying", "claimed", "connected", "failed");
-const setupInfo = obj({ setup_id: id, state: setupState, reason: str }, ["setup_id", "state"], true);
+const setupAccount = obj({ id: str, name: sensitive(str, "email") }, ["id", "name"]);
+const setupInfo = obj({ setup_id: id, state: setupState, reason: str, accounts: array(setupAccount) }, ["setup_id", "state"], true);
 add("service:link", "list", "request", empty, obj({ connections: array(conn) }, ["connections"]),
   { callers: LINK_CALLERS, label: "在看当前连接", description: "Every live connection: which hand, which channels are open (device, human, agent), local or through the relay, since when, heartbeat delay." });
 add("service:link", "describe", "request", obj({ hand: handRef, conn: id }), conn,
@@ -247,9 +248,9 @@ add("service:link", "gateway.status", "request", empty,
 add("service:link", "gateway.setup.start", "request", obj({ provider: { const: "cloudflare" } }, ["provider"]), setupInfo,
   { callers: LINK_CALLERS, effect: "act", label: "在开始搭中转站", description: "Start building a relay in the owner's Cloudflare account: a 'sign in to Cloudflare' card goes to the owner. You get a setup_id and a background message at each step." });
 add("service:link", "gateway.setup.status", "request", obj({ setup_id: id }, ["setup_id"]), setupInfo,
-  { callers: LINK_CALLERS, label: "在看中转站搭建进展", description: "Where a relay setup is: waiting_login, authorized, deploying, claimed, connected, or failed with the reason." });
-add("service:link", "gateway.setup.deploy", "request", obj({ setup_id: id, name: nonempty }, ["setup_id"]), setupInfo,
-  { callers: LINK_CALLERS, effect: "write", risk: "structure", label: "在部署中转站", description: "Deploy the relay in the owner's account, claim it and connect. An agent asking for this is asked about by the owner." });
+  { callers: LINK_CALLERS, label: "在看中转站搭建进展", description: "Where a relay setup is: waiting_login, authorized, deploying, claimed, connected, or failed with the reason. Once authorized it lists the Cloudflare accounts the owner's sign-in can build in (id and name)." });
+add("service:link", "gateway.setup.deploy", "request", obj({ setup_id: id, name: nonempty, account: nonempty }, ["setup_id"]), setupInfo,
+  { callers: LINK_CALLERS, effect: "write", risk: "structure", label: "在部署中转站", description: "Deploy the relay in the owner's account, claim it and connect. When the sign-in sees more than one Cloudflare account, `account` (an id from gateway.setup.status) is required: Ash never picks one. Ash does not write over a Worker it did not build: a name that is taken is refused; without a name one is made (ash-relay-xxxxxx). An agent asking for this is asked about by the owner." });
 add("service:link", "gateway.setup.cancel", "request", obj({ setup_id: id }, ["setup_id"]), setupInfo,
   { callers: LINK_CALLERS, effect: "act", label: "在取消搭中转站", description: "Cancel a relay setup that is not finished." });
 add("service:link", "gateway.use", "request", obj({ url: { type: "string", minLength: 1, maxLength: 2048 } }, ["url"]), obj({ url: str }, ["url"]),

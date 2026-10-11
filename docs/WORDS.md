@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `c3200a57235b693a`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `cdfa4645e4308362`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -125,8 +125,8 @@
 | `refresh_manifest` | owner, agent | act / none | - | hand* | 在请手重发能力清单 | Ask a hand to send its capability list again, for example after you changed what it may lend. |
 | `gateway.status` | owner, agent | read / none | - | - | 在看中转站 | The relay: whether there is one, its address, whether it is claimed by this hub, whether the hub is connected to it, the latest error, and (setup_unavailable) why building a relay is not possible in this build. |
 | `gateway.setup.start` | owner, agent | act / none | - | provider* | 在开始搭中转站 | Start building a relay in the owner's Cloudflare account: a 'sign in to Cloudflare' card goes to the owner. You get a setup_id and a background message at each step. |
-| `gateway.setup.status` | owner, agent | read / none | - | setup_id* | 在看中转站搭建进展 | Where a relay setup is: waiting_login, authorized, deploying, claimed, connected, or failed with the reason. |
-| `gateway.setup.deploy` | owner, agent | write / structure | - | setup_id*, name | 在部署中转站 | Deploy the relay in the owner's account, claim it and connect. An agent asking for this is asked about by the owner. |
+| `gateway.setup.status` | owner, agent | read / none | - | setup_id* | 在看中转站搭建进展 | Where a relay setup is: waiting_login, authorized, deploying, claimed, connected, or failed with the reason. Once authorized it lists the Cloudflare accounts the owner's sign-in can build in (id and name). |
+| `gateway.setup.deploy` | owner, agent | write / structure | - | setup_id*, name, account | 在部署中转站 | Deploy the relay in the owner's account, claim it and connect. When the sign-in sees more than one Cloudflare account, `account` (an id from gateway.setup.status) is required: Ash never picks one. Ash does not write over a Worker it did not build: a name that is taken is refused; without a name one is made (ash-relay-xxxxxx). An agent asking for this is asked about by the owner. |
 | `gateway.setup.cancel` | owner, agent | act / none | - | setup_id* | 在取消搭中转站 | Cancel a relay setup that is not finished. |
 | `gateway.use` | owner, agent | write / structure | - | url* | 在改用中转站 | Use an existing relay at this address instead of building one. An agent asking for this is asked about by the owner. |
 | `connected` | kernel | read / none | event out, record | hand*, conn*, channels | 在记下设备连上 | A hand finished the handshake and is connected. Goes into the ledger. |

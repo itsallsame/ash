@@ -8,7 +8,7 @@
  * Everything that reaches the caller is a [LinkSocket], so the link server does not know where it came from.
  */
 import { Connection, DeviceStream, GatewayClient, GatewayError, type DeviceKey } from "ash-gateway/client/client";
-import { shortFingerprint, type Permission } from "ash-gateway/src/protocol";
+import { derToRaw, shortFingerprint, type Permission } from "ash-gateway/src/protocol";
 import type { LinkSocket } from "./socket";
 
 /** The owner's key. It signs by asking the host (the private key never leaves the keystore), so it is not a `DeviceKey` that holds one. */
@@ -17,7 +17,7 @@ export interface RelayOwner {
   id: string;
   /** SPKI, base64url. */
   publicKey: string;
-  /** ECDSA P-256 over [data]; base64url, DER or raw. */
+  /** ECDSA P-256 over [data]; base64url, DER or raw (the relay gets it raw, see [rawSignature]). */
   sign(data: Uint8Array): Promise<string>;
 }
 
@@ -26,6 +26,20 @@ export type RelayProblem = "claimed_by_other" | "bad_secret" | "missing_secret" 
 export class RelayError extends Error {
   constructor(readonly problem: RelayProblem, message: string) { super(message); this.name = "RelayError"; }
 }
+/**
+ * The signature as 64-byte r||s (what WebCrypto verifies), whatever the keystore gave. The relay takes either form and hands the
+ * owner's approval of a pairing to the paired party as it got it: a browser checks it with WebCrypto, which refuses DER (Android's
+ * keystore signs DER), so a DER approval made every browser pairing end with "approval signature check failed".
+ */
+export function rawSignature(sig: string): string {
+  const bytes = Buffer.from(sig, "base64url");
+  if (bytes.length === 64) return sig;
+  const raw = derToRaw(new Uint8Array(bytes));
+  if (!raw) throw new Error("the owner's signature is neither raw nor DER");
+  return Buffer.from(raw).toString("base64url");
+}
+/** True when a request to the relay got no answer (a slow or lost connection): the relay is unavailable for now, not broken. */
+export const relayUnanswered = (error: unknown): boolean => error instanceof GatewayError && (error.code === "timeout" || error.code === "ws_error");
 const problemOf = (error: unknown): RelayProblem => {
   if (error instanceof RelayError) return error.problem;
   if (error instanceof GatewayError) {
@@ -153,7 +167,7 @@ export class Relay {
     this.url = new URL(options.url).origin;
     const { owner } = options;
     // GatewayClient only reads `id`, `publicKey` and `sign` of its key.
-    this.client = new GatewayClient(this.url, { id: owner.id, publicKey: owner.publicKey, sign: (data: Uint8Array) => owner.sign(data) } as unknown as DeviceKey);
+    this.client = new GatewayClient(this.url, { id: owner.id, publicKey: owner.publicKey, sign: async (data: Uint8Array) => rawSignature(await owner.sign(data)) } as unknown as DeviceKey);
   }
 
   private get timeoutMs(): number { return this.o.timeoutMs ?? 20_000; }

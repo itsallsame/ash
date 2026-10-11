@@ -91,7 +91,7 @@ export class LinkMember implements Member {
       case "gateway.status": { const why = this.d.setup.unavailable(); return { data: { ...this.d.gateway.status(), ...(why ? { setup_unavailable: why } : {}) } }; }
       case "gateway.setup.start": return { data: await this.d.setup.start(ctx.caller.member) };
       case "gateway.setup.status": return { data: this.d.setup.status(input.setup_id) };
-      case "gateway.setup.deploy": return { data: this.d.setup.deploy(input.setup_id, input.name) };
+      case "gateway.setup.deploy": return { data: this.d.setup.deploy(input.setup_id, input.name, input.account) };
       case "gateway.setup.cancel": return { data: this.d.setup.cancel(input.setup_id) };
       case "gateway.use": return { data: { url: await this.d.gateway.use(input.url) } };
       case "env.changed": this.d.gateway.reconnectRelay(); return;

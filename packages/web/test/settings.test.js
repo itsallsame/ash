@@ -410,6 +410,55 @@ test("the relay status reads in words, an address can be used, and a Cloudflare 
   } finally { f.close(); }
 });
 
+test("a sign-in that sees several Cloudflare accounts: the owner picks one (in words), nothing is built until then, and the choice is sent", async () => {
+  let setup = { setup_id: "setup-2", state: "authorized", accounts: [{ id: "acc-a", name: "个人账户" }, { id: "acc-b", name: "公司账户" }] };
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:devices", "list", { devices: [] });
+    kernel.on("service:devices", "pair_pending", { pairs: [] });
+    kernel.on("service:link", "gateway.status", { configured: false, connected: false });
+    kernel.on("service:link", "gateway.setup.start", () => setup);
+    kernel.on("service:link", "gateway.setup.status", () => setup);
+    kernel.on("service:link", "gateway.setup.deploy", (body) => { setup = { setup_id: body.setup_id, state: "deploying" }; return setup; });
+  } });
+  try {
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => /还没有设置中转站/.test(f.panel.find("settingsRelayStatus").textContent));
+    f.panel.find("settingsGatewaySetup").click();
+    await until(() => f.panel.find("settingsGatewayDeploy").hidden === false);
+    assert.equal(f.panel.find("settingsGatewaySetupAccounts").hidden, false);
+    assert.match(f.panel.find("settingsGatewaySetupState").textContent, /多个账户.*先选一个/);
+    assert.deepEqual([0, 1].map((i) => f.panel.find(`settingsGatewaySetupAccount${i}`).textContent), ["个人账户", "公司账户"]);
+    f.panel.find("settingsGatewayDeploy").click();
+    await until(() => /先选一个要搭在哪个 Cloudflare 账户/.test(f.panel.find("settingsGatewaySetupState").textContent));
+    assert.equal(f.sent("service:link", "gateway.setup.deploy").length, 0, "no account chosen: nothing is sent");
+    f.panel.find("settingsGatewaySetupAccount1").click();
+    assert.equal(f.panel.find("settingsGatewaySetupAccount1").attributes["aria-pressed"], "true");
+    f.panel.find("settingsGatewayDeploy").click();
+    await until(() => /正在搭建/.test(f.panel.find("settingsGatewaySetupState").textContent));
+    assert.deepEqual(f.sent("service:link", "gateway.setup.deploy")[0].body, { setup_id: "setup-2", account: "acc-b" });
+  } finally { f.close(); }
+});
+
+test("a sign-in that sees one Cloudflare account asks nothing about it", async () => {
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:devices", "list", { devices: [] });
+    kernel.on("service:devices", "pair_pending", { pairs: [] });
+    kernel.on("service:link", "gateway.status", { configured: false, connected: false });
+    kernel.on("service:link", "gateway.setup.start", { setup_id: "setup-3", state: "authorized", accounts: [{ id: "acc-a", name: "个人账户" }] });
+    kernel.on("service:link", "gateway.setup.deploy", (body) => ({ setup_id: body.setup_id, state: "deploying" }));
+  } });
+  try {
+    f.panel.find("settingsGatewayRow").click();
+    await until(() => /还没有设置中转站/.test(f.panel.find("settingsRelayStatus").textContent));
+    f.panel.find("settingsGatewaySetup").click();
+    await until(() => f.panel.find("settingsGatewayDeploy").hidden === false);
+    assert.equal(f.panel.find("settingsGatewaySetupAccounts").hidden, true);
+    f.panel.find("settingsGatewayDeploy").click();
+    await until(() => f.sent("service:link", "gateway.setup.deploy").length === 1);
+    assert.deepEqual(f.sent("service:link", "gateway.setup.deploy")[0].body, { setup_id: "setup-3" });
+  } finally { f.close(); }
+});
+
 test("a Cloudflare setup that finishes refreshes the relay and the devices", async () => {
   let status = { configured: false, connected: false };
   const f = await drawer({ setup: (kernel) => {
