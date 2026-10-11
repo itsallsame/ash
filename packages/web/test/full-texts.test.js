@@ -30,3 +30,11 @@ test("concurrent reads share one request and an old dataset cannot repopulate th
   assert.equal(await first, null); assert.equal(await second, null);
   assert.equal(reads, 1); assert.equal(cache.bytes, 0); assert.equal(cache.values.size, 0);
 });
+
+test("shared hashes do not turn one expansion choice into another message's choice", async () => {
+  const cache = new FullTexts(); let reads = 0;
+  await cache.load("first", "same", async () => { reads++; return "complete text"; });
+  assert.equal(cache.has("same", "first"), true); assert.equal(cache.has("same", "second"), false);
+  await cache.load("second", "same", async () => { reads++; return "complete text"; });
+  assert.equal(reads, 1); assert.equal(cache.has("same", "second"), true);
+});

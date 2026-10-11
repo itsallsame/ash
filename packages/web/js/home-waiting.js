@@ -45,6 +45,7 @@ function waitingCard(ctx, screen, item, redraw, now = Date.now()) {
     approval ? "需要你确认" : "她问你", h("span", { class: "exp" }, approval ? `${dayTime(ask.expires_at, now)} 前有效` : ago(ask.ts, now)));
   const el = h("article", { class: "a-card hm-wide", dataset: { askId: ask.id } }, head, h("div", { class: "card-title" }, ask.title));
   if (ask.detail) el.append(h("div", { class: "card-body" }, ask.detail));
+  if (typeof ctx.jump === "function") el.append(btn("查看对话", "a-btn btn-ghost btn-sm", () => ctx.jump(ask.id)));
   if (approval && typeof ask.original === "string") {
     const full = h("pre", { class: "hm-original", hidden: true }, ask.original);
     const link = h("button", { type: "button", class: "card-link" }, "查看完整原文", ico("chev", "i-xs"));

@@ -69,6 +69,8 @@ export class ConversationTimeline {
   older() { return this.store.hasBefore && this.store.before && this.store.canPage("before") ? this.read({ before: this.store.before }, "before") : Promise.resolve(0); }
   newer() { return this.store.hasAfter && this.store.after && this.store.canPage("after") ? this.read({ after: this.store.after }, "after") : Promise.resolve(0); }
   locate(params) {
+    if (this.store.protected.size) return Promise.reject(new Error("请先结束当前文字选择或卡片输入，再跳转对话。"));
+    this.store.anchor = null;
     this.epoch++;
     this.pageAbort?.abort();
     this.loading = false;
@@ -85,7 +87,7 @@ export class ConversationTimeline {
       if (!this.store.hasAfter) {
         const item = projectRecords([fact]).conversation[0];
         if (item) this.onChange(this.viewAfter(item, fact.seq), true, new Set([item.id]));
-      } else this.unseen++;
+      } else { this.unseen++; this.onChange(this.view, false); }
     }
     const targets = [fact.reply_to, fact.message_id, fact.in_reply_to, ...(fact.type === "turn.start" ? fact.ids ?? [] : [])];
     for (const id of targets) if (this.store.get(id)) this.queueTarget(id);

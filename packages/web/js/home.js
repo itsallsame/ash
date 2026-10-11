@@ -100,6 +100,7 @@ class HomeShell {
       refreshName: () => { void this.identity.refresh(); },
       back: () => this.back(),
       close: () => this.close(),
+      jump: id => { this.close(); globalThis.dispatchEvent(new CustomEvent("ash:jump", { cancelable: true, detail: { id } })); },
       /** Puts words in the conversation's box (the chat page listens for `ash:compose`; failing that, the plain text box). */
       compose: (text, extra = {}) => {
         const event = new CustomEvent("ash:compose", { cancelable: true, detail: { text, ...extra } });

@@ -11,7 +11,8 @@ const body = (row, options) => {
   const item = row.item;
   if (row.kind === "message" && item.type === "say") {
     const { delivery, reactions, revision, group, ...content } = item;
-    return { content, shown: item.full && options.fullTexts?.has(item.full) ? options.fullTexts.get(item.full) : item.text };
+    return { content, shown: item.full && options.fullTexts?.has(item.full, item.id) ? options.fullTexts.get(item.full) : item.text,
+      expansion: item.full && !options.fullTexts?.has(item.full, item.id) ? options.fullTexts?.expansionLabel?.(item.id) : null };
   }
   if (row.kind === "message") { const { reactions, ...content } = item; return content; }
   return item;
@@ -82,7 +83,7 @@ export class WindowView {
       const state = item?.type === "say" ? { delivery: item.delivery, reactions: item.reactions } : null;
       const changed = !row || !sameBody || !equal(row.state, state) || !equal(row.chrome, chrome) || !equal(row.intent, intent) || row.expired !== expired || row.pending !== pending;
       const decided = item?.type === "ask" && (item.ask.state !== "pending" || expired) || item?.type === "card" && item.locked;
-      const expanded = row && item?.type === "say" && row.content?.shown !== content?.shown && item.full && options.fullTexts?.has(item.full);
+      const expanded = row && item?.type === "say" && row.content?.shown !== content?.shown && item.full && options.fullTexts?.has(item.full, item.id);
       if (changed && row && this.protected(row, !decided && !expanded)) row.deferred = true;
       else if (changed) {
         const reuse = sameBody && descriptor.kind === "message" && item.type === "say";
@@ -137,6 +138,7 @@ export class WindowView {
     this.position.changed();
   }
   jump(id) { const row = this.rows.get(`message:${id}`) ?? this.rows.get(`failure:${id}`); return this.position.jump(row?.nodes.find(node => node.matches?.(".msg,.a-card,.atts")) ?? row?.nodes[0]); }
+  settled(id) { return this.rows.get(`message:${id}`)?.lifetime.completion ?? Promise.resolve(); }
   dispose() {
     this.closed = true; this.position.dispose();
     this.root.ownerDocument.removeEventListener("selectionchange", this.retry); this.root.removeEventListener("focusout", this.retry);

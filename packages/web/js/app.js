@@ -2,6 +2,7 @@ import { ConversationTimeline as Timeline } from "./conversation-timeline.js";
 export { ConversationTimeline as Timeline } from "./conversation-timeline.js";
 import { HomeFeed } from "./home-feed.js";
 import { FullTexts } from "./full-texts.js";
+import { IdleExpansion } from "./idle-expansion.js";
 import { connectHome } from "./home.js";
 import { Net } from "./net.js";
 import { WindowView } from "./window-view.js";
@@ -72,6 +73,8 @@ export function boot({ bridge } = {}) {
   const connection = document.querySelector("#connection");
   const progressRoot = document.querySelector("#progress");
   const log = document.querySelector("#log");
+  const historyNav = document.querySelector("#historyNav");
+  const returnLatest = document.querySelector("#returnLatest");
   const suggestions = document.querySelector("#suggestions");
   const contextRoot = document.querySelector("#context");
   const context = composerContext(contextRoot, input);
@@ -108,6 +111,7 @@ export function boot({ bridge } = {}) {
   };
   const homeFeed = new HomeFeed();
   let timeline;
+  let restorer;
   let recipient;
   let files;
   /** Ask for her home, or for the apps page (`page: "apps"`): whoever owns that page answers the event. */
@@ -117,7 +121,28 @@ export function boot({ bridge } = {}) {
   const optionPending = new Set();
   /** Long texts read from the ledger on demand, by blob hash. */
   const fullTexts = new FullTexts();
+  const discardText = hash => {
+    fullTexts.discard(hash);
+    for (const item of timeline.store.items) if (item.full === hash) timeline.store.collapse(item.id);
+  };
   const redraw = () => { if (timeline) paintView(timeline.view, true); };
+  let navigation = null, navigationSerial = 0;
+  const applyNavigation = () => {
+    if (!navigation) return;
+    const view = conversationView(log);
+    if (navigation.latest) { view.position.latest(); navigation = null; }
+    else if (view.jump(navigation.id)) navigation = null;
+  };
+  const retainReadingAnchor = () => {
+    const anchor = views.get(log)?.position.capture();
+    timeline.store.anchor = anchor && !anchor.bottom && anchor.key?.replace(/^(message|failure):/, "") || null;
+  };
+  const locate = async id => {
+    const serial = ++navigationSerial;
+    await (id ? timeline.jump(id) : timeline.latest());
+    if (serial !== navigationSerial) return false;
+    navigation = id ? { id } : { latest: true }; redraw(); return true;
+  };
   const cardActions = {
     agentName: id => recipient?.name(id) ?? id.replace(/^agent:/, ""),
     get primary() { return net.primary; },
@@ -126,24 +151,42 @@ export function boot({ bridge } = {}) {
     atStart: () => timeline?.store.intro === true,
     get previous() { return timeline?.store.previous; },
     get next() { return timeline?.store.next; },
+    shouldBuild: () => !restorer?.active || restorer.idle(),
     herName: () => presenceBar.title.textContent || "Ash",
     onRetry: async (failure) => {
       await net.enqueueSay(failure.retry.text, [], null, failure.retry.to ?? recipient.target());
-      conversationView(log).position.latest();
+      if (timeline.store.hasAfter) await locate().catch(error => presenceBar.problem(error.message)); else conversationView(log).position.latest();
     },
     onOpenFile: (ref) => files.open(ref),
     onFileLink: (href) => files.openLink(href),
+    onReadOriginal: async (ask, signal) => {
+      const dataset = timeline.store.dataset;
+      const text = await net.readBlobText(ask.original_full, { signal });
+      if (signal?.aborted || dataset !== timeline.store.dataset || timeline.get(ask.id)?.ask?.original_full !== ask.original_full) throw new Error("这条原文已经离开当前对话。");
+      retainReadingAnchor();
+      const dirty = timeline.store.expand(ask.id, new TextEncoder().encode(text).byteLength);
+      if (!dirty) throw new Error("请先结束当前文字选择，再查看完整原文。");
+      paintView(timeline.view, true, dirty);
+      let released = false;
+      return { text, release: () => { if (!released) { released = true; timeline.store.collapse(ask.id); } } };
+    },
     fullTexts,
-    onExpand: async (hash, id) => {
+    onExpand: async (hash, id, { automatic = false, signal, mounted = () => {} } = {}) => {
       id ??= timeline.store.items.find(item => item.full === hash)?.id;
       if (!id || !timeline.get(id)) return;
+      if (!automatic) { restorer.cancel(); await fullTexts.pending.get(hash)?.catch(() => {}); }
       const dataset = timeline.store.dataset;
-      const entry = await fullTexts.load(id, hash, value => net.readBlobText(value));
-      if (!entry || dataset !== timeline.store.dataset || !timeline.get(id)) { fullTexts.retain(timeline.store.items); return; }
+      retainReadingAnchor();
+      const entry = await fullTexts.load(id, hash, value => net.readBlobText(value, { signal }));
+      if (!entry || signal?.aborted || dataset !== timeline.store.dataset || timeline.get(id)?.full !== hash) { if (signal?.aborted) discardText(hash); fullTexts.retain(timeline.store.items); return; }
       const dirty = timeline.store.expand(id, entry.bytes);
-      if (!dirty) { fullTexts.discard(hash); throw new Error("结束当前文字选择后，再展开这条消息。"); }
+      if (!dirty) { discardText(hash); throw new Error("结束当前文字选择后，再展开这条消息。"); }
       fullTexts.retain(timeline.store.items);
+      mounted();
       paintView(timeline.view, true, dirty);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await conversationView(log).settled(id);
+      if (automatic && (signal?.aborted || !timeline.get(id))) { discardText(hash); redraw(); }
     },
     optionPending,
     askIntents,
@@ -186,6 +229,7 @@ export function boot({ bridge } = {}) {
       void files.open({ workspace: "main", path: request.id });
       return true;
     }
+    if (target === "message" && typeof request.id === "string") return locate(request.id);
     const section = TARGET_SECTION[target] ?? (HOME_SECTIONS.has(target) ? target : undefined);
     if (target !== "settings" && !section) return false;
     // The answer is whether the home page took the event.
@@ -242,6 +286,7 @@ export function boot({ bridge } = {}) {
     try {
       const log = document.querySelector("#log");
       for (let pages = 0; pages < 20 && !timeline.exhausted && log && log.scrollHeight <= log.clientHeight + 80; pages++) {
+        retainReadingAnchor();
         if (!await timeline.older()) break;
       }
     } catch { /* the scroll handler can still load older pages */ }
@@ -251,6 +296,7 @@ export function boot({ bridge } = {}) {
     // A dataset reset drops texts and transient choices before any new entity is painted.
     if (fullTexts.dataset !== timeline.store.dataset) {
       fullTexts.reset(); fullTexts.dataset = timeline.store.dataset;
+      restorer?.reset();
       askIntents.clear(); optionPending.clear();
     }
     const active = new Set(timeline.store.items.map(item => item.id));
@@ -260,11 +306,38 @@ export function boot({ bridge } = {}) {
     if (conversation) render(timeline.view, net.outbox, openInline, presenceBar, cardActions, dirty);
     else presenceBar?.render(timeline?.ready ? view.presence : { state: "unknown" });
     progress();
+    historyNav.hidden = !timeline.store.hasAfter && !timeline.unseen;
+    returnLatest.textContent = timeline.unseen ? `回到最新 · ${timeline.unseen} 条新消息` : "回到最新";
+    applyNavigation();
+    restorer?.wake();
     setTimeout(fillScreen, 0);
   });
   timeline = new Timeline(net, paintView);
-  timeline.store.expandedSize = item => item.full ? fullTexts.values.get(item.full)?.bytes ?? 0 : 0;
+  timeline.store.expandedSize = item => item.full && fullTexts.has(item.full, item.id) ? fullTexts.values.get(item.full)?.bytes ?? 0 : 0;
   timeline.onCurrent = current => homeFeed.setCurrent(current);
+  restorer = new IdleExpansion({
+    contains: id => Boolean(timeline.get(id)),
+    candidates: () => {
+      const bounds = log.getBoundingClientRect(), rows = views.get(log)?.rows;
+      return timeline.store.items.filter(item => item.full && fullTexts.expanded(item.id) && !fullTexts.has(item.full, item.id))
+        .map(item => {
+          const row = rows?.get(`message:${item.id}`)?.nodes.find(node => node.matches?.(".msg"));
+          const rect = row?.getBoundingClientRect();
+          return { item, distance: rect ? Math.max(bounds.top - rect.bottom, rect.top - bounds.bottom, 0) : Infinity };
+        }).filter(candidate => candidate.distance < log.clientHeight / 2).sort((a, b) => a.distance - b.distance).map(candidate => candidate.item);
+    },
+    restore: async (item, signal, mounted) => {
+      try { await cardActions.onExpand(item.full, item.id, { automatic: true, signal, mounted }); }
+      catch (error) { redraw(); throw error; }
+    },
+  });
+  returnLatest.addEventListener("click", () => { void locate().catch(error => presenceBar.problem(error.message)); });
+  window.addEventListener("ash:jump", event => {
+    if (event.defaultPrevented || typeof event.detail?.id !== "string") return;
+    event.preventDefault(); void locate(event.detail.id).catch(error => presenceBar.problem(error.message));
+  });
+  const navigationObserver = new MutationObserver(applyNavigation);
+  navigationObserver.observe(log, { childList: true });
   const protectWindow = () => {
     const selection = document.getSelection();
     const ids = [...log.querySelectorAll("[data-row-key]")].filter(node => node.contains(document.activeElement) || selection?.rangeCount && !selection.isCollapsed && selection.containsNode(node, true))
@@ -319,7 +392,7 @@ export function boot({ bridge } = {}) {
       fileInput.value = "";
       picked = [];
       showPicked();
-      conversationView(log).position.latest();
+      if (timeline.store.hasAfter) await locate().catch(error => presenceBar.problem(error.message)); else conversationView(log).position.latest();
     } catch (error) { presenceBar.problem(`没发出去：${error.message || "这台设备存不下待发送的消息"}`); }
     finally { sendButton.disabled = false; sendable(); }
   });
@@ -338,12 +411,16 @@ export function boot({ bridge } = {}) {
     if (timeline.view.asks.some((ask) => ask.state === "pending" && ask.expires_at <= Date.now())) redraw();
   }, 1_000);
   log.addEventListener("scroll", async () => {
+    restorer.scroll();
     if (timeline.loading) return;
+    retainReadingAnchor();
     try {
       if (log.scrollTop < 80) await timeline.older();
       else if (log.scrollHeight - log.scrollTop - log.clientHeight < 100 && timeline.store.hasAfter) await timeline.newer();
     } catch { presenceBar.problem("这段对话暂时加载不出来，稍后再翻一次。"); }
   }, { passive: true });
+  log.addEventListener("wheel", () => restorer.scroll(), { passive: true });
+  log.addEventListener("touchstart", () => restorer.scroll(), { passive: true });
   attachMenu(document.querySelector("#attachMenu"), attachButton, fileInput);
   fileInput.addEventListener("change", () => {
     picked = addPicked(picked, fileInput.files);
@@ -355,9 +432,14 @@ export function boot({ bridge } = {}) {
     if (typeof globalThis.__ashOpenNative === "function") globalThis.__ashOpenNative("apps");
     else openHome({ page: "apps" });
   });
-  window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); views.get(log)?.dispose(); net.stop(); });
+  window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); restorer.dispose(); navigationObserver.disconnect(); views.get(log)?.dispose(); net.stop(); });
   window.addEventListener("online", () => net.reconnect());
-  window.addEventListener("pageshow", (event) => { if (event.persisted) net.start(); });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    restorer.closed = false; restorer.reset();
+    navigationObserver.observe(log, { childList: true });
+    net.start();
+  });
   net.start();
   return { net, timeline };
 }

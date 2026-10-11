@@ -6,7 +6,7 @@ export class FullTexts {
     this.reset();
   }
   reset() { this.values = new Map(); this.choices = new Map(); this.pending = new Map(); this.bytes = 0; this.generation = (this.generation ?? 0) + 1; }
-  has(hash) { return this.values.has(hash); }
+  has(hash, id) { return this.values.has(hash) && (!id || this.expanded(id)); }
   discard(hash) { const entry = this.values.get(hash); if (entry) { this.values.delete(hash); this.bytes -= entry.bytes; } }
   get(hash) {
     const entry = this.values.get(hash);
@@ -15,8 +15,9 @@ export class FullTexts {
     return entry.text;
   }
   expanded(id) { return this.choices.has(id); }
+  expansionLabel(id) { return this.choices.has(id) && !this.choices.get(id).failed ? "正在展开…" : "显示全文"; }
   remember(id, hash) {
-    this.choices.delete(id); this.choices.set(id, hash);
+    this.choices.delete(id); this.choices.set(id, { hash, failed: false });
     while (this.choices.size > this.maxChoices) this.choices.delete(this.choices.keys().next().value);
   }
   async load(id, hash, read) {
@@ -32,11 +33,12 @@ export class FullTexts {
       }).finally(() => { if (generation === this.generation) this.pending.delete(hash); });
       this.pending.set(hash, request);
     }
-    return this.pending.get(hash);
+    try { return await this.pending.get(hash); }
+    catch (error) { if (generation === this.generation && this.choices.get(id)?.hash === hash) this.choices.get(id).failed = true; throw error; }
   }
   /** Mounted texts remain complete. At most one legitimate oversized text can occupy the whole cache. */
   retain(items) {
-    const active = new Set(items.map(item => item.full).filter(Boolean));
+    const active = new Set(items.filter(item => this.expanded(item.id)).map(item => item.full).filter(Boolean));
     for (const [hash, entry] of this.values) {
       if (this.bytes <= this.maxBytes) break;
       if (!active.has(hash)) { this.values.delete(hash); this.bytes -= entry.bytes; }

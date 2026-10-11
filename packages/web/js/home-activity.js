@@ -73,6 +73,7 @@ export function activityPage(ctx, screen, arg) {
     if (open && stepPage?.has_more_before) body.append(btn("更早的步骤", "a-btn btn-ghost btn-sm", () => { void loadSteps(turn.id, { before: stepPage.before }); }));
     if (open && stepPage?.has_more_after) body.append(btn("更新的步骤", "a-btn btn-ghost btn-sm", () => { void loadSteps(turn.id, { after: stepPage.after }); }));
     if (open && askable) body.append(btn([ico("chat", "i-xs"), "问问她这件事"].flat(), "a-btn btn-ghost btn-sm hm-ask", () => ctx.compose?.(`关于${turn.title || "这件事"}，`, { turn: turn.id })));
+    if (open && turn.message_id && typeof ctx.jump === "function") body.append(btn("查看对话", "a-btn btn-ghost btn-sm", () => ctx.jump(turn.message_id)));
     return h("div", { class: "hm-turn", dataset: { turn: turn.id } }, h("span", { class: "tx-caption tx-num hm-turn-time" }, hhmm(turn.started)), h("span", { class: "hm-rail" }, dot, h("span", { class: "hm-rail-line" })), body);
   };
 

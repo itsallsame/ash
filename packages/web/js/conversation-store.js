@@ -18,12 +18,13 @@ export class ConversationStore {
     this.hasBefore = this.hasAfter = false;
     this.intro = false;
     this.protected = new Set();
+    this.anchor = null;
   }
 
   protect(ids) { this.protected = new Set(ids); }
   canPage(direction) {
     const edge = direction === "before" ? this.items.at(-1) : this.items[0];
-    return this.items.length < this.maxItems && this.bytes < this.maxBytes || !this.protected.has(edge?.id);
+    return this.items.length < this.maxItems && this.bytes < this.maxBytes || !this.protected.has(edge?.id) && edge?.id !== this.anchor;
   }
 
   /** Replace for a jump; prepend/append for continuous reading. Older snapshots cannot undo newer answers. */
@@ -46,7 +47,7 @@ export class ConversationStore {
       if (prior && prior.revision > page.snapshot_seq) continue;
       // Size is calculated only when received, never during painting.
       const bytes = Number.isSafeInteger(item.byte_size) && item.byte_size >= 0 ? item.byte_size : new TextEncoder().encode(JSON.stringify(item)).byteLength;
-      const expandedBytes = prior?.expandedBytes ?? this.expandedSize?.(item) ?? 0;
+      const expandedBytes = prior?.item.full === item.full ? prior?.expandedBytes ?? this.expandedSize?.(item) ?? 0 : this.expandedSize?.(item) ?? 0;
       this.byId.set(item.id, { item, bytes: bytes + expandedBytes, baseBytes: bytes, expandedBytes, revision: page.snapshot_seq });
       changed.add(item.id);
     }
@@ -71,10 +72,10 @@ export class ConversationStore {
     while (this.items.length > 1 && (this.items.length > this.maxItems || this.bytes > this.maxBytes)) {
       let fromEnd = direction === "before";
       let edge = fromEnd ? this.items.at(-1) : this.items[0];
-      if (edge.id === keep || this.protected.has(edge.id)) {
+      if (edge.id === keep || edge.id === this.anchor || this.protected.has(edge.id)) {
         fromEnd = !fromEnd;
         edge = fromEnd ? this.items.at(-1) : this.items[0];
-        if (edge.id === keep || this.protected.has(edge.id)) break;
+        if (edge.id === keep || edge.id === this.anchor || this.protected.has(edge.id)) break;
       }
       const item = fromEnd ? this.items.pop() : this.items.shift();
       this.bytes -= this.byId.get(item.id).bytes;
@@ -104,6 +105,12 @@ export class ConversationStore {
   get before() { return this.items[0]?.seq ?? null; }
   get after() { return this.items.at(-1)?.seq ?? null; }
   get(id) { return this.byId.get(id)?.item ?? null; }
+  collapse(id) {
+    const entry = this.byId.get(id);
+    if (!entry) return;
+    this.bytes -= entry.expandedBytes;
+    entry.expandedBytes = 0; entry.bytes = entry.baseBytes;
+  }
 
   update(item, revision, insert = false) {
     if (!insert && !this.byId.has(item.id)) return new Set();

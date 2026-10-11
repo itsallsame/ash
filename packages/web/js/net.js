@@ -138,11 +138,11 @@ export class Net {
   }
 
   /** The text of a long field of the ledger, in full (`service:blobs/read`, in pieces). */
-  async readBlobText(hash) {
+  async readBlobText(hash, options) {
     let text = "";
     let offset = 0;
     for (let pieces = 0; pieces < 200; pieces++) {
-      const piece = await this.data("service:blobs", "read", { hash, offset });
+      const piece = await this.data("service:blobs", "read", { hash, offset }, options);
       text += piece.text;
       if (piece.next_offset === null || piece.next_offset === undefined) return text;
       offset = piece.next_offset;
