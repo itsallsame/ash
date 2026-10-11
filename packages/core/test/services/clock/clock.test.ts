@@ -601,3 +601,45 @@ test("an app's one-time timer refused as forbidden because the app is installed 
   }
   h.svc.stop();
 });
+
+test("an app's one-time timer that falls due before the apps are loaded (apps.describe says unavailable) is put back and delivered once they are", async () => {
+  let loaded = false;
+  const h = away(() => (loaded ? { ok: true, result: { data: { granted: true, enabled: true, running: true } } } : { ok: false, error: { code: "unavailable", message: "the apps are still loading" } }));
+  await h.setAs("app:todo", "app", "early");
+  await h.setAs("agent:main", "agent", "agent-early");
+  h.answers.push(refused("forbidden"));   // the router: nothing runs, so the app is not granted
+  await h.at(1000);
+  assert.deepEqual(h.labels(), ["early"], "the app's timer is back; the agent's was delivered (the fake target answered ok)");
+  loaded = true;
+  await h.at(31_000);
+  assert.deepEqual(h.delivered.map((m) => m.word), ["tick", "tick"], "delivered after the apps are up");
+  assert.deepEqual(h.labels(), []);
+
+  // an agent setter: unavailable from its module is not "away" (that module has no loading phase); a refusal stays a refusal
+  const g = away(() => ({ ok: false, error: { code: "unavailable", message: "x" } }));
+  await g.setAs("agent:main", "agent", "a");
+  g.answers.push(refused("forbidden"));
+  await g.at(1000);
+  assert.deepEqual(g.labels(), []);
+  h.svc.stop(); g.svc.stop();
+});
+
+test("a one-time timer cancelled while its send is in flight is not brought back when the send is refused as away", async () => {
+  const { ledger } = openLedger();
+  let release!: (reply: Reply) => void;
+  const svc = createClockService({ ledger, now: () => T0 + 1000, log: () => {}, setTimer: () => () => {},
+    router: { send: async (m): Promise<Reply> => (m.to === "service:host" || m.word === "describe" ? { ok: true, result: { data: {} } } : new Promise<Reply>((resolve) => { release = resolve; })) } });
+  const as = (member: string): HandleContext => ({ ...ctx, caller: { member, via: "agent", local: false } });
+  const { data } = await svc.handle(msg("set", set({ at: T0 + 1000, to: "service:quiet", word: "tick", body: {}, label: "x" })), { ...ctx, caller: { member: "agent:main", via: "agent", local: false } }) as { data: { id: string } };
+  const rows = () => (svc as any).rows().length;
+  svc.check();
+  assert.equal(rows(), 0, "the row is gone while the send waits");
+  await assert.rejects(svc.handle(msg("cancel", { id: data.id }, "request", "agent:other"), as("agent:other")), (e: any) => e.code === "forbidden", "someone else still may not cancel it");
+  const cancelled = await svc.handle(msg("cancel", { id: data.id }), as("agent:main")) as { data: { cancelled: boolean } };
+  assert.equal(cancelled.data.cancelled, true, "found in flight");
+  release({ ok: false, error: { code: "offline", message: "away" } });
+  await flush(); await new Promise((r) => setImmediate(r));
+  assert.equal(rows(), 0, "not resurrected");
+  assert.equal(((svc as any).sending as Map<string, unknown>).size, 0);
+  svc.stop();
+});

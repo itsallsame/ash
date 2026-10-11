@@ -103,6 +103,8 @@ export class ClockService implements Member {
   private readonly probing = new Map<string, Promise<Presence>>();
   /** How many times a one-time timer (by id) was put back after a refused send; memory only, a restart starts again. */
   private readonly retries = new Map<string, number>();
+  /** One-time timers whose row is deleted and whose send has no answer yet (id -> who set it); `cancelled` is set when someone cancels one meanwhile. */
+  private readonly sending = new Map<string, { by: string; cancelled: boolean }>();
 
   constructor(private readonly options: ClockOptions) {
     this.db = options.ledger.db();
@@ -161,9 +163,13 @@ export class ClockService implements Member {
 
   private remove(body: Record<string, unknown>, caller: Caller) {
     const row = this.db.prepare("SELECT created_by FROM timers WHERE id=?").get(body.id as string) as { created_by: string } | undefined;
-    if (row && row.created_by !== caller.member && caller.member !== OWNER_ID) {
+    const inflight = row ? undefined : this.sending.get(body.id as string);
+    const by = row?.created_by ?? inflight?.by;
+    if (by !== undefined && by !== caller.member && caller.member !== OWNER_ID) {
       throw new WordError("forbidden", "this timer was set by someone else; only its owner or the person:owner can cancel it");
     }
+    // A one-time timer being sent right now has no row; cancelling it means it is not put back if the send is refused.
+    if (inflight) { inflight.cancelled = true; return { cancelled: true }; }
     const removed = this.db.prepare("DELETE FROM timers WHERE id=?").run(body.id as string).changes > 0;
     this.retries.delete(body.id as string);
     this.arm();
@@ -173,6 +179,7 @@ export class ClockService implements Member {
   /** Delete every timer that `member` set; the number deleted. */
   private removeOwner(member: string): number {
     for (const row of this.db.prepare("SELECT id FROM timers WHERE created_by=?").all(member) as { id: string }[]) this.retries.delete(row.id);
+    for (const item of this.sending.values()) if (item.by === member) item.cancelled = true;
     const removed = Number(this.db.prepare("DELETE FROM timers WHERE created_by=?").run(member).changes);
     if (removed > 0) this.arm();
     return removed;
@@ -197,7 +204,10 @@ export class ClockService implements Member {
       }
     });
     this.arm();
-    for (const row of due) void this.send(row);
+    for (const row of due) {
+      if (row.every_s === null) this.sending.set(row.id, { by: row.created_by, cancelled: false });
+      void this.send(row);
+    }
   }
 
   private async send(row: Row): Promise<void> {
@@ -221,11 +231,13 @@ export class ClockService implements Member {
       if (!away && code === "forbidden" && presence === "away") this.putBack(row);
       else if (!away) this.retries.delete(row.id);
     } catch (error) { this.log(`timer ${row.id} (${row.label}): sending to ${row.target}/${row.word} failed`, error); }
+    finally { this.sending.delete(row.id); }
   }
 
   /** A one-time timer whose send was refused because someone is away goes back into the table, RETRY_AFTER_MS later, a few times. */
   private putBack(row: Row): void {
     if (row.every_s !== null) return; // a repeating timer already moved on to its next slot
+    if (this.sending.get(row.id)?.cancelled) { this.retries.delete(row.id); return; } // cancelled while it was being sent
     const tries = (this.retries.get(row.id) ?? 0) + 1;
     if (tries > RETRY_MAX) { this.retries.delete(row.id); this.log(`timer ${row.id} (${row.label}): ${row.target} was away for ${RETRY_MAX} tries; given up`); return; }
     this.retries.set(row.id, tries);
@@ -257,6 +269,9 @@ export class ClockService implements Member {
         ? await this.options.router.send({ to: AGENTS_ID, kind: "request", word: "describe", body: { agent: member } }, SELF)
         : await this.options.router.send({ to: APPS_ID, kind: "request", word: "apps.describe", body: { id: member.replace(/^app:/, "") } }, SELF);
       const data = probe.ok ? probe.result?.data as { granted?: unknown; enabled?: unknown; running?: unknown } | undefined : undefined;
+      // Before the apps are loaded the hub answers `unavailable` and no app runs: the setter is only away, and a refusal until then
+      // can only be the routing check (nothing is running to be granted), not a decision of the owner.
+      if (!probe.ok && probe.error.code === "unavailable") return via === "app" ? "away" : "here";
       const gone = probe.ok ? via === "app" && data?.granted === false : probe.error.code === "not_found";
       if (!gone) return via === "app" && data?.granted !== false && data?.enabled === true && data?.running === false ? "away" : "here";
       const removed = this.removeOwner(member);

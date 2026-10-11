@@ -120,15 +120,18 @@ export class AppsSettings {
         try {
           const reply = await this.request(word, { id: app.id });
           if (!this.live()) return;
-          if (reply?.ok !== true) throw new Error("not done");
+          if (reply?.ok !== true) throw Object.assign(new Error("not done"), { code: reply?.error?.code });
           await this.load();
           this.status.textContent = done;
-        } catch {
+        } catch (error) {
           if (!this.live()) return;
           // The word may still have run (a slow start, a lost answer): show what is true now rather than guess.
           for (const item of buttons) item.disabled = false;
           await this.load().catch(() => {});
-          if (this.live()) this.status.textContent = `「${appName}」没有确认完成；上面是现在的状态，可以再试一次。`;
+          // "not found" on enable: the app is still recorded but its folder is gone; the revoke button clears the record.
+          if (this.live()) this.status.textContent = word === "apps.enable" && error?.code === "not_found"
+            ? `「${appName}」的文件夹已经不在了，启用不了；可以点「收回全部权限」把它卸掉。`
+            : `「${appName}」没有确认完成；上面是现在的状态，可以再试一次。`;
         }
       })(); });
       buttons.push(control);

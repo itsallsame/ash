@@ -283,7 +283,7 @@ export class AppRuntime {
     const grant = this.grants.get(id);
     if (!item && !grant) return null;
     const state = this.running.get(id);
-    const error = item && "error" in item ? item.error : item ? this.lastError.get(id) : "the app folder was not found";
+    const error = item && "error" in item ? item.error : item ? this.lastError.get(id) : "应用文件夹不在了（只剩安装记录）：恢复文件夹，或收回全部权限 / apps.remove 把它卸掉";
     const m = item && "manifest" in item ? item.manifest : null;
     return {
       id, name: m?.name ?? id, version: m?.version ?? "", summary: m?.summary ?? "", role: m?.role ?? m?.summary ?? "", publisher: m?.publisher ?? "",

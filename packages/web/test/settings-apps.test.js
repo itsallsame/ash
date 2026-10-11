@@ -89,3 +89,24 @@ test("an app word that the hub refuses is not shown as done, and the card shows 
     assert.match(card().text, /已停用/);
   } finally { delete globalThis.document; net.stop(); kernel.close(); }
 });
+
+test("enabling an app whose folder is gone says so and points at taking it away", async () => {
+  globalThis.document = { createElement: (tag) => new FakeElement(tag) };
+  const kernel = startKernel();
+  const app = { id: "health", name: "健康", version: "", enabled: false, granted: true, running: false, needs: [], error: "应用文件夹不在了（只剩安装记录）：恢复文件夹，或收回全部权限 / apps.remove 把它卸掉" };
+  kernel.on("service:apps", "apps.list", () => ({ apps: [{ ...app }] }));
+  kernel.on("service:apps", "apps.enable", { ok: false, error: { code: "not_found", message: "文件夹不在" } });
+  const { net } = await connect(kernel);
+  try {
+    const panel = new FakeElement("div");
+    const settings = new SettingsControls(panel, net);
+    settings.network("online");
+    panel.find("settingsAppsRow").click();
+    const card = () => panel.find("settingsAppsList").children[0];
+    await until(() => card());
+    card().all().find((item) => item.attributes?.["data-app-word"] === "apps.enable").click();
+    await until(() => /文件夹已经不在了/.test(panel.find("settingsAppsStatus").textContent));
+    assert.match(panel.find("settingsAppsStatus").textContent, /收回全部权限/);
+    assert.match(card().text, /应用文件夹不在了/);
+  } finally { delete globalThis.document; net.stop(); kernel.close(); }
+});

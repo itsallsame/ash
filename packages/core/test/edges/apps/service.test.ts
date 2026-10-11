@@ -308,7 +308,7 @@ test("an installed app whose folder is gone: listed with the reason, removable a
   await words(w, "apps.refresh");
   const listed = dataOf(await words(w, "apps.list")).apps;
   assert.deepEqual(listed.map((app: any) => [app.id, app.granted, app.enabled, app.running]), [["fixture", true, true, false]]);
-  assert.match(listed[0].error, /folder was not found/);
+  assert.match(listed[0].error, /应用文件夹不在了/);
 
   for (const word of ["apps.enable", "apps.restart"]) {
     const refused = await words(w, word, { id: "fixture" });
