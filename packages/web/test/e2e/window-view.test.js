@@ -28,6 +28,9 @@ test(...withBrowser("a jump near the history tail stays on the target as its tab
     const target = { ...say(21, "table summary"), full: "tail-table" };
     const items = [...Array.from({ length: 20 }, (_, i) => say(i + 1)), target, say(22)];
     view.update(items, [], options); await view.settled(); view.jump(target.id);
+    // Layout can deliver an unchanged scroll event after the jump's compensation event.
+    document.querySelector("#log").dispatchEvent(new Event("scroll"));
+    document.querySelector("#log").dispatchEvent(new Event("scroll"));
     // Exercise incremental layout on a slow device, including the first slice that makes the target alignable.
     view.markdown.budget = 0;
     options.fullTexts.set(target.full, "| Row | Value |\n| --- | --- |\n" + Array.from({ length: 140 }, (_, i) => `| Row ${i} | Complete value |`).join("\n"));

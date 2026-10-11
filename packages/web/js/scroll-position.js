@@ -8,7 +8,7 @@ export class ScrollPosition {
     root.style.overflowAnchor = "none";
     this.onScroll = event => {
       // Our compensation also emits scroll; it must not overwrite the pre-resize anchor.
-      if (this.compensatedTop === root.scrollTop) this.compensations.add(event);
+      if (this.compensatedTop === root.scrollTop || this.top === root.scrollTop) this.compensations.add(event);
       else this.capture(true);
       this.compensatedTop = null;
     };
