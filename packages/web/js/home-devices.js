@@ -197,6 +197,13 @@ export function connectPage(ctx, screen) {
   };
   draw();
   let tick = 0;
-  screen.every(() => { tickText(); if (++tick % 2 === 0) { void readPairing(); if (SETUP_ACTIVE.includes(state.setup?.state)) void readSetup(); } }, 1000);
+  // Only a pairing that is on the page, or a setup that is running, has anything to ask for: the countdown moves every second, the
+  // hub is asked every other second (nothing pushes a device's request to the page).
+  screen.every(() => {
+    const setupRunning = SETUP_ACTIVE.includes(state.setup?.state);
+    if (!state.shown && !setupRunning) return;
+    tickText();
+    if (++tick % 2 === 0) { void readPairing(); if (setupRunning) void readSetup(); }
+  }, 1000);
   return { title: "连一台新设备", body: root, refresh: async () => { await Promise.all([refreshRelay().catch(() => {}), readPairing()]); if (screen.alive()) draw(); } };
 }

@@ -84,6 +84,7 @@ export function waitingPage(ctx, screen, arg) {
   let history = null;
   const draw = () => {
     const items = waitingItems(ctx.feed.view()).filter((item) => !agent || item.ask.from === agent);
+    screen.wake("expiry", draw, Math.min(...items.map(({ ask }) => ask.expires_at)));
     fill(cards, ...(items.length ? items.map((item) => waitingCard(ctx, screen, item, draw)) : [list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))]));
   };
   const drawSettled = () => {
@@ -92,7 +93,6 @@ export function waitingPage(ctx, screen, arg) {
     fill(settledBox, list(row({ icon: "check", tone: "ok", title: `最近处理过 ${history.length} 件`, sub: `最近一件：${decisionText(last)}`, onClick: () => ctx.go("settled") })));
   };
   screen.onView(draw);
-  screen.every(draw, 30_000);
   draw();
   const refresh = async () => {
     try { history = (await screen.ask("service:gate", "history", { limit: 100 })).items?.filter(valid).sort((a, b) => b.at - a.at) ?? []; drawSettled(); } catch { /* the cards above stand */ }

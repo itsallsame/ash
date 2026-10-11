@@ -24,10 +24,22 @@ export class IdentityName {
     readers.add(this);
     this.net = net;
     this.onName = onName;
+    this.listeners = new Set();
     this.epoch = 0;
     this.name = DEFAULT_NAME;
     this.resolved = null;
-    this.onName(this.name);
+    this.announce(this.name);
+  }
+
+  /** Calls [listener](name) whenever the name shown changes; returns the function that stops it. */
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  announce(name) {
+    this.onName(name);
+    for (const listener of this.listeners) listener(name);
   }
 
   reset() {
@@ -52,7 +64,7 @@ export class IdentityName {
       if (typeof file?.content !== "string") { this.resetName(); return; }
       this.name = nameFromIdentity(file.content) || DEFAULT_NAME;
       this.resolved = binding;
-      this.onName(this.name);
+      this.announce(this.name);
       for (const other of readers) if (other !== this && other.net === this.net) other.adopt(this.name, binding);
     } catch {
       if (current()) this.resetName();
@@ -65,12 +77,12 @@ export class IdentityName {
     this.epoch++;
     this.name = name;
     this.resolved = binding;
-    this.onName(name);
+    this.announce(name);
   }
 
   resetName() {
     this.name = DEFAULT_NAME;
     this.resolved = null;
-    this.onName(this.name);
+    this.announce(this.name);
   }
 }

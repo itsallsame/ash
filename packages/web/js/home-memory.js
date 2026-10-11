@@ -65,7 +65,7 @@ export function identityPage(ctx, screen) {
   const page = twoFiles(ctx, screen, { title: "她是谁", files, store: (binding) => personaStore(ctx.net, binding), view,
     foot: () => "这些决定了她是谁、怎样和你相处，改完她下一句话就照新的来。想给她换个名字？直接跟她说。",
     onSaved: (path) => { if (path === "IDENTITY.md") ctx.refreshName(); } });
-  screen.every(() => { header.querySelector(".hm-id-name").textContent = ctx.name; }, 500);
+  screen.onName(() => { header.querySelector(".hm-id-name").textContent = ctx.name; });
   const original = page.body;
   page.body = h("div", { class: "hm-stack" }, header, original);
   const refresh = page.refresh;

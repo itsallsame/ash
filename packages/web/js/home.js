@@ -116,6 +116,7 @@ class HomeShell {
     let alive = true;
     const subscriptions = [];
     const timers = [];
+    const wakes = new Map();
     const guard = () => { if (!alive || !this.net.same(binding)) throw stale(); };
     const screen = {
       alive: () => alive && this.net.same(binding),
@@ -124,6 +125,9 @@ class HomeShell {
       ask: async (to, word, body = {}, options) => { guard(); const reply = await this.net.call(to, word, body, options); guard(); return unwrap(reply); },
       /** The same, but the Reply itself (an error is a value). */
       call: async (to, word, body = {}, options) => { guard(); const reply = await this.net.call(to, word, body, options); guard(); return reply; },
+      onName: (fn) => { subscriptions.push(this.identity.subscribe(() => { if (alive) fn(); })); },
+      /** One timer by [key]: [fn] runs at [ts]; calling again with the key moves it. Stopped with the page. */
+      wake: (key, fn, ts) => { clearTimeout(wakes.get(key)); if (Number.isFinite(ts)) wakes.set(key, setTimeout(() => { if (alive) fn(); }, Math.min(Math.max(0, ts - Date.now()) + 50, 2_147_000_000))); },
       onView: (fn) => { subscriptions.push(feed.subscribe(() => { if (alive) fn(); })); },
       listen: (target, event, fn) => { const run = () => { if (alive) fn(); }; target.addEventListener(event, run); subscriptions.push(() => target.removeEventListener(event, run)); },
       every: (fn, ms) => { const timer = setInterval(() => { if (alive && !document.hidden) fn(); }, ms); timers.push(timer); },
@@ -135,7 +139,7 @@ class HomeShell {
     const el = h("section", { class: `hm-screen${entry.id === "home" ? " hm-screen-home" : ""}`, dataset: { page: entry.id } }, bar, h("div", { class: "hm-scroll" }, h("div", { class: "hm-col" }, page.body)));
     if (animate) el.classList.add("entering");
     this.stage.append(el);
-    const entryScreen = { el, page, dispose: () => { alive = false; for (const off of subscriptions) off(); for (const timer of timers) { clearInterval(timer); clearTimeout(timer); } page.dispose?.(); } };
+    const entryScreen = { el, page, dispose: () => { alive = false; for (const off of subscriptions) off(); for (const timer of [...timers, ...wakes.values()]) { clearInterval(timer); clearTimeout(timer); } page.dispose?.(); } };
     this.screens.push(entryScreen);
     if (animate) requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove("entering")));
     void page.refresh?.();

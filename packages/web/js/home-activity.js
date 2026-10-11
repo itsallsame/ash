@@ -77,6 +77,7 @@ export function activityPage(ctx, screen, arg) {
     const raw = ctx.feed.view();
     const safe = safeActivityView(raw).turns;
     const days = activityByDay(raw, now, agent).map((day) => ({ ...day, front: day.front.filter((turn) => safe[turn.id]).map((turn) => ({ ...turn, ...safe[turn.id], id: turn.id })), back: day.back.filter((turn) => safe[turn.id]).map((turn) => ({ ...turn, ...safe[turn.id], id: turn.id })) }));
+    state.running = days.some((day) => [...day.front, ...day.back].some((turn) => !Number.isFinite(turn.ended)));
     empty.hidden = days.length > 0;
     if (!days.length) { fill(chips); fill(timeline); return; }
     state.latest = days.find((item) => item.day === state.day)?.front[0]?.id ?? days[0].front[0]?.id ?? null;
@@ -93,7 +94,8 @@ export function activityPage(ctx, screen, arg) {
     fill(timeline, ...nodes);
   };
   screen.onView(draw);
-  screen.every(draw, 5000);
+  // Only a turn still running has times that move by themselves.
+  screen.every(() => { if (state.running) draw(); }, 5000);
   draw();
   const refresh = async () => { try { for (const agent of await readAgents(screen)) state.agents.set(agent.id, agent.name); draw(); } catch { /* ids stay */ } };
   return { title: "她做过的事", body: h("div", { class: "hm-activity" }, chips, empty, timeline), refresh };

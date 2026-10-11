@@ -161,3 +161,23 @@ test("every reader of the name on one connection hears a name any of them read, 
     assert.equal(elsewhere.at(-1), "Ash", "another connection's reader is not told");
   } finally { stop(); other.stop(); }
 });
+
+test("a subscriber hears each name the reader shows until it unsubscribes", async () => {
+  const { kernel, net, stop } = await online();
+  try {
+    let content = "- 名字：小舟\n";
+    kernel.on("service:persona", "get", () => identity(content));
+    const name = new IdentityName(net, () => {});
+    const heard = [];
+    const off = name.subscribe((value) => heard.push(value));
+    await name.refresh();
+    content = "- 名字：River\n";
+    await name.refresh();
+    off();
+    content = "- 名字：Mira\n";
+    await name.refresh();
+    assert.equal(heard.at(-1), "River");
+    assert.ok(heard.includes("小舟"));
+    assert.equal(heard.includes("Mira"), false);
+  } finally { stop(); }
+});

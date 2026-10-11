@@ -80,6 +80,7 @@ export function homePage(ctx, screen) {
     const v = view();
     const items = waitingItems(v).filter((item) => !agentId || item.ask.from === agentId);
     const now = Date.now();
+    screen.wake("expiry", draw, Math.min(...items.map(({ ask }) => ask.expires_at)));
     const rows = items.slice(0, 3).map(({ kind, ask }) => row({ icon: kind === "approval" ? "shield" : "ask", tone: kind === "approval" ? "warn" : "her", tall: true, title: ask.title,
       sub: kind === "approval" ? `${firstLine(ask.detail).slice(0, 24)}${ask.detail ? " · " : ""}${dayTime(ask.expires_at, now)} 前有效` : `${agentId ? "" : "她"}问你 · ${ago(ask.ts, now)}`,
       onClick: () => ctx.go("waiting", agentId) }));
@@ -198,7 +199,9 @@ export function homePage(ctx, screen) {
   const drawAll = () => { draw(); drawUpcoming(); drawMemory(); drawPromises(); drawHands(); drawWho(); drawFiles(); drawBackstage(); };
   drawAll();
   screen.onView(draw);
-  screen.every(drawHero, 1000);
+  // The seconds she has been at it are the only thing that moves by itself; the name moves when it is changed.
+  screen.every(() => { if (stateOf(view(), agentId, online()).since) drawHero(); }, 1000);
+  screen.onName(drawHero);
   screen.every(() => { void refresh(); }, 15_000);
   screen.listen(globalThis, "ash:checkup", drawHands);
 
