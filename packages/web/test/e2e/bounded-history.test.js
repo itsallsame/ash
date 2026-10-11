@@ -33,6 +33,9 @@ test(...withBrowser("externalized Chinese messages and gate originals remain com
     title: "审阅完整请求", detail: "摘要", human_kind: "confirmation", expires_at: Date.now() + 3600000,
     options: [{ id: "once", label: "允许这一次" }, { id: "deny", label: "不允许" }], source: { body_full: original },
   } });
+  const custom = "完整的自定义回答。".repeat(1800);
+  kernel.append({ id: "long_answer", from: "agent:main", to: OWNER, kind: "request", word: "ask", body: { title: "自己回答", human_kind: "question", allow_custom: true, expires_at: Date.now() + 3600000, options: [] } });
+  kernel.append({ from: OWNER, to: "agent:main", kind: "response", word: "ask", reply_to: "long_answer", body: { ok: true, result: { data: { choice: "custom", text: custom } } } });
   const { page } = await openPage(browser, kernel);
   assert.equal(kernel.requests.filter(row => row.to === "service:blobs").length, 0);
   await page.locator('#log .msg[data-seq="1"] .expand').click();
@@ -44,6 +47,11 @@ test(...withBrowser("externalized Chinese messages and gate originals remain com
     const text = selection.toString(); selection.removeAllRanges(); return text;
   });
   assert.equal(selected, message);
+  const answer = page.locator('#log [data-row-key="message:long_answer"]');
+  assert.equal(await answer.locator(".ask-detail").count(), 0, "the decided card stays folded");
+  await answer.locator("summary").click();
+  await eventually(async () => (await answer.locator("pre").textContent()) === custom);
+  await answer.locator("summary").click();
   await page.locator('#log [data-row-key="message:gate_original"] summary').click();
   await eventually(async () => (await page.locator('#log [data-row-key="message:gate_original"] pre').textContent()) === original);
   await openHome(page, { page: "home", section: "waiting" }, '#home .hm-screen[data-page="waiting"]');
