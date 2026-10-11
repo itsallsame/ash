@@ -50,7 +50,10 @@ export interface GatewayStatus {
   claimed?: boolean;
   connected: boolean;
   account_email?: string;
+  /** Why the relay could not be reached, in words for a person; never what the relay sent back. */
   last_error?: string;
+  /** The HTTP status the relay answered with in that failure, when it answered. */
+  last_error_status?: number;
 }
 
 const SCHEMA = "CREATE TABLE IF NOT EXISTS link_gateway (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
@@ -174,6 +177,7 @@ export class GatewayControl {
       configured: Boolean(url), ...(url ? { url } : {}), ...(claimed !== null && claimed !== undefined ? { claimed } : {}),
       connected: this.relay?.connected ?? false, ...(email ? { account_email: email } : {}),
       ...(this.relay?.lastError ? { last_error: this.relay.lastError } : {}),
+      ...(this.relay?.lastStatus ? { last_error_status: this.relay.lastStatus } : {}),
     };
   }
 

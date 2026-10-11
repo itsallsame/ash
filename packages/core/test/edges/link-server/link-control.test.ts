@@ -314,6 +314,19 @@ test("gateway.status and gateway.use: what the relay is, and switching to anothe
   assert.ok(!JSON.stringify(status).includes(w.hub.token));
 });
 
+test("gateway.status says why the relay cannot be reached in words, with the HTTP status beside it and nothing the relay sent", async (t) => {
+  const w = await startWorld(t, { gateway: false });
+  const gateway = w.control.gateway as unknown as { relay: unknown };
+  gateway.relay = { lastError: "中转站地址找不到（404），可能已被删除或地址填错；可以重新部署，或换一个地址。", lastStatus: 404, claimed: null, connected: false };
+  const status = await w.link("gateway.status");
+  assert.equal(status.last_error, "中转站地址找不到（404），可能已被删除或地址填错；可以重新部署，或换一个地址。");
+  assert.equal(status.last_error_status, 404);
+  gateway.relay = { lastError: "连不上中转站，网络不通或太慢；会自动重试，也可以检查网络和地址。", lastStatus: null, claimed: null, connected: false };
+  const down = await w.link("gateway.status");
+  assert.ok(!("last_error_status" in down));
+  gateway.relay = null;
+});
+
 test("an unclaimed relay of the owner's own is claimed with the secret in the vault (GATEWAY_BOOTSTRAP), never one passed in a word", async (t) => {
   const w = await startWorld(t, { gateway: false });
   const { FakeGateway } = await import("../../../../link/test/fixtures/fake-gateway");
