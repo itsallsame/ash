@@ -30,7 +30,7 @@ export function approvalSections(view, now = Date.now()) {
     pending.push({ id: ask.id, seq: ask.seq, from: "service:gate", state: "pending", options_valid: true,
       human_kind: ask.human_kind, allow_custom: ask.allow_custom === true,
       title: safeText(ask.title) || "待确认的操作", detail: safeText(ask.detail, 1000),
-      ...(typeof ask.original === "string" ? { original: ask.original } : {}),
+      ...(typeof ask.original === "string" ? { original: ask.original, ...(typeof ask.original_full === "string" && /^[a-f0-9]{64}$/.test(ask.original_full) ? { original_full: ask.original_full } : {}) } : {}),
       expires_at: ask.expires_at, options: offered.map((option) => ({ id: option.id, label: safeText(option.label, 80) })) });
   }
   pending.sort((a, b) => a.expires_at - b.expires_at || a.seq - b.seq);

@@ -81,25 +81,38 @@ export function waitingPage(ctx, screen, arg) {
   let history = null;
   let currentPage = null;
   let loading = false;
-  const originals = new Set();
+  const cardRows = new Map();
   let shownOriginal = null;
-  const disposeOriginals = () => { for (const lifetime of originals) { lifetime.disposed = true; for (const clean of lifetime.cleanup) clean(); } originals.clear(); shownOriginal = null; };
+  const disposeRow = entry => { entry.lifetime.disposed = true; for (const clean of entry.lifetime.cleanup) clean(); entry.node.remove(); };
+  const disposeOriginals = () => { for (const entry of cardRows.values()) disposeRow(entry); cardRows.clear(); shownOriginal = null; };
   const draw = () => {
-    disposeOriginals();
     const current = currentPage ? { asks: currentPage.items.map(item => item.ask).filter(Boolean) } : ctx.feed.view();
     const items = waitingItems(current).filter((item) => !agent || item.ask.from === agent);
     screen.wake("expiry", draw, Math.min(...items.map(({ ask }) => ask.expires_at)));
-    fill(cards, ...(items.length ? items.map((item) => {
-      const lifetime = { disposed: false, cleanup: new Set() }; originals.add(lifetime);
-      return waitingCard(ctx, screen, item, draw, { lifetime, onReadOriginal: async (ask, signal) => {
-        const details = [...cards.querySelectorAll("[data-ask-id]")].find(node => node.dataset.askId === ask.id)?.querySelector("details");
-        if (shownOriginal && shownOriginal !== details) shownOriginal.open = false;
-        shownOriginal = details;
-        const text = await ctx.net.readBlobText(ask.original_full, { signal });
-        if (signal.aborted || lifetime.disposed || !screen.alive()) throw new Error("这条原文已经关闭。");
-        return { text, release: () => { if (shownOriginal === details) shownOriginal = null; } };
-      } });
-    }) : [list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))]));
+    const ids = new Set(items.map(item => item.ask.id));
+    for (const [id, entry] of cardRows) if (!ids.has(id)) { disposeRow(entry); cardRows.delete(id); }
+    if (!items.length) { fill(cards, list(row({ icon: "check", tone: "ok", title: "现在没有要你决定的事", sub: "有事她会叫你" }))); return; }
+    for (const node of [...cards.children]) if (!node.dataset.askId) node.remove();
+    let cursor = cards.firstChild;
+    for (const item of items) {
+      const id = item.ask.id, signature = JSON.stringify([item.ask, intents.get(id)]);
+      let entry = cardRows.get(id);
+      if (entry?.signature !== signature) {
+        if (entry) { if (entry.node === cursor) cursor = cursor.nextSibling; disposeRow(entry); }
+        const lifetime = { disposed: false, cleanup: new Set() };
+        const node = waitingCard(ctx, screen, item, draw, { lifetime, onReadOriginal: async (ask, signal) => {
+          const details = cardRows.get(ask.id)?.node.querySelector("details");
+          if (shownOriginal && shownOriginal !== details) shownOriginal.open = false;
+          shownOriginal = details;
+          const text = await ctx.net.readBlobText(ask.original_full, { signal });
+          if (signal.aborted || lifetime.disposed || !screen.alive()) throw new Error("这条原文已经关闭。");
+          return { text, release: () => { if (shownOriginal === details) shownOriginal = null; } };
+        } });
+        entry = { signature, node, lifetime }; cardRows.set(id, entry);
+      }
+      if (entry.node !== cursor) cards.insertBefore(entry.node, cursor);
+      cursor = entry.node.nextSibling;
+    }
   };
   const drawSettled = () => {
     if (!history || !history.length) { fill(settledBox); return; }

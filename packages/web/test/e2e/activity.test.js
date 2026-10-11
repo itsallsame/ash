@@ -50,10 +50,12 @@ test(...withBrowser("recent history paints first and scrolling up loads the earl
   for (let n = 1; n <= 230; n++) say(kernel, `message ${n}`);
   const { page } = await openPage(browser, kernel);
   await page.locator("#log .msg", { hasText: "message 230" }).waitFor();
-  assert.equal(await page.locator("#log .msg", { hasText: /^message 20$/ }).count(), 0);
+  const first = await page.locator("#log .msg").evaluateAll(nodes => Math.min(...nodes.map(node => Number(node.dataset.seq))));
+  assert.ok(first > 20, "the first render reads a recent range");
   await page.locator("#log").evaluate((el) => { el.scrollTop = 0; });
-  await page.locator("#log .msg", { hasText: /^message 20$/ }).waitFor({ state: "attached" });
-  assert.ok(kernel.synced.some((frame) => frame.before !== undefined), "the earlier page is a `before` sync");
+  await page.locator("#log .msg", { hasText: new RegExp(`^message ${first - 1}$`) }).waitFor({ state: "attached" });
+  assert.ok(kernel.requests.some(row => row.to === "service:history" && row.word === "window" && row.body.before === first), "the earlier range is an indexed before window");
+  assert.ok(await page.locator("#log .msg").count() <= 60);
 }));
 
 test(...withBrowser("a long text shows the ledger's short version and opens in full on request", async ({ kernel, browser }) => {
