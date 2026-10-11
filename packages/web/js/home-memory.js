@@ -62,7 +62,7 @@ export function identityPage(ctx, screen) {
   const header = h("div", { class: "hm-idcard" }, h("span", { class: "hm-idring", "aria-hidden": "true" }),
     h("span", { class: "av av-56" }, h("img", { src: `${globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars"}/default.webp`, alt: "" })),
     h("span", { class: "hm-id-t" }, h("span", { class: "hm-id-name" }, ctx.name), h("span", { class: "hm-id-sub" })));
-  const view = (path, content, parent) => { parent.append(h("div", { class: "list hm-doc-card" }, (() => { const box = h("div", { class: "hm-doc-body" }); readable(box, content, { empty: "还没有写下什么。点「编辑」写几句。", skipTitle: true }); return box; })())); };
+  const view = (path, content, parent) => { parent.append(h("div", { class: "list hm-doc-card" }, (() => { const box = h("div", { class: "hm-doc-body" }); readable(box, content, { empty: "还没有写下什么。点「编辑」写几句。", skipTitle: true }); if (path === "SOUL.md" && content.trim()) box.append(h("span", { class: "hm-doc-sig" }, `— ${ctx.name}`)); return box; })())); };
   const page = twoFiles(ctx, screen, { title: "她是谁", files, store: (binding) => personaStore(ctx.net, binding), view,
     foot: () => "这些决定了她是谁、怎样和你相处，改完她下一句话就照新的来。想给她换个名字？直接跟她说。",
     onSaved: () => { void screen.ask("service:persona", "get", { file: "IDENTITY.md" }).catch(() => {}); } });

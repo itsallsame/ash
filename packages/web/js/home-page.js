@@ -63,7 +63,9 @@ export function homePage(ctx, screen) {
     const waiting = waitingItems(v).filter((item) => !agentId || item.ask.from === agentId).length;
     const today = state.usage?.periods?.today?.cost_usd;
     const live = st.state === "working" ? " av-live" : st.state === "thinking" ? " av-breath" : st.state === "waiting_you" ? " av-wait" : "";
-    const face = isHer ? h("span", { class: `av hm-avatar${live}${online() ? "" : " off"}` }, h("img", { src: `${AVATAR_ROOT}/${st.face}.webp`, alt: "" })) : letterAvatar(name, `hm-avatar${live}`);
+    // A quiet dot when she is simply here (green) or away (grey); a ring only while she is doing something, thinking or asking.
+    const dot = st.state === "idle" ? h("span", { class: "dot" }) : st.state === "resting" ? h("span", { class: "dot off" }) : null;
+    const face = isHer ? h("span", { class: `av hm-avatar${live}${online() ? "" : " off"}` }, h("img", { src: `${AVATAR_ROOT}/${st.face}.webp`, alt: "" }), dot) : letterAvatar(name, `hm-avatar${live}`);
     const since = st.since ? ` · ${duration(Math.max(0, Date.now() - st.since))}` : "";
     const pill = h("span", { class: `tag tag-${st.tone} hm-state`, id: "homeState" }, st.state === "working" || st.state === "thinking" ? h("span", { class: "spinner hm-spin" }) : null, `${st.text}${since}`);
     fill(heroStat, 
