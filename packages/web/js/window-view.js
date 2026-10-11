@@ -47,6 +47,7 @@ export class WindowView {
     for (const row of this.rows.values()) { this.position.unobserve(row.nodes); dispose(row); }
     this.rows.clear(); this.root.replaceChildren(); this.position.anchor = null;
     this.position.pendingJump = null;
+    this.position.readingJump = false;
     this.newest = 0; this.fresh = false; this.latest = null;
   }
   update(entries, outbox = [], options = {}, dirty = null) {

@@ -18,8 +18,12 @@ export class ScrollPosition {
   }
   capture(userScroll = false) {
     const root = this.root;
-    if (userScroll) this.pendingJump = null;
-    const jump = this.pendingJump;
+    if (userScroll) { this.pendingJump = null; this.readingJump = false; }
+    let jump = this.pendingJump;
+    if (jump && !jump.isConnected) {
+      jump = Array.from(root.children).find(node => node.dataset.rowKey === jump.dataset.rowKey);
+      this.pendingJump = jump ?? null;
+    }
     // A newly mounted range can still be too short to align the target. Keep its requested anchor until slices create room.
     if (jump?.isConnected && Math.abs(jump.getBoundingClientRect().top - root.getBoundingClientRect().top) > 1) {
       this.anchor = { bottom: false, row: jump, node: jump, offset: 0, block: -1, key: jump.dataset.rowKey, top: root.scrollTop };
@@ -27,7 +31,7 @@ export class ScrollPosition {
       return this.anchor;
     }
     this.pendingJump = null;
-    const bottom = this.followTail !== false && root.scrollHeight - root.scrollTop - root.clientHeight < 100;
+    const bottom = !this.readingJump && this.followTail !== false && root.scrollHeight - root.scrollTop - root.clientHeight < 100;
     const y = root.getBoundingClientRect().top;
     // Siblings are ordered vertically. Do not read every historical element's geometry.
     const visible = nodes => {
@@ -69,9 +73,11 @@ export class ScrollPosition {
   changed() { this.restore(); this.capture(); }
   observe(nodes) { for (const node of nodes) if (node.nodeType === 1) this.observer?.observe(node); }
   unobserve(nodes) { for (const node of nodes) if (node.nodeType === 1) this.observer?.unobserve(node); }
-  latest() { this.pendingJump = null; this.scrollTo(this.root.scrollHeight); this.capture(); }
+  latest() { this.pendingJump = null; this.readingJump = false; this.scrollTo(this.root.scrollHeight); this.capture(); }
   jump(node) {
     if (!node?.isConnected) return false;
+    // An explicit target remains a reading anchor even when an early slice is briefly close to the tail.
+    this.readingJump = true;
     this.pendingJump = node;
     this.scrollTo(this.root.scrollTop + node.getBoundingClientRect().top - this.root.getBoundingClientRect().top);
     this.capture(); return true;
