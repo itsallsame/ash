@@ -78,24 +78,28 @@ function armed(control, label, confirmLabel, onWarn, run) {
 }
 
 const KEYS = [
-  { ref: "DEEPSEEK_API_KEY", provider: "deepseek", title: "DeepSeek Key", use: "用于：对话模型", hint: "没有它，Ash 无法对话。", lost: "对话模型的 DeepSeek Key", effect: "Ash 暂时无法对话" },
-  { ref: "OPENROUTER_API_KEY", provider: "openrouter", title: "OpenRouter Key", use: "用于：快速判断（JEV 模型）", hint: "没有它，快速判断只能靠关键词。", lost: "快速判断的 OpenRouter Key", effect: "快速判断只能靠关键词" },
+  { ref: "DEEPSEEK_API_KEY", provider: "deepseek", title: "DeepSeek Key", use: "用于：对话模型", hint: "没有它，Ash 无法对话。", lost: "对话模型的 DeepSeek Key", account: "对话模型的 DeepSeek 账户", effect: "Ash 暂时无法对话" },
+  { ref: "OPENROUTER_API_KEY", provider: "openrouter", title: "OpenRouter Key", use: "用于：快速判断（JEV 模型）", hint: "没有它，快速判断只能靠关键词。", lost: "快速判断的 OpenRouter Key", account: "快速判断的 OpenRouter 账户", effect: "快速判断只能靠关键词" },
 ];
 
 /** What `service:llm/keys.status` says about one saved key, in words for the owner. `health` is undefined when the hub could not be asked. */
 export function keyStateText(health) {
   if (health?.status === "ok") return "已保存，已验证可用。";
+  if (health?.status === "low_balance") return "已验证，但余额不足，Ash 暂时无法对话。";
   if (health?.status === "rejected") return `已失效（${health.reason || "无效"}），请换一把新的 Key。`;
   if (health?.status === "unknown") return `已保存，暂时没验证上${health.reason ? `（${health.reason}）` : ""}。`;
   return "已保存。";
 }
 
-/** The saved keys their providers refuse, one plain sentence each (the owner and the agent both need to know these do not work). */
+/** The saved keys that do not work, one plain sentence each: refused by the provider, or accepted but the account is out of balance. */
 export function keyProblems(keys) {
   const list = Array.isArray(keys) ? keys : [];
-  return KEYS.flatMap(({ provider, lost, effect }) => {
+  return KEYS.flatMap(({ provider, lost, effect, account }) => {
     const health = list.find((item) => item?.provider === provider);
-    return health?.configured === true && health.status === "rejected" ? [`${lost}已失效（${health.reason || "无效"}），${effect}。`] : [];
+    if (health?.configured !== true) return [];
+    if (health.status === "rejected") return [`${lost} 已失效（${health.reason || "无效"}），${effect}。`];
+    if (health.status === "low_balance") return [`${account}余额不足，${effect}。`];
+    return [];
   });
 }
 const KIND_NAMES = { computer: "电脑", laptop: "电脑", server: "服务器", browser: "浏览器" };
@@ -466,7 +470,7 @@ export class SettingsControls {
         if (isSaved === null) return;
         const health = keyHealth.find((item) => item?.provider === provider);
         status.textContent = !isSaved ? `还没有保存。${hint}` : checking ? "已保存，正在验证…" : keyStateText(health);
-        status.className = !isSaved || health?.status === "rejected" ? "set-status warn" : health?.status === "ok" ? "set-status ok" : "set-status";
+        status.className = !isSaved || health?.status === "rejected" || health?.status === "low_balance" ? "set-status warn" : health?.status === "ok" ? "set-status ok" : "set-status";
       };
       const showSaved = (saved) => {
         isSaved = saved;
@@ -1124,9 +1128,10 @@ export class SettingsControls {
         vaultRow.sub.className = "set-sub warn";
       } else if (vault) {
         const saved = (ref) => vault.entries.find((entry) => entry.ref === ref)?.configured === true;
-        const refused = new Set((modelKeys?.keys ?? []).filter((item) => item?.configured === true && item.status === "rejected").map((item) => item.ref));
-        vaultRow.sub.textContent = KEYS.map(({ ref, title }) => `${title} ${refused.has(ref) ? "已失效" : saved(ref) ? "已保存" : "未设置"}`).join(" · ");
-        vaultRow.sub.className = saved(KEYS[0].ref) && !refused.size ? "set-sub" : "set-sub warn";
+        const standing = (ref) => (modelKeys?.keys ?? []).find((item) => item?.ref === ref && item.configured === true)?.status;
+        const word = (ref) => standing(ref) === "rejected" ? "已失效" : standing(ref) === "low_balance" ? "余额不足" : saved(ref) ? "已保存" : "未设置";
+        vaultRow.sub.textContent = KEYS.map(({ ref, title }) => `${title} ${word(ref)}`).join(" · ");
+        vaultRow.sub.className = saved(KEYS[0].ref) && KEYS.every(({ ref }) => !["rejected", "low_balance"].includes(standing(ref))) ? "set-sub" : "set-sub warn";
       }
       if (devices || relayState) {
         const count = devices ? devices.devices.filter((device) => !device.revoked_at).length : deviceCount;

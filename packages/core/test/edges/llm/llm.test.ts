@@ -344,7 +344,7 @@ test("verify: an answer about a key the owner has replaced meanwhile is dropped"
   assert.equal(status(f.llm, "openrouter").status, "unknown", "the old key's refusal does not count against the new key");
 });
 
-test("use: a 401 or 403 from post marks the provider's key rejected with the time and reason; the next success clears it", async () => {
+test("use: a 401 from post marks the provider's key rejected with the time and reason; the next success clears it", async () => {
   let answer: () => Response = () => new Response(JSON.stringify({ error: { message: "API key expired", code: 401 } }), { status: 401 });
   const f = healthFixture(() => answer());
   await assert.rejects(f.llm.post("hub:jev", jevRequest), (e: LlmError) => e.code === "failed" && /HTTP 401/.test(e.message));
@@ -384,4 +384,73 @@ test("use: complete reads the provider's '401 ...' error the same way, and a goo
   const server = healthFixture(() => new Response("{}"), { ...keys }, async () => reply({ stopReason: "error", errorMessage: "500 internal error", content: [] }));
   await assert.rejects(server.llm.complete("hub:reviewer", { messages: [{ role: "user", content: "hi" }] }));
   assert.equal(status(server.llm, "deepseek").status, "unknown");
+});
+
+test("use: a 402 or a 403 (a spent budget, a guardrail, a moderation block) never marks the key rejected; a 403 only sends the key check, which decides", async () => {
+  const say = (status: number, message: string) => new Response(JSON.stringify({ error: { message, code: status } }), { status });
+  // the call is refused, the key check passes: the key is fine
+  for (const [code, message] of [[402, "Insufficient credits"], [403, "Key limit exceeded: budget spent"], [403, "Your request was flagged by moderation"], [403, "Blocked by guardrail"]] as const) {
+    const f = healthFixture((s) => s.url.endsWith("/api/v1/key") ? new Response("{}") : say(code, message));
+    await assert.rejects(f.llm.post("hub:jev", jevRequest), (e: LlmError) => e.code === "failed" && new RegExp(`HTTP ${code}`).test(e.message));
+    await new Promise((r) => setImmediate(r));
+    const after = status(f.llm, "openrouter");
+    assert.notEqual(after.status, "rejected", `${code} ${message}`);
+    assert.deepEqual(f.sent.map((s) => s.init.method), ["POST", "GET"], "one call, then the key check");
+    assert.equal(after.status, "ok");
+  }
+  // the call is refused with a 403 and the key check says the key itself is refused: now it is rejected
+  const bad = healthFixture((s) => s.url.endsWith("/api/v1/key") ? say(401, "API key expired") : say(403, "forbidden"));
+  await assert.rejects(bad.llm.post("hub:jev", jevRequest));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual([status(bad.llm, "openrouter").status, status(bad.llm, "openrouter").reason], ["rejected", "已过期"]);
+  // a check that cannot reach the provider leaves it unknown
+  const down = healthFixture((s) => { if (s.url.endsWith("/api/v1/key")) throw new Error("offline"); return say(403, "forbidden"); });
+  await assert.rejects(down.llm.post("hub:jev", jevRequest));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(status(down.llm, "openrouter").status, "unknown");
+  // 402 and 403 on an already rejected key do not clear it either
+  let calls = 0;
+  const keep = healthFixture((s) => s.url.endsWith("/api/v1/key") ? new Response("expired", { status: 401 }) : calls++ === 0 ? new Response("expired", { status: 401 }) : say(402, "Insufficient credits"));
+  await assert.rejects(keep.llm.post("hub:jev", jevRequest));
+  await assert.rejects(keep.llm.post("hub:jev", jevRequest));
+  assert.equal(status(keep.llm, "openrouter").status, "rejected");
+});
+
+test("use: 403s in a row cause one key check per cooldown, not one each", async () => {
+  const f = healthFixture((s) => s.url.endsWith("/api/v1/key") ? new Response("{}") : new Response("no", { status: 403 }));
+  for (let i = 0; i < 4; i++) await assert.rejects(f.llm.post("hub:jev", jevRequest));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(f.sent.filter((s) => s.init.method === "GET").length, 1);
+});
+
+test("verify: DeepSeek's balance answer decides between ok and low_balance (not a rejected key); a later good call clears it", async () => {
+  let available = false;
+  const f = healthFixture(() => new Response(JSON.stringify({ is_available: available, balance_infos: [] })));
+  const low = await f.llm.verify("deepseek");
+  assert.deepEqual([low.status, low.reason], ["low_balance", "余额不足"]);
+  available = true;
+  assert.equal((await f.llm.verify("deepseek")).status, "ok");
+  // OpenRouter's key info has no such field
+  const other = healthFixture(() => new Response(JSON.stringify({ is_available: false })));
+  assert.equal((await other.llm.verify("openrouter")).status, "ok");
+  // an unreadable body is still an accepted key
+  const odd = healthFixture(() => new Response("OK"));
+  assert.equal((await odd.llm.verify("deepseek")).status, "ok");
+});
+
+test("verify with maxAgeMs: a check made that recently is not repeated; the owner's (no limit) always asks", async () => {
+  const f = healthFixture(() => new Response("{}"));
+  await f.llm.verify("deepseek", { maxAgeMs: 30_000 });
+  f.tick(10_000);
+  const again = await f.llm.verify("deepseek", { maxAgeMs: 30_000 });
+  assert.equal(f.sent.length, 1);
+  assert.deepEqual([again.status, again.checked_at], ["ok", 1000], "the last answer, with its time");
+  await f.llm.verify("deepseek");
+  assert.equal(f.sent.length, 2);
+  f.tick(40_000);
+  await f.llm.verify("deepseek", { maxAgeMs: 30_000 });
+  assert.equal(f.sent.length, 3);
+  f.llm.forget("deepseek");
+  await f.llm.verify("deepseek", { maxAgeMs: 30_000 });
+  assert.equal(f.sent.length, 4, "a new key is always checked");
 });

@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "b784b5efaba8087d5492dfe1063a62e9288c89476101823b9f1e7b40f190268b",
+ "hash": "c3200a57235b693a634d4bb61169d8bc939c35d907a4d70e4f96ed295a0cfbce",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8652,7 +8652,7 @@
    "word": "keys.status",
    "kind": "request",
    "direction": "in",
-   "description": "Whether each model key (DeepSeek for the conversation model, OpenRouter for the quick judgement) is saved and whether its provider accepts it: status ok, rejected (refused: reason says why, such as expired; ask the owner for a new key) or unknown (not checked yet or unreachable). Never the key. Use this when the model or quick judgement seems not to work.",
+   "description": "Whether each model key (DeepSeek for the conversation model, OpenRouter for the quick judgement) is saved and whether its provider accepts it: status ok, rejected (the key itself is refused: reason says why, such as expired; ask the owner for a new key), low_balance (accepted, but the account has no balance left, so calls fail; the owner tops up) or unknown (not checked yet or unreachable). Never the key. Use this when the model or quick judgement seems not to work.",
    "input_schema": {
     "type": "object",
     "properties": {},
@@ -8686,6 +8686,7 @@
          "enum": [
           "ok",
           "rejected",
+          "low_balance",
           "unknown"
          ]
         },
@@ -8731,7 +8732,7 @@
    "word": "keys.check",
    "kind": "request",
    "direction": "in",
-   "description": "Ask the provider now whether a model key is accepted (one provider, or both when left out) with a free authenticated request that costs nothing, and return the same as keys.status. A key saved in the vault is checked automatically; use this to check again.",
+   "description": "Ask the provider now whether a model key is accepted (one provider, or both when left out) with a free authenticated request that costs nothing, and return the same as keys.status. A key saved in the vault is checked automatically; use this to check again (an agent asking again within 30 seconds gets the last answer).",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -8773,6 +8774,7 @@
          "enum": [
           "ok",
           "rejected",
+          "low_balance",
           "unknown"
          ]
         },

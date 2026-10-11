@@ -17,11 +17,13 @@ export class LlmError extends Error {
 
 /**
  * What the hub knows about one model key's standing with its provider. `ok`: the provider accepted it (a check or a call).
- * `rejected`: the provider refused it (HTTP 401/403): `reason` is a short Chinese label (已过期, 无效, ...) and `detail` the
- * provider's own words. `unknown`: not checked yet, or the check could not reach the provider. Never holds the key.
+ * `rejected`: the provider refused the key itself (a 401 on a call; 401 or 403 on the key check): `reason` is a short
+ * Chinese label (已过期, 无效, ...) and `detail` the provider's own words. `low_balance`: the key is accepted but the
+ * account has no balance left (DeepSeek's `is_available: false`), so calls will fail; it is not a bad key. `unknown`: not
+ * checked yet, or the check could not reach the provider. Never holds the key.
  */
 export interface KeyHealth {
-  provider: Provider; ref: string; configured: boolean; status: "ok" | "rejected" | "unknown";
+  provider: Provider; ref: string; configured: boolean; status: "ok" | "rejected" | "low_balance" | "unknown";
   reason?: string; detail?: string; checked_at?: number;
 }
 
@@ -69,8 +71,11 @@ export interface Llm {
   post(caller: string, request: LlmPost): Promise<unknown>;
   /** Both model keys, as last learned (no network). */
   keys(): KeyHealth[];
-  /** Asks the provider whether it accepts the key (a free authenticated GET) and remembers the answer. Calls in flight share one check. */
-  verify(provider: Provider): Promise<KeyHealth>;
+  /**
+   * Asks the provider whether it accepts the key (a free authenticated GET) and remembers the answer. Calls in flight share
+   * one check; with `maxAgeMs`, a check that was made that recently is not repeated (the last answer comes back).
+   */
+  verify(provider: Provider, options?: { maxAgeMs?: number }): Promise<KeyHealth>;
   /** The key was saved or removed: what was known about the old one no longer counts. */
   forget(provider: Provider): void;
 }
@@ -82,6 +87,11 @@ const MAX_TIMEOUT_MS = 120_000;
 const MAX_MESSAGE_CHARS = 200_000;
 const MAX_BODY_CHARS = 200_000;
 const MAX_ANSWER_CHARS = 1_000_000;
+/**
+ * A call that comes back 403 or 402 says little about the key: OpenRouter also answers 403 for a guardrail, a moderation
+ * block or a spent budget, and 402 is a payment problem. Such a call only makes the hub ask the key check, at most this often.
+ */
+const RECHECK_AFTER_MS = 30_000;
 /** A free, authenticated GET on each provider (DeepSeek: account balance; OpenRouter: the key's own info). 401/403 means the key is refused. */
 const VERIFY_PATH: Record<Provider, string> = { deepseek: "/user/balance", openrouter: "/api/v1/key" };
 const VERIFY_TIMEOUT_MS = 8000;
@@ -113,8 +123,7 @@ function refusal(status: number, detail: string): string {
   if (/revok|disabled|deactivat|suspend/i.test(detail)) return "已被停用";
   return status === 403 ? "没有权限" : "无效";
 }
-const refused = (error: unknown): error is LlmError & { http: { status: number; detail: string } } =>
-  error instanceof LlmError && !!error.http && (error.http.status === 401 || error.http.status === 403);
+const httpStatus = (error: unknown): number | undefined => (error instanceof LlmError ? error.http?.status : undefined);
 
 function toContext(messages: LlmMessage[], model: Model<Api>, at: number): Context {
   const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
@@ -164,6 +173,7 @@ export function createLlm(options: LlmOptions): Llm {
   /** What was learned about each provider's key. Memory only: after a restart it is learned again. */
   const health = new Map<Provider, { status: KeyHealth["status"]; reason?: string; detail?: string; at: number }>();
   const checking = new Map<Provider, Promise<KeyHealth>>();
+  const lastCheck = new Map<Provider, number>();
   /** Bumped when a provider's key is saved or removed (`forget`); an answer about an older key is dropped. */
   const epochs: Record<Provider, number> = { deepseek: 0, openrouter: 0 };
   /** Notes an answer, unless the key it was about has been replaced meanwhile. */
@@ -191,10 +201,13 @@ export function createLlm(options: LlmOptions): Llm {
     const report: LlmUsageReport = { caller, provider: tally.provider, model: tally.model, input_tokens: tally.input, output_tokens: tally.output,
       ...(tally.cost === undefined ? {} : { cost: tally.cost }), ok: !failure, at };
     try { options.report(report); } catch { /* accounting never changes the answer */ }
-    // What the provider said about the key: a refusal marks it, a success clears the mark, anything else changes nothing.
+    // What the provider said about the key: a 401 marks it, a success clears the mark, a 402 or 403 sends the key check to
+    // find out whether the key itself is at fault (in the background), anything else changes nothing.
     if (tally.key) {
-      if (refused(failure)) remember(tally.provider, tally.epoch, { status: "rejected", reason: refusal(failure.http.status, failure.http.detail), detail: failure.http.detail });
+      const status = httpStatus(failure);
+      if (status === 401) { const http = (failure as LlmError).http!; remember(tally.provider, tally.epoch, { status: "rejected", reason: refusal(401, http.detail), detail: http.detail }); }
       else if (!failure) remember(tally.provider, tally.epoch, { status: "ok" });
+      else if (status === 402 || status === 403) void verifyNow(tally.provider, RECHECK_AFTER_MS).catch(() => {});
     }
     if (failure) throw failure;
     return value as T;
@@ -230,7 +243,12 @@ export function createLlm(options: LlmOptions): Llm {
         const response = await doFetch(origin ? `${origin}${path}` : `${ORIGIN[provider]}${path}`, { method: "GET", signal, redirect: "error",
           headers: { accept: "application/json", authorization: `Bearer ${key}` } });
         const text = (await response.text()).slice(0, 4000);
-        if (response.ok) return { status: "ok" as const };
+        if (response.ok) {
+          // DeepSeek's balance answer says whether the account can still pay for calls.
+          if (provider === "deepseek" && (() => { try { return (JSON.parse(text) as { is_available?: unknown }).is_available === false; } catch { return false; } })())
+            return { status: "low_balance" as const, reason: "余额不足" };
+          return { status: "ok" as const };
+        }
         if (response.status === 401 || response.status === 403) {
           const detail = providerWords(text, key);
           return { status: "rejected" as const, reason: refusal(response.status, detail), ...(detail ? { detail } : {}) };
@@ -245,17 +263,23 @@ export function createLlm(options: LlmOptions): Llm {
     return snapshot(provider);
   }
 
+  function verifyNow(provider: Provider, maxAgeMs?: number): Promise<KeyHealth> {
+    if (provider !== "deepseek" && provider !== "openrouter") return Promise.reject(new LlmError("bad_request", "provider must be deepseek or openrouter"));
+    const running = checking.get(provider);
+    if (running) return running;
+    const last = lastCheck.get(provider);
+    if (maxAgeMs !== undefined && last !== undefined && clock.now() - last < maxAgeMs) return Promise.resolve(snapshot(provider));
+    const run = check(provider).finally(() => {
+      if (checking.get(provider) === run) { checking.delete(provider); lastCheck.set(provider, clock.now()); }
+    });
+    checking.set(provider, run);
+    return run;
+  }
+
   return {
     keys: () => (Object.keys(KEY_REF) as Provider[]).map(snapshot),
-    verify(provider) {
-      if (provider !== "deepseek" && provider !== "openrouter") return Promise.reject(new LlmError("bad_request", "provider must be deepseek or openrouter"));
-      const running = checking.get(provider);
-      if (running) return running;
-      const run = check(provider).finally(() => { if (checking.get(provider) === run) checking.delete(provider); });
-      checking.set(provider, run);
-      return run;
-    },
-    forget(provider) { epochs[provider]++; health.delete(provider); checking.delete(provider); },
+    verify: (provider, o) => verifyNow(provider, o?.maxAgeMs),
+    forget(provider) { epochs[provider]++; health.delete(provider); checking.delete(provider); lastCheck.delete(provider); },
 
     complete(caller, request) {
       return track(caller, { provider: "deepseek", model: typeof request?.model === "string" ? request.model : "" }, async (tally, at) => {

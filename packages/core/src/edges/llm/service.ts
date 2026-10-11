@@ -10,6 +10,8 @@ import { DEFAULT_MODEL, KEY_REF, LlmError, type Llm, type LlmMessage, type LlmEr
 export const LLM_ID = "service:llm";
 /** A completion asked for through the word may take longer than the hub's own quick judgements (5 s), within the word's 60 s. */
 export const SERVICE_TIMEOUT_MS = 30_000;
+/** An agent or an app asking `keys.check` again within this long gets the last answer, so none can loop on the provider. The owner always asks afresh. */
+export const KEY_CHECK_COOLDOWN_MS = 30_000;
 
 const CODES: Record<LlmErrorCode, ErrorCode> = {
   bad_request: "bad_request", unknown_model: "bad_request", unavailable: "unavailable", timeout: "timeout", failed: "failed",
@@ -38,7 +40,10 @@ export function createLlmService(llm: Pick<Llm, "complete"> & Partial<Pick<Llm, 
       if (msg.word === "keys.status" || msg.word === "keys.check") {
         if (!llm.keys || !llm.verify) throw new WordError("unavailable", "key checks are not available");
         const only = (msg.body as { provider?: Provider } | null)?.provider;
-        if (msg.word === "keys.check") await Promise.all((only ? [only] : (Object.keys(KEY_REF) as Provider[])).map((p) => llm.verify!(p)));
+        if (msg.word === "keys.check") {
+          const cooldown = ctx.caller.via === "human" ? {} : { maxAgeMs: KEY_CHECK_COOLDOWN_MS };
+          await Promise.all((only ? [only] : (Object.keys(KEY_REF) as Provider[])).map((p) => llm.verify!(p, cooldown)));
+        }
         return { data: { keys: llm.keys().filter((k) => !only || k.provider === only) } };
       }
       if (msg.word !== "complete") throw new WordError("not_found", `${LLM_ID} has no word ${msg.word}`);

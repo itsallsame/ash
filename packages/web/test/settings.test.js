@@ -534,9 +534,11 @@ test("key words for the owner: verified, refused with the reason, not verified; 
   assert.equal(keyStateText(health("openrouter", "rejected")), "已失效（无效），请换一把新的 Key。");
   assert.equal(keyStateText(health("deepseek", "unknown", { reason: "连不上服务商" })), "已保存，暂时没验证上（连不上服务商）。");
   assert.equal(keyStateText(health("deepseek", "unknown")), "已保存，暂时没验证上。");
+  assert.equal(keyStateText(health("deepseek", "low_balance", { reason: "余额不足" })), "已验证，但余额不足，Ash 暂时无法对话。");
   assert.equal(keyStateText(undefined), "已保存。", "the hub could not be asked: no claim either way");
   assert.deepEqual(keyProblems([health("deepseek", "rejected", { reason: "无效" }), health("openrouter", "rejected", { reason: "已过期" })]), [
-    "对话模型的 DeepSeek Key已失效（无效），Ash 暂时无法对话。", "快速判断的 OpenRouter Key已失效（已过期），快速判断只能靠关键词。"]);
+    "对话模型的 DeepSeek Key 已失效（无效），Ash 暂时无法对话。", "快速判断的 OpenRouter Key 已失效（已过期），快速判断只能靠关键词。"]);
+  assert.deepEqual(keyProblems([health("deepseek", "low_balance", { reason: "余额不足" }), health("openrouter", "ok")]), ["对话模型的 DeepSeek 账户余额不足，Ash 暂时无法对话。"]);
   assert.deepEqual(keyProblems([health("deepseek", "ok"), health("openrouter", "unknown"), { ...health("openrouter", "rejected"), configured: false }]), []);
   assert.deepEqual(keyProblems(undefined), []);
 });
@@ -557,7 +559,7 @@ test("the vault section shows each saved key's standing, lists a refused key as 
     assert.equal(f.panel.find("settingsVault_OPENROUTER_API_KEY_status").className, "set-status warn");
     const problems = f.panel.find("settingsVault_problems");
     assert.equal(problems.hidden, false);
-    assert.equal(problems.textContent, "发现这些问题：\n· 快速判断的 OpenRouter Key已失效（已过期），快速判断只能靠关键词。");
+    assert.equal(problems.textContent, "发现这些问题：\n· 快速判断的 OpenRouter Key 已失效（已过期），快速判断只能靠关键词。");
     assert.equal(f.sent("service:llm", "keys.check").length, 0, "a key that already has a verdict is not asked about again on opening");
     // the owner replaces nothing but taps 验证 after fixing the account: the hub is asked for that provider only
     openrouter = health("openrouter", "ok", { checked_at: 9 });
@@ -565,6 +567,25 @@ test("the vault section shows each saved key's standing, lists a refused key as 
     await until(() => /已验证可用/.test(line("OPENROUTER_API_KEY")));
     assert.deepEqual(f.sent("service:llm", "keys.check")[0].body, { provider: "openrouter" });
     assert.equal(f.panel.find("settingsVault_problems").hidden, true);
+  } finally { f.close(); }
+});
+
+test("a key whose account is out of balance is shown as verified but unable to pay, and listed as a problem", async () => {
+  const f = await drawer({ setup: (kernel) => {
+    kernel.on("service:vault", "list", { entries: [{ ref: "DEEPSEEK_API_KEY", label: "x", kind: "model", configured: true }] });
+    kernel.on("service:llm", "keys.status", { keys: [health("deepseek", "low_balance", { reason: "余额不足", checked_at: 3 }), { ...health("openrouter", "unknown"), configured: false }] });
+    kernel.on("service:admin", "status", { now: 1, paused: false });
+  } });
+  try {
+    f.settings.opened();
+    await until(() => /余额不足/.test(f.panel.find("settingsVaultRow").sub.textContent));
+    assert.equal(f.panel.find("settingsVaultRow").sub.textContent, "DeepSeek Key 余额不足 · OpenRouter Key 未设置");
+    assert.equal(f.panel.find("settingsVaultRow").sub.className, "set-sub warn");
+    f.panel.find("settingsVaultRow").click();
+    await until(() => /余额不足/.test(f.panel.find("settingsVault_DEEPSEEK_API_KEY_status").textContent));
+    assert.equal(f.panel.find("settingsVault_DEEPSEEK_API_KEY_status").textContent, "已验证，但余额不足，Ash 暂时无法对话。");
+    assert.equal(f.panel.find("settingsVault_DEEPSEEK_API_KEY_status").className, "set-status warn");
+    assert.equal(f.panel.find("settingsVault_problems").textContent, "发现这些问题：\n· 对话模型的 DeepSeek 账户余额不足，Ash 暂时无法对话。");
   } finally { f.close(); }
 });
 
@@ -585,7 +606,7 @@ test("saving a key shows the verification, not just 'saved'; a key the hub has n
     f.panel.find("settingsVault_OPENROUTER_API_KEY").children.at(-1).children.find((item) => item.textContent === "保存").click();
     await until(() => /已失效/.test(f.panel.find("settingsVault_OPENROUTER_API_KEY_status").textContent));
     assert.equal(f.panel.find("settingsVault_OPENROUTER_API_KEY_status").textContent, "已失效（无效），请换一把新的 Key。");
-    assert.match(f.panel.find("settingsVault_problems").textContent, /快速判断的 OpenRouter Key已失效（无效）/);
+    assert.match(f.panel.find("settingsVault_problems").textContent, /快速判断的 OpenRouter Key 已失效（无效）/);
     assert.doesNotMatch(JSON.stringify(f.panel), /sk-or-bad/);
   } finally { f.close(); }
 });
