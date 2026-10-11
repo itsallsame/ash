@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 
 export const name = "dsh-ash-control";
-export const inject = ["agents", "llm", "sessionPersistence", "sessions", "acpAppStartup", "compaction"];
+export const inject = ["agents", "llm", "sessionPersistence", "sessions", "sessionProjections", "acpAppStartup", "compaction"];
 
 const CREDENTIAL_REF = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_SECRET = 8192;
@@ -103,6 +103,8 @@ export function createAshMethods(ctx) {
 // default when the log has none). So after a successful set, the plugin appends DSH's own `model/selection` event (the
 // same record DSH's web API writes for a pending choice) and flushes it; after a successful resume it reads the latest
 // `model/selection` newer than the latest `request/header` and sets it back. Nothing lives outside DSH's session log.
+// The log is read through a host-only session projection (`ctx.sessionProjections`), not through the deprecated
+// `session.snapshotEvents()`: DSH folds each committed event into the unit as it lands, and the plugin reads the state.
 const MODEL_OPTION = "model";
 const EFFORT_OPTION = "reasoning_effort";
 
@@ -119,21 +121,54 @@ export function selectionOf(options) {
 const sameRoute = (a, b) => a.provider === b.provider && a.model === b.model;
 const sameSelection = (a, b, lenientEffort) => sameRoute(a, b) && (lenientEffort || a.reasoningEffort === b.reasoningEffort);
 
-/** The newest of the log's two statements about the model: {kind: "selection" | "header", selection, lenientEffort}. */
-export function latestModelIntent(session) {
-  const events = session?.snapshotEvents?.() ?? [];
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event.type === "model/selection") return { kind: "selection", selection: event.data, lenientEffort: false };
-    if (event.type === "request/header") {
-      const config = event.data?.header?.config;
-      if (!config) continue;
-      // The header carries the effort the adapter picked as its default; that is not a choice anybody made.
-      const lenientEffort = session.requestHeader?.()?.adapterDefaults?.reasoningEffort === true;
-      return { kind: "header", selection: { provider: config.provider, model: config.model, ...(config.reasoningEffort ? { reasoningEffort: String(config.reasoningEffort) } : {}) }, lenientEffort };
+const asSelection = (data) => data && typeof data.provider === "string" && data.provider && typeof data.model === "string" && data.model
+  ? { provider: data.provider, model: data.model, ...(typeof data.reasoningEffort === "string" && data.reasoningEffort ? { reasoningEffort: data.reasoningEffort } : {}) }
+  : undefined;
+
+/**
+ * The projection unit (DSH's `ProjectionDefinition`, host-only: no `wire`) that keeps the newest of the log's two
+ * statements about the model. State is plain JSON, `{latest: null | {kind: "selection" | "header", selection, lenientEffort}}`:
+ * "selection" is a `model/selection` event nobody has used yet, "header" is the model of the newest `request/header`.
+ * A `request/header` carries the effort the adapter picked as its default when its `adapterDefaults.reasoningEffort` is
+ * true; that is not a choice anybody made, hence `lenientEffort`. The fold is synchronous and returns the same state
+ * reference for every event that is not the unit's, as the registry requires. Bump `stateVersion` when the state or the
+ * fold changes, so a cached state of the older fold is dropped.
+ */
+export const MODEL_INTENT_KEY = "ashModelIntent";
+export const modelIntentProjection = {
+  key: MODEL_INTENT_KEY,
+  stateVersion: 1,
+  // The registry only calls parse() on a persisted state before it seeds a fold; a state that does not fit throws.
+  stateSchema: {
+    parse(value) {
+      const latest = value?.latest;
+      if (latest === null) return value;
+      if (!latest || (latest.kind !== "selection" && latest.kind !== "header") || typeof latest.lenientEffort !== "boolean" || !asSelection(latest.selection))
+        throw new Error("ashModelIntent: malformed state");
+      return value;
+    },
+  },
+  init: () => ({ latest: null }),
+  apply(state, event) {
+    if (event.type === "model/selection") {
+      const selection = asSelection(event.data);
+      return selection ? { latest: { kind: "selection", selection, lenientEffort: false } } : state;
     }
-  }
-  return undefined;
+    if (event.type === "request/header") {
+      const header = event.data?.header;
+      const config = header?.config;
+      if (!config) return state;
+      // The header carries the effort the adapter picked as its default; that is not a choice anybody made.
+      const selection = { provider: config.provider, model: config.model, ...(config.reasoningEffort ? { reasoningEffort: String(config.reasoningEffort) } : {}) };
+      return { latest: { kind: "header", selection, lenientEffort: header.adapterDefaults?.reasoningEffort === true } };
+    }
+    return state;
+  },
+};
+
+/** The newest of the log's two statements about the model: {kind: "selection" | "header", selection, lenientEffort}. */
+export function latestModelIntent(ctx, session) {
+  return ctx.sessionProjections?.stateOf?.(session, MODEL_INTENT_KEY)?.latest ?? undefined;
 }
 
 /** Remember and restore the model choice of a session in DSH's own session log. Failures are logged, never thrown. */
@@ -145,7 +180,7 @@ export function createModelMemory(ctx, log = () => {}) {
         const agent = typeof sessionId === "string" ? ctx.agents?.get?.(sessionId) : undefined;
         const selection = selectionOf(options);
         if (!agent || !selection) return;
-        const latest = latestModelIntent(agent.session);
+        const latest = latestModelIntent(ctx, agent.session);
         if (latest && sameSelection(latest.selection, selection, latest.lenientEffort)) return;
         agent.session.append("model/selection", selection);
         await ctx.sessions.flush(agent.session);
@@ -160,7 +195,7 @@ export function createModelMemory(ctx, log = () => {}) {
       let options = result.configOptions;
       try {
         const agent = typeof sessionId === "string" ? ctx.agents?.get?.(sessionId) : undefined;
-        const latest = agent && latestModelIntent(agent.session);
+        const latest = agent && latestModelIntent(ctx, agent.session);
         if (!latest || latest.kind !== "selection") return result;
         const want = latest.selection;
         const have = selectionOf(options);
@@ -180,6 +215,7 @@ export async function apply(ctx, config) {
   const req = createRequire(realpathSync(process.argv[1]));
   const acpPath = req.resolve("@deepseek-ai/dsh-acp");
   const sdkPath = createRequire(acpPath).resolve("@agentclientprotocol/sdk");
+  ctx.sessionProjections.register(modelIntentProjection);
   const acp = await import(pathToFileURL(acpPath).href);
   const { ndJsonStream } = await import(pathToFileURL(sdkPath).href);
   // DSH's own constructor gives each message the identity a stored session needs to load again.

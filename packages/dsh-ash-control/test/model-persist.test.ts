@@ -10,7 +10,7 @@ import { createDshDriver } from "../../core/src/edges/agents/dsh";
 import type { AgentStartSpec } from "../../sdk/src/driver";
 
 const load = async (name: string): Promise<any> => import(pathToFileURL(fileURLToPath(new URL(`../../${name}/index.mjs`, import.meta.url))).href);
-const { createModelMemory, selectionOf } = await load("dsh-ash-control");
+const { createModelMemory, selectionOf, modelIntentProjection, MODEL_INTENT_KEY } = await load("dsh-ash-control");
 // The patch the container ships (plain JavaScript, like the plugin).
 const { CONTAINER_PATCH } = (await import(pathToFileURL(fileURLToPath(new URL("../../../tools/container-sources.mjs", import.meta.url))).href)) as { CONTAINER_PATCH: string };
 
@@ -21,19 +21,29 @@ const options = (model: string, effort = "high") => [{ id: "model", currentValue
 
 // -- the plugin's memory, against a fake session --------------------------------------------------------------------
 
-/** Just enough of a DSH session: an event log, the header fold, and the flush the plugin waits for. */
-function fakeSession(events: { type: string; data: unknown }[] = [], adapterDefaults = false) {
+/**
+ * Just enough of DSH around a session: an event log with no way to read it back (the plugin must go through the
+ * projection registry, never `snapshotEvents`), a registry that folds the registered unit over that log the way DSH's
+ * `ctx.sessionProjections.stateOf` does, and the flush the plugin waits for.
+ */
+function fakeSession(events: { type: string; data: unknown }[] = []) {
   const log = [...events];
-  const session = {
-    snapshotEvents: () => log,
-    requestHeader: () => { const h = [...log].reverse().find((e) => e.type === "request/header"); return h ? { config: (h.data as any).header.config, adapterDefaults: { reasoningEffort: adapterDefaults } } : undefined; },
-    append: (type: string, data: unknown) => { log.push({ type, data }); },
+  const session = { append: (type: string, data: unknown) => { log.push({ type, data }); } };
+  const units = new Map<string, any>();
+  const sessionProjections = {
+    register: (def: any) => { units.set(def.key, def); return () => units.delete(def.key); },
+    stateOf: (s: unknown, key: string) => {
+      const def = units.get(key);
+      if (!def || s !== session) return undefined;
+      return log.reduce((state, event) => def.apply(state, event), def.init({}, 0));
+    },
   };
+  sessionProjections.register(modelIntentProjection);
   const flushed: unknown[] = [];
-  const ctx = { agents: { get: (id: string) => (id === "s1" ? { session } : undefined) }, sessions: { flush: async (s: unknown) => { flushed.push(s); return true; } } };
+  const ctx = { agents: { get: (id: string) => (id === "s1" ? { session } : undefined) }, sessions: { flush: async (s: unknown) => { flushed.push(s); return true; } }, sessionProjections };
   return { log, ctx, flushed, session };
 }
-const header = (provider: string, model: string, reasoningEffort?: string) => ({ type: "request/header", data: { header: { config: { provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) } } } });
+const header = (provider: string, model: string, reasoningEffort?: string, adapterDefaults = false) => ({ type: "request/header", data: { header: { config: { provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) }, ...(adapterDefaults ? { adapterDefaults: { reasoningEffort: true } } : {}) } } });
 
 test("selectionOf reads the model pair and the effort from ACP's options, and nothing from anything else", () => {
   assert.deepEqual(selectionOf(options(PRO, "low")), { provider: "deepseek-official", model: "deepseek-v4-pro", reasoningEffort: "low" });
@@ -59,12 +69,34 @@ test("remember: a choice is appended to the session log and flushed; one the log
 });
 
 test("remember: what the latest request header already holds is not repeated, and an adapter-default effort is not a choice", async () => {
-  const f = fakeSession([header("deepseek-official", "deepseek-flash", "high")], true);
+  const f = fakeSession([header("deepseek-official", "deepseek-flash", "high", true)]);
   await createModelMemory(f.ctx).remember("s1", options(FLASH, "high"));
   assert.equal(f.log.length, 1);
-  const g = fakeSession([header("deepseek-official", "deepseek-flash", "high")], false);
+  const g = fakeSession([header("deepseek-official", "deepseek-flash", "high")]);
   await createModelMemory(g.ctx).remember("s1", options(FLASH, "low"));
   assert.equal(g.log.length, 2, "an effort that differs from an explicit one is a choice");
+});
+
+test("the projection unit: keeps the newest statement about the model, ignores other events, and keeps the same state for them", () => {
+  const { apply, init, stateSchema, key, stateVersion } = modelIntentProjection;
+  assert.equal(key, MODEL_INTENT_KEY);
+  assert.ok(Number.isSafeInteger(stateVersion) && stateVersion >= 0);
+  const empty = init({}, 0);
+  assert.deepEqual(empty, { latest: null });
+  const other = { type: "user/message", data: {} };
+  assert.equal(apply(empty, other), empty, "an event that is not the unit's returns the very same state");
+  const chosen = apply(empty, { type: "model/selection", data: { provider: "deepseek-official", model: "deepseek-v4-pro", reasoningEffort: "low" } });
+  assert.deepEqual(chosen, { latest: { kind: "selection", selection: { provider: "deepseek-official", model: "deepseek-v4-pro", reasoningEffort: "low" }, lenientEffort: false } });
+  assert.equal(apply(chosen, other), chosen);
+  assert.equal(apply(chosen, { type: "model/selection", data: { provider: "", model: "x" } }), chosen, "a selection that names no model is not a statement");
+  assert.equal(apply(chosen, { type: "request/header", data: { header: {} } }), chosen, "a header without a config says nothing");
+  const used = apply(chosen, header("deepseek-official", "deepseek-flash", "high", true));
+  assert.deepEqual(used, { latest: { kind: "header", selection: { provider: "deepseek-official", model: "deepseek-flash", reasoningEffort: "high" }, lenientEffort: true } });
+  // The state is plain JSON: it survives a checkpoint, and the schema accepts it back and refuses nonsense.
+  assert.deepEqual(stateSchema.parse(JSON.parse(JSON.stringify(used))), used);
+  assert.deepEqual(stateSchema.parse(empty), empty);
+  assert.throws(() => stateSchema.parse({ latest: { kind: "other" } }));
+  assert.throws(() => stateSchema.parse(undefined));
 });
 
 test("restore: sets back a choice that no request has used yet, and leaves a session alone when a request header is newer", async () => {
