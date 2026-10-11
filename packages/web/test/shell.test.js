@@ -36,6 +36,20 @@ test("the first history page marks the timeline ready even when it holds nothing
   assert.equal(timeline.ready, false, "a reset waits for the new history again");
 });
 
+test("batching retains timeline sequence deduplication for rows outside the display projection", () => {
+  const changes = [];
+  const timeline = new Timeline(null, (view, conversation) => changes.push(conversation));
+  changes.length = 0;
+  timeline.add({ ...message(1), word: "unknown" });
+  changes.length = 0;
+  timeline.addMany([message(3), message(1), message(2), message(2)]);
+  assert.deepEqual(timeline.view.conversation.map((item) => item.seq), [2, 3]);
+  assert.equal(timeline.records.get(1).word, "unknown", "a conflicting replay cannot replace a previously accepted row");
+  assert.deepEqual(changes, [true], "the completed batch notifies the painter once");
+  timeline.addMany([message(1), message(2)]);
+  assert.deepEqual(changes, [true], "a duplicate page does not paint");
+});
+
 test("an attachment is found in the owner's own conversation only, as bytes or as the blob that holds them", () => {
   const timeline = new Timeline(null);
   const hash = "b".repeat(64);
