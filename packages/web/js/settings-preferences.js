@@ -14,7 +14,8 @@ function element(tag, text = "") {
 
 /** An editor bound to one connection. Drafts and uncertain writes live only in this instance. */
 export class ProactivePreferences {
-  constructor(root, net, valid) {
+  constructor(root, net, valid, { onText = () => {} } = {}) {
+    this.onText = onText;
     this.root = root;
     this.net = net;
     this.valid = valid;
@@ -81,6 +82,7 @@ export class ProactivePreferences {
       const text = await this.fileText();
       if (!this.current()) return;
       this.baseline = text;
+      this.onText(text);
       this.editor.value = text ?? "";
       this.loaded = true;
       this.pending = null;
@@ -147,6 +149,7 @@ export class ProactivePreferences {
       if (!this.current()) return;
       if (after === pending.content) {
         this.baseline = pending.content;
+        this.onText(pending.content);
         this.pending = null;
         this.status.textContent = "已保存。";
       } else this.status.textContent = "保存结果未确认，请再点一次保存。";

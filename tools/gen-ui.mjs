@@ -17,11 +17,13 @@ const noBrowserClient = { name: "no-browser-client", setup(b) {
   b.onResolve({ filter: /link-browser\.js$/ }, () => ({ path: "link-browser", namespace: "app-page" }));
   b.onLoad({ filter: /.*/, namespace: "app-page" }, () => ({ contents: "export const HandClient = undefined; export const browserConnector = undefined;", loader: "js" }));
 } };
-const bundle = async (plugins) => (await build({ entryPoints: [join(ui, "js/app.js")], bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent", plugins })).outputFiles[0].text.replaceAll("</script", "<\\/script");
+// The page's own code, then the home pages: the hook is evaluated first so it sees the connection start.
+const entry = { contents: 'import "./js/home-hook.js"; import "./js/app.js"; import "./js/home.js";', resolveDir: ui, sourcefile: "page-entry.js", loader: "js" };
+const bundle = async (plugins) => (await build({ stdin: entry, bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent", plugins })).outputFiles[0].text.replaceAll("</script", "<\\/script");
 const app = await bundle([]);
 const appInApp = await bundle([noBrowserClient]);
 // Design tokens (generated from design/app/tokens.json) and the component styles, ahead of the page's own rules.
-const styles = `<style>\n${["ash-tokens.css", "ash-ui.css"].map((f) => readFileSync(join(ui, f), "utf8").trim()).join("\n")}\n</style>`;
+const styles = `<style>\n${["ash-tokens.css", "ash-ui.css", "home.css"].map((f) => readFileSync(join(ui, f), "utf8").trim()).join("\n")}\n</style>`;
 const html = readFileSync(join(ui, "index.html"), "utf8").replace("<!-- ash-style -->", () => styles);
 if (!html.includes("<!-- ui-app -->")) throw new Error("UI app marker missing");
 if (!html.includes("--you-soft")) throw new Error("UI style marker missing");

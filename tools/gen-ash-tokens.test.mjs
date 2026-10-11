@@ -40,15 +40,19 @@ test("component styles are plain page CSS built on the tokens", () => {
   const ui = read("packages/web/ash-ui.css").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.ok(!/\.t-(light|dark)\b/.test(ui), "the canvas wrappers are not part of the page styles");
   assert.ok(!/\.(device|screen|board|shot)\b/.test(ui), "display chrome is not part of the page styles");
-  const hex = ui.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
-  assert.deepEqual([...new Set(hex)].filter((h) => !["#fff", "#000"].includes(h.toLowerCase())), [], "colours come from tokens");
+  const home = read("packages/web/home.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const css of [ui, home]) {
+    const hex = css.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
+    assert.deepEqual([...new Set(hex)].filter((h) => !["#fff", "#000"].includes(h.toLowerCase())), [], "colours come from tokens");
+  }
+  assert.ok(!/rgba?\(/.test(home), "the home pages carry no colour of their own");
 });
 
 test("every CSS variable the page uses is defined by the tokens, the aliases or the rule itself", () => {
   const defined = new Set();
   for (const f of ["packages/web/ash-tokens.css", "packages/web/ash-ui.css", "packages/web/index.html"])
     for (const m of read(f).matchAll(/(--[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
-  for (const f of ["packages/web/ash-ui.css", "packages/web/index.html"])
+  for (const f of ["packages/web/ash-ui.css", "packages/web/home.css", "packages/web/index.html"])
     for (const m of read(f).matchAll(/var\((--[a-z0-9-]+)/g)) assert.ok(defined.has(m[1]), `${f} uses undefined ${m[1]}`);
 });
 
@@ -57,6 +61,7 @@ test("the generated page and the app's packaged page start with the tokens and t
     const text = read(rel);
     assert.ok(text.includes("--you-soft"), `${what}: tokens`);
     assert.ok(text.includes(".a-card"), `${what}: component styles`);
+    assert.ok(text.includes(".hm-root"), `${what}: home page styles`);
     assert.ok(!text.includes("ash-style"), `${what}: style marker replaced`);
   }
 });

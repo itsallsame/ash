@@ -77,7 +77,7 @@ object OnboardingPlan {
 
     /**
      * One part of her body, as the checkup groups them (HANDOFF §3; the ids are the ones of `open_native("checkup/<id>")` in
-     * spec/UI-SPLIT.md §3). The guide's dots are one per part, and its closing screen names the parts that stayed off.
+     * the page bridge, design/app/IMPLEMENTATION.md). The guide's dots are one per part, and its closing screen names the parts that stayed off.
      * [items] are the ids of `config.status` (plus the keep-alive switches and the recovery grant, see [rows]); the brain's
      * own package and connection are not rows, the guide's brain screen is theirs.
      */
