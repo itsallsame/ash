@@ -42,9 +42,9 @@ object Link {
         val r = runtime ?: return "未启动"
         val c = r.client
         return when (c.state) {
-            LinkClient.State.READY -> "已连接内核"
+            LinkClient.State.READY -> "已连接大脑"
             LinkClient.State.STOPPED -> "已停止（关闭码 ${c.stoppedBy ?: "-"}）"
-            LinkClient.State.IDLE -> "等待内核交接"
+            LinkClient.State.IDLE -> "等待大脑交接"
             else -> "连接中" + (c.lastClose?.let { "（上次关闭码 ${it.code}）" } ?: "")
         }
     }

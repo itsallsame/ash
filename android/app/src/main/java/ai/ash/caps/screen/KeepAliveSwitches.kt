@@ -17,7 +17,7 @@ object KeepAliveSwitches {
     /** An app as the maker's settings list it. */
     data class Target(val pkg: String, val label: String)
     /** The only apps the flow ever touches. */
-    val targets: List<Target> = listOf(Target(ASH_PACKAGE, "Ash"), Target(KERNEL_PACKAGE, "Ash 内核"))
+    val targets: List<Target> = listOf(Target(ASH_PACKAGE, "Ash"), Target(KERNEL_PACKAGE, "Ash 大脑"))
     fun target(pkg: String): Target? = targets.firstOrNull { it.pkg == pkg }
 
     /** One switch, by the text next to it. */
