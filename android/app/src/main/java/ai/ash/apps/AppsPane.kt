@@ -110,8 +110,9 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
                 screen.addView(AshPage.largeTitle(activity, "应用"))
                 val blocks = mutableListOf<View>()
                 // Waiting for the owner's say: a strip above the grid, one per app.
-                list.filter { !it.granted }.forEach { blocks += banner(it) }
-                val installed = list.filter { it.granted }
+                list.filter { !it.granted && !it.broken }.forEach { blocks += banner(it) }
+                // A broken app (its app.json is wrong) is not one that wants in: it shows here with the error badge, and its page says what to do.
+                val installed = list.filter { it.granted || it.broken }
                 if (installed.isNotEmpty()) {
                     blocks += grid(installed)
                     blocks += AshPage.foot(activity, "长按图标，可以放到手机桌面", center = true)
@@ -157,7 +158,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
 
     private fun cell(a: AppInfo): View {
         val c = AshUi.p(activity)
-        val stopped = !a.enabled
+        val stopped = a.granted && !a.enabled && !a.broken
         return AshUi.vstack(activity, 8).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             isClickable = true
@@ -165,7 +166,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
                 addView(AshPage.appIcon(activity, icons[a.id], AppTile.GRID, shadow = !stopped, dimmed = stopped),
                     FrameLayout.LayoutParams(d(AppTile.GRID.sizeDp), d(AppTile.GRID.sizeDp), Gravity.CENTER_HORIZONTAL))
                 // Only trouble gets a badge: a quiet app has none.
-                if (a.error.isNotBlank() && !stopped) addView(AshPage.errorBadge(activity).apply {
+                if (a.hasTrouble && !stopped) addView(AshPage.errorBadge(activity).apply {
                     (layoutParams as FrameLayout.LayoutParams).apply { gravity = Gravity.TOP or Gravity.END; marginEnd = d(6); topMargin = -d(5) }
                 })
             })
@@ -178,6 +179,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
 
     private fun open(a: AppInfo) {
         if (a.usable) { activity.startActivity(Ui.appIntent(activity, a.id)); return }
+        if (a.broken) { detail = a.id; sure = false; note = null; render(); return }
         stopped(a)
     }
 
@@ -213,9 +215,10 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
 
         // The icon, the name, one line of how it is, and the one thing to do: open it.
         val state = when {
+            a.broken -> "出错了" to c.err
             !a.granted -> "等你批准" to c.warn
             !a.enabled -> "已停用" to c.text3
-            a.error.isNotBlank() -> "出错了" to c.err
+            a.hasTrouble -> "出错了" to c.err
             else -> "在用" to c.ok
         }
         blocks += AshUi.vstack(activity, 8).apply {
@@ -233,16 +236,21 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
                 LinearLayout.LayoutParams(d(160), d(AshTokens.Size.button)).apply { topMargin = d(AshTokens.Space.xs) })
         }
 
-        if (a.error.isNotBlank()) blocks += AshUi.card(activity).apply {
-            addView(AshUi.cardHeader(activity, AshUi.Tone.ERR, AshPage.icon(activity, R.drawable.ash_ic_alert), "出错了"))
-            addView(AshUi.text(activity, a.error, AshTokens.Type.callout))
+        // What went wrong, in words for the owner (never the kernel's line: it names files and parser errors).
+        a.troubleText?.let { text ->
+            blocks += AshUi.card(activity).apply {
+                addView(AshUi.cardHeader(activity, AshUi.Tone.ERR, AshPage.icon(activity, R.drawable.ash_ic_alert), "出错了"))
+                addView(AshUi.text(activity, text, AshTokens.Type.callout))
+            }
         }
 
-        // What it asks of Ash, and (once it is allowed) the switch.
-        val rows = if (a.needs.isEmpty()) listOf(AshUi.row(activity, "不需要用 Ash 的其他东西"))
-            else a.needs.map { n -> AshUi.row(activity, n.text, null, AshPage.icon(activity, needIcon(n.kind))) }
-        blocks += AshUi.group(activity, if (a.granted) "你允许它用的" else "它想用的", rows = rows, iconInset = a.needs.isNotEmpty())
-        if (a.granted) blocks += AshUi.group(activity, rows = listOf(
+        // What it asks of Ash, and (once it is allowed) the switch. A broken app has told nothing that can be read: neither is shown.
+        if (!a.broken) {
+            val rows = if (a.needs.isEmpty()) listOf(AshUi.row(activity, "不需要用 Ash 的其他东西"))
+                else a.needs.map { n -> AshUi.row(activity, n.text, null, AshPage.icon(activity, needIcon(n.kind))) }
+            blocks += AshUi.group(activity, if (a.granted) "你允许它用的" else "它想用的", rows = rows, iconInset = a.needs.isNotEmpty())
+        }
+        if (a.granted && !a.broken) blocks += AshUi.group(activity, rows = listOf(
             AshUi.AshSwitch(activity).let { sw ->
                 sw.set(a.enabled)
                 if (busy) AshUi.disable(sw)
@@ -251,7 +259,9 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
                 AshUi.row(activity, "在用", "关掉后先停着，它用的东西还留着", trailing = sw, onClick = if (busy) null else ({ sw.performClick() }))
             }), iconInset = false)
 
-        if (!a.granted) {
+        if (!a.granted && a.broken) {
+            // nothing to install and nothing to take back: the card above says what to do
+        } else if (!a.granted) {
             blocks += twoTap(if (sure) "确认安装" else "安装", AshUi.Kind.PRIMARY,
                 if (sure) "安装后「${a.name}」可以用上面列出的这些；你随时可以停用或收回。" else null) {
                 if (!sure) { sure = true; render() } else { sure = false; owner("apps.install", a, "已安装「${a.name}」。") }

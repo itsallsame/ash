@@ -71,6 +71,8 @@ export interface AppReport { id: string; path: string; ok: boolean; problems: Ap
 export interface AppInfo {
   id: string; name: string; version: string; summary: string; role: string; publisher: string; enabled: boolean; granted: boolean; running: boolean;
   needs: AppNeed[]; surfaces: { id: string; title: string; resource: string }[]; events: string[]; tools: string[]; listens: string[]; error?: string;
+  /** What kind of trouble `error` is, for a screen that must not show it as it is (it is for an agent): `manifest` (app.json cannot be read or does not pass), `folder` (an installed app whose folder is gone), `run` (it did not start or stopped). */
+  problem?: "manifest" | "folder" | "run";
   /** The folder as the agent sees it, and who made the app. */
   path: string; origin: AppOrigin;
 }
@@ -284,12 +286,13 @@ export class AppRuntime {
     if (!item && !grant) return null;
     const state = this.running.get(id);
     const error = item && "error" in item ? item.error : item ? this.lastError.get(id) : "应用文件夹不在了（只剩安装记录）：恢复文件夹，或点「收回全部权限」把它卸掉";
+    const problem = !error ? undefined : !item ? "folder" as const : "error" in item ? "manifest" as const : "run" as const;
     const m = item && "manifest" in item ? item.manifest : null;
     return {
       id, name: m?.name ?? id, version: m?.version ?? "", summary: m?.summary ?? "", role: m?.role ?? m?.summary ?? "", publisher: m?.publisher ?? "",
       enabled: Boolean(grant?.enabled), granted: Boolean(grant), running: Boolean(state?.online),
       needs: grant?.needs ?? m?.needs ?? [], surfaces: m?.surfaces ?? [], events: m?.events ?? [], tools: state ? [...state.tools] : [],
-      listens: grant?.listens ?? [], ...(error ? { error } : {}), path: this.agentPath(id), origin: this.origin(id),
+      listens: grant?.listens ?? [], ...(error ? { error, problem } : {}), path: this.agentPath(id), origin: this.origin(id),
     };
   }
   /** Every app with a folder and every installed app (a record without a folder is listed too, with `error` saying so, so it can be removed). */
