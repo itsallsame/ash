@@ -9,6 +9,8 @@ import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Outline
+import android.graphics.Path
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
@@ -19,11 +21,15 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.LineHeightSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -57,15 +63,36 @@ object AshUi {
         typeface = weighted(type.weight)
         includeFontPadding = false
         val linePx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, type.lineSp, resources.displayMetrics)
+        // The add-on is only a stand-in for text set some other way; [text] sets the exact line height itself.
         if (Build.VERSION.SDK_INT >= 28) lineHeight = linePx.toInt()
         else setLineSpacing(linePx - paint.fontMetricsInt.let { it.descent - it.ascent }, 1f)
         fontFeatureSettings = "tnum"
         setTextColor(color ?: type.role?.let { color(context, it) } ?: p(context).text)
     }
 
+    /**
+     * A line of exactly [heightPx], the room above and below equal (also under the last line). The line-spacing add-on counts the
+     * Latin font's height, so a phone that draws Chinese in another font got taller lines and a last line without its share.
+     */
+    private class ExactLine(private val heightPx: Int) : LineHeightSpan {
+        override fun chooseHeight(text: CharSequence?, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: Paint.FontMetricsInt) {
+            val extra = heightPx - (fm.descent - fm.ascent)
+            fm.ascent -= extra / 2; fm.descent += extra - extra / 2
+            fm.top = fm.ascent; fm.bottom = fm.descent
+        }
+    }
+
+    /** [s] with the style's exact line height. (`setLineHeight` of 34+ was measured too and still gave taller lines under a CJK fallback font.) */
+    private fun exactLines(tv: TextView, s: CharSequence, type: AshType): CharSequence {
+        if (s.isEmpty()) return s
+        tv.setLineSpacing(0f, 1f)
+        val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, type.lineSp, tv.resources.displayMetrics).toInt()
+        return SpannableStringBuilder(s).apply { setSpan(ExactLine(px), 0, length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) }
+    }
+
     fun text(ctx: Context, s: CharSequence, type: AshType = AshTokens.Type.body, color: Int? = null, maxLines: Int = Int.MAX_VALUE) =
         style(TextView(ctx), type, color).apply {
-            text = s
+            text = exactLines(this, s, type)
             if (maxLines != Int.MAX_VALUE) { this.maxLines = maxLines; ellipsize = TextUtils.TruncateAt.END }
         }
 
@@ -260,11 +287,21 @@ object AshUi {
                     else floatArrayOf(if (mid) t else r, if (mid) t else r, r, r, r, r, t, t)
         return GradientDrawable().apply { setColor(if (mine) c.bubbleMe else c.bubbleHer); cornerRadii = radii }
     }
+    /** The outline the system casts the bubble's shadow from: a drawable with one small corner gives it none of its own. */
+    fun bubbleOutline(ctx: Context, mine: Boolean, mid: Boolean = false): ViewOutlineProvider = object : ViewOutlineProvider() {
+        override fun getOutline(v: View, outline: Outline) {
+            val r = dpF(ctx, AshTokens.Radius.bubble.toFloat()); val t = dpF(ctx, AshTokens.Radius.bubbleTail.toFloat())
+            val radii = if (mine) floatArrayOf(r, r, if (mid) t else r, if (mid) t else r, t, t, r, r)
+                        else floatArrayOf(if (mid) t else r, if (mid) t else r, r, r, r, r, t, t)
+            outline.setConvexPath(Path().apply { addRoundRect(RectF(0f, 0f, v.width.toFloat(), v.height.toFloat()), radii, Path.Direction.CW) })
+        }
+    }
+
     fun bubbleText(ctx: Context, s: CharSequence, mine: Boolean, mid: Boolean = false) =
         text(ctx, s, AshTokens.Type.chat, if (mine) p(ctx).onMe else p(ctx).text).apply {
             background = bubble(ctx, mine, mid); setPadding(dp(ctx, 14), dp(ctx, 10), dp(ctx, 14), dp(ctx, 10))
             maxWidth = (ctx.resources.displayMetrics.widthPixels * 0.8f).toInt()
-            if (!mine) cardShadow(this)
+            if (!mine) { cardShadow(this); outlineProvider = bubbleOutline(ctx, mine, mid) }
         }
 
     /** 输入框上方的小胶囊：「在看网页 · 12 秒」（进行中，带转圈）/「做了 4 步 · 18 秒 · 查看」。 */
@@ -357,6 +394,8 @@ object AshUi {
             val c = p(context); val inset = dpF(context, 3f)
             val box = RectF(inset, inset, width - inset, height - inset)
             val r = box.width() * AshTokens.Radius.avatarFraction
+            // the face is a cut-out: the warm tile shows behind it
+            imgPaint.shader = null; imgPaint.color = c.surface2; canvas.drawRoundRect(box, r, r, imgPaint)
             image?.let { bmp ->
                 val shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
                 val scale = maxOf(box.width() / bmp.width, box.height() / bmp.height)
@@ -364,7 +403,7 @@ object AshUi {
                 val dy = (box.height() - bmp.height * scale) * 0.18f
                 shader.setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate(box.left + (box.width() - bmp.width * scale) / 2, box.top + dy) })
                 imgPaint.shader = shader; canvas.drawRoundRect(box, r, r, imgPaint)
-            } ?: run { imgPaint.shader = null; imgPaint.color = c.surface2; canvas.drawRoundRect(box, r, r, imgPaint) }
+            }
 
             val outer = RectF(box.left - inset + dpF(context, 0.8f), box.top - inset + dpF(context, 0.8f), box.right + inset - dpF(context, 0.8f), box.bottom + inset - dpF(context, 0.8f))
             val ro = outer.width() * 0.36f
@@ -388,6 +427,72 @@ object AshUi {
                 }
                 State.PLAIN -> Unit
             }
+        }
+    }
+
+    /**
+     * Her face in a round frame with a ring of light around it (the first-launch guide: download progress, how many things are on).
+     * [progress] of the ring is lit, from the top, clockwise; [spinning] lights a short arc that goes round instead (not when the
+     * system's animations are off). [boxDp] is the view's side, [radiusDp] the ring's radius, [avatarDp] the face's diameter.
+     */
+    class RingAvatar(ctx: Context, private val boxDp: Int, private val radiusDp: Int, private val avatarDp: Int = 120, private val strokeDp: Float = 5f) : View(ctx) {
+        var image: Bitmap? = null; set(v) { field = v; invalidate() }
+        var progress = 0f; private set
+        var spinning = false; set(v) { field = v; restart(); invalidate() }
+        private val c = p(ctx)
+        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = c.surface3 }
+        private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = c.herFill; strokeCap = Paint.Cap.ROUND }
+        private val img = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private var turn = 0f
+        private var spin: ValueAnimator? = null
+        private var grow: ValueAnimator? = null
+
+        /** Moves the lit part of the ring to [to] (0..1), smoothly when animations are on. */
+        fun setProgress(to: Float, animate: Boolean = true) {
+            val target = to.coerceIn(0f, 1f)
+            grow?.cancel()
+            if (!animate || !motionOn(context) || !isAttachedToWindow) { progress = target; invalidate(); return }
+            grow = ValueAnimator.ofFloat(progress, target).apply {
+                duration = AshTokens.Motion.cardResolve; interpolator = AshTokens.Motion.easing()
+                addUpdateListener { progress = it.animatedValue as Float; invalidate() }; start()
+            }
+        }
+
+        private fun restart() {
+            spin?.cancel(); spin = null
+            if (!spinning || !isAttachedToWindow || !motionOn(context)) return
+            spin = ValueAnimator.ofFloat(0f, 360f).apply {
+                duration = AshTokens.Motion.ring; repeatCount = ValueAnimator.INFINITE; interpolator = android.view.animation.LinearInterpolator()
+                addUpdateListener { turn = it.animatedValue as Float; invalidate() }; start()
+            }
+        }
+
+        override fun onAttachedToWindow() { super.onAttachedToWindow(); restart() }
+        override fun onDetachedFromWindow() { spin?.cancel(); grow?.cancel(); super.onDetachedFromWindow() }
+        override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(dp(context, boxDp), dp(context, boxDp))
+
+        override fun onDraw(canvas: Canvas) {
+            val cx = width / 2f; val cy = height / 2f
+            val stroke = dpF(context, strokeDp)
+            track.strokeWidth = stroke; arc.strokeWidth = stroke
+            val r = dpF(context, radiusDp.toFloat())
+            val oval = RectF(cx - r, cy - r, cx + r, cy + r)
+            canvas.drawOval(oval, track)
+            when {
+                spinning -> canvas.drawArc(oval, turn - 90f, 100f, false, arc)
+                progress > 0f -> canvas.drawArc(oval, -90f, 360f * progress, false, arc)
+            }
+            val a = dpF(context, avatarDp / 2f)
+            val box = RectF(cx - a, cy - a, cx + a, cy + a)
+            img.shader = null; img.color = c.surface2; canvas.drawCircle(cx, cy, a, img)
+            val bmp = image ?: return
+            val shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            val scale = maxOf(box.width() / bmp.width, box.height() / bmp.height)
+            // object-position 50% 18%, as everywhere she is drawn: keep the face, crop from the top
+            val dy = (box.height() - bmp.height * scale) * 0.18f
+            shader.setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate(box.left + (box.width() - bmp.width * scale) / 2, box.top + dy) })
+            img.shader = shader
+            canvas.drawCircle(cx, cy, a, img)
         }
     }
 

@@ -82,7 +82,7 @@ class OnboardingPlanTest {
     @Test fun miuiAndColorosGetTheLineAboutTheSystemQuestion() {
         for (maker in listOf("Xiaomi", "Redmi", "POCO", "OPPO", "OnePlus", "realme")) {
             val line = OnboardingPlan.kernelPrompt(KernelAutostart.rom(maker))
-            assertEquals("系统会问是否允许打开 Ash 内核，请选「始终允许」。", line)
+            assertEquals("装好后系统会问你一次，请选「始终允许」。", line)
         }
     }
 
@@ -101,5 +101,134 @@ class OnboardingPlanTest {
         assertTrue(OnboardingPlan.showRefusedRetry(rom, 30_000))
         assertTrue(OnboardingPlan.showRefusedRetry(KernelAutostart.rom("oppo"), 120_000))
         assertEquals("如果刚才选了拒绝，点这里重试", OnboardingPlan.kernelRetryHint(rom))
+    }
+
+    // ---- one thing per screen ----
+
+    private fun page(kernel: KernelState = bound, rows: List<Row> = rows(), kernelSkipped: Boolean = false, skipped: Set<String> = emptySet()) =
+        OnboardingPlan.page(kernel, rows, kernelSkipped, skipped)
+
+    @Test fun theBrainComesBeforeAnyItemUnlessThePhoneSkippedIt() {
+        assertEquals(OnboardingPlan.Page(OnboardingPlan.Kind.BRAIN), page(KernelState.NOT_INSTALLED, rows("notifications")))
+        assertEquals(OnboardingPlan.Page(OnboardingPlan.Kind.BRAIN), page(KernelState.NOT_RUNNING, rows("accessibility")))
+        assertEquals(OnboardingPlan.Page(OnboardingPlan.Kind.ITEM, "notifications"), page(KernelState.NOT_INSTALLED, rows("notifications"), kernelSkipped = true))
+        assertEquals(OnboardingPlan.Page(OnboardingPlan.Kind.DONE), page())
+    }
+
+    @Test fun theFirstItemLeftIsAskedAndAnAnsweredOneIsNot() {
+        val r = rows("health", "notifications", "overlay")
+        assertEquals("notifications", page(rows = r).item)
+        assertEquals("overlay", page(rows = r, skipped = setOf("notifications")).item)
+        assertEquals("health", page(rows = r, skipped = setOf("notifications", "overlay")).item)
+        assertEquals(OnboardingPlan.Kind.DONE, page(rows = r, skipped = setOf("notifications", "overlay", "health")).kind)
+    }
+
+    @Test fun whatMattersIsAskedFirstAndTheSensesLast() {
+        val order = OnboardingPlan.asked(bound, rows("health", "location", "accessibility", "notifications", "battery_optimization", "photos"))
+        assertEquals(listOf("notifications", "battery_optimization", "accessibility", "photos", "location", "health"),
+            order.filter { it in setOf("health", "location", "accessibility", "notifications", "battery_optimization", "photos") })
+        assertTrue(order.indexOf("accessibility") < order.indexOf("location"))
+    }
+
+    @Test fun everyItemTheGuideCanReadHasAPlaceInTheOrderAndACopy() {
+        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock", "screen_recovery")
+        for (item in items) {
+            assertTrue("$item is not in the order", item in OnboardingPlan.ASK_ORDER)
+            assertTrue("$item has no copy", item in OnboardingContent.pages)
+        }
+        assertEquals(OnboardingPlan.ASK_ORDER.size, OnboardingPlan.ASK_ORDER.toSet().size)
+        assertEquals(items.toSet(), OnboardingPlan.ASK_ORDER.toSet())
+    }
+
+    @Test fun anUnknownItemIsAskedAtTheEndAndNeverLost() {
+        val r = rows() + Row("future_thing", "missing")
+        assertEquals("future_thing", OnboardingPlan.asked(bound, r).last())
+        assertEquals("future_thing", page(rows = r).item)
+    }
+
+    @Test fun whatThePhoneCannotHaveIsNeverAsked() {
+        val r = rows("health", "shizuku", "overlay", unsupported = setOf("health", "shizuku"))
+        assertEquals(listOf("overlay"), OnboardingPlan.pending(bound, r, emptySet()))
+        assertFalse("health" in OnboardingPlan.asked(bound, r))
+    }
+
+    @Test fun theKernelsOwnSwitchesWaitForTheKernel() {
+        val r = rows("kernel_battery_optimization") + Row("kernel_autostart", "missing")
+        assertEquals(emptyList<String>(), OnboardingPlan.pending(KernelState.NOT_INSTALLED, r, emptySet()))
+        assertEquals(listOf("kernel_battery_optimization", "kernel_autostart"), OnboardingPlan.pending(KernelState.NOT_RUNNING, r, emptySet()))
+    }
+
+    @Test fun theRecoveryGrantIsAskedOnlyWhileAccessIsOpenAndNotAfterAccessibilityWasPassedOn() {
+        // as in the old step: it never holds the guide, and is shown only next to the accesses that are still open
+        assertEquals(emptyList<String>(), OnboardingPlan.pending(bound, rows("screen_recovery"), emptySet()))
+        assertEquals(listOf("screen_recovery", "notification_listener").sorted(), OnboardingPlan.pending(bound, rows("screen_recovery", "notification_listener"), emptySet()).sorted())
+        assertEquals(listOf("accessibility", "screen_recovery").sorted(), OnboardingPlan.pending(bound, rows("screen_recovery", "accessibility"), emptySet()).sorted())
+        assertEquals(listOf("accessibility"), OnboardingPlan.pending(bound, rows("screen_recovery", "accessibility"), setOf("screen_recovery")))
+        // passing on accessibility passes on its recovery too, even if the recovery was not marked
+        assertEquals(listOf("notification_listener"), OnboardingPlan.pending(bound, rows("screen_recovery", "accessibility", "notification_listener"), setOf("accessibility")))
+    }
+
+    @Test fun theDotsAreTheItemsShownOrStillToCome() {
+        val r = rows("notifications", "accessibility", "location")
+        assertEquals(listOf("notifications", "accessibility", "location"), OnboardingPlan.dots(bound, r, emptySet(), emptyList()))
+        // one that was granted while the owner was on it stays a dot; one that was granted before the guide started never is
+        val after = rows("accessibility", "location")
+        assertEquals(listOf("notifications", "accessibility", "location"), OnboardingPlan.dots(bound, after, emptySet(), listOf("notifications")))
+        assertEquals(listOf("accessibility", "location"), OnboardingPlan.dots(bound, after, emptySet(), emptyList()))
+    }
+
+    @Test fun theClosingScreenCountsWhatIsOnAndNamesWhatIsNot() {
+        val none = OnboardingPlan.summary(bound, rows())
+        assertEquals(OnboardingPlan.asked(bound, rows()).size + 1, none.on)
+        assertEquals(emptyList<String>(), none.off)
+        val some = OnboardingPlan.summary(bound, rows("overlay", "location", "health"))
+        assertEquals(listOf("overlay", "location", "health"), some.off)
+        assertEquals(some.on + 3, some.total)
+        val noBrain = OnboardingPlan.summary(KernelState.NOT_INSTALLED, rows())
+        assertEquals(OnboardingPlan.BRAIN, noBrain.off.first())
+    }
+
+    @Test fun theOwnerHearsOfTheBrainNotTheKernel() {
+        assertEquals("大脑的安装包没装上", OnboardingPlan.brainWords("内核包没装上"))
+        assertEquals("大脑没起来", OnboardingPlan.brainWords("内核没起来"))
+    }
+
+    // ---- the parts of her body ----
+
+    @Test fun thePartsAreTheCheckupsSevenWithTheIdsOfTheSplitSpec() {
+        assertEquals(listOf("brain", "alarm", "notify", "awake", "eyes", "files", "location"), OnboardingPlan.PARTS.map { it.id })
+        assertEquals(listOf("大脑", "闹钟", "叫你", "在后台醒着", "眼睛和手", "照片和文件", "位置和健康"), OnboardingPlan.PARTS.map { it.title })
+    }
+
+    @Test fun everyItemIsInOnePartAndTheOnesTheHandoffListsAreWhereItPutsThem() {
+        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock", "screen_recovery")
+        for (item in items) assertEquals(item, 1, OnboardingPlan.PARTS.count { item in it.items })
+        assertEquals("brain", OnboardingPlan.partOf("kernel_battery_optimization").id)
+        assertEquals("alarm", OnboardingPlan.partOf("exact_alarm").id)
+        assertEquals("notify", OnboardingPlan.partOf("notifications").id)
+        assertEquals("awake", OnboardingPlan.partOf("recents_lock").id)
+        assertEquals("eyes", OnboardingPlan.partOf("accessibility").id)
+        assertEquals("eyes", OnboardingPlan.partOf("notification_listener").id)
+        assertEquals("files", OnboardingPlan.partOf("usage_access").id)
+        assertEquals("location", OnboardingPlan.partOf("health").id)
+        assertEquals("location", OnboardingPlan.partOf("future_thing").id)
+    }
+
+    @Test fun theDotsAreOnePerPartInTheOrderTheGuideAsks() {
+        val r = rows("location", "accessibility", "notification_listener", "notifications", "photos", "health")
+        assertEquals(listOf("notify", "eyes", "files", "location"), OnboardingPlan.dotParts(bound, r, emptySet(), emptyList()))
+        // a part whose items are all granted before the guide starts has no dot; one just finished keeps its dot
+        assertEquals(listOf("eyes", "files", "location"), OnboardingPlan.dotParts(bound, rows("accessibility", "photos", "location"), emptySet(), emptyList()))
+        assertEquals(listOf("notify", "eyes", "files", "location"), OnboardingPlan.dotParts(bound, rows("accessibility", "photos", "location"), emptySet(), listOf("notifications")))
+        assertTrue(OnboardingPlan.dotParts(KernelState.NOT_RUNNING, rows(unsupported = emptySet()) + Row("kernel_autostart", "missing"), emptySet(), emptyList()).size <= 7)
+    }
+
+    @Test fun theClosingScreenNamesPartsNotItems() {
+        val s = OnboardingPlan.summary(bound, rows("accessibility", "overlay", "location", "health"))
+        assertEquals(listOf("眼睛和手", "位置和健康"), s.offParts.map { it.title })
+        val all = OnboardingPlan.summary(KernelState.NOT_INSTALLED, rows(*ConfigStatus.NAMES.toTypedArray(), "autostart", "recents_lock"))
+        assertTrue(all.offParts.size <= 7)
+        assertEquals("brain", all.offParts.first().id)
+        assertEquals(emptyList<OnboardingPlan.Part>(), OnboardingPlan.summary(bound, rows()).offParts)
     }
 }
