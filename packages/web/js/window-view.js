@@ -1,4 +1,5 @@
 import { appendConversationRow, conversationRows } from "./conversation.js";
+import { appendMarkdown, appendMarkdownInSlices, MarkdownQueue } from "./markdown.js";
 import { ScrollPosition } from "./scroll-position.js";
 
 // Projected facts are immutable; compare their small structures without copying text into JSON cache keys.
@@ -10,11 +11,11 @@ const context = row => ({ previousDisplay: row.previousDisplay, previous: row.pr
 const body = (row, options) => {
   const item = row.item;
   if (row.kind === "message" && item.type === "say") {
-    const { delivery, reactions, revision, group, ...content } = item;
+    const { delivery, reactions, revision, group, byte_size, reactions_more, ...content } = item;
     return { content, shown: item.full && options.fullTexts?.has(item.full, item.id) ? options.fullTexts.get(item.full) : item.text,
       expansion: item.full && !options.fullTexts?.has(item.full, item.id) ? options.fullTexts?.expansionLabel?.(item.id) : null };
   }
-  if (row.kind === "message") { const { reactions, ...content } = item; return content; }
+  if (row.kind === "message") { const { reactions, byte_size, reactions_more, ...content } = item; return content; }
   return item;
 };
 
@@ -24,6 +25,7 @@ export class WindowView {
     this.root = root;
     this.rows = new Map();
     this.position = new ScrollPosition(root);
+    this.markdown = new MarkdownQueue({ before: () => this.position.capture(), after: () => this.position.changed() });
     this.newest = 0;
     this.fresh = false;
     this.closed = false;
@@ -89,7 +91,22 @@ export class WindowView {
         const reuse = sameBody && descriptor.kind === "message" && item.type === "say";
         const lifetime = reuse ? row.lifetime : { disposed: false, cleanup: new Set() };
         const fragment = document.createDocumentFragment();
-        appendConversationRow(fragment, descriptor, { ...options, omitContent: reuse, lifetime });
+        appendConversationRow(fragment, descriptor, { ...options, omitContent: reuse, lifetime,
+          renderMarkdown: (parent, source, markdownOptions, message) => {
+            const controller = new AbortController();
+            lifetime.controller = controller;
+            const cancel = () => controller.abort(); lifetime.cleanup.add(cancel);
+            const expanded = message.full && options.fullTexts?.has(message.full, message.id);
+            const preview = expanded ? appendMarkdown(parent, message.text, markdownOptions) : null;
+            const shouldBuild = expanded ? () => this.latest?.[2].shouldBuild?.(message.id) !== false : undefined;
+            lifetime.completion = appendMarkdownInSlices(parent, source, { ...markdownOptions, queue: this.markdown, signal: controller.signal, shouldBuild, onStart: () => preview?.remove() });
+            if (expanded) {
+              const progress = document.createElement("small"); progress.className = "meta"; progress.textContent = "正在展开…"; parent.append(progress);
+              lifetime.completion.then(() => { if (!controller.signal.aborted && !lifetime.disposed) { preview?.remove(); progress.remove(); } });
+            }
+            lifetime.completion.finally(() => { lifetime.cleanup.delete(cancel); });
+          },
+        });
         let nodes = Array.from(fragment.childNodes);
         const before = row?.nodes.find(node => node.matches?.(".ask"))?.offsetHeight;
         if (reuse) {
@@ -138,8 +155,11 @@ export class WindowView {
     this.position.changed();
   }
   jump(id) { const row = this.rows.get(`message:${id}`) ?? this.rows.get(`failure:${id}`); return this.position.jump(row?.nodes.find(node => node.matches?.(".msg,.a-card,.atts")) ?? row?.nodes[0]); }
-  settled(id) { return this.rows.get(`message:${id}`)?.lifetime.completion ?? Promise.resolve(); }
+  settled(id) { return id ? this.rows.get(`message:${id}`)?.lifetime.completion ?? Promise.resolve() : Promise.all([...this.rows.values()].map(row => row.lifetime.completion)); }
+  cancelExpansion(id) { this.rows.get(`message:${id}`)?.lifetime.controller?.abort(); }
+
   dispose() {
+    this.markdown.dispose();
     this.closed = true; this.position.dispose();
     this.root.ownerDocument.removeEventListener("selectionchange", this.retry); this.root.removeEventListener("focusout", this.retry);
     for (const row of this.rows.values()) dispose(row); this.rows.clear(); this.latest = null;

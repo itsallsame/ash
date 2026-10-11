@@ -59,3 +59,51 @@ test("fenced code preserves whitespace and markup literally, unclosed fences sti
   assert.equal(fallback.className, "markdown md-plain");
   assert.equal(fallback.textContent, huge);
 });
+
+test("sliced Markdown retains the synchronous structure and cancels queued parsing", async () => {
+  const { appendMarkdownInSlices, MarkdownQueue } = await import("../js/markdown.js");
+  const source = '# 标题\n\n[reference][r] **bold**\n\n- [x] done\n  - nested\n- next\n\n|a|b|\n|:---|---:|\n|one|**two**|\n\n```html\n<img src=x>\n```\n\n<script>unsafe</script>\n\n[r]: https://example.com/';
+  const expected = draw(source);
+  const frames = [];
+  globalThis.requestAnimationFrame = callback => frames.push(callback);
+  globalThis.document = { createElement: tag => new Node(tag), createTextNode: value => { const n = new Node("#text"); n.textContent = value; return n; } };
+  try {
+    const root = new Node("root"), canceled = new Node("root");
+    let slices = 0;
+    const queue = new MarkdownQueue({ budget: 0, after: () => slices++ });
+    const done = appendMarkdownInSlices(root, source, { queue });
+    const controller = new AbortController();
+    const stop = appendMarkdownInSlices(canceled, '## never built', { queue, signal: controller.signal });
+    controller.abort(); await stop;
+    assert.equal(canceled.textContent, "");
+    assert.equal(frames.length, 1, "all messages share one scheduled frame");
+    while (frames.length) { frames.shift()(0); await new Promise(resolve => setTimeout(resolve, 5)); }
+    const actual = await done;
+    const shape = node => ({ tag: node.tag, text: node.value, className: node.className, style: node.style, attributes: node.attributes, children: node.children.map(shape) });
+    assert.deepEqual(shape(actual), shape(expected));
+    assert.ok(slices > 8, "zero-budget test yields between table/list steps");
+    assert.equal(queue.jobs.length, 0);
+  } finally { delete globalThis.document; delete globalThis.requestAnimationFrame; }
+});
+
+test("paused full-text work neither parses nor blocks inline work, and cancellation releases its completion", async () => {
+  const { appendMarkdownInSlices, MarkdownQueue } = await import("../js/markdown.js");
+  const frames = [];
+  globalThis.requestAnimationFrame = callback => frames.push(callback);
+  globalThis.document = { createElement: tag => new Node(tag), createTextNode: value => { const n = new Node("#text"); n.textContent = value; return n; } };
+  const advance = async count => { for (let i = 0; i < count && frames.length; i++) { frames.shift()(0); await new Promise(resolve => setTimeout(resolve, 5)); } };
+  try {
+    const queue = new MarkdownQueue({ budget: 0 }), paused = new Node("root"), inline = new Node("root");
+    let allowed = false, completed = false;
+    const pending = appendMarkdownInSlices(paused, '# restored text', { queue, shouldBuild: () => allowed }).then(() => { completed = true; });
+    const normal = appendMarkdownInSlices(inline, 'ordinary inline', { queue });
+    await advance(5); await normal;
+    assert.equal(inline.textContent, 'ordinary inline'); assert.equal(paused.textContent, ''); assert.equal(completed, false);
+    allowed = true; await advance(5); await pending;
+    assert.equal(paused.textContent, 'restored text');
+    const controller = new AbortController();
+    const stop = appendMarkdownInSlices(new Node("root"), '# canceled', { queue, shouldBuild: () => false, signal: controller.signal });
+    await advance(1); controller.abort(); await stop;
+    assert.equal(queue.jobs.length, 0);
+  } finally { delete globalThis.document; delete globalThis.requestAnimationFrame; }
+});

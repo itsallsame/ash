@@ -52,6 +52,19 @@
 
 `WindowView` owns stable conversation entities whose DOM remains a set of adjacent siblings, preserving the existing flex layout. `update(items, outbox, options, changedIds)` reconciles an ordered projected range; `null` changed IDs requests a range check, and `framePainter` merges explicit IDs within a frame. Neighbor context (`options.previous` / `options.next`) preserves time lines and grouped bubbles across range boundaries. Receipt, reaction and group changes reuse a message's Markdown and attachments. Pending local items and failure cards have separate stable keys.
 
+History window items may include `type: "failed"` retry facts and aggregated reactions (`emoji`, `count`); these remain bounded display facts. An explicit `options.intro` takes precedence over the loaded-range heuristic. If the preceding item is a failure, `options.previousDisplay.ts` supplies the preceding timed item's timestamp, since failure cards do not advance time-line context.
+
 `ScrollPosition` is the sole owner of reading compensation: it captures a visible Markdown block, restores it after writes and delayed height changes, and follows the bottom only when already there. It supports mounted-ID jumps and returning to the bottom; network paging/around lookup belongs to the data source. Selected or focused entities defer replacement/eviction until the interaction ends. `pinnedIds()` lets the caller protect corresponding data. A changed `options.epoch` resets old source entities even when selected; `dispose()` releases observers, listeners and attachment resources.
 
 The existing Timeline still retains its loaded history. Stable DOM alone does not bound data or total node count: the data source must supply a limited range and manage its independent cache budget. The synchronous safe Markdown renderer is unchanged; this change does not claim to eliminate cold long-message parsing/layout tasks.
+
+
+### Markdown frame work
+
+`WindowView` gives every mounted rich message one shared `MarkdownQueue`, with a 4 ms script budget between frame boundaries. The safe renderer builds the same complete DOM: tables pause between rows, lists between items, and other blocks remain intact. Table borders keep the existing collapsed layout. Parser work counts against that budget, but an individual parser call or block can exceed it; the budget is a scheduling target, not a wall-clock guarantee.
+
+Expanded text shows a quiet “正在展开…” line until its DOM is complete. Clicking the expand button releases that button's focus before requesting a body replacement; ordinary text selection and input drafts remain protected. `settled(id)` lets the caller await a row's current work, and `cancelExpansion(id)` stops unfinished work. The caller then discards the canceled text and repaints its preview. Eviction, source reset and disposal cancel jobs and release their tokens. Metadata-only updates preserve both the body and any work in progress.
+
+The data source owns the independent expansion-choice LRU, full-text cache and idle restoration policy. It decides which nearby row to fetch after scrolling settles, then waits for `settled(id)` before restoring the next one. Rendering does not introduce another prefetch/restoration scheduler, worker, persistent token cache or partial-body eviction.
+
+For restored cached full text, `options.shouldBuild(id)` can pause parser/DOM work while scrolling. The queue reads the latest predicate between slices, retains the preview until the first DOM slice, and continues ordinary inline/preview jobs while restored text is paused. Returning `true` resumes the existing job; lifetime cancellation releases the tokens and resolves `settled(id)`. The data source still owns idle timing and near-viewport eligibility.

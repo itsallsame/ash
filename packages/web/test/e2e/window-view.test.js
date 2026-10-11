@@ -13,7 +13,7 @@ async function fixture(browser) {
   const page = await browser.newPage({ viewport: { width: 393, height: 852 }, reducedMotion: "reduce" });
   await page.setContent(`<style>${css}body{display:block;height:852px}#log{height:740px}</style><main id="log" class="stream"></main><button id="outside">outside</button>`);
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     window.view = new ViewModule.WindowView(document.querySelector("#log"));
     window.say = (id, text = `message ${id}`) => ({ id: `m${id}`, seq: id, ts: Date.now() + id * 1000, type: "say", side: "agent", from: "agent:main", text, group: "t1", reactions: [] });
     window.options = { primary: "agent:main", agentName: id => id.slice(6), atStart: false };
@@ -27,18 +27,18 @@ test(...withBrowser("stable rows preserve Markdown, card drafts, selection, and 
     const custom = { id: "choice", seq: 2, ts: Date.now(), type: "card", side: "agent", card: { type: "options", prompt: "choose", options: [{ id: "a", text: "A" }], allow_custom: true } };
     options.onSelect = async () => {};
     window.items = [say(1, "## Heading\n\nread **this**\n\n```js\nlet a=1;\n```"), custom];
-    view.update(items, [], options);
+    view.update(items, [], options); await view.settled();
     const first = document.querySelector('.msg[data-seq="1"]'), paragraph = first.querySelector("p");
     const input = document.querySelector(".card-custom"); input.value = "unfinished"; input.focus(); input.setSelectionRange(2, 5);
-    items.push(say(3)); view.update(items, [], options, new Set(["m3"]));
+    items.push(say(3)); view.update(items, [], options, new Set(["m3"])); await view.settled();
     const draft = input === document.activeElement && input.value === "unfinished" && input.selectionStart === 2 && input.selectionEnd === 5;
     document.querySelector("#outside").focus();
     const selection = document.getSelection(), range = document.createRange(); range.selectNodeContents(paragraph); selection.removeAllRanges(); selection.addRange(range);
-    items.push(say(4)); view.update(items, [], options, new Set(["m4"]));
+    items.push(say(4)); view.update(items, [], options, new Set(["m4"])); await view.settled();
     const keptSelection = selection.toString();
-    items[0] = { ...items[0], text: "changed while selected" }; view.update(items, [], options, new Set(["m1"]));
+    items[0] = { ...items[0], text: "changed while selected" }; view.update(items, [], options, new Set(["m1"])); await view.settled();
     const deferred = first.querySelector("p") === paragraph;
-    selection.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); await Promise.resolve();
+    selection.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); await Promise.resolve(); await view.settled();
     const changed = document.querySelector('.msg[data-seq="1"]').textContent;
     const eager = document.createElement("div"); ViewModule.appendConversation(eager, items, options);
     const normalize = root => [...root.children].map(node => { const clone = node.cloneNode(true); clone.removeAttribute("data-row-key"); clone.classList.remove("enter"); return clone.outerHTML; });
@@ -50,13 +50,13 @@ test(...withBrowser("stable rows preserve Markdown, card drafts, selection, and 
 
 test(...withBrowser("receipt, reaction, and burst grouping updates retain the message body and attachment nodes", async ({ browser }) => {
   const page = await fixture(browser);
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     let files = 0; options.onOpenFile = () => files++;
     const owner = { ...say(1), side: "owner", text: "hello", delivery: "sent", attachments: [{ workspace: "main", path: "a.png", name: "a.png" }] };
-    window.items = [owner, say(2, "## Title\n\nkeep body")]; view.update(items, [], options);
+    window.items = [owner, say(2, "## Title\n\nkeep body")]; view.update(items, [], options); await view.settled();
     const body = document.querySelector('.msg[data-seq="2"]'), paragraph = body.querySelector("p"), attachment = document.querySelector(".atts button");
     items = [{ ...owner, delivery: "read", revision: 2 }, { ...items[1], reactions: [{ id: "r", emoji: "👍" }], revision: 2 }, say(3)];
-    view.update(items, [], options, new Set(["m1", "m2", "m3"])); attachment.click();
+    view.update(items, [], options, new Set(["m1", "m2", "m3"])); await view.settled(); attachment.click();
     return { sameBody: body === document.querySelector('.msg[data-seq="2"]'), sameParagraph: paragraph === body.querySelector("p"), sameAttachment: attachment === document.querySelector(".atts button"), files, receipt: document.querySelector(".delivery").textContent, reaction: body.querySelector(".reaction").textContent, group: body.className };
   });
   assert.equal(result.sameBody, true); assert.equal(result.sameParagraph, true); assert.equal(result.sameAttachment, true);
@@ -90,45 +90,171 @@ test(...withBrowser("explicit full-text expansion replaces its focused button wh
 
 test(...withBrowser("prepend, append, eviction, delayed heights and long-message blocks keep the reading anchor", async ({ browser }) => {
   const page = await fixture(browser);
-  await page.evaluate(() => { window.items = Array.from({ length: 60 }, (_, i) => say(i + 100)); view.update(items, [], options); view.position.jump(document.querySelector('.msg[data-seq="130"]')); window.anchor = document.querySelector('.msg[data-seq="130"]'); window.offset = anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top; });
+  await page.evaluate(async () => { window.items = Array.from({ length: 60 }, (_, i) => say(i + 100)); view.update(items, [], options); await view.settled(); view.position.jump(document.querySelector('.msg[data-seq="130"]')); window.anchor = document.querySelector('.msg[data-seq="130"]'); window.offset = anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top; });
   const measure = () => page.evaluate(() => anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top - offset);
-  await page.evaluate(() => { items = [...Array.from({ length: 10 }, (_, i) => say(i + 90)), ...items]; view.update(items, [], options); }); assert.ok(Math.abs(await measure()) < 1);
-  await page.evaluate(() => { items.push(say(160)); view.update(items, [], options, new Set(["m160"])); }); assert.ok(Math.abs(await measure()) < 1);
-  await page.evaluate(() => { items = items.slice(10); view.update(items, [], options); }); assert.ok(Math.abs(await measure()) < 1);
-  await page.evaluate(() => { const space = document.createElement("div"); space.style.height = "800px"; document.querySelector('.msg[data-seq="110"]').append(space); });
+  await page.evaluate(async () => { items = [...Array.from({ length: 10 }, (_, i) => say(i + 90)), ...items]; view.update(items, [], options); await view.settled(); }); assert.ok(Math.abs(await measure()) < 1);
+  await page.evaluate(async () => { items.push(say(160)); view.update(items, [], options, new Set(["m160"])); await view.settled(); }); assert.ok(Math.abs(await measure()) < 1);
+  await page.evaluate(async () => { items = items.slice(10); view.update(items, [], options); await view.settled(); }); assert.ok(Math.abs(await measure()) < 1);
+  await page.evaluate(async () => { const space = document.createElement("div"); space.style.height = "800px"; document.querySelector('.msg[data-seq="110"]').append(space); });
   await page.waitForFunction(() => Math.abs(anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top - offset) < 1);
-  await page.evaluate(() => { items = [say(1000, Array.from({ length: 80 }, (_, i) => `paragraph ${i}\n`).join("\n"))]; view.update(items, [], options); window.anchor = document.querySelectorAll(".markdown p")[40]; view.position.jump(anchor); window.offset = anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top; const space = document.createElement("div"); space.style.height = "300px"; document.querySelector(".markdown").prepend(space); });
+  await page.evaluate(async () => { items = [say(1000, Array.from({ length: 80 }, (_, i) => `paragraph ${i}\n`).join("\n"))]; view.update(items, [], options); await view.settled(); window.anchor = document.querySelectorAll(".markdown p")[40]; view.position.jump(anchor); window.offset = anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top; const space = document.createElement("div"); space.style.height = "300px"; document.querySelector(".markdown").prepend(space); });
   await page.waitForFunction(() => Math.abs(anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top - offset) < 1);
-  await page.evaluate(() => { view.position.latest(); items.push(say(1001)); view.update(items, [], options, new Set(["m1001"])); });
+  await page.evaluate(async () => { view.position.latest(); items.push(say(1001)); view.update(items, [], options, new Set(["m1001"])); await view.settled(); });
   assert.ok(await page.evaluate(() => view.root.scrollHeight - view.root.scrollTop - view.root.clientHeight < 1));
 }));
 
 test(...withBrowser("eviction respects focus and late attachment reads revoke their resources", async ({ browser }) => {
   const page = await fixture(browser);
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     window.released = 0; options.openInline = () => new Promise(resolve => { window.finishAttachment = resolve; });
     window.items = [{ ...say(1), attachments: [{ source: "inline", message_id: "m1", index: 0, name: "image.png" }] }];
-    view.update(items, [], options); document.querySelector(".atts button").click();
+    view.update(items, [], options); await view.settled(); document.querySelector(".atts button").click();
     const bubble = document.querySelector(".msg"); bubble.tabIndex = 0; bubble.focus();
-    view.update([], [], options); window.pins = view.pinnedIds(); document.querySelector("#outside").focus();
+    view.update([], [], options); await view.settled(); window.pins = view.pinnedIds(); document.querySelector("#outside").focus();
     finishAttachment({ preview: true, name: "image", url: "blob:unused", revoke: () => released++ });
   });
   await page.waitForFunction(() => released === 1);
   assert.deepEqual(await page.evaluate(() => pins), ["m1"]);
   assert.equal(await page.locator("#log .atts").count(), 0);
-  const reset = await page.evaluate(() => {
-    view.update([say(2, "old source")], [], { ...options, epoch: 1 });
+  const reset = await page.evaluate(async () => {
+    view.update([say(2, "old source")], [], { ...options, epoch: 1 }); await view.settled();
     const old = document.querySelector(".msg"); old.tabIndex = 0; old.focus();
-    view.update([say(2, "new source")], [], { ...options, epoch: 2 });
+    view.update([say(2, "new source")], [], { ...options, epoch: 2 }); await view.settled();
     return { oldConnected: old.isConnected, text: document.querySelector(".msg").textContent, pins: view.pinnedIds() };
   });
   assert.equal(reset.oldConnected, false); assert.equal(reset.text, "new source"); assert.deepEqual(reset.pins, []);
-  const settled = await page.evaluate(() => {
+  const settled = await page.evaluate(async () => {
     options.onAnswerAsk = async () => {};
     const question = { id: "q", seq: 4, ts: Date.now(), type: "ask", side: "agent", ask: { id: "q", from: "agent:main", title: "question", state: "pending", allow_custom: true, expires_at: Date.now() + 60000, options: [] } };
-    view.update([question], [], options); document.querySelector(".card-custom").focus();
-    view.update([{ ...question, ask: { ...question.ask, state: "answered", choice: "custom", answer_text: "done" } }], [], options, new Set(["q"]));
+    view.update([question], [], options); await view.settled(); document.querySelector(".card-custom").focus();
+    view.update([{ ...question, ask: { ...question.ask, state: "answered", choice: "custom", answer_text: "done" } }], [], options, new Set(["q"])); await view.settled();
     return { inputs: document.querySelectorAll(".card-custom").length, outcome: document.querySelector(".ask-outcome")?.textContent };
   });
   assert.equal(settled.inputs, 0); assert.match(settled.outcome, /done/);
+}));
+
+test(...withBrowser("history window facts render failures, aggregate reactions and one authoritative introduction", async ({ browser }) => {
+  const page = await fixture(browser);
+  const result = await page.evaluate(async () => {
+    const retries = [];
+    const failed = { id: "t-failed", type: "failed", seq: 3, ts: Date.now(), turn: "t-failed", retry: { text: "try again" } };
+    const items = [{ ...say(2), byte_size: 100, reactions: [{ emoji: "👍", count: 10000 }] }, failed];
+    const settings = { ...options, intro: true, previous: { ...say(1), text: undefined }, onRetry: async item => retries.push(item.id) };
+    view.update(items, [], settings); await view.settled();
+    const bubble = document.querySelector(".msg"), paragraph = bubble.querySelector("p");
+    const introductions = document.querySelectorAll(".intro").length;
+    const group = bubble.className;
+    await document.querySelector(".failure button").click();
+    const jump = view.jump("t-failed");
+    view.update([{ ...items[0], byte_size: 101, reactions_more: true, reactions: [{ emoji: "👍", count: 10001 }] }, failed], [], { ...settings, atStart: true, intro: false }, new Set(["m2"])); await view.settled();
+    return { introductions, finalIntroductions: document.querySelectorAll(".intro").length, failures: document.querySelectorAll(".failure").length,
+      retries, jump, group, sameParagraph: paragraph === document.querySelector(".msg p"), reaction: document.querySelector(".reaction").textContent,
+      sameBubble: bubble === document.querySelector(".msg") };
+  });
+  assert.equal(result.introductions, 1); assert.equal(result.finalIntroductions, 0); assert.equal(result.failures, 1);
+  assert.deepEqual(result.retries, ["t-failed"]); assert.equal(result.jump, true); assert.match(result.group, /group-last/);
+  assert.equal(result.sameParagraph, true); assert.equal(result.sameBubble, true); assert.equal(result.reaction, "👍 10001");
+}));
+
+test(...withBrowser("expansion releases its button focus, keeps complete selectable DOM and shows progress", async ({ browser }) => {
+  const page = await fixture(browser);
+  await page.evaluate(async () => {
+    window.source = '|key|value|\n|---|---|\n' + Array.from({ length: 1550 }, (_, i) => `|row ${i}|**value** ${i}|`).join('\n') + '\n\n```js\nconst final = "copy me";\n```';
+    options.fullTexts = new Map();
+    window.items = [{ ...say(1, 'preview text'), full: 'hash-1' }];
+    options.onExpand = async (hash, id) => {
+      window.receivedId = id;
+      options.fullTexts.set(hash, source);
+      view.update(items, [], options, new Set([id]));
+      await view.settled(id);
+    };
+    view.update(items, [], options); await view.settled();
+  });
+  await page.locator('.expand').focus(); await page.locator('.expand').click();
+  await page.waitForFunction(() => document.querySelector('.msg small')?.textContent === '正在展开…');
+  await page.evaluate(async () => { await view.settled('m1'); });
+  const result = await page.evaluate(() => {
+    const bubble = document.querySelector('.msg');
+    const selection = getSelection(), range = document.createRange(); range.selectNodeContents(bubble.querySelector('.markdown')); selection.removeAllRanges(); selection.addRange(range);
+    const selected = selection.toString(); selection.removeAllRanges();
+    const expected = document.createElement('div'); ViewModule.appendConversation(expected, items, options);
+    return { receivedId, rows: bubble.querySelectorAll('tbody tr').length, progress: Boolean(bubble.querySelector('small')), expand: Boolean(bubble.querySelector('.expand')), same: bubble.querySelector('.markdown').outerHTML === expected.querySelector('.markdown').outerHTML, selected, borders: getComputedStyle(bubble.querySelector('table')).borderCollapse };
+  });
+  assert.equal(result.receivedId, 'm1'); assert.equal(result.rows, 1550);
+  assert.equal(result.progress, false); assert.equal(result.expand, false); assert.equal(result.same, true);
+  assert.match(result.selected, /row 1549/); assert.match(result.selected, /copy me/); assert.equal(result.borders, 'collapse');
+}));
+
+test(...withBrowser("shared frame work cancels evicted/old-source Markdown and retains body on metadata updates", async ({ browser }) => {
+  const page = await fixture(browser);
+  const result = await page.evaluate(async () => {
+    const text = '|key|value|\n|---|---|\n' + Array.from({ length: 1550 }, (_, i) => `|${i}|**value ${i}**|`).join('\n');
+    window.items = [say(1, text), say(2, text), say(3, text)];
+    view.update(items, [], options);
+    const old = document.querySelector('.msg[data-seq="1"]'), pending = view.settled();
+    const queueBefore = view.markdown.jobs.length;
+    view.update([say(4, 'new dataset')], [], { ...options, epoch: 'new' });
+    await pending; await view.settled();
+    const canceledNodes = old.querySelectorAll('tr').length;
+    const body = document.querySelector('.msg'), paragraph = body.querySelector('p');
+    view.update([{ ...say(4, 'new dataset'), reactions: [{ emoji: '👍', count: 4 }] }], [], { ...options, epoch: 'new' });
+    await view.settled();
+    return { queueBefore, canceledNodes, detached: !old.isConnected, same: paragraph === body.querySelector('p'), jobs: view.markdown.jobs.length, text: body.textContent };
+  });
+  assert.equal(result.queueBefore, 3); assert.equal(result.canceledNodes, 0); assert.equal(result.detached, true);
+  assert.equal(result.same, true); assert.equal(result.jobs, 0); assert.match(result.text, /new dataset/);
+}));
+
+test(...withBrowser("partial long-message work is serial and cancellable while the reading anchor stays fixed", async ({ browser }) => {
+  const page = await fixture(browser);
+  await page.evaluate(async () => {
+    window.items = Array.from({ length: 50 }, (_, i) => say(i + 1));
+    items[0] = { ...items[0], full: 'long-a' }; items[1] = { ...items[1], full: 'long-b' };
+    options.fullTexts = new Map(); view.update(items, [], options); await view.settled();
+    window.anchor = document.querySelector('.msg[data-seq="30"]'); view.position.jump(anchor);
+    window.offset = anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top;
+    const text = '|key|value|\n|---|---|\n' + Array.from({ length: 1550 }, (_, i) => `|${i}|**value ${i}**|`).join('\n');
+    options.fullTexts.set('long-a', text); options.fullTexts.set('long-b', text);
+    view.update(items, [], options, new Set(['m1', 'm2']));
+  });
+  await page.waitForFunction(() => { const count = document.querySelector('.msg[data-seq="1"]').querySelectorAll('tbody tr').length; return count > 0 && count < 1550; });
+  const mid = await page.evaluate(() => {
+    const first = document.querySelector('.msg[data-seq="1"]');
+    const before = first.querySelectorAll('tr').length, second = document.querySelector('.msg[data-seq="2"]').querySelectorAll('tr').length;
+    const controller = view.rows.get('message:m1').lifetime.controller;
+    items[0] = { ...items[0], reactions: [{ emoji: '👍', count: 2 }] };
+    view.update(items, [], options, new Set(['m1']));
+    const sameJob = controller === view.rows.get('message:m1').lifetime.controller;
+    view.cancelExpansion('m1');
+    return { before, second, sameJob, offset: anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top - offset };
+  });
+  assert.equal(mid.second, 0); assert.equal(mid.sameJob, true); assert.ok(Math.abs(mid.offset) < 1);
+  await page.evaluate(async () => { await view.settled(); });
+  const after = await page.evaluate(() => ({ count: document.querySelector('.msg[data-seq="1"]').querySelectorAll('tr').length, second: document.querySelector('.msg[data-seq="2"]').querySelectorAll('tbody tr').length, offset: anchor.getBoundingClientRect().top - view.root.getBoundingClientRect().top - offset }));
+  assert.equal(after.count, mid.before); assert.equal(after.second, 1550); assert.ok(Math.abs(after.offset) < 1);
+}));
+
+test(...withBrowser("automatic full-text slices pause with the live scroll gate and settle when canceled", async ({ browser }) => {
+  const page = await fixture(browser);
+  await page.evaluate(async () => {
+    window.allowBuild = false;
+    options.shouldBuild = () => allowBuild;
+    options.fullTexts = new Map([['restored', '|key|value|\n|---|---|\n' + Array.from({ length: 1550 }, (_, i) => `|${i}|**value** ${i}|`).join('\n')]]);
+    window.items = [{ ...say(1, 'preview'), full: 'restored' }, say(2, 'inline during scrolling')];
+    view.update(items, [], options);
+    window.completed = false; view.settled('m1').then(() => { completed = true; });
+    await view.settled('m2');
+  });
+  assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), 0);
+  assert.match(await page.locator('.msg[data-seq="1"]').textContent(), /preview.*正在展开/s);
+  assert.match(await page.locator('.msg[data-seq="2"]').textContent(), /inline during scrolling/);
+  assert.equal(await page.evaluate(() => completed), false);
+  await page.evaluate(() => { allowBuild = true; });
+  await page.waitForFunction(() => document.querySelector('.msg[data-seq="1"] tbody tr'));
+  const paused = await page.evaluate(() => { allowBuild = false; return document.querySelectorAll('.msg[data-seq="1"] tbody tr').length; });
+  await page.evaluate(async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+  assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), paused);
+  await page.evaluate(async () => { view.cancelExpansion('m1'); await view.settled('m1'); });
+  assert.equal(await page.evaluate(() => completed), true);
+  assert.equal(await page.locator('.msg[data-seq="1"] tbody tr').count(), paused);
 }));
