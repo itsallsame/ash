@@ -47,3 +47,11 @@
 - 把话放进对话框：`ctx.compose(text)` 发 `ash:compose`（`detail: {text, turn?}`，可取消）；没人处理就直接填 `#t`。
 - 原生入口：`globalThis.__ashOpenNative(page)`、`globalThis.__ashCheckup()` / `ash:checkup`（`page` 取 `apps`、`checkup`、`checkup/<部位>`；部位 id 见 `OnboardingPlan.PARTS`），没有原生时「这台手机」格不显示。
 - 删除类操作都是两次点击：第一次写后果，第二次执行（`twoTap`）。
+
+## Stable conversation rendering
+
+`WindowView` owns stable conversation entities whose DOM remains a set of adjacent siblings, preserving the existing flex layout. `update(items, outbox, options, changedIds)` reconciles an ordered projected range; `null` changed IDs requests a range check, and `framePainter` merges explicit IDs within a frame. Neighbor context (`options.previous` / `options.next`) preserves time lines and grouped bubbles across range boundaries. Receipt, reaction and group changes reuse a message's Markdown and attachments. Pending local items and failure cards have separate stable keys.
+
+`ScrollPosition` is the sole owner of reading compensation: it captures a visible Markdown block, restores it after writes and delayed height changes, and follows the bottom only when already there. It supports mounted-ID jumps and returning to the bottom; network paging/around lookup belongs to the data source. Selected or focused entities defer replacement/eviction until the interaction ends. `pinnedIds()` lets the caller protect corresponding data. A changed `options.epoch` resets old source entities even when selected; `dispose()` releases observers, listeners and attachment resources.
+
+The existing Timeline still retains its loaded history. Stable DOM alone does not bound data or total node count: the data source must supply a limited range and manage its independent cache budget. The synchronous safe Markdown renderer is unchanged; this change does not claim to eliminate cold long-message parsing/layout tasks.

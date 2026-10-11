@@ -4,7 +4,7 @@ import { HomeFeed } from "./home-feed.js";
 import { FullTexts } from "./full-texts.js";
 import { connectHome } from "./home.js";
 import { Net } from "./net.js";
-import { appendConversation, appendOutbox } from "./conversation.js";
+import { WindowView } from "./window-view.js";
 import { renderProgress } from "./progress.js";
 import { presentUiOpen } from "./suggestions.js";
 import { composerContext } from "./composer.js";
@@ -42,59 +42,25 @@ export function failedTurns(view, now = Date.now()) {
     .filter(([, turn]) => turn.background !== true && turn.outcome === "error" && Number.isFinite(turn.ended) && now - turn.ended < 86_400_000 && !(last && last.ts > turn.ended))
     .map(([turn, info]) => {
       // What to say again: the owner's last words before the turn began, when they were plain text.
-      const said = [...view.conversation].reverse().find((item) => item.type === "say" && item.side === "owner" && item.ts <= info.started);
+      const said = [...view.conversation].reverse().find(item => item.type === "say" && item.side === "owner" && item.ts <= info.started);
       return { turn, ts: info.ended, retry: said && !said.full && said.text && !(said.attachments?.length) ? { text: said.text, to: said.to } : null };
     });
 }
 
-const reducedMotion = () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-/** Messages that have been drawn before: only the ones that are new rise into place. */
-const drawn = { newest: 0, clients: new Set(), fresh: false, local: 0 };
+const views = new WeakMap();
+const conversationView = log => {
+  let view = views.get(log);
+  if (!view || view.closed) { view = new WindowView(log); views.set(log, view); }
+  return view;
+};
 
-export function render(view, outbox = [], openInline, presenceBar, cardActions) {
+export function render(view, outbox = [], openInline, presenceBar, cardActions, dirty = null) {
   const log = document.querySelector("#log");
-  const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
-  const oldHeight = log.scrollHeight;
-  const oldTop = log.scrollTop;
   const loading = cardActions?.loading?.() === true;
-  // A card that was waiting for an answer and is answered now folds up instead of jumping to its short form.
-  const heights = new Map();
-  for (const card of log.querySelectorAll?.(".a-card[data-ask-id]") ?? []) heights.set(card.dataset.askId, card.offsetHeight);
-  const fragment = document.createDocumentFragment();
-  appendConversation(fragment, view.conversation, { openInline, ...cardActions, loading, failures: loading ? [] : failedTurns(view), atStart: cardActions?.atStart?.() === true, herName: cardActions?.herName?.() ?? "Ash" });
-  appendOutbox(fragment, outbox);
-  log.replaceChildren(fragment);
-  if (log.setAttribute) log.setAttribute("aria-busy", loading ? "true" : "false");
-  if (log.querySelectorAll) animate(log, heights);
-  if (nearEnd) log.scrollTop = log.scrollHeight;
-  else log.scrollTop = oldTop + Math.max(0, log.scrollHeight - oldHeight);
+  conversationView(log).update(view.conversation, outbox, { openInline, ...cardActions, loading,
+    failures: loading ? [] : failedTurns(view), atStart: cardActions?.atStart?.() === true,
+    herName: cardActions?.herName?.() ?? "Ash", epoch: cardActions?.epoch?.() }, dirty);
   presenceBar?.render(loading ? { state: "unknown" } : view.presence);
-}
-
-/** Motion of the design: a new message rises 6px and fades in (240 ms), an answered card folds up (300 ms). */
-function animate(log, heights) {
-  const motion = !reducedMotion();
-  const before = drawn.newest;
-  let local = drawn.local;
-  for (const node of log.querySelectorAll("[data-seq], [data-client-id]")) {
-    const seq = Number(node.dataset.seq);
-    const client = node.dataset.clientId;
-    const known = client ? drawn.clients.has(client) : seq <= before;
-    if (client) drawn.clients.add(client); else drawn.newest = Math.max(drawn.newest, seq);
-    // The owner's own message has risen once already, as the local copy that waited to be sent.
-    const settled = !client && !known && local > 0 && node.classList.contains("me") && local--;
-    if (drawn.fresh && motion && !known && !settled) node.classList.add("enter");
-  }
-  drawn.local = log.querySelectorAll(".pending-local").length;
-  if (log.querySelector("[data-seq], [data-client-id]")) drawn.fresh = true;
-  if (!motion) return;
-  const css = getComputedStyle(document.documentElement);
-  for (const card of log.querySelectorAll(".a-card[data-ask-id]")) {
-    const was = heights.get(card.dataset.askId);
-    const now = card.offsetHeight;
-    if (was > now + 4) card.animate?.([{ height: `${was}px`, overflow: "hidden" }, { height: `${now}px`, overflow: "hidden" }],
-      { duration: parseInt(css.getPropertyValue("--dur-resolve"), 10) || 300, easing: css.getPropertyValue("--ease").trim() || "ease" });
-  }
 }
 
 export function boot({ bridge } = {}) {
@@ -151,16 +117,19 @@ export function boot({ bridge } = {}) {
   const optionPending = new Set();
   /** Long texts read from the ledger on demand, by blob hash. */
   const fullTexts = new FullTexts();
-  const redraw = () => { if (timeline) render(timeline.view, net.outbox, openInline, presenceBar, cardActions); };
+  const redraw = () => { if (timeline) paintView(timeline.view, true); };
   const cardActions = {
     agentName: id => recipient?.name(id) ?? id.replace(/^agent:/, ""),
     get primary() { return net.primary; },
     loading: () => !timeline?.ready,
+    epoch: () => timeline?.store.dataset,
     atStart: () => timeline?.store.intro === true,
+    get previous() { return timeline?.store.previous; },
+    get next() { return timeline?.store.next; },
     herName: () => presenceBar.title.textContent || "Ash",
     onRetry: async (failure) => {
       await net.enqueueSay(failure.retry.text, [], null, failure.retry.to ?? recipient.target());
-      log.scrollTop = log.scrollHeight;
+      conversationView(log).position.latest();
     },
     onOpenFile: (ref) => files.open(ref),
     onFileLink: (href) => files.openLink(href),
@@ -260,7 +229,7 @@ export function boot({ bridge } = {}) {
     onQueue: (count, outbox) => {
       for (const item of outbox) if (item.in_reply_to && item.status === "rejected") optionPending.delete(item.in_reply_to);
       for (const item of outbox) if (item.in_reply_to && item.status !== "rejected") optionPending.add(item.in_reply_to);
-      if (timeline) render(timeline.view, outbox, openInline, presenceBar, cardActions);
+      if (timeline) paintView(timeline.view, true, new Set(outbox.map(item => item.in_reply_to).filter(Boolean)));
     },
   });
   connectHome(net, homeFeed);
@@ -278,7 +247,7 @@ export function boot({ bridge } = {}) {
     } catch { /* the scroll handler can still load older pages */ }
     finally { filling = false; }
   };
-  const paintView = framePainter((view, conversation) => {
+  const paintView = framePainter((view, conversation, dirty) => {
     // A dataset reset drops texts and transient choices before any new entity is painted.
     if (fullTexts.dataset !== timeline.store.dataset) {
       fullTexts.reset(); fullTexts.dataset = timeline.store.dataset;
@@ -288,7 +257,7 @@ export function boot({ bridge } = {}) {
     askIntents.prune(active);
     for (const id of optionPending) if (!active.has(id) && !net.outbox.some(item => item.in_reply_to === id)) optionPending.delete(id);
     fullTexts.retain(timeline.store.items);
-    if (conversation) render(timeline.view, net.outbox, openInline, presenceBar, cardActions);
+    if (conversation) render(timeline.view, net.outbox, openInline, presenceBar, cardActions, dirty);
     else presenceBar?.render(timeline?.ready ? view.presence : { state: "unknown" });
     progress();
     setTimeout(fillScreen, 0);
@@ -350,7 +319,7 @@ export function boot({ bridge } = {}) {
       fileInput.value = "";
       picked = [];
       showPicked();
-      log.scrollTop = log.scrollHeight;
+      conversationView(log).position.latest();
     } catch (error) { presenceBar.problem(`没发出去：${error.message || "这台设备存不下待发送的消息"}`); }
     finally { sendButton.disabled = false; sendable(); }
   });
@@ -386,7 +355,7 @@ export function boot({ bridge } = {}) {
     if (typeof globalThis.__ashOpenNative === "function") globalThis.__ashOpenNative("apps");
     else openHome({ page: "apps" });
   });
-  window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); net.stop(); });
+  window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); views.get(log)?.dispose(); net.stop(); });
   window.addEventListener("online", () => net.reconnect());
   window.addEventListener("pageshow", (event) => { if (event.persisted) net.start(); });
   net.start();
