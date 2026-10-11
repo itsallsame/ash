@@ -351,4 +351,11 @@ test("a runtime that fails the key write: every turn tries again before it opens
     assert.ok(d.of("credentialsSet").length > sets, `turn ${i} tried the write again`);
   }
   assert.deepEqual(atSend, ["sk-v1", "sk-v1", "sk-v2"]);
+  // the keys are in sync now: the turn after it writes nothing more
+  const synced = d.of("credentialsSet").length;
+  await f.call(M, "say", { text: "t4" });
+  await waitFor(() => d.of("send").length === 4, "turn 4");
+  await settle();
+  assert.equal(d.of("credentialsSet").length, synced, "a turn after the sync writes no key");
+  assert.deepEqual(atSend, ["sk-v1", "sk-v1", "sk-v2", "sk-v2"]);
 });

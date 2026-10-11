@@ -1016,7 +1016,9 @@ export class AgentManager {
   /**
    * Before a turn opens: wait for the key writes on their way, then, if the owner has saved a key since the last one that landed,
    * write the latest (and once more when keys were saved meanwhile). A write that fails or times out is logged and this turn goes
-   * on; the next turn compares and tries again, so a stuck runtime costs each turn up to KEY_SYNC_TIMEOUT_MS and no more. This is
+   * on; the next turn compares and tries again. What a stuck runtime costs a turn: first the wait for this agent's writes already on their
+   * way (each of them gives up after KEY_SYNC_TIMEOUT_MS), then this turn's own writes, at most KEY_SYNC_TRIES of them and each at
+   * most KEY_SYNC_TIMEOUT_MS (a failed one ends the loop, so a runtime that does not answer is tried once). This is
    * the one place the keys' being in time depends on; `onVaultChanged` only makes them arrive early.
    */
   private async ensureKeys(live: Live): Promise<void> {

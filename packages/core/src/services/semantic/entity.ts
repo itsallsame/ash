@@ -4,7 +4,7 @@
  *
  *   - the first meeting: until the primary agent has really spoken to the owner, it is woken with `wake {reason:
  *     "first_meeting"}` when a hand with a channel for people connects (the link's event `connected`, `channels` include
- *     `human`) and when a model key is saved (the vault's event `vault.changed`, `action: "saved"`; a new install has no key
+ *     `human`, and a model key is configured, asked of the vault: with none the wake would only fail) and when a model key is saved (the vault's event `vault.changed`, `action: "saved"`; a new install has no key
  *     at the first connection, and the wake's turn fails). "Has spoken" is read from the ledger: any `say` or `show` an agent
  *     sent to the owner, outside a turn that ended in error (the failure notice is not a greeting), or the wake's own turn
  *     ended `completed`; then it is written to the layer's own table and never asked again. A wake whose turn has not ended
@@ -19,7 +19,7 @@ import type { HandleContext, Message, WordResult } from "../../../../sdk/src/mes
 import type { Member, WordContract } from "../../../../sdk/src/word";
 import type { Ledger } from "../../kernel/ledger";
 import { DailyReview } from "./daily";
-import { ask, CLOCK_TIME, listAgents, nextMoment, primaryAgent, readSetting, reconcileTimers, type SemanticKv, wakeAgent, type Sender } from "./shared";
+import { ask, CLOCK_TIME, dataOf, listAgents, nextMoment, primaryAgent, readSetting, reconcileTimers, type SemanticKv, wakeAgent, type Sender } from "./shared";
 
 export const ENTITY_ID = "service:semantic";
 export const DEFAULT_RELOAD_TIME = "04:00";
@@ -82,7 +82,17 @@ export class Entity implements Member {
   private async connected(body: unknown): Promise<void> {
     const channels = (body as { channels?: unknown } | null)?.channels;
     if (!Array.isArray(channels) || !channels.includes("human")) return;
+    // With no model key saved the wake's turn can only fail, and every connection of a person's channel would add one more
+    // failure: wait for `vault.changed` instead. When the vault cannot be asked, go on as if there were a key.
+    if (!(await this.hasModelKey())) return;
     await this.firstMeeting();
+  }
+
+  /** Whether any of the model keys is configured, asked of the vault. An answer that does not come counts as yes: the turn will tell. */
+  private async hasModelKey(): Promise<boolean> {
+    const entries = dataOf<{ entries?: { ref?: unknown; configured?: unknown }[] }>(await ask(this.options.router, ENTITY_ID, "service:vault", "list"))?.entries;
+    if (!Array.isArray(entries)) return true;
+    return entries.some((entry) => entry.configured === true && typeof entry.ref === "string" && this.options.modelKeys.includes(entry.ref));
   }
 
   /** Wake the primary agent for the first meeting unless it is already held or the last such wake is still being worked on. */

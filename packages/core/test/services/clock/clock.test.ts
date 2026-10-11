@@ -52,7 +52,7 @@ test("the words are the sdk contracts and set/list/cancel work", async () => {
   assert.equal(list.timers[0].created_by, "agent:main");
 
   assert.deepEqual(await s.call("cancel", { id: a.id }), { cancelled: true });
-  assert.deepEqual(await s.call("cancel", { id: a.id }), { cancelled: false });
+  assert.deepEqual(await s.call("cancel", { id: a.id }), { cancelled: false });   // (no `inflight` for a timer that is only waiting or gone)
   assert.equal((await s.call("list", {})).timers.length, 1);
 });
 
@@ -635,8 +635,9 @@ test("a one-time timer cancelled while its send is in flight is not brought back
   svc.check();
   assert.equal(rows(), 0, "the row is gone while the send waits");
   await assert.rejects(svc.handle(msg("cancel", { id: data.id }, "request", "agent:other"), as("agent:other")), (e: any) => e.code === "forbidden", "someone else still may not cancel it");
-  const cancelled = await svc.handle(msg("cancel", { id: data.id }), as("agent:main")) as { data: { cancelled: boolean } };
+  const cancelled = await svc.handle(msg("cancel", { id: data.id }), as("agent:main")) as { data: { cancelled: boolean; inflight?: boolean } };
   assert.equal(cancelled.data.cancelled, true, "found in flight");
+  assert.equal(cancelled.data.inflight, true, "and says so: the send is out and is not taken back");
   release({ ok: false, error: { code: "offline", message: "away" } });
   await flush(); await new Promise((r) => setImmediate(r));
   assert.equal(rows(), 0, "not resurrected");

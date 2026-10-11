@@ -2,7 +2,8 @@
  * `service:clock`: durable timers (HUB-MODULES §3).
  *
  *   set    {at?, every?, to, word, body, label}   store a timer; `at` is Unix ms, `every` seconds (at least 60)
- *   cancel {id}
+ *   cancel {id}        -> {cancelled, inflight?}: `inflight: true` is a one-time timer whose send is already out; that send is
+ *                         delivered if it succeeds, and only the put-back for another try is stopped
  *   list
  *   wake.fired (event, from the host module)       the phone's alarm went off: look for due timers
  *
@@ -168,8 +169,9 @@ export class ClockService implements Member {
     if (by !== undefined && by !== caller.member && caller.member !== OWNER_ID) {
       throw new WordError("forbidden", "this timer was set by someone else; only its owner or the person:owner can cancel it");
     }
-    // A one-time timer being sent right now has no row; cancelling it means it is not put back if the send is refused.
-    if (inflight) { inflight.cancelled = true; return { cancelled: true }; }
+    // A one-time timer being sent right now has no row, and the send is already out: it is not taken back and arrives if it
+    // succeeds. Cancelling only means it is not put back for another try if the send is refused; `inflight` tells the asker so.
+    if (inflight) { inflight.cancelled = true; return { cancelled: true, inflight: true }; }
     const removed = this.db.prepare("DELETE FROM timers WHERE id=?").run(body.id as string).changes > 0;
     this.retries.delete(body.id as string);
     this.arm();

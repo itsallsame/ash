@@ -358,7 +358,7 @@ export class AppRuntime {
       if (bad) { this.log("app tool rejected", id, tool.name, bad); continue; }
       if (state.tools.has(tool.name)) continue;
       state.tools.add(tool.name);
-      contracts.push(appToolContract(id, tool));
+      contracts.push(appToolContract(id, tool, manifest.name));
     }
     for (const name of manifest.events ?? []) {
       if (state.tools.has(name)) continue;

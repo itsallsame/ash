@@ -5,6 +5,7 @@
  */
 import type { CapabilitySpec } from "../../../../../sdk/src/link";
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../../sdk/src/message";
+import { upstreamDoingLabel } from "../../../../../sdk/src/labels";
 import { DEFAULT_CALLERS, wordEffect, type Member, type Risk, type WordContract } from "../../../../../sdk/src/word";
 import { wordsOf } from "../../../../../sdk/src/words";
 import { LinkError, type LinkSession } from "../../../../../link/src/server";
@@ -14,7 +15,7 @@ const READ_TIMEOUT_MS = 60_000;
 const ACT_TIMEOUT_MS = 600_000;
 
 /** What the hand declared in its manifest, as the contract of a word of `member`. The hand's effect and risk stand. */
-export function capabilityContract(member: string, cap: CapabilitySpec): WordContract {
+export function capabilityContract(member: string, cap: CapabilitySpec, deviceName?: string): WordContract {
   return {
     member, word: cap.name, kind: "request", direction: "in", description: cap.description,
     input_schema: cap.input_schema,
@@ -24,7 +25,8 @@ export function capabilityContract(member: string, cap: CapabilitySpec): WordCon
     ...(cap.foreground ? { foreground: true } : {}),
     callers: [...(cap.callers ?? DEFAULT_CALLERS)],
     ...(cap.timeout_ms ? { timeout_ms: cap.timeout_ms } : {}),
-    label: { doing: cap.label ?? `在用 ${cap.name}` },
+    // Seen on approval cards and the island: the hand's own label, else the device's name; never the capability's raw name.
+    label: { doing: cap.label?.trim() ? cap.label : upstreamDoingLabel({ word: cap.name, ...(deviceName ? { owner: deviceName } : {}), ownerId: member, noun: "能力" }) },
   };
 }
 
@@ -74,7 +76,7 @@ export class HandMember implements Member {
     this.kind = init.kind;
     this.name = init.name;
     this.local = init.local;
-    this.contracts = [...init.capabilities.map((cap) => capabilityContract(init.id, cap)), ...(init.events ?? []).map((word) => eventContract(init.id, word))];
+    this.contracts = [...init.capabilities.map((cap) => capabilityContract(init.id, cap, init.name)), ...(init.events ?? []).map((word) => eventContract(init.id, word))];
     for (const contract of this.contracts) if (contract.kind === "request") this.byWord.set(contract.word, contract);
   }
 

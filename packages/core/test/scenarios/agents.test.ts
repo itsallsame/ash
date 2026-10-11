@@ -245,7 +245,9 @@ test("S164, S165: pausing stops the running turns of every agent; resuming is th
 
 test("S028 (first_meeting): the first time the owner connects, the primary agent is woken once; a later connection does not wake it again", async (t) => {
   const s = await startScenario(t, { firstMeeting: true });
-  await s.human();
+  const first = await s.human();
+  const saved = await first.call("service:vault", "set", { ref: "DEEPSEEK_API_KEY", value: "sk-test", kind: "model" });
+  assert.ok(saved.ok);
 
   const { message } = await s.driver.delivery((m) => m.word === "wake" && m.text.startsWith("Wake · first_meeting"), "the first-meeting wake");
   assert.equal(message.lane, "back");
@@ -256,19 +258,24 @@ test("S028 (first_meeting): the first time the owner connects, the primary agent
   assert.equal(wakes.length, 1);
 });
 
-test("S028 (first_meeting, no key): a new install has no model key, the first turn fails; saving the key brings the first meeting again, and only until the agent has spoken", async (t) => {
+test("S028 (first_meeting, no key): a new install has no model key, so a connection wakes nobody; the key the owner saves brings the first meeting, a wrong one fails it and a corrected one tries again, only until the agent has spoken", async (t) => {
   const s = await startScenario(t, { firstMeeting: true });
   const isMeeting = (m: { word: string; text: string }) => m.word === "wake" && m.text.startsWith("Wake · first_meeting");
   const meetings = () => s.driver.messages().filter(isMeeting);
   let keyed = false;
   s.driver.script(async (turn) => {
     if (!turn.messages.some(isMeeting)) return;
-    if (!keyed) throw new Error("no model key");
+    if (!keyed) throw new Error("bad model key");
     await turn.tool("human_say", { text: "你好，我是 Ash。" });
   });
   const owner = await s.human();
+  await s.human({ name: "a second channel" });
+  await quiet();
+  assert.equal(meetings().length, 0, "no model key: connecting does not start a turn that can only fail");
 
-  const failed = await s.driver.turn((r) => r.messages.some(isMeeting), "the first turn, without a key");
+  const wrong = await owner.call("service:vault", "set", { ref: "DEEPSEEK_API_KEY", value: "sk-wrong", kind: "model" });
+  assert.ok(wrong.ok);
+  const failed = await s.driver.turn((r) => r.messages.some(isMeeting), "the first turn, with a wrong key");
   await failed.done;
   assert.equal(failed.outcome, "error");
   await quiet();

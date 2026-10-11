@@ -179,6 +179,26 @@ test("the first meeting without a key: the turn fails, the key is saved, and the
   assert.deepEqual(hub.invalid, []);
 });
 
+test("the first meeting without any model key: a connection does not wake (the turn could only fail); saving a model key does; an unrelated key does not count", async () => {
+  const hub = await startedHub();
+  hub.savedKeys = ["CLOUDFLARE_TOKEN"];                                                                 // a key, but not a model's
+  await connect(hub);
+  await connect(hub, "c2");
+  assert.equal(meetings(hub).length, 0);
+  assert.equal(hub.sent.filter((s) => s.msg.to === "service:vault" && s.msg.word === "list").length, 2);
+  hub.savedKeys = ["CLOUDFLARE_TOKEN", "OPENROUTER_API_KEY"];
+  await keySaved(hub, "OPENROUTER_API_KEY");
+  assert.equal(meetings(hub).length, 1);
+  assert.deepEqual(hub.invalid, []);
+});
+
+test("the first meeting when the vault cannot be asked: the connection wakes as before", async () => {
+  const hub = await startedHub();
+  hub.members.delete("service:vault");
+  await connect(hub);
+  assert.equal(meetings(hub).length, 1);
+});
+
 test("the first meeting is not repeated while the last wake is still being worked on", async () => {
   const hub = await startedHub();
   const agent = agentSide(hub);

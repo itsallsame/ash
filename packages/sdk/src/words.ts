@@ -411,8 +411,8 @@ add("service:agents", "env.changed", "event", ENV_CHANGED, undefined,
 // ===================================================================================================================
 add("service:clock", "set", "request", obj({ at: num, every: { type: "integer", minimum: 60 }, to: id, word: id, body: free, label: nonempty }, ["to", "word", "body", "label"]), obj({ id, next: num }, ["id", "next"]),
   { effect: "write", label: "在定提醒", description: "Set a timer that sends a word to a member at a time (at, Unix ms) or repeatedly (every, seconds, at least 60). Use for a future or repeating message, not for immediate delivery. Keep the returned id to cancel it." });
-add("service:clock", "cancel", "request", obj({ id }, ["id"]), obj({ cancelled: bool }, ["cancelled"]),
-  { effect: "write", label: "在取消提醒", description: "Cancel a timer by id; check `cancelled` because it may already have fired." });
+add("service:clock", "cancel", "request", obj({ id }, ["id"]), obj({ cancelled: bool, inflight: bool }, ["cancelled"]),
+  { effect: "write", label: "在取消提醒", description: "Cancel a timer by id; check `cancelled` because it may already have fired. `inflight: true` (with `cancelled: true`) means a one-time timer's send was already on its way when you cancelled: that send is not taken back and is delivered if it succeeds; cancelling only stops it from being put back and sent again if it is refused." });
 add("service:clock", "cancel.owner", "request", obj({ member: id }, ["member"]), obj({ cancelled: integer }, ["cancelled"]),
   { callers: KERNEL, effect: "write", label: "在清理已删成员的提醒", description: "Internal: take back every timer the given member set, and tell how many there were. The agents module calls it when it deletes an agent, and the apps module when an app is removed or loses all its grants, so their timers do not go on firing as a member that no longer exists. The hub itself calls this; nobody else." });
 add("service:clock", "list", "request", empty, obj({ timers: array(any) }, ["timers"]),

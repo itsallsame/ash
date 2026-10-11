@@ -44,6 +44,14 @@ test("an app tool compiles to a word contract", () => {
   assert.deepEqual(plain.input_schema, { type: "object" });
 });
 
+test("an app tool without a title is labelled by the app's name, never by its raw name", () => {
+  assert.deepEqual(appToolContract("todo", { name: "todo.add" }, "待办").label, { doing: "在用 待办 的功能" });
+  assert.deepEqual(appToolContract("todo", { name: "todo.add" }).label, { doing: "在处理" }, "no title and no app name");
+  assert.deepEqual(appToolContract("todo", { name: "todo.add", title: "todo.add" }, "待办").label, { doing: "在用 待办 的功能" }, "a title that is only the name");
+  assert.deepEqual(appToolContract("todo", { name: "todo.add", annotations: { title: "Add an item" } }, "待办").label, { doing: "在用 Add an item" });
+  for (const tool of [{ name: "todo.add" }, { name: "get_items", title: "get_items" }]) assert.ok(!/todo\.add|get_items/.test(appToolContract("todo", tool, "待办").label.doing));
+});
+
 test("wake_events may name the agent to wake", () => {
   const app = { wake_events: ["notes.due", { event: "message.received", agent: "agent:ash-chat" }, { event: "x.y" }] } as Pick<AppJson, "wake_events">;
   assert.deepEqual(wakeEvents(app), [{ event: "notes.due" }, { event: "message.received", agent: "agent:ash-chat" }, { event: "x.y" }]);

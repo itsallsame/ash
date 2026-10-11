@@ -3,6 +3,7 @@
  * risk (SPEC-02 §5.3). The runtime that starts apps compiles each tool with `appToolContract`.
  */
 import { AGENT_ID_PATTERN, APP_NAME_PATTERN, SURFACE_ID_PATTERN, TOOL_NAME_PATTERN } from "./ids";
+import { upstreamDoingLabel } from "./labels";
 import { APP_CONTRACT } from "./versions";
 import { DEFAULT_CALLERS, type Effect, type JsonSchema, type Risk, type WordContract } from "./word";
 
@@ -223,10 +224,11 @@ export interface McpTool {
   annotations?: McpToolAnnotations;
 }
 
-/** The contract of one app tool. Runtime registration only checks the name and that the schema compiles. */
-export function appToolContract(appId: string, tool: McpTool): WordContract {
+/** The contract of one app tool (`appName` is the app's name for people, used in the label when the tool has no title). Runtime registration only checks the name and that the schema compiles. */
+export function appToolContract(appId: string, tool: McpTool, appName?: string): WordContract {
   const { effect, risk } = toolEffectRisk(tool.annotations);
-  const title = tool.title ?? tool.annotations?.title ?? tool.name;
+  const declared = tool.title ?? tool.annotations?.title;
+  const title = declared ?? tool.name;
   return {
     member: `app:${appId}`,
     word: tool.name,
@@ -237,6 +239,7 @@ export function appToolContract(appId: string, tool: McpTool): WordContract {
     effect,
     risk,
     callers: [...DEFAULT_CALLERS],
-    label: { doing: `在用 ${title}` },
+    // Seen on approval cards and the island: the tool's own title, else the app's name; never the tool's raw name.
+    label: { doing: upstreamDoingLabel({ ...(declared ? { title: declared } : {}), word: tool.name, ...(appName ? { owner: appName } : {}), ownerId: appId, noun: "功能" }) },
   };
 }

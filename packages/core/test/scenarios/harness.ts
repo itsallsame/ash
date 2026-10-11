@@ -775,6 +775,9 @@ export class Scenario {
    */
   async passFirstMeeting(): Promise<void> {
     const owner = await this.human({ name: "first meeting" });
+    // A new install with no model key does not wake on a connection (the turn could only fail); the key the owner saves does.
+    const saved = await owner.call("service:vault", "set", { ref: "DEEPSEEK_API_KEY", value: "sk-scenario", kind: "model" });
+    if (!saved.ok) throw new Error(`the scenario's model key was not saved: ${saved.error.message}`);
     const isMeeting = (m: DriverMessage): boolean => m.word === "wake" && m.text.startsWith("Wake · first_meeting");
     const turn = await this.driver.turn((record) => record.messages.some(isMeeting), "the first-meeting turn");
     await turn.done;

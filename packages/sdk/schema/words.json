@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "8aeb547be5d2dcd44373d6ba9771f18bcd87aa82fb8db2e3677a1606ad913be5",
+ "hash": "cb123876bb94ad433921cf014dcb50a521a1c073e7cb87cd3a250a1fdc894616",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -8409,7 +8409,7 @@
    "word": "cancel",
    "kind": "request",
    "direction": "in",
-   "description": "Cancel a timer by id; check `cancelled` because it may already have fired.",
+   "description": "Cancel a timer by id; check `cancelled` because it may already have fired. `inflight: true` (with `cancelled: true`) means a one-time timer's send was already on its way when you cancelled: that send is not taken back and is delivered if it succeeds; cancelling only stops it from being put back and sent again if it is refused.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -8427,6 +8427,9 @@
     "type": "object",
     "properties": {
      "cancelled": {
+      "type": "boolean"
+     },
+     "inflight": {
       "type": "boolean"
      }
     },

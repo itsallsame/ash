@@ -55,6 +55,8 @@ export interface Hub {
   files: Map<string, string>;
   bodyUp: boolean;
   settings: Record<string, unknown>;
+  /** The vault refs that are saved (the stand-in vault's `list` says so); both model keys by default. */
+  savedKeys: string[];
   paused: boolean;
   cardWidgets: number;
   sensesDaily: any;
@@ -80,7 +82,7 @@ export function newHub(options: { ledger?: Ledger; t?: number; budget?: number; 
   const hub: Hub = {
     t: options.t ?? DAY1, ledger, members: new Map(), sent: [], invalid: [], cards: [], ownerChoice: "allow",
     agents: [{ id: "agent:main", primary: true, lanes: { front: {}, back: {} } }],
-    files: new Map(), bodyUp: true, settings: {}, paused: false, cardWidgets: options.cardWidgets ?? 1, sensesDaily: { counts: { location: 0 } },
+    files: new Map(), bodyUp: true, settings: {}, savedKeys: ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"], paused: false, cardWidgets: options.cardWidgets ?? 1, sensesDaily: { counts: { location: 0 } },
   } as unknown as Hub;
   let inflight = 0;
   const now = () => hub.t;
@@ -146,6 +148,9 @@ export function newHub(options: { ledger?: Ledger; t?: number; budget?: number; 
     stub("service:admin", "service", {
       status: () => ({ now: hub.t, paused: hub.paused }),
       "settings.get": (body) => ({ settings: Object.fromEntries((body.keys as string[]).filter((k) => k in hub.settings).map((k) => [k, hub.settings[k]])) }),
+    }, now),
+    stub("service:vault", "service", {
+      list: () => ({ entries: ["CLOUDFLARE_TOKEN", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"].map((ref) => ({ ref, label: ref, kind: "other", configured: hub.savedKeys.includes(ref) })) }),
     }, now),
     stub("service:senses", "service", { daily: () => hub.sensesDaily }, now),
     stub("service:widgets", "service", { "widget.list": () => ({ widgets: Array.from({ length: hub.cardWidgets }, (_, i) => ({ id: `w${i}`, type: "card", card: null })), cards: [] }) }, now),
