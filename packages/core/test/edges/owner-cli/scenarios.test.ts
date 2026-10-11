@@ -81,6 +81,9 @@ test("the link file is fetched from the phone with run-as, and the scenarios are
 test("R6: a reply from the agent in a completed turn is a PASS; a missing model key is a SKIP that says what to do", async (t: TestContext) => {
   const s = await startScenario(t);
   await s.phone();
+  // The harness saves a model key to pass the first meeting; this case is about a hub without one.
+  const owner = await s.human();
+  assert.ok((await owner.call("service:vault", "delete", { ref: "DEEPSEEK_API_KEY" })).ok);
   s.driver.script((turn) => turn.say("你好，我在。"));
   const skipped = await scenarios(s, "R6");
   assert.match(lineOf(skipped, "R6"), /^SKIP R6 .*no model key.*set-key DEEPSEEK_API_KEY/, skipped.out);
