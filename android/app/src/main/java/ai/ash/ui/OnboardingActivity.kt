@@ -223,7 +223,7 @@ class OnboardingActivity : Activity() {
             Kind.ITEM -> {
                 val item = p.item!!
                 val granted = l.items.firstOrNull { it.item == item }?.state == ConfigStatus.GRANTED
-                "$granted$reviewing${item in opened}${awaitsWord(item)}${OnboardingPlan.dots(l.kernel, l.rows, skipped, history.mapNotNull { it.item }).joinToString(",")}"
+                "$granted$reviewing${item in opened}${awaitsWord(item)}${OnboardingPlan.dotParts(l.kernel, l.rows, skipped, history.mapNotNull { it.item }).joinToString(",")}"
             }
             Kind.DONE -> OnboardingPlan.summary(l.kernel, l.rows).let { "${it.on}/${it.off.joinToString(",")}" }
         }
@@ -268,8 +268,8 @@ class OnboardingActivity : Activity() {
     private fun welcomePage(): View {
         val c = palette
         val face = OnboardingViews.avatar(this, "default", Layout.welcomeAvatar, AshUi.AvatarView.State.THINKING)
-        val title = AshUi.text(this, OnboardingContent.Words.WELCOME_TITLE, OnboardingViews.welcomeTitle).apply { gravity = Gravity.CENTER }
-        val body = AshUi.text(this, OnboardingContent.Words.WELCOME_BODY, OnboardingViews.welcomeBody).apply { gravity = Gravity.CENTER }
+        val title = OnboardingViews.text(this, OnboardingContent.Words.WELCOME_TITLE, OnboardingViews.welcomeTitle).apply { gravity = Gravity.CENTER }
+        val body = OnboardingViews.text(this, OnboardingContent.Words.WELCOME_BODY, OnboardingViews.welcomeBody).apply { gravity = Gravity.CENTER }
         val stack = centered(14, Layout.sideWide, face, title, body)
         (title.layoutParams as LinearLayout.LayoutParams).topMargin = dp(Layout.welcomeTitleTop)
         // the avatar's own margins (its ring) are negative; the column needs the room back
@@ -307,7 +307,7 @@ class OnboardingActivity : Activity() {
             spinning = phase == Brain.STARTING
         }
         ring = face
-        val label = AshUi.text(this, "", OnboardingViews.brainLabel, c.her).apply { gravity = Gravity.CENTER; visibility = View.GONE }
+        val label = OnboardingViews.text(this, "", OnboardingViews.brainLabel, c.her).apply { gravity = Gravity.CENTER; visibility = View.GONE }
         ringLabel = label
         val (title, body) = when (phase) {
             Brain.NO_URL -> "我的大脑还没装上" to "这个版本没有带下载地址。请先自己把大脑的安装包装好，再回来。"
@@ -318,8 +318,8 @@ class OnboardingActivity : Activity() {
             Brain.STARTING -> "大脑装好了" to listOfNotNull("正在叫醒它，一会儿就好。", OnboardingPlan.kernelPrompt(rom)).joinToString("")
             else -> OnboardingContent.Words.BRAIN_TITLE to listOfNotNull("一两分钟。", OnboardingPlan.kernelPrompt(rom)).joinToString("")
         }
-        val titleView = AshUi.text(this, title, OnboardingViews.brainTitle).apply { gravity = Gravity.CENTER }
-        val bodyView = AshUi.text(this, body, OnboardingViews.brainBody).apply { gravity = Gravity.CENTER }
+        val titleView = OnboardingViews.text(this, title, OnboardingViews.brainTitle).apply { gravity = Gravity.CENTER }
+        val bodyView = OnboardingViews.text(this, body, OnboardingViews.brainBody).apply { gravity = Gravity.CENTER }
         val stack = centered(14, Layout.sideWide, face, label, titleView, bodyView)
         val waited = if (waitingSince == 0L) 0L else SystemClock.elapsedRealtime() - waitingSince
         val refused = phase == Brain.STARTING && OnboardingPlan.showRefusedRetry(rom, waited)
@@ -335,7 +335,7 @@ class OnboardingActivity : Activity() {
             phase == Brain.GAVE_UP || refused -> { buttons += primary("再试一次", { retryKernel() }); buttons += skip }
             else -> buttons += primary("请稍等", {}, enabled = false)
         }
-        if (refused) OnboardingPlan.kernelRetryHint(rom)?.let { hint -> stack.addView(AshUi.text(this, hint, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }) }
+        if (refused) OnboardingPlan.kernelRetryHint(rom)?.let { hint -> stack.addView(OnboardingViews.text(this, hint, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }) }
         return frame(null, stack, bottom(Layout.barSimple, *buttons.toTypedArray())).also { updateBrain(l) }
     }
 
@@ -367,15 +367,12 @@ class OnboardingActivity : Activity() {
         val permission = permissionOf(item)
         val copy = OnboardingContent.of(item, permission?.title ?: item, permission?.why ?: "")
         val granted = row.state == ConfigStatus.GRANTED
-        val states = OnboardingPlan.dots(l.kernel, l.rows, skipped, history.mapNotNull { it.item }).let { dots ->
-            val at = dots.indexOf(item)
-            dots.mapIndexed { i, d ->
-                when {
-                    i == at -> OnboardingViews.DotState.ACTIVE
-                    d in history.mapNotNull { it.item } || d in skipped || l.items.firstOrNull { it.item == d }?.state == ConfigStatus.GRANTED -> OnboardingViews.DotState.DONE
-                    else -> OnboardingViews.DotState.UPCOMING
-                }
-            }
+        val seen = history.mapNotNull { it.item }
+        // one dot per part of her body: the parts before this one are done, this one is the long bar
+        val parts = OnboardingPlan.dotParts(l.kernel, l.rows, skipped, seen)
+        val at = parts.indexOf(OnboardingPlan.partOf(item).id)
+        val states = parts.mapIndexed { i, _ ->
+            when { i == at -> OnboardingViews.DotState.ACTIVE; i < at -> OnboardingViews.DotState.DONE; else -> OnboardingViews.DotState.UPCOMING }
         }
         val gap = if (copy.look == Look.HAND) Layout.pageGapHand else Layout.pageGapAsk
         val body = AshUi.vstack(this, gap).apply { setPadding(dp(Layout.sideX), 0, dp(Layout.sideX), dp(Layout.sideX)); gravity = Gravity.CENTER_VERTICAL }
@@ -385,7 +382,7 @@ class OnboardingActivity : Activity() {
                 body.addView(OnboardingViews.previewCard(this, p), OnboardingViews.fill().apply {
                     topMargin = dp(Layout.previewTop); marginStart = dp(Layout.previewSide); marginEnd = dp(Layout.previewSide)
                 })
-                body.addView(AshUi.text(this, p.caption, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }, OnboardingViews.fill())
+                body.addView(OnboardingViews.text(this, p.caption, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }, OnboardingViews.fill())
             }
             Look.HAND -> copy.hand?.let { h ->
                 body.addView(OnboardingViews.handCard(this, h), OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.xs) })
@@ -426,26 +423,21 @@ class OnboardingActivity : Activity() {
             image = OnboardingViews.face(this@OnboardingActivity, "success")
             setProgress(if (summary.total == 0) 1f else summary.on.toFloat() / summary.total)
         }
-        val title = AshUi.text(this, OnboardingContent.Words.DONE_TITLE, AshTokens.Type.display).apply { gravity = Gravity.CENTER }
+        val title = OnboardingViews.text(this, OnboardingContent.Words.DONE_TITLE, AshTokens.Type.display).apply { gravity = Gravity.CENTER }
         val said = if (summary.off.isEmpty()) "开了 ${summary.on} 项，该开的都开好了。\n有什么想让我做的，直接跟我说。"
-            else "开了 ${summary.on} 项。这 ${summary.off.size} 项你先没开，\n需要时在我的主页里随时能开："
-        val body = AshUi.text(this, said, OnboardingViews.doneBody).apply { gravity = Gravity.CENTER }
+            else "开了 ${summary.on} 项。下面这几处你先没开，\n需要时在我的主页里随时能开："
+        val body = OnboardingViews.text(this, said, OnboardingViews.doneBody).apply { gravity = Gravity.CENTER }
         val stack = OnboardingViews.column(this, 10).apply {
             setPadding(dp(Layout.sideX), dp(Layout.doneTop), dp(Layout.sideX), dp(AshTokens.Space.xl))
             addView(face); addView(title, OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.sm + 2) }); addView(body)
-            if (summary.off.isNotEmpty()) addView(tags(summary.off), OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.xs) })
+            if (summary.off.isNotEmpty()) addView(tags(summary.offParts), OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.xs) })
         }
         return frame(null, stack, bottom(Layout.barSimple, primary(OnboardingContent.Words.DONE_BUTTON, { done() })))
     }
 
-    /** The things that stayed off, as small labels that wrap. */
-    private fun tags(off: List<String>): View {
-        val names = off.map { id ->
-            if (id == OnboardingPlan.BRAIN) "大脑" else permissionOf(id).let { p -> OnboardingContent.of(id, p?.title ?: id, "").name }
-        }
-        val rowGap = dp(AshTokens.Space.xs)
-        return WrapRow(this, rowGap).apply { names.forEach { addView(OnboardingViews.offTag(this@OnboardingActivity, it)) } }
-    }
+    /** The parts of her body that have something off, as small labels that wrap. */
+    private fun tags(parts: List<OnboardingPlan.Part>): View =
+        WrapRow(this, dp(AshTokens.Space.xs)).apply { parts.forEach { addView(OnboardingViews.offTag(this@OnboardingActivity, it.title)) } }
 
     /** Children laid out left to right, wrapping, each line centred. */
     private class WrapRow(ctx: Context, private val gap: Int) : ViewGroup(ctx) {

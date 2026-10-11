@@ -192,4 +192,43 @@ class OnboardingPlanTest {
         assertEquals("大脑的安装包没装上", OnboardingPlan.brainWords("内核包没装上"))
         assertEquals("大脑没起来", OnboardingPlan.brainWords("内核没起来"))
     }
+
+    // ---- the parts of her body ----
+
+    @Test fun thePartsAreTheCheckupsSevenWithTheIdsOfTheSplitSpec() {
+        assertEquals(listOf("brain", "alarm", "notify", "awake", "eyes", "files", "location"), OnboardingPlan.PARTS.map { it.id })
+        assertEquals(listOf("大脑", "闹钟", "叫你", "在后台醒着", "眼睛和手", "照片和文件", "位置和健康"), OnboardingPlan.PARTS.map { it.title })
+    }
+
+    @Test fun everyItemIsInOnePartAndTheOnesTheHandoffListsAreWhereItPutsThem() {
+        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock", "screen_recovery")
+        for (item in items) assertEquals(item, 1, OnboardingPlan.PARTS.count { item in it.items })
+        assertEquals("brain", OnboardingPlan.partOf("kernel_battery_optimization").id)
+        assertEquals("alarm", OnboardingPlan.partOf("exact_alarm").id)
+        assertEquals("notify", OnboardingPlan.partOf("notifications").id)
+        assertEquals("awake", OnboardingPlan.partOf("recents_lock").id)
+        assertEquals("eyes", OnboardingPlan.partOf("accessibility").id)
+        assertEquals("eyes", OnboardingPlan.partOf("notification_listener").id)
+        assertEquals("files", OnboardingPlan.partOf("usage_access").id)
+        assertEquals("location", OnboardingPlan.partOf("health").id)
+        assertEquals("location", OnboardingPlan.partOf("future_thing").id)
+    }
+
+    @Test fun theDotsAreOnePerPartInTheOrderTheGuideAsks() {
+        val r = rows("location", "accessibility", "notification_listener", "notifications", "photos", "health")
+        assertEquals(listOf("notify", "eyes", "files", "location"), OnboardingPlan.dotParts(bound, r, emptySet(), emptyList()))
+        // a part whose items are all granted before the guide starts has no dot; one just finished keeps its dot
+        assertEquals(listOf("eyes", "files", "location"), OnboardingPlan.dotParts(bound, rows("accessibility", "photos", "location"), emptySet(), emptyList()))
+        assertEquals(listOf("notify", "eyes", "files", "location"), OnboardingPlan.dotParts(bound, rows("accessibility", "photos", "location"), emptySet(), listOf("notifications")))
+        assertTrue(OnboardingPlan.dotParts(KernelState.NOT_RUNNING, rows(unsupported = emptySet()) + Row("kernel_autostart", "missing"), emptySet(), emptyList()).size <= 7)
+    }
+
+    @Test fun theClosingScreenNamesPartsNotItems() {
+        val s = OnboardingPlan.summary(bound, rows("accessibility", "overlay", "location", "health"))
+        assertEquals(listOf("眼睛和手", "位置和健康"), s.offParts.map { it.title })
+        val all = OnboardingPlan.summary(KernelState.NOT_INSTALLED, rows(*ConfigStatus.NAMES.toTypedArray(), "autostart", "recents_lock"))
+        assertTrue(all.offParts.size <= 7)
+        assertEquals("brain", all.offParts.first().id)
+        assertEquals(emptyList<OnboardingPlan.Part>(), OnboardingPlan.summary(bound, rows()).offParts)
+    }
 }

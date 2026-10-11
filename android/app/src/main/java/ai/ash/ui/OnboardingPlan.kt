@@ -76,18 +76,42 @@ object OnboardingPlan {
     const val BRAIN = "brain"
 
     /**
-     * The order the guide asks in: what matters first, by the part of her body it belongs to (the checkup's groups): reach
-     * the owner, wake on time, stay awake in the background, the brain's own switches, eyes and hands, photos and files,
-     * and last the optional senses (position, health). An item that is not listed is asked at the end, so none is lost.
+     * One part of her body, as the checkup groups them (HANDOFF §3; the ids are the ones of `open_native("checkup/<id>")` in
+     * spec/UI-SPLIT.md §3). The guide's dots are one per part, and its closing screen names the parts that stayed off.
+     * [items] are the ids of `config.status` (plus the keep-alive switches and the recovery grant, see [rows]); the brain's
+     * own package and connection are not rows, the guide's brain screen is theirs.
      */
-    val ASK_ORDER = listOf(
-        "notifications", "exact_alarm",
-        "battery_optimization", "autostart", "recents_lock",
-        "kernel_battery_optimization", "kernel_autostart",
-        "accessibility", "notification_listener", "screen_recovery", "overlay", "shizuku",
-        "photos", "calendar", "all_files", "write_settings", "usage_access",
-        "location", "location_background", "activity_recognition", "health",
+    class Part(val id: String, val title: String, val items: List<String>)
+
+    /**
+     * The parts in the checkup's order. Where HANDOFF §3 lists an item it is in that part; the rest are put by meaning:
+     * reading notifications is one of her eyes ([eyes]); the calendar is read so that she can remind ahead ([alarm]).
+     * An item no part lists belongs to the last part ([partOf]).
+     */
+    val PARTS = listOf(
+        Part("brain", "大脑", listOf("kernel_battery_optimization", "kernel_autostart")),
+        Part("alarm", "闹钟", listOf("exact_alarm", "calendar")),
+        Part("notify", "叫你", listOf("notifications")),
+        Part("awake", "在后台醒着", listOf("battery_optimization", "autostart", "recents_lock")),
+        Part("eyes", "眼睛和手", listOf("accessibility", "notification_listener", "screen_recovery", "overlay", "shizuku")),
+        Part("files", "照片和文件", listOf("photos", "all_files", "write_settings", "usage_access")),
+        Part("location", "位置和健康", listOf("location", "location_background", "activity_recognition", "health")),
     )
+
+    /** The part an item belongs to (an item no part lists: the last part). */
+    fun partOf(item: String): Part = PARTS.firstOrNull { item in it.items } ?: PARTS.last()
+
+    /** The order the guide goes through the parts: reach the owner first, the optional senses last. */
+    private val ASK_PARTS = listOf("notify", "alarm", "awake", "brain", "eyes", "files", "location")
+
+    /** The order the guide asks the items in: by part ([ASK_PARTS]), in the order of each part's list. */
+    val ASK_ORDER: List<String> = ASK_PARTS.flatMap { id -> PARTS.first { it.id == id }.items }
+
+    /** The parts the guide shows dots for: those that have an item to ask or that was asked (as [dots], by part, in [ASK_PARTS] order). */
+    fun dotParts(kernel: KernelState, rows: List<Row>, skipped: Set<String>, visited: Collection<String>): List<String> {
+        val ids = dots(kernel, rows, skipped, visited).map { partOf(it).id }.toSet()
+        return ASK_PARTS.filter { it in ids }
+    }
 
     /** The items that can be asked now, in the order they are asked: the ones the phone cannot have are left out, and so are the kernel's switches while it is not installed. */
     fun asked(kernel: KernelState, rows: List<Row>): List<String> {
@@ -123,6 +147,8 @@ object OnboardingPlan {
     /** What the closing screen counts: how many are on, and which of the asked ones are not ([BRAIN] first when the kernel is not up). */
     data class Summary(val on: Int, val off: List<String>) {
         val total get() = on + off.size
+        /** The parts that have something off, in the order of the checkup ([PARTS]); at most seven. */
+        val offParts: List<Part> get() = PARTS.filter { part -> off.any { (if (it == BRAIN) "brain" else partOf(it).id) == part.id } }
     }
 
     fun summary(kernel: KernelState, rows: List<Row>): Summary {

@@ -1,5 +1,6 @@
 package ai.ash.ui
 
+import ai.ash.screen.island.IslandTokens
 import ai.ash.ui.design.AshTokens
 import ai.ash.ui.design.AshType
 import ai.ash.ui.design.AshUi
@@ -19,6 +20,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.text.SpannableStringBuilder
+import android.text.style.LineHeightSpan
+import android.util.TypedValue
 import android.text.Spanned
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
@@ -38,11 +41,15 @@ import android.widget.TextView
 internal object OnboardingViews {
     /** Measures from the Setup redlines that are layout, not tokens. */
     object Layout {
-        const val dotsTop = 16
         const val dot = 6
         const val dotActive = 18
         const val dotGap = 6
-        const val dotsRow = 22
+        /**
+         * The dots sit under the island's resting pill (its height and its distance from the top, from the island's own
+         * tokens, which are not touched) and then the design's 16 below that, so the island never covers them.
+         */
+        const val dotsTop = 16 + (IslandTokens.SIZE_PILL_NO_CUTOUT_H + IslandTokens.SIZE_WINDOW_INSET_TOP).toInt()
+        const val dotsRow = dotsTop + dot
 
         const val welcomeAvatar = 136
         const val welcomeTitleTop = 16
@@ -120,6 +127,30 @@ internal object OnboardingViews {
             }
         }
 
+    /** A line of text exactly [lineHeightPx] tall, the room above and below it equal (also under the last line). */
+    private class ExactLine(private val lineHeightPx: Int) : LineHeightSpan {
+        override fun chooseHeight(text: CharSequence?, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: android.graphics.Paint.FontMetricsInt) {
+            val extra = lineHeightPx - (fm.descent - fm.ascent)
+            fm.ascent -= extra / 2; fm.descent += extra - extra / 2
+            fm.top = fm.ascent; fm.bottom = fm.descent
+        }
+    }
+
+    /**
+     * Text in one of the library's styles, but with the line height of the style honoured exactly. The library asks for it
+     * through the line-spacing add-on, which counts the Latin font's height; a phone that draws Chinese in another font then
+     * gets taller lines and a last line without its share, so the words sit low in their bubble.
+     */
+    fun text(ctx: Context, s: CharSequence, type: AshType, color: Int? = null): TextView {
+        val tv = AshUi.text(ctx, s, type, color)
+        tv.setLineSpacing(0f, 1f)
+        if (s.isNotEmpty()) {
+            val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, type.lineSp, ctx.resources.displayMetrics).toInt()
+            tv.text = SpannableStringBuilder(s).apply { setSpan(ExactLine(px), 0, length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) }
+        }
+        return tv
+    }
+
     /** `**word**` marks the word that carries the sentence. */
     fun rich(ctx: Context, s: String): CharSequence {
         val out = SpannableStringBuilder()
@@ -162,7 +193,7 @@ internal object OnboardingViews {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AshUi.dp(ctx, AshTokens.Size.buttonLg))
             addView(ImageView(ctx).apply { setImageDrawable(ctx.getDrawable(icon)?.mutate()?.apply { setTint(c.onYou) }) },
                 LinearLayout.LayoutParams(AshUi.dp(ctx, AshTokens.Size.iconSm), AshUi.dp(ctx, AshTokens.Size.iconSm)).apply { marginEnd = AshUi.dp(ctx, 6) })
-            addView(AshUi.text(ctx, label, AshTokens.Type.button, c.onYou))
+            addView(text(ctx, label, AshTokens.Type.button, c.onYou))
             setOnClickListener { onClick() }
         }
     }
@@ -183,7 +214,7 @@ internal object OnboardingViews {
     /** A small label on the closing screen for something that stayed off. */
     fun offTag(ctx: Context, label: String): TextView {
         val c = AshUi.p(ctx)
-        return AshUi.text(ctx, label, tagType, c.text2).apply {
+        return text(ctx, label, tagType, c.text2).apply {
             gravity = Gravity.CENTER; height = AshUi.dp(ctx, Layout.tagH)
             setPadding(AshUi.dp(ctx, Layout.tagPadX), 0, AshUi.dp(ctx, Layout.tagPadX), 0)
             background = AshUi.rounded(c.surface2, AshUi.dpF(ctx, Layout.tagRadius.toFloat()))
@@ -260,10 +291,20 @@ internal object OnboardingViews {
     fun sayRow(ctx: Context, expression: String, say: String): LinearLayout = AshUi.hstack(ctx, 12).apply {
         gravity = Gravity.BOTTOM
         addView(avatar(ctx, expression, Layout.bubbleAvatar))
-        addView(AshUi.text(ctx, rich(ctx, say), bubbleType).apply {
+        addView(text(ctx, rich(ctx, say), bubbleType).apply {
             background = AshUi.bubble(ctx, false)
             setPadding(AshUi.dp(ctx, 14), AshUi.dp(ctx, 10), AshUi.dp(ctx, 14), AshUi.dp(ctx, 10))
             AshUi.cardShadow(this)
+            // a drawable with a tail corner gives the system no outline to cast the shadow from: say it
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: android.graphics.Outline) {
+                    val r = AshUi.dpF(ctx, AshTokens.Radius.bubble.toFloat()); val t = AshUi.dpF(ctx, AshTokens.Radius.bubbleTail.toFloat())
+                    val path = android.graphics.Path().apply {
+                        addRoundRect(RectF(0f, 0f, v.width.toFloat(), v.height.toFloat()), floatArrayOf(r, r, r, r, r, r, t, t), android.graphics.Path.Direction.CW)
+                    }
+                    outline.setConvexPath(path)
+                }
+            }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
@@ -277,10 +318,10 @@ internal object OnboardingViews {
         addView(avatar(ctx, "success", Layout.bubbleAvatar))
         addView(AshUi.vstack(ctx, 2).apply {
             addView(AshUi.hstack(ctx).apply {
-                addView(AshUi.text(ctx, p.title, previewName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(AshUi.text(ctx, p.whenText, AshTokens.Type.caption))
+                addView(text(ctx, p.title, previewName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(text(ctx, p.whenText, AshTokens.Type.caption))
             })
-            addView(AshUi.text(ctx, p.body, previewBody))
+            addView(text(ctx, p.body, previewBody))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }
 
@@ -289,7 +330,7 @@ internal object OnboardingViews {
         val c = AshUi.p(ctx)
         background = AshUi.rounded(c.surface, AshUi.dpF(ctx, AshTokens.Radius.card.toFloat())); clipToOutline = true
         AshUi.cardShadow(this)
-        addView(AshUi.text(ctx, hand.path, handPath).apply {
+        addView(text(ctx, hand.path, handPath).apply {
             gravity = Gravity.CENTER_VERTICAL; minHeight = AshUi.dp(ctx, Layout.handHeader)
             setPadding(AshUi.dp(ctx, AshTokens.Space.rowX), 0, AshUi.dp(ctx, AshTokens.Space.rowX), 0)
         })
@@ -313,7 +354,7 @@ internal object OnboardingViews {
             val icon = AshUi.dp(ctx, Layout.handIcon)
             if (on) addView(ImageView(ctx).apply { setImageDrawable(ctx.getDrawable(ai.ash.R.mipmap.ic_launcher)) }, LinearLayout.LayoutParams(icon, icon))
             else addView(View(ctx).apply { background = AshUi.rounded(c.surface3, AshUi.dpF(ctx, Layout.handIconRadius.toFloat())) }, LinearLayout.LayoutParams(icon, icon))
-            addView(AshUi.text(ctx, name, if (on) handNameOn else handName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(text(ctx, name, if (on) handNameOn else handName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(AshUi.AshSwitch(ctx).apply { set(on); isClickable = false; isFocusable = false })
         }
     }
@@ -322,7 +363,7 @@ internal object OnboardingViews {
     fun steps(ctx: Context, hand: OnboardingContent.Hand): LinearLayout = AshUi.vstack(ctx, Layout.stepsGap).apply {
         setPadding(AshUi.dp(ctx, Layout.stepsPadX), 0, AshUi.dp(ctx, Layout.stepsPadX), 0)
         listOf(hand.step1, OnboardingContent.HAND_STEP_2, OnboardingContent.HAND_STEP_3).forEachIndexed { i, s ->
-            addView(AshUi.text(ctx, "${i + 1}　$s", handStep))
+            addView(text(ctx, "${i + 1}　$s", handStep))
         }
     }
 
