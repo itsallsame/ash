@@ -1,4 +1,4 @@
-// This file is embedded only in the APK's appassets page. The page has no connection of its own: it trades two kinds of
+// This script loads after app.js only in the APK's appassets page. The page has no connection of its own: it trades two kinds of
 // messages with the native layer. `{type:"frame", frame}` carries the human channel's frames of ash-link/1 unchanged, both
 // ways; `{type:"link", open, client?, local?}` (native to page) says the channel opened or closed. The owner credential
 // never enters this page.

@@ -4,7 +4,7 @@
  * it through the relay.
  */
 import { createHash } from "node:crypto";
-import { AVATARS, ICON_SVG, UI_HTML, UI_JS, WEB_MANIFEST } from "./ui.generated";
+import { AVATARS, ICON_SVG, UI_HTML, UI_JS, UI_JS_FILE, WEB_MANIFEST } from "./ui.generated";
 import type { HttpHandler } from "./index";
 
 const FACE = /^\/avatars\/([a-z]+)\.webp$/;
@@ -16,10 +16,9 @@ export function staticWeb(): HttpHandler {
     const path = new URL(req.url ?? "/", "http://web.invalid").pathname;
     const face = FACE.exec(path);
     let type: string, body: string | Buffer;
-    if (path === "/") { type = "text/html; charset=utf-8"; body = UI_HTML; }
-    else if (path === "/app.js") {
-      // The fixed URL may be cached, but must revalidate when a different UI is served.
-      res.setHeader("cache-control", "no-cache");
+    if (path === "/") { type = "text/html; charset=utf-8"; body = UI_HTML; res.setHeader("cache-control", "no-cache"); }
+    else if (path === `/${UI_JS_FILE}`) {
+      res.setHeader("cache-control", "public, max-age=31536000, immutable");
       res.setHeader("etag", JS_ETAG);
       if (req.headers["if-none-match"] === JS_ETAG) { res.writeHead(304).end(); return; }
       type = "application/javascript; charset=utf-8"; body = UI_JS;

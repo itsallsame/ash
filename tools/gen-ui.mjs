@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // The same UI source produces the page the kernel serves to browsers and the Android packaged page. They differ in one
 // thing only, the transport (SPEC-05 §4.1): a browser opens its own WebSocket with the browser client of packages/link;
-// the app's page passes frames through AshNative and is built without the browser client (js/link-browser.js left empty).
+// the appassets origin selects AshNative. Both pages load the same external bundle.
 // Browser frame checks are compiled from the protocol schemas during this build, not while opening the page.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync as writeFile, renameSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync as writeFile, renameSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { assertNoInlineScripts } from "./ui-scripts.mjs";
 // Readers (tests/builds) may run while another build refreshes the generated module.
 function writeFileSync(path, content) { const temp = `${path}.${process.pid}.tmp`; writeFile(temp, content); renameSync(temp, path); }
 import { dirname, join } from "node:path";
@@ -14,29 +16,34 @@ import "./gen-island.mjs";
 
 const ui = join(dirname(fileURLToPath(import.meta.url)), "../packages/web");
 const read = (f) => JSON.stringify(readFileSync(join(ui, f), "utf8"));
-const noBrowserClient = { name: "no-browser-client", setup(b) {
-  b.onResolve({ filter: /link-browser\.js$/ }, () => ({ path: "link-browser", namespace: "app-page" }));
-  b.onLoad({ filter: /.*/, namespace: "app-page" }, () => ({ contents: "export const HandClient = undefined; export const browserConnector = undefined;", loader: "js" }));
-} };
 // Boot explicitly supplies the home's connection; no prototype hook or duplicate history reader.
 const entry = { contents: 'import "./js/app.js"; import "./js/home.js";', resolveDir: ui, sourcefile: "page-entry.js", loader: "js" };
 const bundle = async (plugins) => (await build({ stdin: entry, bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent", plugins })).outputFiles[0].text.replaceAll("</script", "<\\/script");
 const app = await bundle([browserLinkPlugin()]);
-const appInApp = await bundle([noBrowserClient]);
+const scriptName = (name, text) => `${name}.${createHash("sha256").update(text).digest("hex")}.js`;
+const appFile = scriptName("app", app);
 // Design tokens (generated from design/app/tokens.json) and the component styles, ahead of the page's own rules.
 const styles = `<style>\n${["ash-tokens.css", "ash-ui.css", "home.css"].map((f) => readFileSync(join(ui, f), "utf8").trim()).join("\n")}\n</style>`;
 const html = readFileSync(join(ui, "index.html"), "utf8").replace("<!-- ash-style -->", () => styles);
 if (!html.includes("<!-- ui-app -->")) throw new Error("UI app marker missing");
 if (!html.includes("--you-soft")) throw new Error("UI style marker missing");
 // External browser scripts can be streamed/compiled independently of the HTML parser.
-const generatedHtml = html.replace("<!-- ui-app -->", '<script defer src="/app.js"></script>');
+const generatedHtml = html.replace("<!-- ui-app -->", `<script defer src="/${appFile}"></script>`);
 const assetRoot = join(ui, "../../android/app/src/main/assets/ash-ui");
-const nativeBootstrap = readFileSync(join(ui, "js/native-bootstrap.js"), "utf8").replaceAll("</script", "<\\/script");
-// A file is shown from its bytes (a blob for an image, srcdoc for a page): the page loads nothing from anywhere.
-const assetHtml = html.replace("<!-- ui-app -->", () => `<script>${appInApp}</script>`).replace("<head>", `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'; base-uri 'none'">`)
-  .replace("</body>", `<script>${nativeBootstrap}</script>\n</body>`);
+const nativeBootstrap = readFileSync(join(ui, "js/native-bootstrap.js"), "utf8");
+const bootstrapFile = scriptName("native-bootstrap", nativeBootstrap);
+// Classic deferred scripts execute in order: register native boot before the bridge can answer hello synchronously.
+// File previews still use blob/srcdoc; packaged scripts load only from the same appassets origin.
+const assetHtml = html.replace("<!-- ui-app -->", `<script defer src="${appFile}"></script>`).replace("<head>", `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'; base-uri 'none'">`)
+  .replace("</body>", `<script defer src="${bootstrapFile}"></script>\n</body>`);
+assertNoInlineScripts(assetHtml);
 mkdirSync(join(assetRoot, "avatars"), { recursive: true });
 writeFileSync(join(assetRoot, "index.html"), assetHtml);
+writeFileSync(join(assetRoot, appFile), app);
+writeFileSync(join(assetRoot, bootstrapFile), nativeBootstrap);
+for (const file of readdirSync(assetRoot))
+  if (/^(?:app|native-bootstrap)(?:\.[a-f0-9]{64})?\.js$/.test(file) && file !== appFile && file !== bootstrapFile)
+    unlinkSync(join(assetRoot, file));
 writeFileSync(join(assetRoot, "manifest.webmanifest"), readFileSync(join(ui, "manifest.webmanifest")));
 writeFileSync(join(assetRoot, "icon.svg"), readFileSync(join(ui, "icon.svg")));
 for (const face of readdirSync(join(ui, "avatars")).filter((f) => f.endsWith(".webp")))
@@ -46,6 +53,6 @@ const avatars = Object.fromEntries(readdirSync(join(ui, "avatars")).filter((f) =
 writeFileSync(
   join(ui, "../core/src/edges/link-server/ui.generated.ts"),
   `// GENERATED by tools/gen-ui.mjs from packages/web/ — edit those files, then \`npm run gen:ui\`.\n\n` +
-    `export const UI_HTML: string = ${JSON.stringify(generatedHtml)};\n\nexport const UI_JS: string = ${JSON.stringify(app)};\n\nexport const WEB_MANIFEST: string = ${read("manifest.webmanifest")};\n\nexport const ICON_SVG: string = ${read("icon.svg")};\n\n` +
+    `export const UI_HTML: string = ${JSON.stringify(generatedHtml)};\n\nexport const UI_JS: string = ${JSON.stringify(app)};\n\nexport const UI_JS_FILE: string = ${JSON.stringify(appFile)};\n\nexport const WEB_MANIFEST: string = ${read("manifest.webmanifest")};\n\nexport const ICON_SVG: string = ${read("icon.svg")};\n\n` +
     `export const AVATARS: Record<string, string> = ${JSON.stringify(avatars, null, 1)};\n`,
 );

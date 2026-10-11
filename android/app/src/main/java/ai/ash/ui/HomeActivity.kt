@@ -143,7 +143,12 @@ class HomeActivity : Activity() {
                 if (u.scheme == "https" && u.host == "appassets.androidplatform.net" && u.port == -1 &&
                     u.encodedPath?.startsWith("/assets/ash-ui/") == true && u.encodedPath?.contains("..") != true &&
                     u.query == null && u.fragment == null) {
-                    assetLoader.shouldInterceptRequest(u)?.let { return it }
+                    assetLoader.shouldInterceptRequest(u)?.let {
+                        // The fixed page rereads on update; content-addressed scripts keep the loader's long cache.
+                        if (u.lastPathSegment == "index.html")
+                            it.responseHeaders = it.responseHeaders.orEmpty() + ("Cache-Control" to "no-cache")
+                        return it
+                    }
                 }
                 return forbidden()
             }
