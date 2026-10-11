@@ -2,6 +2,9 @@ package ai.ash.apps
 
 import ai.ash.BuildConfig
 import ai.ash.R
+import ai.ash.ui.design.AshPage
+import ai.ash.ui.design.AshTokens
+import ai.ash.ui.design.AshUi
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -57,15 +60,10 @@ class AppActivity : Activity() {
     private var info: AppInfo? = null
     private var icon: Bitmap? = null
     private lateinit var root: LinearLayout
-    private lateinit var bar: LinearLayout
-    private lateinit var iconView: ImageView
-    private lateinit var nameView: TextView
-    private lateinit var tabs: LinearLayout
-    private lateinit var tabScroll: HorizontalScrollView
+    private lateinit var titleBox: LinearLayout
+    private lateinit var tabHost: FrameLayout
     private lateinit var content: FrameLayout
-    private lateinit var notice: LinearLayout
-    private lateinit var noticeText: TextView
-    private lateinit var noticeButton: Button
+    private lateinit var notice: FrameLayout
     private var surface: String? = null
     private var page: Page? = null
 
@@ -118,30 +116,14 @@ class AppActivity : Activity() {
     private fun theme() = if (Ui.night(this)) "dark" else "light"
 
     private fun build() {
-        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(d(4), d(4), d(4), d(4)) }
-        bar.addView(TextView(this).apply {
-            text = "←"; textSize = 20f; gravity = Gravity.CENTER; contentDescription = "返回"
-            setOnClickListener { moveTaskToBack(true) }
-        }, LinearLayout.LayoutParams(d(44), d(44)))
-        iconView = ImageView(this).apply { setImageResource(R.drawable.ic_launcher); scaleType = ImageView.ScaleType.FIT_CENTER }
-        bar.addView(iconView, LinearLayout.LayoutParams(d(26), d(26)))
-        nameView = TextView(this).apply { text = appId; textSize = 16f; typeface = Typeface.DEFAULT_BOLD; setPadding(d(10), 0, d(8), 0); maxLines = 1 }
-        bar.addView(nameView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(TextView(this).apply {
-            text = "⋯"; textSize = 20f; gravity = Gravity.CENTER; contentDescription = "更多"
-            setOnClickListener { v -> menu(v) }
-        }, LinearLayout.LayoutParams(d(44), d(44)))
-        root.addView(bar)
-        tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(d(8), 0, d(8), d(4)) }
-        tabScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(tabs); visibility = View.GONE }
-        root.addView(tabScroll)
+        root = AshPage.screen(this)
+        titleBox = AshUi.hstack(this, 8).apply { gravity = Gravity.CENTER }
+        val more = AshUi.iconButton(this, AshPage.icon(this, R.drawable.ash_ic_more), "更多") { menu(titleBox) }
+        root.addView(AshPage.navbar(this, null, "返回", trailing = more, center = titleBox) { moveTaskToBack(true) })
+        tabHost = FrameLayout(this).apply { visibility = View.GONE }
+        root.addView(tabHost)
         content = FrameLayout(this)
-        notice = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(d(32), d(32), d(32), d(32)) }
-        noticeText = TextView(this).apply { textSize = 15f; gravity = Gravity.CENTER; text = "正在打开…" }
-        noticeButton = Button(this).apply { visibility = View.GONE }
-        notice.addView(noticeText)
-        notice.addView(noticeButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = d(16) })
+        notice = FrameLayout(this)
         content.addView(notice, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         Ui.insets(root)
@@ -151,13 +133,17 @@ class AppActivity : Activity() {
 
     private fun paint() {
         Ui.systemBars(this)
-        root.setBackgroundColor(Ui.bar(this))
-        bar.setBackgroundColor(Ui.bar(this))
-        content.setBackgroundColor(Ui.page(this))
-        nameView.setTextColor(Ui.text(this))
-        noticeText.setTextColor(Ui.muted(this))
-        for (i in 0 until bar.childCount) (bar.getChildAt(i) as? TextView)?.setTextColor(Ui.text(this))
+        root.setBackgroundColor(AshUi.p(this).bg)
+        content.setBackgroundColor(AshUi.p(this).bg)
+        paintTitle()
         renderTabs()
+    }
+
+    /** Who this is, always on show (so a page cannot pass itself off as Ash): the app's icon and its name. */
+    private fun paintTitle() {
+        titleBox.removeAllViews()
+        titleBox.addView(AshPage.appIcon(this, icon, AshPage.AppTile.FRAME, shadow = false), LinearLayout.LayoutParams(d(AshPage.AppTile.FRAME.sizeDp), d(AshPage.AppTile.FRAME.sizeDp)))
+        titleBox.addView(AshUi.text(this, info?.name ?: "", AshTokens.Type.headline, maxLines = 1))
     }
 
     private fun menu(anchor: View) {
@@ -176,35 +162,39 @@ class AppActivity : Activity() {
         m.show()
     }
 
-    private fun say(text: String, button: String? = null, act: (() -> Unit)? = null) {
+    /** Nothing to show: the empty state's own structure (what happened, why in plain words, what you can do), or a spinner while it opens. */
+    private fun say(title: String?, body: String = "", button: String? = null, act: (() -> Unit)? = null) {
         drop()
         notice.visibility = View.VISIBLE
-        noticeText.text = text
-        noticeButton.visibility = if (button != null) View.VISIBLE else View.GONE
-        noticeButton.text = button ?: ""
-        noticeButton.setOnClickListener { act?.invoke() }
+        notice.removeAllViews()
+        if (title == null) {
+            notice.addView(AshUi.Spinner(this), FrameLayout.LayoutParams(d(AshTokens.Size.icon), d(AshTokens.Size.icon), Gravity.CENTER))
+            return
+        }
+        val action = button?.let { AshUi.button(this, it, AshUi.Kind.PRIMARY) { act?.invoke() } }
+        notice.addView(AshPage.empty(this, title, body, action), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
     }
 
     /** What Ash says about this app now; then its page. */
     private fun load() {
-        say("正在打开…")
+        say(null)
         Thread({
             val result = runCatching { ash.apps().firstOrNull { it.id == appId } }
             val bitmap = if (icon == null && result.getOrNull() != null) ash.icon(appId) else icon
             main.post {
                 if (isDestroyed) return@post
                 val error = result.exceptionOrNull()
-                if (error != null) return@post say(error.message ?: "连不上 Ash", "打开 Ash") { Ash.open(this) }
-                val a = result.getOrNull() ?: return@post say("Ash 里没有这个应用（$appId）", "全部应用") {
-                    Ash.openApps(this)
-                }
+                if (error != null) return@post say("连不上 Ash", error.message ?: "打开 Ash 后再试。", "打开 Ash") { Ash.open(this) }
+                val a = result.getOrNull() ?: return@post say("Ash 里已经没有这个应用", "它可能被收回或删掉了。", "全部应用") { Ash.openApps(this) }
                 info = a
                 icon = bitmap
-                nameView.text = a.name
-                if (bitmap != null) iconView.setImageBitmap(bitmap)
+                paintTitle()
                 Ui.taskCard(this, a.name, bitmap)
-                if (!a.usable) return@post say(if (!a.enabled) "「${a.name}」已在 Ash 里停用。" else "「${a.name}」在 Ash 里批准后可用。", "打开 Ash") { Ash.open(this) }
-                if (a.surfaces.isEmpty()) return@post say("「${a.name}」没有可以打开的页面。")
+                if (!a.usable) return@post say(
+                    if (!a.enabled) "「${a.name}」现在停着" else "「${a.name}」还没批准",
+                    if (!a.enabled) "在 Ash 主页的「她的手和眼 · 应用」里重新打开就能用。" else "到应用页看看它要用什么，批准之后就能用。",
+                    if (!a.enabled) "打开 Ash" else "全部应用") { if (!a.enabled) Ash.open(this) else Ash.openApps(this) }
+                if (a.surfaces.isEmpty()) return@post say("这个应用没有页面", "「${a.name}」没有可以打开的页面。")
                 if (surface == null || a.surfaces.none { it.first == surface }) surface = a.surfaces.first().first
                 renderTabs()
                 open(surface!!)
@@ -212,29 +202,29 @@ class AppActivity : Activity() {
         }, "app-load").start()
     }
 
+    /** The app's pages as a segmented bar under the frame (only when it has more than one). */
     private fun renderTabs() {
-        if (!::tabs.isInitialized) return
+        if (!::tabHost.isInitialized) return
         val a = info
-        tabs.removeAllViews()
-        tabScroll.visibility = if (a != null && a.usable && a.surfaces.size > 1) View.VISIBLE else View.GONE
-        tabScroll.setBackgroundColor(Ui.bar(this))
-        for ((id, title) in a?.surfaces.orEmpty()) tabs.addView(TextView(this).apply {
-            text = title; textSize = 14f; setPadding(d(14), d(6), d(14), d(6))
-            val on = id == surface
-            setTextColor(if (on) Ui.ACCENT else Ui.muted(this@AppActivity))
-            typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            setOnClickListener { if (id != surface) { surface = id; renderTabs(); open(id) } }
+        tabHost.removeAllViews()
+        val surfaces = a?.surfaces.orEmpty()
+        tabHost.visibility = if (a != null && a.usable && surfaces.size > 1) View.VISIBLE else View.GONE
+        if (tabHost.visibility != View.VISIBLE) return
+        tabHost.setPadding(d(AshTokens.Space.md), d(AshTokens.Space.xxs), d(AshTokens.Space.md), d(AshTokens.Space.sm))
+        tabHost.addView(AshUi.segmented(this, surfaces.map { it.second }, surfaces.indexOfFirst { it.first == surface }) { i ->
+            val id = surfaces[i].first
+            if (id != surface) { surface = id; renderTabs(); open(id) }
         })
     }
 
     private fun open(surfaceId: String) {
-        say("正在打开…")
+        say(null)
         Thread({
             val result = runCatching { ash.surface(appId, surfaceId) }
             main.post {
                 if (isDestroyed || surface != surfaceId) return@post
                 result.onSuccess { show(it.html, it.csp) }
-                    .onFailure { say(it.message ?: "打不开这一页", "重新加载") { load() } }
+                    .onFailure { say("这一页没打开", it.message ?: "再试一次通常就好了。", "重新加载") { load() } }
             }
         }, "app-surface").start()
     }
@@ -268,7 +258,7 @@ class AppActivity : Activity() {
             safeBrowsingEnabled = true
             @Suppress("DEPRECATION") saveFormData = false
         }
-        web.setBackgroundColor(Ui.page(this))
+        web.setBackgroundColor(AshUi.p(this).bg)
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 // The page never navigates away; a link the owner tapped may open in the browser, after asking.
@@ -286,7 +276,7 @@ class AppActivity : Activity() {
             override fun onPageCommitVisible(view: WebView, url: String?) { offerPort(p) }
             override fun onPageFinished(view: WebView, url: String?) { offerPort(p) }
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                if (page === p) say("页面出错停止了", "重新加载") { load() } else runCatching { view.destroy() }
+                if (page === p) say("这一页出错停了", "重新加载一下通常就好了。", "重新加载") { load() } else runCatching { view.destroy() }
                 return true
             }
         }

@@ -206,6 +206,7 @@ class OnboardingPlanTest {
         assertEquals("brain", OnboardingPlan.partOf("kernel_battery_optimization").id)
         assertEquals("alarm", OnboardingPlan.partOf("exact_alarm").id)
         assertEquals("notify", OnboardingPlan.partOf("notifications").id)
+        assertEquals("notify", OnboardingPlan.partOf("alerts").id) // not a row of config.status: the checkup lists it, under 叫你 (HANDOFF §3)
         assertEquals("awake", OnboardingPlan.partOf("recents_lock").id)
         assertEquals("eyes", OnboardingPlan.partOf("accessibility").id)
         assertEquals("eyes", OnboardingPlan.partOf("notification_listener").id)

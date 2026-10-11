@@ -6,11 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.view.View
 import android.widget.FrameLayout
+import ai.ash.ui.design.AshUi
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import android.view.WindowInsetsController
@@ -19,11 +19,11 @@ import android.view.WindowInsetsController
 object Ui {
     fun dp(ctx: Context, v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
     fun night(ctx: Context) = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-    fun text(ctx: Context) = if (night(ctx)) Color.rgb(0xF2, 0xF2, 0xF2) else Color.rgb(0x1C, 0x1C, 0x1E)
-    fun muted(ctx: Context) = if (night(ctx)) Color.rgb(0xA0, 0xA0, 0xA6) else Color.rgb(0x6E, 0x6E, 0x73)
-    fun bar(ctx: Context) = if (night(ctx)) Color.rgb(0x1C, 0x1C, 0x1E) else Color.rgb(0xF4, 0xF4, 0xF6)
-    fun page(ctx: Context) = if (night(ctx)) Color.rgb(0x00, 0x00, 0x00) else Color.WHITE
-    const val ACCENT = 0xFFFF7A3D.toInt()
+    // The colours are the design's tokens ([ai.ash.ui.design.AshTokens]); these four are only the names the shell's screens use.
+    fun text(ctx: Context) = AshUi.p(ctx).text
+    fun muted(ctx: Context) = AshUi.p(ctx).text2
+    fun bar(ctx: Context) = AshUi.p(ctx).bg
+    fun page(ctx: Context) = AshUi.p(ctx).bg
 
     /** The space, in pixels, to keep clear on each side of a screen. */
     data class Edges(val left: Int, val top: Int, val right: Int, val bottom: Int) {

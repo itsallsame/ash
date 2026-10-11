@@ -3,12 +3,12 @@ package ai.ash.ui
 import android.content.Context
 import android.content.Intent
 
-/** The two tabs of Ash's home screen. */
-enum class HomeTab(val key: String, val label: String) {
+/** The two pages of Ash's home screen: there is no tab bar, the chat is the screen and the apps open over it (the chat's 「应用」 button). */
+enum class HomeTab(val key: String) {
     /** The chat: the packaged web UI. */
-    CHAT("chat", "对话"),
+    CHAT("chat"),
     /** The owner's apps (each one opens in its own task, in the isolated process). */
-    APPS("apps", "应用");
+    APPS("apps");
 
     companion object {
         fun of(key: String?): HomeTab? = values().firstOrNull { it.key == key }
@@ -42,13 +42,24 @@ object HomeRoute {
     fun isLauncher(action: String?, categories: Set<String>?): Boolean =
         action == Intent.ACTION_MAIN && categories?.contains(Intent.CATEGORY_LAUNCHER) == true
 
-    /** The tab bar gives way to the keyboard: with it up, the message box sits right on top of the keyboard. */
-    fun tabBarVisible(keyboardUp: Boolean): Boolean = !keyboardUp
-
     /** Whether the chat is what the owner is looking at: it is what the presence, the island and notifications go by. */
     fun chatInFront(resumed: Boolean, tab: HomeTab): Boolean = resumed && tab == HomeTab.CHAT
 
-    /** Opens Ash with the [HomeTab.APPS] tab in front (from anywhere, the apps' own process included). */
+    /** What the web page may ask the app to open (`open_native`, UI-SPLIT §3): the apps grid, or the checkup (`checkup`, `checkup/<part>`). */
+    sealed class Native {
+        object Apps : Native()
+        class Checkup(val part: OnboardingPlan.Part?) : Native()
+    }
+
+    /** The page named by an `open_native` message, or null for anything that is not one of the few names. */
+    fun nativeFor(page: String?): Native? = when {
+        page == "apps" -> Native.Apps
+        page == "checkup" -> Native.Checkup(null)
+        page != null && page.startsWith("checkup/") -> ai.ash.ui.Checkup.part(page.removePrefix("checkup/"))?.let { Native.Checkup(it) }
+        else -> null
+    }
+
+    /** Opens Ash with the [HomeTab.APPS] page in front (from anywhere, the apps' own process included). */
     fun appsIntent(ctx: Context): Intent =
         Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra(EXTRA_TAB, HomeTab.APPS.key)
 }

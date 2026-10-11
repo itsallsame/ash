@@ -31,6 +31,31 @@ class AppsBridgeTest {
         assertTrue(allows("health", "app:health", "ash.on_event"))
     }
 
+    /** The owner's words on an app (install, switch, take back) are the list screen's own, in Ash's process: never an app's page, never over the binder. */
+    @Test fun onlyTheListScreenInsideAshMaySayTheOwnersWords() {
+        fun allows(app: String?, word: String, body: String, owner: Boolean) = AppsBridgePolicy.allows(app, "service:apps", word, JSONObject(body), owner)
+        for (word in AppsBridgePolicy.OWNER_WORDS - "apps.refresh") {
+            assertTrue(word, allows(null, word, """{"id":"health"}""", owner = true))
+            assertFalse("$word over the binder", allows(null, word, """{"id":"health"}""", owner = false))
+            assertFalse("$word from an app's page", allows("health", word, """{"id":"health"}""", owner = true))
+            assertFalse("$word without an app", allows(null, word, "{}", owner = true))
+            assertFalse("$word on a made-up id", allows(null, word, """{"id":"../x"}""", owner = true))
+        }
+        assertTrue(allows(null, "apps.refresh", "{}", owner = true))
+        assertFalse(allows(null, "apps.refresh", "{}", owner = false))
+        assertFalse(allows(null, "apps.describe", """{"id":"health"}""", owner = true))
+        // the ordinary words are unchanged by it
+        assertTrue(allows(null, "apps.list", "{}", owner = true))
+        assertFalse(AppsBridgePolicy.allows(null, "app:health", "health.today", JSONObject(), owner = true))
+    }
+
+    @Test fun anOwnerCallInsideAshGoesThroughAndTheBinderSideNeverGetsTheOwnerFlag() {
+        val inside = AppsBridge(null, 1000, { 1000 }, owner = true) { request -> sent += request; answer() }
+        assertTrue(call(inside, "service:apps", "apps.enable", """{"id":"health"}""").getBoolean("ok"))
+        assertEquals("apps.enable", sent.last().getString("word"))
+        assertTrue(refused(call(bridge(null), "service:apps", "apps.enable", """{"id":"health"}""")))
+    }
+
     @Test fun thePolicyRefusesEverythingElse() {
         fun allows(app: String?, to: String, word: String, body: String = "{}") = AppsBridgePolicy.allows(app, to, word, JSONObject(body))
         // other words of service:apps (installing is the owner's, in Ash itself), other services and members

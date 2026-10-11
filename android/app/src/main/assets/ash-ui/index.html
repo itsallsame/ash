@@ -823,6 +823,12 @@ ${l.message||"\u8BFB\u53D6\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5"}`}finally{i.load
 // Nothing here may depend on which side is ready first. The page says `hello` until it hears `ready` (the native layer may
 // not have noticed the page yet), and once it is running it asks for the state of the link (`link_state`) until it has been
 // told once; after that every change is pushed. The last state told is kept, so a listener that registers late is given it.
+//
+// Two more things the pages use (they exist only here, in the app; a browser has neither, so callers check):
+//   `__ashOpenNative(page)` asks the app to open one of its own screens: "apps" (the apps grid), "checkup" (the phone's checkup),
+//   or "checkup/<part>" for one part of it (brain, alarm, notify, awake, eyes, files, location). It says whether it asked.
+//   The app tells the page how the checkup stands, once the page is up and whenever it changes: `{type:"checkup", todo, groups:[{id,
+//   todo}]}`. `__ashCheckup()` is the last one told (null before any) and `ash:checkup` is fired on window with it as `detail`.
 (() => {
   const native = globalThis.AshNative;
   if (!native || location.origin !== "https://appassets.androidplatform.net") return;
@@ -834,6 +840,7 @@ ${l.message||"\u8BFB\u53D6\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5"}`}finally{i.load
   let onFrame = null;
   let onLink = null;
   let lastLink = null;
+  let lastCheckup = null;
   const doc = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   const post = (value) => native.postMessage(JSON.stringify(value));
   const later = (fn, ms) => globalThis.setTimeout?.(fn, ms);
@@ -847,6 +854,17 @@ ${l.message||"\u8BFB\u53D6\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5"}`}finally{i.load
       post({ type: "file_save", id, name: file.name, ...(file.mime ? { mime: file.mime } : {}), b64: file.b64 });
     });
   };
+
+  const NATIVE_PAGES = /^(apps|checkup(\/(brain|alarm|notify|awake|eyes|files|location))?)$/;
+  /** Asks the app to open one of its own screens; false when the page is not known or the app has not said `ready` yet. */
+  globalThis.__ashOpenNative = (page) => {
+    if (!ready || typeof page !== "string" || !NATIVE_PAGES.test(page)) return false;
+    post({ type: "open_native", page });
+    return true;
+  };
+
+  /** The checkup as the app last told it: `{todo, groups:[{id, todo}]}`, or null. */
+  globalThis.__ashCheckup = () => lastCheckup;
 
   globalThis.__ashBrowserLogins = () => {
     if (!ready) return Promise.reject(new Error("native settings unavailable"));
@@ -891,6 +909,12 @@ ${l.message||"\u8BFB\u53D6\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5"}`}finally{i.load
     }
     if (message.type === "frame" && message.frame && typeof message.frame === "object") { onFrame?.(message.frame); return; }
     if (message.type === "link") { lastLink = message; onLink?.(message); return; }
+    if (message.type === "checkup") {
+      if (typeof message.todo !== "number" || !Array.isArray(message.groups)) return;
+      lastCheckup = { todo: message.todo, groups: message.groups.filter((g) => g && typeof g.id === "string" && typeof g.todo === "number").map((g) => ({ id: g.id, todo: g.todo })) };
+      try { if (globalThis.CustomEvent && globalThis.dispatchEvent) globalThis.dispatchEvent(new globalThis.CustomEvent("ash:checkup", { detail: lastCheckup })); } catch { /* a listener's failure is its own */ }
+      return;
+    }
     const item = pending.get(message.id);
     if (!item || message.type !== item.result) return;
     pending.delete(message.id);

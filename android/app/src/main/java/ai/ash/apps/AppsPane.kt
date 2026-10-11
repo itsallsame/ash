@@ -1,121 +1,286 @@
 package ai.ash.apps
 
 import ai.ash.R
-
+import ai.ash.ui.design.AshPage
+import ai.ash.ui.design.AshPage.AppTile
+import ai.ash.ui.design.AshTokens
+import ai.ash.ui.design.AshType
+import ai.ash.ui.design.AshUi
+import ai.ash.ui.design.Role
 import android.app.Activity
-import android.app.AlertDialog
 import android.graphics.Bitmap
-import android.graphics.Typeface
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
-import android.widget.Button
-import android.widget.ImageView
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 
 /**
- * The 「应用」 tab of Ash: the owner's apps as Ash lists them. Tap to open one in its own task (in the isolated process,
- * as before); long-press to add it to the home screen. It lives in Ash's own process, so the list comes straight from
- * Ash ([Ash] with `inProcess`) and the pages of the apps stay where they were. [view] goes into the home screen's content
- * area (which already keeps clear of the system bars and the keyboard); call [refresh] whenever it is shown; [close] when
- * the screen goes. [toChat] switches to the chat tab.
+ * 「应用」: the owner's apps as Ash lists them, as a grid of icons like a phone's home screen (Apps.html). Tap one to open it in
+ * its own task (in the isolated process, as before); long-press for 「添加到桌面」 and the app's own page of details (what it
+ * may use, its switch, taking everything back). It lives in Ash's own process, so the list comes straight from Ash ([Ash] with
+ * `inProcess`, which is also what lets it say the owner's words on an app) and the pages of the apps stay where they were.
+ * [view] goes into the home screen's content area (which already keeps clear of the system bars and the keyboard); call
+ * [refresh] whenever it is shown, [close] when the screen goes, [back] for the back key (false: nothing of its own to close,
+ * go to the chat). [toChat] leaves for the chat.
  */
 class AppsPane(private val activity: Activity, private val ash: Ash, private val toChat: () -> Unit) {
-    private val list: LinearLayout
-    private val status: TextView
-    private val retry: Button
+    val view = FrameLayout(activity)
+    private val page = FrameLayout(activity)
+    private val sheet = AshPage.Sheet(activity.window.decorView as FrameLayout)
     private val icons: MutableMap<String, Bitmap?> = java.util.Collections.synchronizedMap(HashMap())
+    private var apps: List<AppInfo>? = null
+    private var failure: String? = null
+    /** The app whose page of details is showing, or null for the grid. */
+    private var detail: String? = null
+    /** The second tap of a two-tap button (take back, install) has been asked for. */
+    private var sure = false
     @Volatile private var loading = false
     @Volatile private var closed = false
-    val view: View
 
     init {
-        val d = { v: Int -> Ui.dp(activity, v) }
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(d(20), d(16), d(20), d(20)) }
-        column.addView(TextView(activity).apply { text = "应用"; textSize = 24f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Ui.text(activity)) })
-        column.addView(TextView(activity).apply {
-            text = "你的应用，每个都有自己的页面。长按可以添加到桌面。"
-            textSize = 14f; setTextColor(Ui.muted(activity)); setPadding(0, d(6), 0, d(12))
-        })
-        status = TextView(activity).apply { textSize = 15f; setTextColor(Ui.muted(activity)); setPadding(0, d(12), 0, d(8)) }
-        column.addView(status)
-        retry = Button(activity).apply { text = "重试"; visibility = View.GONE; setOnClickListener { refresh() } }
-        column.addView(retry, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        column.addView(list)
-        view = ScrollView(activity).apply { addView(column); setBackgroundColor(Ui.page(activity)) }
+        view.addView(page, FrameLayout.LayoutParams(-1, -1))
+        render()
     }
 
-    fun close() { closed = true; ash.close() }
+    fun close() { closed = true; sheet.dismiss(animate = false); ash.close() }
+
+    /** The back key: closes the drawer, then the page of details; false when the grid itself is showing. */
+    fun back(): Boolean {
+        if (sheet.showing) { sheet.dismiss(); return true }
+        if (detail != null) { detail = null; sure = false; render(); return true }
+        return false
+    }
 
     fun refresh() {
         if (loading || closed) return
         loading = true
-        if (list.childCount == 0) status.text = "正在向 Ash 要应用列表…"
         Thread({
             val result = runCatching { ash.apps() }
             result.getOrNull()?.forEach { a -> if (!icons.containsKey(a.id)) icons[a.id] = ash.icon(a.id) }
             activity.runOnUiThread {
                 loading = false
                 if (closed || activity.isDestroyed) return@runOnUiThread
-                result.onSuccess { show(it) }.onFailure {
-                    list.removeAllViews()
-                    status.text = it.message ?: "连不上 Ash"
-                    status.visibility = View.VISIBLE
-                    retry.visibility = View.VISIBLE
-                }
+                result.onSuccess { apps = it; failure = null; if (detail != null && it.none { a -> a.id == detail }) detail = null }
+                    .onFailure { failure = it.message ?: "连不上 Ash"; if (apps == null) detail = null }
+                render()
             }
         }, "apps-list").start()
     }
 
-    private fun show(apps: List<AppInfo>) {
-        retry.visibility = View.GONE
-        status.visibility = if (apps.isEmpty()) View.VISIBLE else View.GONE
-        status.text = "还没有应用。在 Ash 里装好、批准的应用会出现在这里。"
-        list.removeAllViews()
-        for (a in apps) list.addView(row(a))
+    private fun d(v: Int) = AshUi.dp(activity, v)
+
+    /** 「取消」 under a drawer's buttons: no fill, the quiet text colour (the design's own ghost button there). */
+    private fun cancel(): View = AshUi.button(activity, "取消", AshUi.Kind.GHOST, block = true) { sheet.dismiss() }.apply { setTextColor(AshUi.p(activity).text2) }
+
+    private fun render() {
+        page.removeAllViews()
+        val a = detail?.let { id -> apps?.firstOrNull { it.id == id } }
+        page.addView(if (a != null) detailPage(a) else gridPage(), FrameLayout.LayoutParams(-1, -1))
     }
 
-    private fun row(a: AppInfo): View {
-        val d = { v: Int -> Ui.dp(activity, v) }
-        val row = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, d(12), 0, d(12))
-            isClickable = true; isLongClickable = true
-            setBackgroundResource(android.R.drawable.list_selector_background)
+    // ---------- the grid ----------
+
+    private fun gridPage(): View {
+        val screen = AshPage.screen(activity)
+        screen.addView(AshPage.navbar(activity, null, "返回对话") { toChat() })
+        val list = apps
+        when {
+            list == null && failure == null -> screen.addView(AshPage.largeTitle(activity, "应用"))
+            list == null -> {
+                screen.addView(AshPage.largeTitle(activity, "应用"))
+                screen.addView(AshPage.empty(activity, "暂时读不到应用", "$failure。读不到不代表没有，再试一次。",
+                    AshUi.button(activity, "重试", AshUi.Kind.PRIMARY) { refresh() }), LinearLayout.LayoutParams(-1, 0, 1f))
+            }
+            list.isEmpty() -> {
+                screen.addView(AshPage.largeTitle(activity, "应用"))
+                screen.addView(AshPage.empty(activity, "这里还空着", "想要什么小工具，跟 Ash 说一句，比如「帮我做个记账的小应用」。她做好、你点头之后，就会出现在这里。"),
+                    LinearLayout.LayoutParams(-1, 0, 1f))
+            }
+            else -> {
+                screen.addView(AshPage.largeTitle(activity, "应用"))
+                val blocks = mutableListOf<View>()
+                // Waiting for the owner's say: a strip above the grid, one per app.
+                list.filter { !it.granted }.forEach { blocks += banner(it) }
+                val installed = list.filter { it.granted }
+                if (installed.isNotEmpty()) {
+                    blocks += grid(installed)
+                    blocks += AshPage.foot(activity, "长按图标，可以放到手机桌面", center = true)
+                }
+                screen.addView(AshPage.scroll(activity, 22, blocks, topDp = 6).also { noClip(it) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            }
         }
-        row.addView(ImageView(activity).apply {
-            val b = icons[a.id]
-            if (b != null) setImageBitmap(b) else setImageResource(R.drawable.ic_launcher)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }, LinearLayout.LayoutParams(d(48), d(48)))
-        val text = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(d(14), 0, 0, 0) }
-        text.addView(TextView(activity).apply { this.text = a.name; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Ui.text(activity)) })
-        if (a.summary.isNotBlank()) text.addView(TextView(activity).apply {
-            this.text = a.summary; textSize = 13f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setTextColor(Ui.muted(activity))
-        })
-        if (!a.usable) text.addView(TextView(activity).apply {
-            this.text = if (!a.enabled) "已在 Ash 里停用" else "等你在 Ash 里批准"; textSize = 13f; setTextColor(Ui.ACCENT)
-        })
-        row.addView(text, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        row.setOnClickListener { open(a) }
-        row.setOnLongClickListener {
-            AlertDialog.Builder(activity).setTitle(a.name).setItems(arrayOf("打开", "添加到桌面")) { _, which ->
-                if (which == 0) open(a) else Pin.request(activity, a.id, a.name, icons[a.id])
-            }.show()
-            true
+        return screen
+    }
+
+    private fun noClip(v: View) {
+        (v as? ViewGroup)?.let { g -> g.clipChildren = false; g.clipToPadding = false; for (i in 0 until g.childCount) noClip(g.getChildAt(i)) }
+    }
+
+    /** 「露营清单想装进来」: the app has not been approved yet; 「看看」 opens its page, where the owner reads what it asks for. */
+    private fun banner(a: AppInfo): View {
+        val c = AshUi.p(activity)
+        return AshPage.panel(activity, ring = c.warnFill).apply {
+            addView(AshUi.hstack(activity, 12).apply {
+                setPadding(d(AshTokens.Space.rowX), d(AshTokens.Space.sm), d(AshTokens.Space.rowX), d(AshTokens.Space.sm))
+                addView(AshPage.appIcon(activity, icons[a.id], AppTile.BANNER, shadow = false))
+                addView(AshUi.vstack(activity).apply {
+                    addView(AshUi.text(activity, "${a.name}想装进来", AshType(15f, 20f, 600, Role.INK), maxLines = 1))
+                    addView(AshUi.text(activity, "先看看它要用什么，再决定", AshTokens.Type.caption))
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(AshPage.smallButton(activity, "看看", AshUi.Kind.PRIMARY) { detail = a.id; sure = false; render() })
+            })
         }
-        return row
+    }
+
+    /** Four to a row, 62dp icons with 8dp between the columns and 22dp between the rows. */
+    private fun grid(list: List<AppInfo>): View = AshUi.vstack(activity, 22).apply {
+        list.chunked(4).forEach { rowApps ->
+            addView(AshUi.hstack(activity, 8).apply {
+                gravity = Gravity.TOP
+                for (i in 0 until 4) {
+                    val cell = rowApps.getOrNull(i)?.let { cell(it) } ?: View(activity)
+                    addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                }
+            })
+        }
+    }
+
+    private fun cell(a: AppInfo): View {
+        val c = AshUi.p(activity)
+        val stopped = !a.enabled
+        return AshUi.vstack(activity, 8).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            isClickable = true
+            addView(FrameLayout(activity).apply {
+                addView(AshPage.appIcon(activity, icons[a.id], AppTile.GRID, shadow = !stopped, dimmed = stopped),
+                    FrameLayout.LayoutParams(d(AppTile.GRID.sizeDp), d(AppTile.GRID.sizeDp), Gravity.CENTER_HORIZONTAL))
+                // Only trouble gets a badge: a quiet app has none.
+                if (a.error.isNotBlank() && !stopped) addView(AshPage.errorBadge(activity).apply {
+                    (layoutParams as FrameLayout.LayoutParams).apply { gravity = Gravity.TOP or Gravity.END; marginEnd = d(6); topMargin = -d(5) }
+                })
+            })
+            addView(AshUi.text(activity, if (stopped) "${a.name} · 停用" else a.name, AshType(12.5f, 17f, 400, if (stopped) Role.TEXT_3 else Role.TEXT), maxLines = 2)
+                .apply { gravity = Gravity.CENTER; if (stopped) setTextColor(c.text3) })
+            setOnClickListener { open(a) }
+            setOnLongClickListener { actions(a); true }
+        }
     }
 
     private fun open(a: AppInfo) {
         if (a.usable) { activity.startActivity(Ui.appIntent(activity, a.id)); return }
-        AlertDialog.Builder(activity)
-            .setTitle("「${a.name}」还不能用")
-            .setMessage(if (!a.enabled) "它已在 Ash 里停用。到 Ash 的「设置 › 应用」里重新启用后可用。" else "到 Ash 的「设置 › 应用」里安装，或让 Ash 帮你装，批准后可用。")
-            .setPositiveButton("回到对话") { _, _ -> toChat() }
-            .setNegativeButton("取消", null)
-            .show()
+        stopped(a)
+    }
+
+    /** 「每日复盘」现在停着: says where to switch it on again. */
+    private fun stopped(a: AppInfo) {
+        sheet.show { s ->
+            s.gravity = Gravity.CENTER_HORIZONTAL
+            s.addView(AshPage.appIcon(activity, icons[a.id], AppTile.GRID, shadow = false), LinearLayout.LayoutParams(d(AppTile.GRID.sizeDp), d(AppTile.GRID.sizeDp)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+            s.addView(AshUi.text(activity, "「${a.name}」现在停着", AshTokens.Type.headline).apply { gravity = Gravity.CENTER })
+            s.addView(AshUi.text(activity, "在 Ash 主页的「她的手和眼 · 应用」里重新打开就能用。", AshTokens.Type.callout).apply { gravity = Gravity.CENTER; setPadding(d(10), 0, d(10), 0) })
+            s.addView(AshUi.button(activity, "回到 Ash", AshUi.Kind.PRIMARY, AshUi.BtnSize.LG, block = true) { sheet.dismiss(); toChat() })
+            s.addView(cancel())
+        }
+    }
+
+    /** Long-press: put it on the phone's home screen, or read about it. */
+    private fun actions(a: AppInfo) {
+        sheet.show { s ->
+            s.addView(AshUi.text(activity, a.name, AshTokens.Type.headline).apply { gravity = Gravity.CENTER })
+            if (a.usable) s.addView(AshUi.button(activity, "添加到桌面", AshUi.Kind.PRIMARY, block = true) { sheet.dismiss(); Pin.request(activity, a.id, a.name, icons[a.id]) })
+            s.addView(AshUi.button(activity, "看看它的详情", if (a.usable) AshUi.Kind.NEUTRAL else AshUi.Kind.PRIMARY, block = true) { sheet.dismiss(); detail = a.id; sure = false; render() })
+            s.addView(cancel())
+        }
+    }
+
+    // ---------- one app ----------
+
+    private fun detailPage(a: AppInfo): View {
+        val c = AshUi.p(activity)
+        val screen = AshPage.screen(activity)
+        screen.addView(AshPage.navbar(activity, null, "返回应用") { detail = null; sure = false; render() })
+        val blocks = mutableListOf<View>()
+
+        // The icon, the name, one line of how it is, and the one thing to do: open it.
+        val state = when {
+            !a.granted -> "等你批准" to c.warn
+            !a.enabled -> "已停用" to c.text3
+            a.error.isNotBlank() -> "出错了" to c.err
+            else -> "在用" to c.ok
+        }
+        blocks += AshUi.vstack(activity, 8).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 0, 0, d(6))
+            addView(AshPage.appIcon(activity, icons[a.id], AppTile.DETAIL), LinearLayout.LayoutParams(d(AppTile.DETAIL.sizeDp), d(AppTile.DETAIL.sizeDp)).apply { bottomMargin = d(AshTokens.Space.xxs) })
+            addView(AshUi.text(activity, a.name, AshTokens.Type.title).apply { gravity = Gravity.CENTER })
+            addView(AshUi.hstack(activity).apply {
+                gravity = Gravity.CENTER
+                if (a.version.isNotBlank()) addView(AshUi.text(activity, "${a.version} 版 · ", AshTokens.Type.sub))
+                addView(AshUi.text(activity, state.first, AshTokens.Type.sub, state.second))
+            })
+            if (a.summary.isNotBlank()) addView(AshUi.text(activity, a.summary, AshTokens.Type.callout).apply { gravity = Gravity.CENTER; setPadding(d(AshTokens.Space.lg), 0, d(AshTokens.Space.lg), 0) })
+            if (a.usable) addView(AshUi.button(activity, "打开", AshUi.Kind.PRIMARY) { activity.startActivity(Ui.appIntent(activity, a.id)) },
+                LinearLayout.LayoutParams(d(160), d(AshTokens.Size.button)).apply { topMargin = d(AshTokens.Space.xs) })
+        }
+
+        if (a.error.isNotBlank()) blocks += AshUi.card(activity).apply {
+            addView(AshUi.cardHeader(activity, AshUi.Tone.ERR, AshPage.icon(activity, R.drawable.ash_ic_alert), "出错了"))
+            addView(AshUi.text(activity, a.error, AshTokens.Type.callout))
+        }
+
+        // What it asks of Ash, and (once it is allowed) the switch.
+        val rows = if (a.needs.isEmpty()) listOf(AshUi.row(activity, "不需要用 Ash 的其他东西"))
+            else a.needs.map { n -> AshUi.row(activity, n.text, null, AshPage.icon(activity, needIcon(n.kind))) }
+        blocks += AshUi.group(activity, if (a.granted) "你允许它用的" else "它想用的", rows = rows, iconInset = a.needs.isNotEmpty())
+        if (a.granted) blocks += AshUi.group(activity, rows = listOf(
+            AshUi.AshSwitch(activity).let { sw ->
+                sw.set(a.enabled)
+                sw.onChange = { on -> owner(if (on) "apps.enable" else "apps.disable", a.id, if (on) "没能打开「${a.name}」" else "没能停下「${a.name}」") }
+                // The whole row is the switch's to tap (the switch itself is only 28dp high).
+                AshUi.row(activity, "在用", "关掉后先停着，它用的东西还留着", trailing = sw) { sw.performClick() }
+            }), iconInset = false)
+
+        if (!a.granted) {
+            blocks += twoTap(if (sure) "确认安装" else "安装", AshUi.Kind.PRIMARY,
+                if (sure) "安装后「${a.name}」可以用上面列出的这些；你随时可以停用或收回。" else null) {
+                if (!sure) { sure = true; render() } else { sure = false; owner("apps.install", a.id, "没能安装「${a.name}」") }
+            }
+        } else {
+            blocks += twoTap(if (sure) "再点一次，确认收回" else "收回全部权限", AshUi.Kind.DANGER,
+                if (sure) "收回后「${a.name}」会停止运行，再用要重新安装。" else null) {
+                if (!sure) { sure = true; render() } else { sure = false; owner("apps.revoke", a.id, "没能收回「${a.name}」的权限") }
+            }
+        }
+        screen.addView(AshPage.scroll(activity, 16, blocks), LinearLayout.LayoutParams(-1, 0, 1f))
+        return screen
+    }
+
+    private fun needIcon(kind: String) = when (kind) {
+        "notify" -> R.drawable.ash_ic_bell
+        "widgets" -> R.drawable.ash_ic_widget
+        "card" -> R.drawable.ash_ic_msg
+        else -> R.drawable.ash_ic_link
+    }
+
+    /** A block button (the second tap says what will happen, under it) — the pattern for taking something away or giving reach. */
+    private fun twoTap(label: String, kind: AshUi.Kind, consequence: String?, onTap: () -> Unit): View = AshUi.vstack(activity, 8).apply {
+        addView(AshUi.button(activity, label, kind, block = true, onClick = onTap))
+        consequence?.let { addView(AshPage.foot(activity, it)) }
+    }
+
+    /** One of the owner's words on an app, then the list again; if Ash did not do it, say so and show what is true now. */
+    private fun owner(word: String, id: String, failed: String) {
+        Thread({
+            val done = ash.owner(word, id)
+            activity.runOnUiThread {
+                if (closed || activity.isDestroyed) return@runOnUiThread
+                if (!done) Toast.makeText(activity, "$failed，再试一次", Toast.LENGTH_SHORT).show()
+                refresh()
+            }
+        }, "apps-owner").start()
     }
 }

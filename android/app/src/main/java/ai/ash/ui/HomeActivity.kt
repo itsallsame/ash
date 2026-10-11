@@ -39,6 +39,8 @@ import ai.ash.caps.config.Permissions
 import ai.ash.human.ChatBridge
 import ai.ash.link.Link
 import ai.ash.caps.camera.CaptureProvider
+import ai.ash.ui.design.AshUi
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -47,17 +49,17 @@ import java.io.ByteArrayInputStream
 import java.util.concurrent.Executors
 
 /**
- * Opening the app opens Ash: two tabs. 「对话」 is the packaged UI in a WebView. 「应用」 is the owner's apps ([AppsPane]); an app
- * opens in a task of its own in the isolated process, never in here. The tab bar is native (the web page, which browsers and
- * the desktop client share too, knows nothing of it). [HomeRoute] decides which tab an intent asks for. The page has no connection of its own: the frames it sends and
+ * Opening the app opens Ash: the chat, the packaged UI in a WebView, and nothing else on the screen — there is no tab bar, the
+ * bottom is the message box's. The owner's apps ([AppsPane]) open over the chat when the page asks for them (`open_native`
+ * `apps`, the 「应用」 button in its top bar); an app opens in a task of its own in the isolated process, never in here. The
+ * page also asks to open the checkup ([ConsoleActivity]) and is told how many of its items need attention ([Checkup]).
+ * [HomeRoute] decides which of the two an intent asks for. The page has no connection of its own: the frames it sends and
  * receives on the human channel are handed to and from the app's one connection by [ai.ash.human.ChatBridge], unchanged
  * (SPEC-05 §4.1). Native code only does what a page cannot: saving a file, clearing the browser's logins, the camera.
  */
 class HomeActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var content: FrameLayout
-    private lateinit var tabBar: LinearLayout
-    private val tabButtons = mutableMapOf<HomeTab, TextView>()
     private var appsPane: AppsPane? = null
     private var tab = HomeTab.CHAT
     private var resumed = false
@@ -70,6 +72,12 @@ class HomeActivity : Activity() {
     private val pageEpoch get() = gate.epoch
     /** The page attached to the chat bridge by this screen, so that closing it does not drop the page of a newer screen. */
     private var attachedPage: ChatBridge.Page? = null
+    /** Where the page is told things the app says on its own ([Checkup]): the reply proxy of the live page, and what it was last told. */
+    private var pageReply: androidx.webkit.JavaScriptReplyProxy? = null
+    private var told: String? = null
+    private var checkupBusy = false
+    private val checkupWork = Executors.newSingleThreadExecutor { r -> Thread(r, "ash-checkup-push").apply { isDaemon = true } }
+    private val checkupTick = object : Runnable { override fun run() { if (resumed) { pushCheckup(); ui.postDelayed(this, CHECKUP_MS) } } }
     /** The web page's pending <input type=file> request; answered exactly once (null = cancelled). */
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private class SaveFile(val id: String, val name: String, val bytes: ByteArray, val epoch: Long, val reply: androidx.webkit.JavaScriptReplyProxy)
@@ -78,13 +86,17 @@ class HomeActivity : Activity() {
     private var captureFile: java.io.File? = null
 
     private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    /** Which of the two themes this screen was made with: [onConfigurationChanged] comes after the resources already say the new mode, so it cannot be asked of them. */
+    private var themedNight = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         // A WebView's prefers-color-scheme follows the theme's isLightTheme only, not the system
         // night mode — so the theme is chosen here to make the ash UI follow the system.
-        setTheme(if (night) R.style.Ash_Dark else R.style.Ash_Light)
+        themedNight = night
+        setTheme(if (themedNight) R.style.Ash_Dark else R.style.Ash_Light)
         super.onCreate(savedInstanceState)
+        ai.ash.apps.Ui.systemBars(this)
         // The page holds no session of its own: everything it says goes over the app's connection.
         CookieManager.getInstance().setAcceptCookie(false)
         if (BuildConfig.ISOLATED_PROBE) WebView.setWebContentsDebuggingEnabled(true)
@@ -99,7 +111,9 @@ class HomeActivity : Activity() {
             setSupportZoom(false)
             userAgentString = "$userAgentString AshApp/0.2"
         }
-        web.setBackgroundColor(if (night) 0xFF141415.toInt() else 0xFFF7F7F5.toInt())
+        // The page follows the system's dark mode by itself (its own prefers-color-scheme styles): the WebView must not darken it a second time.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) WebSettingsCompat.setAlgorithmicDarkeningAllowed(web.settings, false)
+        web.setBackgroundColor(AshUi.p(this).bg)
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
@@ -109,7 +123,7 @@ class HomeActivity : Activity() {
                 // Child documents are never replacement main pages or native deep links.
                 if (!req.isForMainFrame) return true
                 if (u.scheme == "ash" && u.host == "console") {
-                    startActivity(Intent(this@HomeActivity, ConsoleActivity::class.java))
+                    openNative(HomeRoute.Native.Checkup(null))
                     return true
                 }
                 if (u.scheme == "ash" && u.host == "permission") {
@@ -168,8 +182,12 @@ class HomeActivity : Activity() {
                         val sink = ChatBridge.Page { text -> ui.post { if (pageEpoch == live) runCatching { reply.postMessage(text) } } }
                         attachedPage = sink
                         chat.attach(sink)
+                        // The page is also told how the phone's checkup stands (the home page's 「这台手机」).
+                        pageReply = reply; told = null
+                        ui.post { pushCheckup() }
                     }
                 }
+                "open_native" -> ui.post { if (pageEpoch == epoch) HomeRoute.nativeFor(input.optString("page"))?.let { openNative(it) } }
                 // The page asks what state the link is in (it is told at `hello`, but may have come late or missed it).
                 "link_state" -> chat.resendLink()
                 "frame" -> input.optJSONObject("frame")?.let { frame -> bridgeWork.execute { if (pageEpoch == epoch) chat.fromPage(frame) } }
@@ -185,17 +203,12 @@ class HomeActivity : Activity() {
 
         // Edge to edge (targetSdk 35): a WebView ignores its own padding, so the frame around it keeps clear of the bars and
         // the keyboard, and the page is laid out in what is left (its composer then sits on top of the keyboard).
-        // The tab bar sits under the content inside the same padding (the bars and the keyboard), and gives way to the keyboard.
-        content = FrameLayout(this).apply { addView(web, FrameLayout.LayoutParams(-1, -1)) }
-        tabBar = buildTabBar()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(if (night) 0xFF141415.toInt() else 0xFFF7F7F5.toInt())
-            addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
-            addView(tabBar, LinearLayout.LayoutParams(-1, ai.ash.apps.Ui.dp(this@HomeActivity, 52)))
+        content = FrameLayout(this).apply {
+            setBackgroundColor(AshUi.p(this@HomeActivity).bg)
+            addView(web, FrameLayout.LayoutParams(-1, -1))
         }
-        ai.ash.apps.Ui.insets(root) { keyboardUp -> tabBar.visibility = if (HomeRoute.tabBarVisible(keyboardUp)) View.VISIBLE else View.GONE }
-        setContentView(root)
+        ai.ash.apps.Ui.insets(content)
+        setContentView(content)
         focusInput = intent?.getBooleanExtra(EXTRA_FOCUS_INPUT, false) == true
         // A recreate (dark mode) keeps the tab; otherwise the intent says.
         val saved = HomeTab.of(savedInstanceState?.getString(STATE_TAB))
@@ -228,21 +241,7 @@ class HomeActivity : Activity() {
         outState.putString(STATE_TAB, tab.key)
     }
 
-    private fun buildTabBar(): LinearLayout {
-        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(ai.ash.apps.Ui.bar(this@HomeActivity)) }
-        for (t in HomeTab.values()) {
-            val button = TextView(this).apply {
-                text = t.label; textSize = 15f; gravity = Gravity.CENTER
-                isClickable = true
-                setOnClickListener { showTab(t) }
-            }
-            tabButtons[t] = button
-            bar.addView(button, LinearLayout.LayoutParams(0, -1, 1f))
-        }
-        return bar
-    }
-
-    /** Brings [next] to the front: the chat page or the apps list (made the first time it is wanted). */
+    /** Brings [next] to the front: the chat page, or the apps over it (made the first time it is wanted). */
     private fun showTab(next: HomeTab) {
         tab = next
         if (next == HomeTab.APPS && appsPane == null) {
@@ -251,13 +250,29 @@ class HomeActivity : Activity() {
         }
         web.visibility = if (next == HomeTab.CHAT) View.VISIBLE else View.GONE
         appsPane?.view?.visibility = if (next == HomeTab.APPS) View.VISIBLE else View.GONE
-        for ((t, b) in tabButtons) {
-            val on = t == next
-            b.setTextColor(if (on) ai.ash.apps.Ui.ACCENT else ai.ash.apps.Ui.muted(this))
-            b.typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-        }
         if (next == HomeTab.APPS && resumed) appsPane?.refresh()
         syncFront()
+    }
+
+    /** What the web page asked to open (`open_native`): the apps over the chat, or the checkup page (a part of it, when one is named). */
+    private fun openNative(page: HomeRoute.Native) = when (page) {
+        is HomeRoute.Native.Apps -> showTab(HomeTab.APPS)
+        is HomeRoute.Native.Checkup -> startActivity(Intent(this, ConsoleActivity::class.java).apply { page.part?.let { putExtra(ConsoleActivity.EXTRA_PART, it.id) } })
+    }
+
+    /** Tells the page how many items of the checkup need attention (`{type:"checkup", todo, groups}`), when that has changed; read off the main thread. */
+    private fun pushCheckup() {
+        val reply = pageReply ?: return
+        val epoch = pageEpoch
+        if (epoch == 0L || checkupBusy) return
+        checkupBusy = true
+        checkupWork.execute {
+            val json = runCatching { Checkup.summary(this).toJson().toString() }.getOrNull()
+            ui.post {
+                checkupBusy = false
+                if (json != null && pageEpoch == epoch && json != told) { told = json; runCatching { reply.postMessage(json) } }
+            }
+        }
     }
 
     /** What the rest of Ash goes by to know the owner is looking at the chat: not when the apps tab is in front. */
@@ -287,6 +302,9 @@ class HomeActivity : Activity() {
         HandRuntime.appOpened(this)
         Link.get(this).presence.tell()
         if (tab == HomeTab.APPS) appsPane?.refresh()
+        // Back from a system settings page the checkup may have changed: look now, then every few seconds while in front.
+        ui.removeCallbacks(checkupTick)
+        checkupTick.run()
         // The kernel package: not installed, the guide's first step offers to install it (once); not running, it is started from here (in front, the app may).
         when (KernelGate.action(KernelLauncher.state(this), 0)) {
             KernelGate.Action.INSTALL -> OnboardingActivity.offerKernel(this)
@@ -297,6 +315,7 @@ class HomeActivity : Activity() {
 
     override fun onPause() {
         resumed = false
+        ui.removeCallbacks(checkupTick)
         ai.ash.host.AppState.homeVisible = false
         HandRuntime.appLeft()
         Link.get(this).presence.tell()
@@ -451,13 +470,15 @@ class HomeActivity : Activity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if ((newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) != (if (night) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)) recreate()
+        // The system switched between light and dark: the page's prefers-color-scheme follows the theme it was made with, so the screen is made again (it keeps its page).
+        if (((newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES) != themedNight) recreate()
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (tab == HomeTab.APPS) { showTab(HomeTab.CHAT); return }
-        web.evaluateJavascript("(() => { const f = document.querySelector('.files-view[open]'); if (!f) return false; f.close(); return true; })()") { closed ->
+        if (tab == HomeTab.APPS) { if (appsPane?.back() != true) showTab(HomeTab.CHAT); return }
+        // The page's home pages come first (`__ashHomeBack` closes the top-most layer of 「她的主页」 and says so; false: none is open), then the file view, then the page history.
+        web.evaluateJavascript(BACK_SCRIPT) { closed ->
             if (closed != "true") { if (web.canGoBack()) web.goBack() else moveTaskToBack(true) }
         }
     }
@@ -468,6 +489,7 @@ class HomeActivity : Activity() {
         chat.detach(attachedPage)
         appsPane?.close()
         bridgeWork.shutdown()
+        checkupWork.shutdown()
         answerFiles(null)
         web.destroy()
         super.onDestroy()
@@ -481,6 +503,9 @@ class HomeActivity : Activity() {
         const val EXTRA_FOCUS_INPUT = "ai.ash.extra.FOCUS_INPUT"
         private const val STATE_TAB = "ai.ash.state.TAB"
         private const val CHAT_TAG = "ash.chat"
+        private const val CHECKUP_MS = 5_000L
+        private const val BACK_SCRIPT = "(() => { try { if (typeof window.__ashHomeBack === 'function' && window.__ashHomeBack() === true) return true; } catch (e) {} " +
+            "const f = document.querySelector('.files-view[open]'); if (!f) return false; f.close(); return true; })()"
         private const val UI_ASSET_ORIGIN = "https://appassets.androidplatform.net"
         private const val UI_ASSET_URL = "$UI_ASSET_ORIGIN/assets/ash-ui/index.html"
         private const val REQ_FILES = 7101

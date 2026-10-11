@@ -85,13 +85,14 @@ object OnboardingPlan {
 
     /**
      * The parts in the checkup's order. Where HANDOFF §3 lists an item it is in that part; the rest are put by meaning:
-     * reading notifications is one of her eyes ([eyes]); the calendar is read so that she can remind ahead ([alarm]).
+     * reading notifications is one of her eyes ([eyes]); the calendar is read so that she can remind ahead ([alarm]); the alert sound and vibration
+     * (not a row of `config.status`, the checkup lists it) is how she calls the owner ([notify]).
      * An item no part lists belongs to the last part ([partOf]).
      */
     val PARTS = listOf(
         Part("brain", "大脑", listOf("kernel_battery_optimization", "kernel_autostart")),
         Part("alarm", "闹钟", listOf("exact_alarm", "calendar")),
-        Part("notify", "叫你", listOf("notifications")),
+        Part("notify", "叫你", listOf("notifications", "alerts")),
         Part("awake", "在后台醒着", listOf("battery_optimization", "autostart", "recents_lock")),
         Part("eyes", "眼睛和手", listOf("accessibility", "notification_listener", "screen_recovery", "overlay", "shizuku")),
         Part("files", "照片和文件", listOf("photos", "all_files", "write_settings", "usage_access")),
@@ -101,11 +102,14 @@ object OnboardingPlan {
     /** The part an item belongs to (an item no part lists: the last part). */
     fun partOf(item: String): Part = PARTS.firstOrNull { item in it.items } ?: PARTS.last()
 
+    /** Items of a part that only the checkup lists (they are not rows the guide asks). */
+    private val CHECKUP_ONLY = setOf("alerts")
+
     /** The order the guide goes through the parts: reach the owner first, the optional senses last. */
     private val ASK_PARTS = listOf("notify", "alarm", "awake", "brain", "eyes", "files", "location")
 
     /** The order the guide asks the items in: by part ([ASK_PARTS]), in the order of each part's list. */
-    val ASK_ORDER: List<String> = ASK_PARTS.flatMap { id -> PARTS.first { it.id == id }.items }
+    val ASK_ORDER: List<String> = ASK_PARTS.flatMap { id -> PARTS.first { it.id == id }.items }.filter { it !in CHECKUP_ONLY }
 
     /** The parts the guide shows dots for: those that have an item to ask or that was asked (as [dots], by part, in [ASK_PARTS] order). */
     fun dotParts(kernel: KernelState, rows: List<Row>, skipped: Set<String>, visited: Collection<String>): List<String> {
