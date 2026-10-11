@@ -24,7 +24,7 @@ export interface RelayOwner {
 /** Why the relay cannot be used, in a fixed vocabulary. Only `unreachable` is retried; the others need the owner. */
 export type RelayProblem = "claimed_by_other" | "bad_secret" | "missing_secret" | "unsupported" | "unreachable";
 export class RelayError extends Error {
-  constructor(readonly problem: RelayProblem, message: string) { super(message); this.name = "RelayError"; }
+  constructor(readonly problem: RelayProblem, message: string, cause?: unknown) { super(message, cause === undefined ? undefined : { cause }); this.name = "RelayError"; }
 }
 /**
  * The signature as 64-byte r||s (what WebCrypto verifies), whatever the keystore gave. The relay takes either form and hands the
@@ -48,6 +48,39 @@ const problemOf = (error: unknown): RelayProblem => {
   }
   return "unreachable";
 };
+
+/**
+ * What went wrong reaching the relay, told to a person (and an agent reading `gateway.status`): what happened, why it may be,
+ * and what can be done. Nothing the relay or the network said goes in: a relay's answer can be a whole web page (an error page
+ * of the host, a 404 of a deleted Worker), so the text is chosen by what kind of failure it was. The HTTP status, when there is
+ * one, comes back beside it.
+ */
+export function relayErrorInfo(error: unknown): { text: string; status?: number } {
+  if (error instanceof RelayError) {
+    switch (error.problem) {
+      case "claimed_by_other": return { text: "这个中转站已经被另一个主人认领了，这台手机进不去；可以换一个中转站，或重新部署一个自己的。" };
+      case "bad_secret": return { text: "认领中转站用的密钥对不上；可以重新部署中转站，或重新填写密钥。" };
+      case "missing_secret": return { text: "这个中转站还没被认领，而且手机上没有认领用的密钥；可以重新部署一个中转站。" };
+      case "unsupported": return { text: "中转站和这台手机说的不是同一个版本；可以重新部署中转站，或升级 Ash。" };
+      default: if (error.cause !== undefined) return relayErrorInfo(error.cause);
+    }
+  }
+  if (error instanceof GatewayError) {
+    if (error.code === "bad_mac") return { text: "认领中转站用的密钥对不上；可以重新部署中转站，或重新填写密钥。", status: error.status || undefined };
+    if (error.code === "already_claimed") return { text: "这个中转站已经被另一个主人认领了，这台手机进不去；可以换一个中转站，或重新部署一个自己的。", status: error.status || undefined };
+    const status = error.status;
+    if (status === 404) return { status, text: "中转站地址找不到（404），可能已被删除或地址填错；可以重新部署，或换一个地址。" };
+    if (status === 401 || status === 403) return { status, text: `中转站不让这台手机进（${status}），可能是密钥不对或已被别人认领；可以重新认领，或换一个中转站。` };
+    if (status === 429) return { status, text: "中转站现在请求太多（429），过一会儿会自动再试。" };
+    if (status >= 500) return { status, text: `中转站那边出了问题（${status}），会自动重试；一直不好的话，可以重新部署中转站。` };
+    if (status >= 400) return { status, text: `中转站没有接受这次请求（${status}），地址可能不对；可以重新部署，或换一个地址。` };
+    if (error.code === "timeout" || error.code === "ws_error") return { text: "连不上中转站，网络不通或太慢；会自动重试，也可以检查网络和地址。" };
+  }
+  if (error instanceof Error && (/timed out$/.test(error.message) || error.name === "TimeoutError" || error.name === "AbortError" || error instanceof TypeError)) {
+    return { text: "连不上中转站，网络不通或太慢；会自动重试，也可以检查网络和地址。" };
+  }
+  return { text: "连接中转站没成功；会自动重试，一直不好的话，检查地址或重新部署。" };
+}
 
 /** A device as the relay lists it: its grants and whether it is connected to the relay now. */
 export interface RelayDevice { id: string; name: string; permissions: string[]; online: boolean; revoked: boolean }
@@ -155,6 +188,7 @@ export class Relay {
   private claimedByOwner: boolean | null = null;
   private problemNow: RelayProblem | null = null;
   private lastErrorText: string | null = null;
+  private lastErrorStatus: number | null = null;
   private list: RelayDevice[] = [];
   private readonly requests = new Map<string, RelayPairRequest>();
   private readonly browsers = new Map<string, DeviceStream>();
@@ -181,7 +215,10 @@ export class Relay {
   get claimed(): boolean | null { return this.claimedByOwner; }
   /** Set when the relay refused in a way retrying cannot help. */
   get problem(): RelayProblem | null { return this.problemNow; }
+  /** Why the last attempt failed, in words for a person ([relayErrorInfo]); null while connected. */
   get lastError(): string | null { return this.lastErrorText; }
+  /** The HTTP status the relay answered with in the last failure, when it answered. */
+  get lastStatus(): number | null { return this.lastErrorStatus; }
   devices(): RelayDevice[] { return this.list.map((d) => ({ ...d, permissions: [...d.permissions] })); }
 
   // ---- reaching the relay ----------------------------------------------------------------------------------------------
@@ -193,7 +230,7 @@ export class Relay {
   async ensureClaimed(): Promise<void> {
     let health: Record<string, unknown>;
     try { health = await timeoutAfter(this.client.health(), this.timeoutMs, "relay health"); }
-    catch (error) { throw new RelayError(problemOf(error), error instanceof Error ? error.message : String(error)); }
+    catch (error) { throw new RelayError(problemOf(error), error instanceof Error ? error.message : String(error), error); }
     if (health.protocol !== undefined && health.protocol !== "ash-gw/1") throw new RelayError("unsupported", "the relay speaks a protocol this hub does not");
     if (health.claimed === true) {
       if (health.owner_id !== this.o.owner.id) { this.claimedByOwner = false; throw new RelayError("claimed_by_other", "the relay is claimed by another owner"); }
@@ -204,7 +241,7 @@ export class Relay {
     const secret = this.o.claimSecret?.();
     if (!secret) throw new RelayError("missing_secret", "the relay is not claimed and there is no claim secret to claim it with");
     try { await timeoutAfter(this.client.claim(secret, this.o.name ?? "ash"), this.timeoutMs, "relay claim"); }
-    catch (error) { throw new RelayError(problemOf(error), error instanceof Error ? error.message : String(error)); }
+    catch (error) { throw new RelayError(problemOf(error), error instanceof Error ? error.message : String(error), error); }
     this.claimedByOwner = true;
   }
 
@@ -243,11 +280,12 @@ export class Relay {
         const session = await timeoutAfter(this.client.authenticate(), this.timeoutMs, "relay sign-in");
         const conn = await timeoutAfter(this.client.connect(session), this.timeoutMs, "relay connect");
         this.problemNow = null;
-        this.lastErrorText = null;
+        this.lastErrorText = null; this.lastErrorStatus = null;
         await this.serve(conn);
         delay = initialMs;
       } catch (error) {
-        this.lastErrorText = error instanceof Error ? error.message : String(error);
+        const info = relayErrorInfo(error);
+        this.lastErrorText = info.text; this.lastErrorStatus = info.status ?? null;
         this.problemNow = problemOf(error);
         this.log("relay unavailable", error);
         if (this.problemNow !== "unreachable") return;
