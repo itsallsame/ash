@@ -78,3 +78,5 @@ For restored cached full text, `options.shouldBuild(id)` can pause parser/DOM wo
 ### Browser protocol checks
 
 `gen:ui` compiles the browser transport's frame validators with Ajv standalone from `packages/sdk/schema/link/`. Opening the page executes these generated checks directly; it does not initialize the schema compiler. Protocol constants, sender roles, validation results and first-error text follow the same SDK schemas. Fixture comparisons cover all frame types with runtime code generation disabled. Node clients and the native transport keep their existing SDK paths; no frame checks are skipped.
+
+After changing SDK frame definitions, run `npm run gen:link-schema` to update the schema files, then `npm run gen:ui` to rebuild the browser checks and pages. The SDK and browser fixture tests verify that the generated schemas and validators remain in sync.
