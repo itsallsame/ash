@@ -3,6 +3,7 @@ import { fill } from "./home-dom.js";
 import { Files } from "./files.js";
 import { listBodies, listDirectory } from "./body.js";
 import { btn, group, h, list, note, row, skeleton } from "./home-ui.js";
+import { isSettingsFile } from "./home-text.js";
 
 let reader = null;
 /** The one file reader of the page (a dialog); the conversation's links use their own instance of the same class. */
@@ -18,14 +19,14 @@ export function filesPage(ctx, screen, arg) {
     if (state.failed) { fill(box, note(state.failed, "warn"), btn("重试", "a-btn btn-neutral btn-sm", () => void load())); return; }
     if (!state.listing) return;
     const where = state.bodies.length > 1 ? h("div", { class: "seg", role: "tablist" }, state.bodies.map((body) => btn(body.body === "body:main" ? "她的容器" : body.name || body.body, state.body === body.body ? "on" : "", () => { state.body = body.body; state.path = ""; void load(); }, { role: "tab", "aria-selected": String(state.body === body.body) }))) : null;
-    const entries = [...state.listing.entries].sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name));
+    const entries = [...state.listing.entries].filter((entry) => state.path || !isSettingsFile(entry.name)).sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name));
     const rows = entries.map((entry) => {
       const dir = entry.type === "directory";
       const child = state.path ? `${state.path}/${entry.name}` : entry.name;
       return row({ icon: dir ? "folder" : "file", tone: dir ? "" : "you", title: entry.name, sub: dir ? null : Number.isFinite(entry.size) ? sizeText(entry.size) : null, onClick: () => { if (dir) { state.path = child; void load(); } else void files.open({ workspace: state.body, path: child }); } });
     });
-    const up = state.path ? row({ icon: "back", title: "上一级", sub: state.path, onClick: () => { state.path = state.path.split("/").slice(0, -1).join("/"); void load(); } }) : null;
-    fill(box, where, group(state.path || "", list(...(up ? [up] : []), ...(rows.length ? rows : [row({ title: "此目录为空" })]))),
+    const up = state.path ? row({ icon: "back", title: "上一级", sub: null, onClick: () => { state.path = state.path.split("/").slice(0, -1).join("/"); void load(); } }) : null;
+    fill(box, where, group(state.path.split("/").pop() || "", list(...(up ? [up] : []), ...(rows.length ? rows : [row({ title: "此目录为空" })]))),
       state.listing.truncated ? note("只显示了前面一部分") : null);
   };
   async function load() {

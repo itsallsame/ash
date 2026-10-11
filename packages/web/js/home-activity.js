@@ -4,6 +4,7 @@ import { activityByDay, chipLabel } from "./home-model.js";
 import { btn, h, ico } from "./home-ui.js";
 import { duration, hhmm, fill } from "./home-dom.js";
 import { readAgents } from "./home-data.js";
+import { HELPER } from "./home-text.js";
 import { outcomeText } from "./activity-model.js";
 
 const OUTCOME_TONE = { running: "her", completed: "ok", cancelled: "3", error: "err", ended: "3" };
@@ -55,7 +56,7 @@ export function activityPage(ctx, screen, arg) {
     return { text, next_offset: Number.isSafeInteger(data.next_offset) ? data.next_offset : null };
   };
 
-  const titleOf = (turn) => turn.background ? `${state.agents.get(turn.agent) ?? turn.agent?.replace(/^agent:/, "") ?? ""} 在后台工作`.trim() : turn.title || "对话";
+  const titleOf = (turn) => turn.background ? `${state.agents.get(turn.agent) ?? HELPER} 在后台工作`.trim() : turn.title || "对话";
   const turnEl = (turn, now, askable) => {
     const out = outcomeText(turn);
     const open = state.open.has(turn.id) || (!state.seen.has(turn.id) && (out.key === "running" || turn.id === state.latest));

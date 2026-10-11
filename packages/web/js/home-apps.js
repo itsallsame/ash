@@ -30,7 +30,7 @@ export function appsPage(ctx, screen) {
     const waiting = apps.filter((app) => app.granted !== true).length;
     const grid = h("div", { class: "hm-appgrid", id: "homeAppsList" }, apps.map((app) => h("button", { type: "button", class: "hm-appcell", dataset: { appId: app.id }, onclick: () => ctx.go("app", app.id) },
       h("span", { class: "hm-appic" }, tile(app), clean(app.error, 10) ? h("span", { class: "hm-appbad", "aria-label": "出错了" }) : null),
-      h("span", { class: "hm-appname" }, clean(app.name, 12) || app.id, app.granted === true && app.enabled !== true ? h("span", { class: "c-3" }, " · 停用") : null))));
+      h("span", { class: "hm-appname" }, clean(app.name, 12) || "应用", app.granted === true && app.enabled !== true ? h("span", { class: "c-3" }, " · 停用") : null))));
     fill(box, waiting ? h("div", { class: "banner hm-bannerwarn" }, ico("shield", "i-s"), `${waiting} 个应用等你批准`) : null, grid, btn("重新查找应用", "a-btn btn-ghost btn-block", () => void load("apps.refresh"), { id: "homeAppsRefresh" }));
   };
   async function load(word = "apps.list") {
@@ -54,14 +54,14 @@ export function appPage(ctx, screen, id) {
     } catch (error) {
       if (error?.code === "stale") return;
       await load().catch(() => {});
-      state.status = word === "apps.enable" && error?.code === "not_found" ? `「${clean(app?.name, 40)}」的文件夹已经不在了，启用不了；可以点「收回全部权限」把它卸掉。` : `「${clean(app?.name, 40) || id}」没有确认完成；上面是现在的状态，可以再试一次。`;
+      state.status = word === "apps.enable" && error?.code === "not_found" ? `「${clean(app?.name, 40)}」的文件夹已经不在了，启用不了；可以点「收回全部权限」把它卸掉。` : `「${clean(app?.name, 40) || "这个应用"}」没有确认完成；上面是现在的状态，可以再试一次。`;
     }
     state.busy = false; state.armed = null;
     if (screen.alive()) draw();
   };
   const draw = () => {
     if (!app) return;
-    const name = clean(app.name, 40) || app.id;
+    const name = clean(app.name, 40) || "未命名应用";
     const granted = app.granted === true;
     const needs = (Array.isArray(app.needs) ? app.needs : []).map(needLine).filter(Boolean);
     const two = (word, label, cls, done, confirm, warn) => {

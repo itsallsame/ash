@@ -13,9 +13,23 @@ export function normalizeClockList(data) {
     item.every != null && (!Number.isSafeInteger(item.every) || item.every < 60) ||
     !human(item.label) || !human(item.blocked))) throw new Error("暂时读不到计划（不代表没有）。");
   return timers.map((item) => ({ id: item.id, next: item.next, every: Number.isSafeInteger(item.every) && item.every >= 60 ? item.every : null,
-      to: typeof item.to === "string" ? item.to : null, word: typeof item.word === "string" ? item.word : null,
+      to: typeof item.to === "string" ? item.to : null, by: typeof item.created_by === "string" ? item.created_by : null, word: typeof item.word === "string" ? item.word : null,
       label: typeof item.label === "string" ? item.label : "", blocked: typeof item.blocked === "string" ? "请稍后再看" : null }));
 }
+
+/**
+ * The plans the system makes for its own upkeep (reloading memory, waking on a pulse, whatever is added later) are not the owner's
+ * to read or delete. They are told by what they are, not by a list of names: made by a service; aimed at a service (the owner's
+ * and her agents' plans wake an agent or speak to a person); or carrying an internal name, which is a code and not words
+ * (`pulse:wake:1791…`: a word, a colon, more, no space; or a bare code with a long run of digits). A name with a space or in
+ * Chinese is a person's words.
+ */
+export const isSystemPlan = (timer) =>
+  /^service:/.test(timer?.by ?? "") || /^service:/.test(timer?.to ?? "") ||
+  /^[a-z][a-z0-9_-]*(:[^\s:]+)+$/i.test(timer?.label ?? "") || /^[\x21-\x7e]*\d{9,}[\x21-\x7e]*$/.test(timer?.label ?? "");
+
+/** The plans of [timers] that are the owner's to see. */
+export const userPlans = (timers) => timers.filter((timer) => !isSystemPlan(timer));
 
 /** How often a timer repeats, in the owner's words. */
 export function repeatText(every) {
@@ -39,7 +53,7 @@ async function clockRequest(net, binding, word, body, clientId) {
 }
 
 export async function listClock(net, binding) {
-  return normalizeClockList(await clockRequest(net, binding, "list", {}));
+  return userPlans(normalizeClockList(await clockRequest(net, binding, "list", {})));
 }
 
 export async function cancelClock(net, binding, id, clientId) {
