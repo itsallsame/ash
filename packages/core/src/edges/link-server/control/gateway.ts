@@ -20,7 +20,7 @@ import type { HandRegistry } from "../hands/registry";
 import type { HubLinkServer } from "../index";
 
 /** Where the vault keeps a claim secret the owner set for an unclaimed relay they run themselves. */
-export const BOOTSTRAP_REF = "gateway.bootstrap";
+export const BOOTSTRAP_REF = "GATEWAY_BOOTSTRAP";
 
 /** The hub's key. It lives in the host's keystore; only signing is asked of it. */
 export interface OwnerIdentity {
@@ -62,7 +62,7 @@ const WEB: readonly string[] = ["web_ui", "chat"];
 const PROBLEM_TEXT: Record<string, string> = {
   claimed_by_other: "The relay is claimed by another owner.",
   bad_secret: "The relay did not accept the claim secret.",
-  missing_secret: "The relay is not claimed and there is no claim secret; set one in the vault as gateway.bootstrap.",
+  missing_secret: "The relay is not claimed and there is no claim secret; set one in the vault as GATEWAY_BOOTSTRAP.",
   unsupported: "The relay speaks a protocol this hub does not.",
   unreachable: "The relay cannot be reached.",
 };
@@ -99,7 +99,7 @@ export class GatewayControl {
   stop(): void { this.end(); }
 
   /**
-   * Makes [url] the relay: reaches it, claims it with [claimSecret] (or the vault's `gateway.bootstrap`) when it is
+   * Makes [url] the relay: reaches it, claims it with [claimSecret] (or the vault's `GATEWAY_BOOTSTRAP`) when it is
    * unclaimed, remembers it and connects. Throws a `WordError` saying what is wrong when it cannot be reached or claimed.
    */
   async use(url: string, opts: { claimSecret?: string; account?: { email?: string } } = {}): Promise<string> {
@@ -110,7 +110,7 @@ export class GatewayControl {
       relay.stop();
       const problem = error instanceof RelayError ? error.problem : "unreachable";
       throw new WordError(problem === "claimed_by_other" || problem === "missing_secret" || problem === "bad_secret" ? "forbidden" : "unavailable", PROBLEM_TEXT[problem] ?? "The relay cannot be used.", {
-        recovery_hint: problem === "missing_secret" ? "Store the relay's claim secret with service:vault/set (ref gateway.bootstrap), then use it again." : "Check the address, or build a new relay with gateway.setup.start.",
+        recovery_hint: problem === "missing_secret" ? "Store the relay's claim secret with service:vault/set (ref GATEWAY_BOOTSTRAP), then use it again." : "Check the address, or build a new relay with gateway.setup.start.",
       });
     }
     this.end();

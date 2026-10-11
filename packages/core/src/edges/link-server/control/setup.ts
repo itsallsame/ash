@@ -22,7 +22,7 @@ export type SetupState = (typeof SETUP_STATES)[number];
 export interface SetupInfo { setup_id: string; state: SetupState; reason?: string }
 
 /** Where the vault keeps the Cloudflare sign-in (JSON: access token, refresh token, expiry). */
-export const CLOUDFLARE_REF = "cloudflare.oauth";
+export const CLOUDFLARE_REF = "CLOUDFLARE_OAUTH";
 
 export interface CloudflareEndpoints {
   authorizeUrl: string;

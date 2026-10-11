@@ -297,13 +297,13 @@ test("gateway.status and gateway.use: what the relay is, and switching to anothe
   assert.ok(!JSON.stringify(status).includes(w.hub.token));
 });
 
-test("an unclaimed relay of the owner's own is claimed with the secret in the vault (gateway.bootstrap), never one passed in a word", async (t) => {
+test("an unclaimed relay of the owner's own is claimed with the secret in the vault (GATEWAY_BOOTSTRAP), never one passed in a word", async (t) => {
   const w = await startWorld(t, { gateway: false });
   const { FakeGateway } = await import("../../../../link/test/fixtures/fake-gateway");
   const fresh = await FakeGateway.start({ secret: "claim-secret-123" });
   t.after(() => fresh.stop());
   assert.equal(await w.refused("gateway.use", { url: fresh.url }), "forbidden", "no secret: cannot claim");
-  w.vault.set("gateway.bootstrap", "claim-secret-123");
+  w.vault.set("GATEWAY_BOOTSTRAP", "claim-secret-123");
   await w.link("gateway.use", { url: fresh.url });
   assert.equal(fresh.claimed, true);
   assert.ok(await w.control.gateway.connected(5000));

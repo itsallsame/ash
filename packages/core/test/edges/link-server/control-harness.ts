@@ -13,6 +13,7 @@ import { Endpoint, FakeGateway, connectorOver } from "../../../../link/test/fixt
 import { createLinkControl, type LinkControl, type LinkControlDeps } from "../../../src/edges/link-server/control/words";
 import type { OwnerIdentity } from "../../../src/edges/link-server/control/gateway";
 import { Devices } from "../../../src/edges/link-server/hands/devices";
+import { MAX_VALUE_LENGTH, REF_PATTERN } from "../../../src/kernel/vault";
 import { FakeCloudflare } from "./fake-cloudflare";
 import { startHub, newIdentity, type Hub, type Identity } from "./harness";
 
@@ -30,9 +31,14 @@ export const listening = (port: number) => new Promise<boolean>((resolve) => {
   socket.once("error", () => resolve(false));
 });
 
+/** Takes what the real vault takes: a name it would refuse is refused here too (a ref like `a.b` once passed these tests and failed on a phone). */
 export class MemoryVault {
   readonly values = new Map<string, string>();
-  set(ref: string, value: string): void { this.values.set(ref, value); }
+  set(ref: string, value: string): void {
+    if (!REF_PATTERN.test(ref)) throw new TypeError("a credential name is letters, digits and _, starting with a letter or _ (at most 64)");
+    if (typeof value !== "string" || !value.trim() || value.length > MAX_VALUE_LENGTH) throw new TypeError("a credential value is a non-empty string of at most 4096 characters");
+    this.values.set(ref, value);
+  }
   use(ref: string): string | null { return this.values.get(ref) ?? null; }
 }
 
