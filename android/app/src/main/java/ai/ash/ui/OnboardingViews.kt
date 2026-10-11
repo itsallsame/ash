@@ -5,23 +5,15 @@ import ai.ash.ui.design.AshTokens
 import ai.ash.ui.design.AshType
 import ai.ash.ui.design.AshUi
 import ai.ash.ui.design.Role
-import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.BitmapShader
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Matrix
-import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.text.SpannableStringBuilder
-import android.text.style.LineHeightSpan
-import android.util.TypedValue
 import android.text.Spanned
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
@@ -59,8 +51,6 @@ internal object OnboardingViews {
         const val brainRingRadius = 82
         const val doneRing = 168
         const val doneRingRadius = 78
-        const val ringStroke = 5
-        const val ringAvatar = 120
         const val doneTop = 72
 
         const val bubbleAvatar = 40
@@ -114,42 +104,12 @@ internal object OnboardingViews {
 
     /** A square avatar [sizeDp] wide: the view is [Layout.avatarPad] larger on every side (room for its ring), and the margins take that back. */
     fun avatar(ctx: Context, expression: String, sizeDp: Int, state: AshUi.AvatarView.State = AshUi.AvatarView.State.PLAIN): AshUi.AvatarView =
-        AshUi.AvatarView(ctx).apply {
-            image = face(ctx, expression); this.state = state
-            // her face is a cut-out: the page's warm tile shows behind it, as in the design (the library's avatar draws the picture only)
-            val pad = AshUi.dp(ctx, Layout.avatarPad)
-            background = android.graphics.drawable.InsetDrawable(
-                AshUi.rounded(AshUi.p(ctx).surface2, AshUi.dpF(ctx, sizeDp * AshTokens.Radius.avatarFraction)), pad)
-        }.also {
+        AshUi.AvatarView(ctx).apply { image = face(ctx, expression); this.state = state }.also {
             it.layoutParams = LinearLayout.LayoutParams(AshUi.dp(ctx, sizeDp + 2 * Layout.avatarPad), AshUi.dp(ctx, sizeDp + 2 * Layout.avatarPad)).apply {
                 val m = -AshUi.dp(ctx, Layout.avatarPad)
                 setMargins(m, m, m, m)
             }
         }
-
-    /** A line of text exactly [lineHeightPx] tall, the room above and below it equal (also under the last line). */
-    private class ExactLine(private val lineHeightPx: Int) : LineHeightSpan {
-        override fun chooseHeight(text: CharSequence?, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: android.graphics.Paint.FontMetricsInt) {
-            val extra = lineHeightPx - (fm.descent - fm.ascent)
-            fm.ascent -= extra / 2; fm.descent += extra - extra / 2
-            fm.top = fm.ascent; fm.bottom = fm.descent
-        }
-    }
-
-    /**
-     * Text in one of the library's styles, but with the line height of the style honoured exactly. The library asks for it
-     * through the line-spacing add-on, which counts the Latin font's height; a phone that draws Chinese in another font then
-     * gets taller lines and a last line without its share, so the words sit low in their bubble.
-     */
-    fun text(ctx: Context, s: CharSequence, type: AshType, color: Int? = null): TextView {
-        val tv = AshUi.text(ctx, s, type, color)
-        tv.setLineSpacing(0f, 1f)
-        if (s.isNotEmpty()) {
-            val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, type.lineSp, ctx.resources.displayMetrics).toInt()
-            tv.text = SpannableStringBuilder(s).apply { setSpan(ExactLine(px), 0, length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) }
-        }
-        return tv
-    }
 
     /** `**word**` marks the word that carries the sentence. */
     fun rich(ctx: Context, s: String): CharSequence {
@@ -193,7 +153,7 @@ internal object OnboardingViews {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AshUi.dp(ctx, AshTokens.Size.buttonLg))
             addView(ImageView(ctx).apply { setImageDrawable(ctx.getDrawable(icon)?.mutate()?.apply { setTint(c.onYou) }) },
                 LinearLayout.LayoutParams(AshUi.dp(ctx, AshTokens.Size.iconSm), AshUi.dp(ctx, AshTokens.Size.iconSm)).apply { marginEnd = AshUi.dp(ctx, 6) })
-            addView(text(ctx, label, AshTokens.Type.button, c.onYou))
+            addView(AshUi.text(ctx, label, AshTokens.Type.button, c.onYou))
             setOnClickListener { onClick() }
         }
     }
@@ -214,76 +174,10 @@ internal object OnboardingViews {
     /** A small label on the closing screen for something that stayed off. */
     fun offTag(ctx: Context, label: String): TextView {
         val c = AshUi.p(ctx)
-        return text(ctx, label, tagType, c.text2).apply {
+        return AshUi.text(ctx, label, tagType, c.text2).apply {
             gravity = Gravity.CENTER; height = AshUi.dp(ctx, Layout.tagH)
             setPadding(AshUi.dp(ctx, Layout.tagPadX), 0, AshUi.dp(ctx, Layout.tagPadX), 0)
             background = AshUi.rounded(c.surface2, AshUi.dpF(ctx, Layout.tagRadius.toFloat()))
-        }
-    }
-
-    /**
-     * Her face in a round frame with a ring of light around it: [progress] of the ring is lit (from the top, clockwise);
-     * [spinning] lights a short arc that goes round instead (no animation when the system's animations are off).
-     */
-    class RingAvatar(ctx: Context, private val boxDp: Int, private val radiusDp: Int) : View(ctx) {
-        var image: Bitmap? = null; set(v) { field = v; invalidate() }
-        var progress = 0f; private set
-        var spinning = false; set(v) { field = v; restart(); invalidate() }
-        private val c = AshUi.p(ctx)
-        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = c.surface3 }
-        private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = c.herFill; strokeCap = Paint.Cap.ROUND }
-        private val img = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        private var turn = 0f
-        private var spin: ValueAnimator? = null
-        private var grow: ValueAnimator? = null
-
-        /** Moves the lit part of the ring to [to] (0..1), smoothly when animations are on. */
-        fun setProgress(to: Float, animate: Boolean = true) {
-            val target = to.coerceIn(0f, 1f)
-            grow?.cancel()
-            if (!animate || !AshUi.motionOn(context) || !isAttachedToWindow) { progress = target; invalidate(); return }
-            grow = ValueAnimator.ofFloat(progress, target).apply {
-                duration = AshTokens.Motion.cardResolve; interpolator = AshTokens.Motion.easing()
-                addUpdateListener { progress = it.animatedValue as Float; invalidate() }; start()
-            }
-        }
-
-        private fun restart() {
-            spin?.cancel(); spin = null
-            if (!spinning || !isAttachedToWindow || !AshUi.motionOn(context)) return
-            spin = ValueAnimator.ofFloat(0f, 360f).apply {
-                duration = AshTokens.Motion.ring; repeatCount = ValueAnimator.INFINITE; interpolator = android.view.animation.LinearInterpolator()
-                addUpdateListener { turn = it.animatedValue as Float; invalidate() }; start()
-            }
-        }
-
-        override fun onAttachedToWindow() { super.onAttachedToWindow(); restart() }
-        override fun onDetachedFromWindow() { spin?.cancel(); grow?.cancel(); super.onDetachedFromWindow() }
-        override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(AshUi.dp(context, boxDp), AshUi.dp(context, boxDp))
-
-        override fun onDraw(canvas: Canvas) {
-            val cx = width / 2f; val cy = height / 2f
-            val stroke = AshUi.dpF(context, Layout.ringStroke.toFloat())
-            track.strokeWidth = stroke; arc.strokeWidth = stroke
-            val r = AshUi.dpF(context, radiusDp.toFloat())
-            val oval = RectF(cx - r, cy - r, cx + r, cy + r)
-            canvas.drawOval(oval, track)
-            when {
-                spinning -> canvas.drawArc(oval, turn - 90f, 100f, false, arc)
-                progress > 0f -> canvas.drawArc(oval, -90f, 360f * progress, false, arc)
-            }
-            val a = AshUi.dpF(context, Layout.ringAvatar / 2f)
-            val box = RectF(cx - a, cy - a, cx + a, cy + a)
-            val bmp = image
-            img.shader = null; img.color = c.surface2; canvas.drawCircle(cx, cy, a, img)
-            if (bmp == null) return
-            val shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-            val scale = maxOf(box.width() / bmp.width, box.height() / bmp.height)
-            // object-position 50% 18%, as everywhere she is drawn: keep the face, crop from the top
-            val dy = (box.height() - bmp.height * scale) * 0.18f
-            shader.setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate(box.left + (box.width() - bmp.width * scale) / 2, box.top + dy) })
-            img.shader = shader
-            canvas.drawCircle(cx, cy, a, img)
         }
     }
 
@@ -291,20 +185,11 @@ internal object OnboardingViews {
     fun sayRow(ctx: Context, expression: String, say: String): LinearLayout = AshUi.hstack(ctx, 12).apply {
         gravity = Gravity.BOTTOM
         addView(avatar(ctx, expression, Layout.bubbleAvatar))
-        addView(text(ctx, rich(ctx, say), bubbleType).apply {
+        addView(AshUi.text(ctx, rich(ctx, say), bubbleType).apply {
             background = AshUi.bubble(ctx, false)
             setPadding(AshUi.dp(ctx, 14), AshUi.dp(ctx, 10), AshUi.dp(ctx, 14), AshUi.dp(ctx, 10))
             AshUi.cardShadow(this)
-            // a drawable with a tail corner gives the system no outline to cast the shadow from: say it
-            outlineProvider = object : android.view.ViewOutlineProvider() {
-                override fun getOutline(v: View, outline: android.graphics.Outline) {
-                    val r = AshUi.dpF(ctx, AshTokens.Radius.bubble.toFloat()); val t = AshUi.dpF(ctx, AshTokens.Radius.bubbleTail.toFloat())
-                    val path = android.graphics.Path().apply {
-                        addRoundRect(RectF(0f, 0f, v.width.toFloat(), v.height.toFloat()), floatArrayOf(r, r, r, r, r, r, t, t), android.graphics.Path.Direction.CW)
-                    }
-                    outline.setConvexPath(path)
-                }
-            }
+            outlineProvider = AshUi.bubbleOutline(ctx, mine = false)
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
@@ -318,10 +203,10 @@ internal object OnboardingViews {
         addView(avatar(ctx, "success", Layout.bubbleAvatar))
         addView(AshUi.vstack(ctx, 2).apply {
             addView(AshUi.hstack(ctx).apply {
-                addView(text(ctx, p.title, previewName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(text(ctx, p.whenText, AshTokens.Type.caption))
+                addView(AshUi.text(ctx, p.title, previewName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(AshUi.text(ctx, p.whenText, AshTokens.Type.caption))
             })
-            addView(text(ctx, p.body, previewBody))
+            addView(AshUi.text(ctx, p.body, previewBody))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }
 
@@ -330,7 +215,7 @@ internal object OnboardingViews {
         val c = AshUi.p(ctx)
         background = AshUi.rounded(c.surface, AshUi.dpF(ctx, AshTokens.Radius.card.toFloat())); clipToOutline = true
         AshUi.cardShadow(this)
-        addView(text(ctx, hand.path, handPath).apply {
+        addView(AshUi.text(ctx, hand.path, handPath).apply {
             gravity = Gravity.CENTER_VERTICAL; minHeight = AshUi.dp(ctx, Layout.handHeader)
             setPadding(AshUi.dp(ctx, AshTokens.Space.rowX), 0, AshUi.dp(ctx, AshTokens.Space.rowX), 0)
         })
@@ -354,7 +239,7 @@ internal object OnboardingViews {
             val icon = AshUi.dp(ctx, Layout.handIcon)
             if (on) addView(ImageView(ctx).apply { setImageDrawable(ctx.getDrawable(ai.ash.R.mipmap.ic_launcher)) }, LinearLayout.LayoutParams(icon, icon))
             else addView(View(ctx).apply { background = AshUi.rounded(c.surface3, AshUi.dpF(ctx, Layout.handIconRadius.toFloat())) }, LinearLayout.LayoutParams(icon, icon))
-            addView(text(ctx, name, if (on) handNameOn else handName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(AshUi.text(ctx, name, if (on) handNameOn else handName), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(AshUi.AshSwitch(ctx).apply { set(on); isClickable = false; isFocusable = false })
         }
     }
@@ -363,7 +248,7 @@ internal object OnboardingViews {
     fun steps(ctx: Context, hand: OnboardingContent.Hand): LinearLayout = AshUi.vstack(ctx, Layout.stepsGap).apply {
         setPadding(AshUi.dp(ctx, Layout.stepsPadX), 0, AshUi.dp(ctx, Layout.stepsPadX), 0)
         listOf(hand.step1, OnboardingContent.HAND_STEP_2, OnboardingContent.HAND_STEP_3).forEachIndexed { i, s ->
-            addView(text(ctx, "${i + 1}　$s", handStep))
+            addView(AshUi.text(ctx, "${i + 1}　$s", handStep))
         }
     }
 

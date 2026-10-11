@@ -79,7 +79,7 @@ class OnboardingActivity : Activity() {
     private var cursor = -1
     private var shown: String? = null
     private lateinit var holder: FrameLayout
-    private var ring: OnboardingViews.RingAvatar? = null
+    private var ring: AshUi.RingAvatar? = null
     private var ringLabel: android.widget.TextView? = null
 
     private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -268,8 +268,8 @@ class OnboardingActivity : Activity() {
     private fun welcomePage(): View {
         val c = palette
         val face = OnboardingViews.avatar(this, "default", Layout.welcomeAvatar, AshUi.AvatarView.State.THINKING)
-        val title = OnboardingViews.text(this, OnboardingContent.Words.WELCOME_TITLE, OnboardingViews.welcomeTitle).apply { gravity = Gravity.CENTER }
-        val body = OnboardingViews.text(this, OnboardingContent.Words.WELCOME_BODY, OnboardingViews.welcomeBody).apply { gravity = Gravity.CENTER }
+        val title = AshUi.text(this, OnboardingContent.Words.WELCOME_TITLE, OnboardingViews.welcomeTitle).apply { gravity = Gravity.CENTER }
+        val body = AshUi.text(this, OnboardingContent.Words.WELCOME_BODY, OnboardingViews.welcomeBody).apply { gravity = Gravity.CENTER }
         val stack = centered(14, Layout.sideWide, face, title, body)
         (title.layoutParams as LinearLayout.LayoutParams).topMargin = dp(Layout.welcomeTitleTop)
         // the avatar's own margins (its ring) are negative; the column needs the room back
@@ -302,12 +302,12 @@ class OnboardingActivity : Activity() {
         val c = palette
         val phase = brainPhase(l)
         val rom = KernelAutostart.rom(Build.MANUFACTURER)
-        val face = OnboardingViews.RingAvatar(this, Layout.brainRing, Layout.brainRingRadius).apply {
+        val face = AshUi.RingAvatar(this, Layout.brainRing, Layout.brainRingRadius).apply {
             image = OnboardingViews.face(this@OnboardingActivity, if (phase == Brain.READY) "success" else "thinking")
             spinning = phase == Brain.STARTING
         }
         ring = face
-        val label = OnboardingViews.text(this, "", OnboardingViews.brainLabel, c.her).apply { gravity = Gravity.CENTER; visibility = View.GONE }
+        val label = AshUi.text(this, "", OnboardingViews.brainLabel, c.her).apply { gravity = Gravity.CENTER; visibility = View.GONE }
         ringLabel = label
         val (title, body) = when (phase) {
             Brain.NO_URL -> "我的大脑还没装上" to "这个版本没有带下载地址。请先自己把大脑的安装包装好，再回来。"
@@ -318,8 +318,8 @@ class OnboardingActivity : Activity() {
             Brain.STARTING -> "大脑装好了" to listOfNotNull("正在叫醒它，一会儿就好。", OnboardingPlan.kernelPrompt(rom)).joinToString("")
             else -> OnboardingContent.Words.BRAIN_TITLE to listOfNotNull("一两分钟。", OnboardingPlan.kernelPrompt(rom)).joinToString("")
         }
-        val titleView = OnboardingViews.text(this, title, OnboardingViews.brainTitle).apply { gravity = Gravity.CENTER }
-        val bodyView = OnboardingViews.text(this, body, OnboardingViews.brainBody).apply { gravity = Gravity.CENTER }
+        val titleView = AshUi.text(this, title, OnboardingViews.brainTitle).apply { gravity = Gravity.CENTER }
+        val bodyView = AshUi.text(this, body, OnboardingViews.brainBody).apply { gravity = Gravity.CENTER }
         val stack = centered(14, Layout.sideWide, face, label, titleView, bodyView)
         val waited = if (waitingSince == 0L) 0L else SystemClock.elapsedRealtime() - waitingSince
         val refused = phase == Brain.STARTING && OnboardingPlan.showRefusedRetry(rom, waited)
@@ -335,7 +335,7 @@ class OnboardingActivity : Activity() {
             phase == Brain.GAVE_UP || refused -> { buttons += primary("再试一次", { retryKernel() }); buttons += skip }
             else -> buttons += primary("请稍等", {}, enabled = false)
         }
-        if (refused) OnboardingPlan.kernelRetryHint(rom)?.let { hint -> stack.addView(OnboardingViews.text(this, hint, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }) }
+        if (refused) OnboardingPlan.kernelRetryHint(rom)?.let { hint -> stack.addView(AshUi.text(this, hint, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }) }
         return frame(null, stack, bottom(Layout.barSimple, *buttons.toTypedArray())).also { updateBrain(l) }
     }
 
@@ -382,7 +382,7 @@ class OnboardingActivity : Activity() {
                 body.addView(OnboardingViews.previewCard(this, p), OnboardingViews.fill().apply {
                     topMargin = dp(Layout.previewTop); marginStart = dp(Layout.previewSide); marginEnd = dp(Layout.previewSide)
                 })
-                body.addView(OnboardingViews.text(this, p.caption, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }, OnboardingViews.fill())
+                body.addView(AshUi.text(this, p.caption, AshTokens.Type.caption).apply { gravity = Gravity.CENTER }, OnboardingViews.fill())
             }
             Look.HAND -> copy.hand?.let { h ->
                 body.addView(OnboardingViews.handCard(this, h), OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.xs) })
@@ -419,14 +419,14 @@ class OnboardingActivity : Activity() {
     // 准备好了
     private fun donePage(l: Loaded): View {
         val summary = OnboardingPlan.summary(l.kernel, l.rows)
-        val face = OnboardingViews.RingAvatar(this, Layout.doneRing, Layout.doneRingRadius).apply {
+        val face = AshUi.RingAvatar(this, Layout.doneRing, Layout.doneRingRadius).apply {
             image = OnboardingViews.face(this@OnboardingActivity, "success")
             setProgress(if (summary.total == 0) 1f else summary.on.toFloat() / summary.total)
         }
-        val title = OnboardingViews.text(this, OnboardingContent.Words.DONE_TITLE, AshTokens.Type.display).apply { gravity = Gravity.CENTER }
+        val title = AshUi.text(this, OnboardingContent.Words.DONE_TITLE, AshTokens.Type.display).apply { gravity = Gravity.CENTER }
         val said = if (summary.off.isEmpty()) "开了 ${summary.on} 项，该开的都开好了。\n有什么想让我做的，直接跟我说。"
             else "开了 ${summary.on} 项。下面这几处你先没开，\n需要时在我的主页里随时能开："
-        val body = OnboardingViews.text(this, said, OnboardingViews.doneBody).apply { gravity = Gravity.CENTER }
+        val body = AshUi.text(this, said, OnboardingViews.doneBody).apply { gravity = Gravity.CENTER }
         val stack = OnboardingViews.column(this, 10).apply {
             setPadding(dp(Layout.sideX), dp(Layout.doneTop), dp(Layout.sideX), dp(AshTokens.Space.xl))
             addView(face); addView(title, OnboardingViews.fill().apply { topMargin = dp(AshTokens.Space.sm + 2) }); addView(body)

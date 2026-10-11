@@ -28,3 +28,13 @@
 ## App 图标
 
 - `design/app/icons/app-icon.svg` → `android/{app,kernel}/src/main/res/mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher.png`（48–192px 位图，MIUI 要位图，不加 adaptive）；应用内引用的 `drawable/ic_launcher.xml` 同步成同一个图形。通知小图标 `ic_stat_ash` 没动。
+
+## AshUi 相对设计包的改动
+
+设计包里的 `AshUi.kt` 是手写的；落到仓库后只加不换接口，改了这几处：
+
+- **精确行高**：`AshUi.text` 按字阶的行高精确排。34+ 用 `setLineHeight`，之前用一个 `LineHeightSpan` 把上下留白对半分（包括最后一行）。原来的做法（行距附加量，按拉丁字体算）在系统用另一种字体画中文时行变高、最后一行少一份留白，字在气泡里偏下。直接 `style()` 再自己设文字的地方在 34 以前还是旧做法，要精确行高请用 `AshUi.text`。
+- **气泡投影**：`bubbleText` 的气泡有一个小尖角，系统给不出轮廓，所以没有阴影；加了 `AshUi.bubbleOutline(...)` 给气泡一个轮廓，自己拼气泡的地方也用它。
+- **头像底**：`AvatarView` 先画 surface-2 的圆角底再画脸（脸是抠图，设计稿里底是显示的）。
+- **进度光环**：新增 `AshUi.RingAvatar`（头像带一圈进度光 / 转圈），引导页的下载进度和「准备好了」页的开了几项用它。
+
