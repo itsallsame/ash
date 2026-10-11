@@ -205,12 +205,13 @@ export class ClockService implements Member {
     });
     this.arm();
     for (const row of due) {
-      if (row.every_s === null) this.sending.set(row.id, { by: row.created_by, cancelled: false });
-      void this.send(row);
+      const inflight = row.every_s === null ? { by: row.created_by, cancelled: false } : undefined;
+      if (inflight) this.sending.set(row.id, inflight);
+      void this.send(row, inflight);
     }
   }
 
-  private async send(row: Row): Promise<void> {
+  private async send(row: Row, inflight?: { by: string; cancelled: boolean }): Promise<void> {
     const msg: Outgoing = { to: row.target, kind: "request", word: row.word, body: JSON.parse(row.body) };
     try {
       // As the one who set it: the router, the callers check and the gate see that caller, not the clock.
@@ -231,7 +232,8 @@ export class ClockService implements Member {
       if (!away && code === "forbidden" && presence === "away") this.putBack(row);
       else if (!away) this.retries.delete(row.id);
     } catch (error) { this.log(`timer ${row.id} (${row.label}): sending to ${row.target}/${row.word} failed`, error); }
-    finally { this.sending.delete(row.id); }
+    // Only this send's own entry: a timer put back may already be on its way again under the same id.
+    finally { if (inflight && this.sending.get(row.id) === inflight) this.sending.delete(row.id); }
   }
 
   /** A one-time timer whose send was refused because someone is away goes back into the table, RETRY_AFTER_MS later, a few times. */
