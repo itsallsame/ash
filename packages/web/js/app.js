@@ -143,7 +143,9 @@ export function boot({ bridge } = {}) {
     const serial = ++navigationSerial;
     await (id ? timeline.jump(id) : timeline.latest());
     if (serial !== navigationSerial) return false;
-    navigation = id ? { id } : { latest: true }; redraw(); return true;
+    navigation = id ? { id } : { latest: true };
+    restorer?.scroll(); // Navigation starts a fresh quiet interval; an earlier idle deadline must not admit a heavy body immediately.
+    redraw(); return true;
   };
   const disclosureCharges = new Map();
   const readDisclosure = async (ask, field, signal) => {
