@@ -74,3 +74,7 @@ Expanded text shows a quiet “正在展开…” line until its DOM is complete
 The data source owns the independent expansion-choice LRU, full-text cache and idle restoration policy. It decides which nearby row to fetch after scrolling settles, then waits for `settled(id)` before restoring the next one. Rendering does not introduce another prefetch/restoration scheduler, worker, persistent token cache or partial-body eviction.
 
 For restored cached full text, `options.shouldBuild(id)` can pause parser/DOM work while scrolling. The queue reads the latest predicate between slices, retains the preview until the first DOM slice, and continues ordinary inline/preview jobs while restored text is paused. Returning `true` resumes the existing job; lifetime cancellation releases the tokens and resolves `settled(id)`. The data source still owns idle timing and near-viewport eligibility.
+
+### Browser protocol checks
+
+`gen:ui` compiles the browser transport's frame validators with Ajv standalone from `packages/sdk/schema/link/`. Opening the page executes these generated checks directly; it does not initialize the schema compiler. Protocol constants, sender roles, validation results and first-error text follow the same SDK schemas. Fixture comparisons cover all frame types with runtime code generation disabled. Node clients and the native transport keep their existing SDK paths; no frame checks are skipped.

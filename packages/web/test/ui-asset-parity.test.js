@@ -48,7 +48,7 @@ test("the app's page is the same shell and page code as the browser's, with the 
   assert.match(asset, /connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'/);
   assert.doesNotMatch(asset, /script-src[^;]*unsafe-eval/);
   assert.ok(!asset.includes("/?token="));
-  // The browser client checks frames with a compiled schema validator; the app's page must not carry it.
-  assert.ok(scripts(generated)[0].includes("new Function") && !appScript.includes("new Function"));
+  // Browser frame checks are generated at build time; neither transport compiles code while opening the page.
+  assert.ok(!scripts(generated)[0].includes("new Function") && !appScript.includes("new Function"));
   assert.ok(scripts(generated)[0].length > appScript.length);
 });

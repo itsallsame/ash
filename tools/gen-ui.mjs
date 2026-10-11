@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // The same UI source produces the page the kernel serves to browsers and the Android packaged page. They differ in one
 // thing only, the transport (SPEC-05 §4.1): a browser opens its own WebSocket with the browser client of packages/link;
-// the app's page passes frames through AshNative and may not compile code at run time (CSP without 'unsafe-eval'), which
-// the client's frame checks need. So the app's page is built without the browser client (js/link-browser.js left empty).
+// the app's page passes frames through AshNative and is built without the browser client (js/link-browser.js left empty).
+// Browser frame checks are compiled from the protocol schemas during this build, not while opening the page.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync as writeFile, renameSync } from "node:fs";
 // Readers (tests/builds) may run while another build refreshes the generated module.
 function writeFileSync(path, content) { const temp = `${path}.${process.pid}.tmp`; writeFile(temp, content); renameSync(temp, path); }
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { browserLinkPlugin } from "./browser-link.mjs";
 import "./gen-island.mjs";
 
 const ui = join(dirname(fileURLToPath(import.meta.url)), "../packages/web");
@@ -20,7 +21,7 @@ const noBrowserClient = { name: "no-browser-client", setup(b) {
 // Boot explicitly supplies the home's connection; no prototype hook or duplicate history reader.
 const entry = { contents: 'import "./js/app.js"; import "./js/home.js";', resolveDir: ui, sourcefile: "page-entry.js", loader: "js" };
 const bundle = async (plugins) => (await build({ stdin: entry, bundle: true, write: false, platform: "browser", format: "iife", target: "es2022", minify: true, logLevel: "silent", plugins })).outputFiles[0].text.replaceAll("</script", "<\\/script");
-const app = await bundle([]);
+const app = await bundle([browserLinkPlugin()]);
 const appInApp = await bundle([noBrowserClient]);
 // Design tokens (generated from design/app/tokens.json) and the component styles, ahead of the page's own rules.
 const styles = `<style>\n${["ash-tokens.css", "ash-ui.css", "home.css"].map((f) => readFileSync(join(ui, f), "utf8").trim()).join("\n")}\n</style>`;
