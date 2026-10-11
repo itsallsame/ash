@@ -1,4 +1,4 @@
-import { addIcon, avatarUrl, text } from "./chat-ui.js";
+import { addIcon, avatarUrl, letterOf, text } from "./chat-ui.js";
 
 /** What is shown for an agent that can be picked: the status line under its name. */
 const statusOf = (agent) => agent.reachable === false ? "暂时用不了" : agent.state === "starting" ? "启动中" : agent.state === "working" ? agent.summary || "工作中" : agent.summary || (agent.primary ? "在线" : "就绪");
@@ -16,7 +16,7 @@ function face(parent, agent, className) {
     if (agent.reachable !== false) text(holder, "span", "", "dot");
     return holder;
   }
-  return text(parent, "span", String(agent.name ?? "?").slice(0, 1), `av-letter ${className} fill-${letterFill(agent.id)}`);
+  return text(parent, "span", letterOf(agent.name), `av-letter ${className} fill-${letterFill(agent.id)}`);
 }
 
 /**

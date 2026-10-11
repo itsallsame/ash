@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { appendConversation, appendOutbox, fileRef } from "../js/conversation.js";
-import { dayStamp, validUntil } from "../js/chat-ui.js";
+import { dayStamp, letterOf, validUntil } from "../js/chat-ui.js";
 import { failedTurns } from "../js/app.js";
 import { fold, initialView } from "../js/project.js";
 
@@ -22,7 +22,7 @@ function draw(entries, options) {
   finally { delete globalThis.document; }
 }
 
-test("gate approval originals are folded and shown in a closed plain-text disclosure, including decided cards", () => {
+test("a gate approval shows its original in a closed plain-text disclosure while it waits, and folds to a result line once decided", () => {
   const original = "x".repeat(65000) + "\nTAIL <script>not HTML</script>\t  spaces";
   const message = { id: "ask-original", seq: 1, ts: 1, from: "service:gate", to: "person:owner", kind: "request", word: "ask",
     body: { title: "确认", detail: "摘要", expires_at: Date.now() + 60_000, options: [{ id: "once", label: "允许这一次" }],
@@ -30,8 +30,14 @@ test("gate approval originals are folded and shown in a closed plain-text disclo
   const view = fold(initialView(), message);
   assert.equal(view.asks[0].original, original);
   for (const state of ["pending", "answered", "expired", "closed"]) {
-    const rendered = draw([{ ...view.conversation[0], ask: { ...view.asks[0], state } }]);
-    const disclosure = rendered.children.find((node) => node.className?.includes("a-card")).children.find((node) => node.tag === "details");
+    const rendered = draw([{ ...view.conversation[0], ask: { ...view.asks[0], state, expires_at: Date.now() + 60_000 } }]);
+    const card = rendered.children.find((node) => node.className?.includes("a-card"));
+    const disclosure = card.children.find((node) => node.tag === "details");
+    if (state !== "pending") {
+      assert.equal(disclosure, undefined, `${state}: no original text on a decided card`);
+      assert.deepEqual(card.children.map((node) => node.className.split(" ")[0]), ["card-hd", "card-title", "resolved"], `${state}: head, title, one result line`);
+      continue;
+    }
     assert.ok(disclosure);
     assert.notEqual(disclosure.open, true);
     assert.equal(disclosure.children[0].tag, "summary");
@@ -252,4 +258,18 @@ test("an approval card keeps the line breaks of its detail", async () => {
   const detail = "健康 1.0.0：概览\n它需要：\n· 读取健康数据\n· 给你发通知";
   const card = draw([{ type: "ask", seq: 1, ask: { id: "a1", title: "安装「健康」", detail, expires_at: Date.now() + 60_000, state: "pending", options: [] } }]).children[0];
   assert.equal(card.children.find((node) => node.className.includes("ask-detail")).textContent, detail);
+});
+
+test("a helper's face carries the letter that tells it apart; a question that allows free answers has the box", async () => {
+  assert.deepEqual(["小研", "阿福", "老王", "记账员", "Ash", "小", "", "翻译"].map(letterOf), ["研", "福", "王", "记", "A", "小", "?", "翻"]);
+  const ask = { id: "q", seq: 1, from: "agent:main", title: "晚饭吃什么？", detail: "", human_kind: "question", allow_custom: true, state: "pending", expires_at: Date.now() + 60_000, options: [{ id: "a", label: "面" }] };
+  const answers = [];
+  const card = draw([{ type: "ask", ask }], { onAnswerAsk: async (_ask, choice, words) => answers.push([choice, words]) }).children[0];
+  const input = card.all().find((node) => node.tag === "input");
+  assert.equal(input.placeholder, "自己说…");
+  input.value = "  随便  ";
+  await card.all().filter((node) => node.tag === "button").at(-1).listeners.click();
+  assert.deepEqual(answers, [["custom", "随便"]]);
+  const without = draw([{ type: "ask", ask: { ...ask, allow_custom: false } }], { onAnswerAsk: async () => {} }).children[0];
+  assert.equal(without.all().some((node) => node.tag === "input"), false);
 });

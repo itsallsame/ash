@@ -2,7 +2,7 @@
 import { cardHead, fileRef, renderCard } from "./cards.js";
 import { appendApprovalOriginal } from "./approval-original.js";
 import { appendMarkdown } from "./markdown.js";
-import { addIcon, avatarUrl, button, dayStamp, text, validUntil } from "./chat-ui.js";
+import { addIcon, avatarUrl, button, dayStamp, letterOf, text, validUntil } from "./chat-ui.js";
 export { fileRef } from "./cards.js";
 
 const say = (item) => item?.type === "say";
@@ -101,13 +101,16 @@ function approvalCard(fragment, item, { onAnswerAsk, askIntents, agentName, prim
   const head = confirm ? cardHead(card, "warn", "shield", "需要你确认") : cardHead(card, "her", "ask", `${asker} 问你`);
   if (!decided && Number.isFinite(ask.expires_at)) text(head, "span", validUntil(ask.expires_at), "exp ask-expiry");
   text(card, "div", ask.title, "card-title ask-title");
-  // The gate puts its own review on the first line of the detail ("审核：…"): it gets a note of its own under the sentence.
-  const lines = String(ask.detail ?? "").split("\n");
-  const review = lines[0]?.startsWith("审核：") ? lines.shift() : "";
-  const detail = review ? lines.join("\n") : String(ask.detail ?? "");
-  if (detail) text(card, "small", detail, "card-body ask-detail");
-  if (review) text(card, "div", review, "card-note");
-  appendApprovalOriginal(card, ask, "查看完整原文");
+  // A decided card is folded to its head, its title and one result line (HANDOFF §3): no detail and no original text.
+  if (!decided) {
+    // The gate puts its own review on the first line of the detail ("审核：…"): it gets a note of its own under the sentence.
+    const lines = String(ask.detail ?? "").split("\n");
+    const review = lines[0]?.startsWith("审核：") ? lines.shift() : "";
+    const detail = review ? lines.join("\n") : String(ask.detail ?? "");
+    if (detail) text(card, "small", detail, "card-body ask-detail");
+    if (review) text(card, "div", review, "card-note");
+    appendApprovalOriginal(card, ask, "查看完整原文");
+  }
   const chosen = (ask.options || []).find((option) => option.id === ask.choice);
   const answer = askIntents?.get(ask.id);
   // A decided card says how it ended instead of keeping buttons that look live but do nothing.
@@ -218,7 +221,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
       if (item.side === "owner" && item.origin?.label) text(fragment, "small", `来自 ${item.origin.label}`, "from r");
       if (item.side === "agent" && item.from?.startsWith("agent:") && item.from !== primary && !previous) {
         const byline = text(fragment, "div", "", "byline agent-byline");
-        text(byline, "span", agentName(item.from).slice(0, 1), `av-letter agent-avatar fill-${letterFill(item.from)}`);
+        text(byline, "span", letterOf(agentName(item.from)), `av-letter agent-avatar fill-${letterFill(item.from)}`);
         text(byline, "span", `${agentName(item.from)}${primary ? ` · ${agentName(primary)} 的帮手` : ""}`);
       }
       if (item.side === "owner" && item.to && item.to !== primary) text(fragment, "small", `@ ${agentName(item.to)}`, "from r");
