@@ -16,6 +16,10 @@
  * As a second line, a timer an agent or an app set that cannot be sent because the setter is gone (the refusal is followed by
  * `service:agents/describe` or `service:apps/apps.describe`, see `dropIfGone`) takes all of that member's timers back, with a
  * log line. A member that is only stopped, restarting or disabled is still known, so its timers stay.
+ * A one-time timer whose send is refused with `unavailable` or `offline` (the target or the setter is only away: the apps are
+ * still loading, an agent is restarting) is put back under the same id for RETRY_AFTER_MS later, RETRY_MAX times at most, so the
+ * reminder is not lost; so is one whose app setter is installed and enabled but not running yet. `not_found` / `granted: false`
+ * from the second line above still take it (and the setter's other timers) back. A repeating timer just loses that round.
  * `at` alone fires once; `every`
  * repeats; both together fire first at `at` and then every period. A repeating timer that was missed (the phone
  * slept, the hub was down) fires once for the missed rounds and goes on from the next slot after now. Precision is
@@ -40,6 +44,10 @@ const AGENTS_ID = "service:agents";
 const APPS_ID = "service:apps";
 /** setTimeout cannot wait longer than this; a longer wait is cut and rechecked. */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+/** A one-time timer whose send was refused because someone was away (`unavailable`, `offline`) is put back and tried again this much later... */
+const RETRY_AFTER_MS = 30_000;
+/** ...at most this many times (ten minutes), or until the setter turns out to be gone. */
+const RETRY_MAX = 20;
 
 export interface ClockOptions {
   ledger: Pick<Ledger, "db" | "tx">;
@@ -75,7 +83,9 @@ const seesAll = (caller: Caller): boolean => caller.member === OWNER_ID || calle
 /** The clock's own identity: only for its own calls to the host. */
 const SELF: Caller = { member: CLOCK_ID, via: "service", local: true };
 
-type Row = { id: string; next_at: number; every_s: number | null; target: string; word: string; body: string; label: string; created_by: string; created_as: string };
+type Row = { id: string; next_at: number; every_s: number | null; target: string; word: string; body: string; label: string; created_by: string; created_as: string; created_at: number };
+/** What the owning module says about a setter after a refusal: not there any more, installed but not running, or just there (or unknown). */
+type Presence = "gone" | "away" | "here";
 const info = (row: Row): TimerInfo => ({ id: row.id, next: row.next_at, every: row.every_s, to: row.target, word: row.word,
   body: JSON.parse(row.body), label: row.label, created_by: row.created_by });
 
@@ -89,8 +99,10 @@ export class ClockService implements Member {
   private readonly log: (message: string, error?: unknown) => void;
   private cancelTimer: (() => void) | null = null;
   private stopped = false;
-  /** Members whose existence is being checked after a failed send. */
-  private readonly probing = new Set<string>();
+  /** Members whose existence is being checked after a failed send (timers that fall due together share one question). */
+  private readonly probing = new Map<string, Promise<Presence>>();
+  /** How many times a one-time timer (by id) was put back after a refused send; memory only, a restart starts again. */
+  private readonly retries = new Map<string, number>();
 
   constructor(private readonly options: ClockOptions) {
     this.db = options.ledger.db();
@@ -153,12 +165,14 @@ export class ClockService implements Member {
       throw new WordError("forbidden", "this timer was set by someone else; only its owner or the person:owner can cancel it");
     }
     const removed = this.db.prepare("DELETE FROM timers WHERE id=?").run(body.id as string).changes > 0;
+    this.retries.delete(body.id as string);
     this.arm();
     return { cancelled: removed };
   }
 
   /** Delete every timer that `member` set; the number deleted. */
   private removeOwner(member: string): number {
+    for (const row of this.db.prepare("SELECT id FROM timers WHERE created_by=?").all(member) as { id: string }[]) this.retries.delete(row.id);
     const removed = Number(this.db.prepare("DELETE FROM timers WHERE created_by=?").run(member).changes);
     if (removed > 0) this.arm();
     return removed;
@@ -195,11 +209,30 @@ export class ClockService implements Member {
       const stored = JSON.parse(row.created_as) as Caller;
       const caller = stored.member === OWNER_ID && row.target === OWNER_ID ? SELF : stored;
       const reply: Reply = await this.options.router.send(msg, caller);
-      if (!reply.ok) {
-        this.log(`timer ${row.id} (${row.label}): ${row.target}/${row.word} answered ${reply.error.code}: ${reply.error.message}`);
-        if ((stored.via === "agent" || stored.via === "app") && ["forbidden", "offline", "not_found"].includes(reply.error.code)) await this.dropIfGone(row, stored.member, stored.via);
-      }
+      if (reply.ok) { this.retries.delete(row.id); return; }
+      const code = reply.error.code;
+      this.log(`timer ${row.id} (${row.label}): ${row.target}/${row.word} answered ${code}: ${reply.error.message}`);
+      // Someone is only away: a one-time timer comes back later (before the question below, which may take it away again).
+      const away = code === "unavailable" || code === "offline";
+      if (away) this.putBack(row);
+      let presence: Presence = "here";
+      if ((stored.via === "agent" || stored.via === "app") && ["forbidden", "offline", "not_found"].includes(code)) presence = await this.dropIfGone(row, stored.member, stored.via);
+      // An app that is installed and enabled but not running (yet) is refused as `forbidden`: it is away too.
+      if (!away && code === "forbidden" && presence === "away") this.putBack(row);
+      else if (!away) this.retries.delete(row.id);
     } catch (error) { this.log(`timer ${row.id} (${row.label}): sending to ${row.target}/${row.word} failed`, error); }
+  }
+
+  /** A one-time timer whose send was refused because someone is away goes back into the table, RETRY_AFTER_MS later, a few times. */
+  private putBack(row: Row): void {
+    if (row.every_s !== null) return; // a repeating timer already moved on to its next slot
+    const tries = (this.retries.get(row.id) ?? 0) + 1;
+    if (tries > RETRY_MAX) { this.retries.delete(row.id); this.log(`timer ${row.id} (${row.label}): ${row.target} was away for ${RETRY_MAX} tries; given up`); return; }
+    this.retries.set(row.id, tries);
+    const next = this.now() + RETRY_AFTER_MS;
+    this.db.prepare("INSERT OR IGNORE INTO timers (id,next_at,every_s,target,word,body,label,created_by,created_as,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .run(row.id, next, null, row.target, row.word, row.body, row.label, row.created_by, row.created_as, row.created_at);
+    this.arm();
   }
 
   /**
@@ -208,20 +241,28 @@ export class ClockService implements Member {
    * can ever be sent again: take them back. Only the owning module's answer says it is gone (`service:agents/describe`: not_found;
    * `service:apps/apps.describe`: not_found, or found with `granted` false, which is a folder left behind after an uninstall; it answers from the install record, so an app whose folder is missing is still installed, and `unavailable` before the apps are loaded, which this leaves alone). A stopped,
    * restarting or only disabled member is still known, and any other answer or failure leaves the timers alone.
+   * Returns what it found: "gone" (timers taken back), "away" (an app that is installed, enabled and not running), or "here" (anything else).
    */
-  private async dropIfGone(row: Row, member: string, via: "agent" | "app"): Promise<void> {
-    if (this.probing.has(member)) return; // several of its timers fell due together: one question is enough
-    this.probing.add(member);
+  private dropIfGone(row: Row, member: string, via: "agent" | "app"): Promise<Presence> {
+    const asking = this.probing.get(member); // several of its timers fell due together: one question is enough
+    if (asking) return asking;
+    const question = this.probe(row, member, via).finally(() => { this.probing.delete(member); });
+    this.probing.set(member, question);
+    return question;
+  }
+
+  private async probe(row: Row, member: string, via: "agent" | "app"): Promise<Presence> {
     try {
       const probe = via === "agent"
         ? await this.options.router.send({ to: AGENTS_ID, kind: "request", word: "describe", body: { agent: member } }, SELF)
         : await this.options.router.send({ to: APPS_ID, kind: "request", word: "apps.describe", body: { id: member.replace(/^app:/, "") } }, SELF);
-      const gone = probe.ok ? via === "app" && (probe.result?.data as { granted?: unknown } | undefined)?.granted === false : probe.error.code === "not_found";
-      if (!gone) return;
+      const data = probe.ok ? probe.result?.data as { granted?: unknown; enabled?: unknown; running?: unknown } | undefined : undefined;
+      const gone = probe.ok ? via === "app" && data?.granted === false : probe.error.code === "not_found";
+      if (!gone) return via === "app" && data?.granted !== false && data?.enabled === true && data?.running === false ? "away" : "here";
       const removed = this.removeOwner(member);
       this.log(`timer ${row.id} (${row.label}): ${member} is no longer ${via === "agent" ? "a declared agent" : "an installed app"}; took back its ${removed} timer(s)`);
-    } catch (error) { this.log(`timer ${row.id} (${row.label}): could not check whether ${member} still exists`, error); }
-    finally { this.probing.delete(member); }
+      return "gone";
+    } catch (error) { this.log(`timer ${row.id} (${row.label}): could not check whether ${member} still exists`, error); return "here"; }
   }
 
   // ---- arming: the in-process timeout and the host alarm follow the earliest timer ----

@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "250bfaf25fba910095080fcc78b89615dd8d6e89c1c838f2ef5d91eab5b6f52a",
+ "hash": "8aeb547be5d2dcd44373d6ba9771f18bcd87aa82fb8db2e3677a1606ad913be5",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -6657,7 +6657,7 @@
    "word": "apps.list",
    "kind": "request",
    "direction": "in",
-   "description": "Every app found in the container (/root/apps/<id>/app.json): name, version, whether the owner installed (granted) it and whether it is running.",
+   "description": "Every app found in the container (/root/apps/<id>/app.json): name, version, whether the owner installed (granted) it and whether it is running. An installed app whose folder is gone is listed too (error says so); apps.remove or apps.revoke clears it.",
    "input_schema": {
     "type": "object",
     "properties": {},
@@ -7352,7 +7352,7 @@
    "word": "apps.revoke",
    "kind": "request",
    "direction": "in",
-   "description": "Take back one need (need: a member id such as device:<hand_id>, or notify / widgets / card), or every grant when need is left out, which stops the app.",
+   "description": "Take back one need (need: a member id such as device:<hand_id>, or notify / widgets / card), or every grant when need is left out, which stops the app. Works on an installed app whose folder is gone too.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -7848,7 +7848,7 @@
    "word": "apps.remove",
    "kind": "request",
    "direction": "in",
-   "description": "Uninstall an app: stop it, drop everything the owner granted it and its home-screen cards, and delete its folder /root/apps/<id>/. keep_data: true keeps the folder (its data and files) so it can be installed again as it was. Ash's own apps cannot be removed (they come back): disable them instead.",
+   "description": "Uninstall an app: stop it, drop everything the owner granted it and its home-screen cards, and delete its folder /root/apps/<id>/. keep_data: true keeps the folder (its data and files) so it can be installed again as it was. Ash's own apps cannot be removed (they come back): disable them instead. An installed app whose folder is already gone is removed from the records (and its timers cleared); there is no folder to delete.",
    "input_schema": {
     "type": "object",
     "properties": {

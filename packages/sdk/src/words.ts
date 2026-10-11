@@ -698,7 +698,8 @@ const appInfo = obj({ id: appId, name: str, version: str, summary: str, role: st
   needs: array(obj({}, [], true)), surfaces: array(obj({}, [], true)), events: strings, tools: strings, error: str,
   cards: array(obj({ id: str, title: str, size: str, card: widgetCardId, problem: str }, ["id", "title", "size", "card"])) }, ["id", "name", "version", "enabled", "granted", "running"], true);
 add("service:apps", "apps.list", "request", empty, obj({ apps: array(appInfo) }, ["apps"]),
-  { label: "在看有哪些应用", description: "Every app found in the container (/root/apps/<id>/app.json): name, version, whether the owner installed (granted) it and whether it is running." });
+  { label: "在看有哪些应用", description: "Every app found in the container (/root/apps/<id>/app.json): name, version, whether the owner installed (granted) it and whether it is running. " +
+    "An installed app whose folder is gone is listed too (error says so); apps.remove or apps.revoke clears it." });
 add("service:apps", "apps.describe", "request", obj({ id: appId }, ["id"]), appInfo,
   { label: "在看应用详情", description: "One app: what it needs from ash (needs), its screens (surfaces), events and tools." });
 add("service:apps", "apps.install", "request", obj({ id: appId }, ["id"]), appInfo,
@@ -710,7 +711,7 @@ add("service:apps", "apps.enable", "request", obj({ id: appId }, ["id"]), appInf
 add("service:apps", "apps.disable", "request", obj({ id: appId }, ["id"]), appInfo,
   { risk: "structure", effect: "write", label: "在停用应用", description: "Stop an app; its grants are kept so it can be turned on again." });
 add("service:apps", "apps.revoke", "request", obj({ id: appId, need: nonempty }, ["id"]), appInfo,
-  { risk: "structure", effect: "write", label: "在收回应用的权限", description: "Take back one need (need: a member id such as device:<hand_id>, or notify / widgets / card), or every grant when need is left out, which stops the app." });
+  { risk: "structure", effect: "write", label: "在收回应用的权限", description: "Take back one need (need: a member id such as device:<hand_id>, or notify / widgets / card), or every grant when need is left out, which stops the app. Works on an installed app whose folder is gone too." });
 add("service:apps", "apps.refresh", "request", empty, obj({ apps: array(appInfo) }, ["apps"]),
   { label: "在查找新应用", description: "Read /root/apps again: new apps appear, removed ones stop." });
 // Running apps: restart after editing, read what the server said, clear its data, remove it. No approval: they stay
@@ -728,7 +729,7 @@ add("service:apps", "apps.reset", "request", obj({ id: appId }, ["id"]), obj({ i
     "Only for an app that declares data_dir. The owner's data is gone afterwards: do it only when the owner wants it, or for an app you are still building." });
 add("service:apps", "apps.remove", "request", obj({ id: appId, keep_data: bool }, ["id"]), obj({ id: appId, removed: bool, kept: { anyOf: [str, { type: "null" }] } }, ["id", "removed", "kept"]),
   { effect: "write", label: "在卸载应用", description: "Uninstall an app: stop it, drop everything the owner granted it and its home-screen cards, and delete its folder /root/apps/<id>/. " +
-    "keep_data: true keeps the folder (its data and files) so it can be installed again as it was. Ash's own apps cannot be removed (they come back): disable them instead." });
+    "keep_data: true keeps the folder (its data and files) so it can be installed again as it was. Ash's own apps cannot be removed (they come back): disable them instead. An installed app whose folder is already gone is removed from the records (and its timers cleared); there is no folder to delete." });
 // Writing apps: the contract to read, a skeleton to start from, and a check that says exactly what is wrong.
 const appProblem = obj({ level: choice("error", "warning"), where: str, problem: str, fix: str }, ["level", "where", "problem"]);
 const appTool = obj({ name: { type: "string", pattern: TOOL_NAME_PATTERN }, title: { type: "string", minLength: 1, maxLength: 60 },

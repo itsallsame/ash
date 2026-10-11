@@ -156,12 +156,15 @@ export class AppRuntime {
     await this.bridge.start();
     this.found = this.discover();
     for (const id of this.options.builtinApps ?? []) this.seedBuiltin(id);
+    // What is installed is known now (`info` answers from the install records and the scan); starting the servers can take a
+    // minute each and tells nothing about whether an app exists, so `apps.describe` does not wait for it (its `running` is true
+    // as each app comes up).
+    this.started = true;
     await this.refresh();
     this.tellKept();
-    this.started = true;
   }
 
-  /** Whether `start()` has finished: before that the folders have not been scanned and nothing runs yet. */
+  /** Whether the folders have been scanned and the built-in apps seeded: `info` can say what is installed. The servers may still be starting. */
   isStarted(): boolean { return this.started; }
 
   /** The main agent hears (a background `tell`) that a release is waiting for the apps it changed; the hub does not merge it. */
@@ -289,7 +292,8 @@ export class AppRuntime {
       listens: grant?.listens ?? [], ...(error ? { error } : {}), path: this.agentPath(id), origin: this.origin(id),
     };
   }
-  list(): AppInfo[] { return [...this.found.keys()].map((id) => this.info(id)!); }
+  /** Every app with a folder and every installed app (a record without a folder is listed too, with `error` saying so, so it can be removed). */
+  list(): AppInfo[] { return [...new Set([...this.found.keys(), ...this.grants.ids()])].sort().map((id) => this.info(id)!); }
 
   // ---- starting and stopping one app --------------------------------------------------------------------------------
 
@@ -619,32 +623,42 @@ export class AppRuntime {
     return report([...problems, ...trial.problems], trial.tools, trial.surfaces, manifest.id);
   }
 
+  /** Thrown when a word needs the app's folder and an install record is all there is. */
+  private missingFolder(id: string): WordError {
+    return this.grants.get(id)
+      ? fail("not_found", `${this.agentPath(id)}/ 下没有应用文件夹（${id} 还有安装记录）：恢复这个文件夹，或用 apps.remove 卸掉它`, { recovery_hint: "apps.remove {id} clears the install record." })
+      : fail("not_found", `no app ${id}`);
+  }
+
   async enable(id: string): Promise<AppInfo> {
-    if (!this.manifest(id)) throw fail("not_found", `no app ${id}`);
+    if (!this.manifest(id)) throw this.missingFolder(id);
     if (!this.grants.setEnabled(id, true)) throw fail("failed", "not installed; use apps.install", { recovery_hint: "apps.install asks the owner and starts it." });
     await this.launch(id);
     return this.info(id)!;
   }
 
   async disable(id: string): Promise<AppInfo> {
-    if (!this.found.has(id)) throw fail("not_found", `no app ${id}`);
+    if (!this.found.has(id) && !this.grants.get(id)) throw fail("not_found", `no app ${id}`);
     this.grants.setEnabled(id, false);
     await this.stop(id);
     return this.info(id)!;
   }
 
+  /** Take back a grant. An installed app whose folder is gone can be revoked too: there is only the record to narrow. */
   async revoke(id: string, need?: string): Promise<AppInfo> {
-    if (!this.found.has(id)) throw fail("not_found", `no app ${id}`);
+    if (!this.found.has(id) && !this.grants.get(id)) throw fail("not_found", `no app ${id}`);
+    const before = this.info(id)!;
     const left = this.grants.revoke(id, need);
     if (!left) { await this.stop(id); await this.dropTimers(id); }
-    return this.info(id)!;
+    // Revoked completely and no folder: nothing is left to describe, so say what it was, no longer granted.
+    return this.info(id) ?? { ...before, enabled: false, granted: false, running: false, needs: [], listens: [], tools: [] };
   }
 
   /** Restart after editing. Within what the owner approved: if needs or listens grew, it has to be installed again. */
   async restart(id: string): Promise<{ id: string; running: boolean; problems: AppProblem[] }> {
     this.rediscover(id);
     const grant = this.grants.get(id);
-    if (!this.found.has(id)) throw fail("not_found", `${this.agentPath(id)}/ 下没有应用`);
+    if (!this.found.has(id)) throw this.missingFolder(id);
     if (!grant) throw fail("failed", `${id} 还没装：用 apps.install`);
     if (!grant.enabled) throw fail("failed", `${id} 停用了：用 apps.enable 重新打开`);
     const report = await this.validate({ id });
@@ -704,13 +718,15 @@ export class AppRuntime {
     } catch (error) { this.log("apps: clearing the timers of", id, error instanceof Error ? error.message : error); }
   }
 
+  /** Remove an app: its record and grants, its timers, and (unless keepData) its folder. An installed app whose folder is gone is removed too; there is no folder to delete. */
   async remove(id: string, keepData: boolean): Promise<{ id: string; removed: boolean; kept: string | null }> {
-    if (!this.found.has(id)) throw fail("not_found", `no app ${id}`);
+    if (!this.found.has(id) && !this.grants.get(id)) throw fail("not_found", `no app ${id}`);
     if (this.grants.get(id)?.builtin) throw fail("failed", `${id} 是 Ash 自带的器官：用 apps.disable 停用它（apps.reset 清空它的数据）`);
     await this.stop(id);
     this.grants.revoke(id);
     await this.dropTimers(id);
     const root = this.root;
+    if (!this.found.has(id)) { this.output.delete(id); return { id, removed: true, kept: null }; } // only the record was left
     if (!keepData && root && ID.test(id)) {
       rmSync(join(root, id), { recursive: true, force: true });
       this.found.delete(id);

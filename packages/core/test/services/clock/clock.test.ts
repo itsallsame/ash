@@ -498,3 +498,106 @@ test("after the apps are loaded, an app whose record is gone loses its timers", 
   assert.ok(h.logs.some((l) => /app:fixture is no longer an installed app/.test(l)));
   h.clock.stop();
 });
+
+// ---- T21d: a one-time timer whose send is refused because someone is only away is put back and tried again ----
+
+/** A clock with a movable time; `answer` decides what the timer's target (service:quiet) says, `describe` what the agents / apps module says. */
+function away(describe: (member: string) => Reply = () => found()) {
+  const { ledger } = openLedger();
+  const clock = { t: T0 };
+  const answers: Reply[] = [];
+  const delivered: Outgoing[] = [];
+  const logs: string[] = [];
+  let calls = 0;
+  const svc = createClockService({ ledger, now: () => clock.t, log: (m) => logs.push(m), setTimer: () => () => {},
+    router: { send: async (m): Promise<Reply> => {
+      if (m.to === "service:host") return { ok: true };
+      if (m.to === "service:agents" && m.word === "describe") return describe((m.body as { agent: string }).agent);
+      if (m.to === "service:apps" && m.word === "apps.describe") return describe(`app:${(m.body as { id: string }).id}`);
+      calls++;
+      const reply = answers.length ? answers.shift()! : { ok: true } as Reply;
+      if (reply.ok) delivered.push(m);
+      return reply;
+    } } });
+  const setAs = (member: string, via: Caller["via"], label: string, extra: Record<string, unknown> = {}) =>
+    svc.handle(msg("set", set({ at: T0 + 1000, to: "service:quiet", word: "tick", body: {}, label, ...extra })), { ...ctx, caller: { member, via, local: false } });
+  const labels = () => (svc as any).rows().map((r: any) => r.label).sort();
+  const nextOf = (label: string) => (svc as any).rows().find((r: any) => r.label === label)?.next_at;
+  /** Move the time to `to` ms after T0 and let the due timers go. */
+  const at = async (to: number) => { clock.t = T0 + to; svc.check(); await flush(); await new Promise((r) => setImmediate(r)); };
+  return { svc, answers, delivered, logs, setAs, labels, nextOf, at, get calls() { return calls; } };
+}
+const refused = (code: "offline" | "unavailable" | "not_found" | "forbidden"): Reply => ({ ok: false, error: { code, message: `answered ${code}` } });
+
+test("a one-time timer whose target is offline or unavailable comes back 30 s later and is delivered when it is there", async () => {
+  const h = away();
+  await h.setAs("agent:main", "agent", "once");
+  h.answers.push(refused("offline"), refused("unavailable"));
+  await h.at(1000);
+  assert.deepEqual(h.labels(), ["once"], "refused as offline: put back");
+  assert.equal(h.nextOf("once"), T0 + 31_000);
+  await h.at(20_000);
+  assert.equal(h.calls, 1, "not tried before the 30 s are over");
+  await h.at(31_000);
+  assert.equal(h.calls, 2);
+  assert.equal(h.nextOf("once"), T0 + 61_000, "unavailable: put back again");
+  await h.at(61_000);
+  assert.deepEqual(h.delivered.map((m) => m.word), ["tick"], "delivered once the target answers");
+  assert.deepEqual(h.labels(), [], "and then gone for good");
+  assert.equal(((h.svc as any).retries as Map<string, number>).size, 0);
+  h.svc.stop();
+});
+
+test("not_found does not bring a one-time timer back, nor does a setter that turns out to be gone (the probe takes all its timers)", async () => {
+  const h = away((member) => (member === "agent:dead" ? notFound() : found()));
+  await h.setAs("agent:main", "agent", "nowhere");
+  h.answers.push(refused("not_found"));
+  await h.at(1000);
+  assert.deepEqual(h.labels(), [], "the target has no such word: not retried");
+
+  await h.setAs("agent:dead", "agent", "d-once", { at: T0 + 2000 });
+  await h.setAs("agent:dead", "agent", "d-later", { at: T0 + 500_000 });
+  h.answers.push(refused("offline"));
+  await h.at(2000);
+  assert.deepEqual(h.labels(), [], "put back, then taken back with the rest because agent:dead is not declared");
+  assert.ok(h.logs.some((l) => /agent:dead is no longer a declared agent/.test(l)));
+  h.svc.stop();
+});
+
+test("a repeating timer refused as offline just loses that round; a one-time timer gives up after 20 tries", async () => {
+  const h = away();
+  await h.setAs("agent:main", "agent", "rep", { every: 3600, at: T0 + 1000 });
+  h.answers.push(refused("offline"));
+  await h.at(1000);
+  assert.equal(h.nextOf("rep"), T0 + 1000 + 3_600_000, "next slot, no extra retry row");
+  assert.equal(h.labels().length, 1);
+
+  await h.setAs("agent:main", "agent", "stubborn", { at: T0 + 2_000_000 });
+  for (let i = 0; i < 25; i++) h.answers.push(refused("offline"));
+  let t = 2_000_000;
+  for (let i = 0; i < 21; i++) { await h.at(t); t += 30_000; }
+  assert.ok(!h.labels().includes("stubborn"), "gone after RETRY_MAX tries");
+  assert.ok(h.logs.some((l) => /given up/.test(l)));
+  h.svc.stop();
+});
+
+test("an app's one-time timer refused as forbidden because the app is installed and enabled but not running yet is put back; a running, disabled or revoked app's is not", async () => {
+  const state: Record<string, unknown> = { granted: true, enabled: true, running: false };
+  const h = away(() => ({ ok: true, result: { data: state } }));
+  await h.setAs("app:todo", "app", "wait");
+  h.answers.push(refused("forbidden"));
+  await h.at(1000);
+  assert.deepEqual(h.labels(), ["wait"], "the app is starting: try again");
+  await h.at(31_000);
+  assert.deepEqual(h.delivered.map((m) => m.word), ["tick"], "delivered once the app runs and may send");
+  assert.deepEqual(h.labels(), []);
+
+  for (const [name, patch] of [["running", { running: true }], ["disabled", { enabled: false }]] as const) {
+    Object.assign(state, { granted: true, enabled: true, running: false }, patch);
+    await h.setAs("app:todo", "app", name, { at: T0 + 100_000 });
+    h.answers.push(refused("forbidden"));
+    await h.at(100_000);
+    assert.deepEqual(h.labels(), [], `${name}: a real refusal is not retried`);
+  }
+  h.svc.stop();
+});

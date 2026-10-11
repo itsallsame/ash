@@ -276,3 +276,61 @@ test("installBuiltinOrgans: each organ is copied the first time and never over w
     assert.deepEqual(installBuiltinOrgans(join(dir, "nowhere"), join(dir, "apps")), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- T21d: describing while the servers start; an installed app whose folder is gone ----
+
+test("apps.describe answers from the install records while the servers are still starting (running is true only as each comes up)", async () => {
+  const first = await installed();
+  await first.apps.stopAll(Date.now() + 3000);
+  // A server that never speaks MCP: the connect hangs until the hub stops.
+  const hang = { root: first.root, spawn: (_app: unknown, dir: string) => ({ command: process.execPath, args: ["-e", "setTimeout(() => {}, 20000)"], cwd: dir, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" } }) };
+  const second = world({ dbPath: first.dbPath, root: first.root, fixture: false, launcher: hang as never });
+  const before = await words(second, "apps.describe", { id: "fixture" });
+  assert.equal(before.ok === false && before.error.code, "unavailable", "before start() has scanned and seeded, the apps module does not guess");
+
+  let done = false;
+  const starting = second.apps.start().then(() => { done = true; });
+  const described = await until(async () => { const r = await words(second, "apps.describe", { id: "fixture" }); return r.ok ? dataOf(r) : null; }, "apps.describe during the start");
+  assert.equal(done, false, "refresh() is still waiting for the server");
+  assert.deepEqual([described.granted, described.enabled, described.running, described.tools], [true, true, false, []], "running and tools say the truth: it is not up");
+  assert.equal(dataOf(await words(second, "apps.list")).apps[0].running, false);
+  const unknown = await words(second, "apps.describe", { id: "nope" });
+  assert.equal(unknown.ok === false && unknown.error.code, "not_found", "an app with no record and no folder is really not there");
+
+  await second.apps.stopAll(Date.now() + 3000);
+  await starting;
+});
+
+test("an installed app whose folder is gone: listed with the reason, removable and revocable (timers cleared), but not enabled or restarted", async () => {
+  const w = await installed();
+  const clock = withClock(w);
+  rmSync(join(w.root, "fixture"), { recursive: true, force: true });
+  await words(w, "apps.refresh");
+  const listed = dataOf(await words(w, "apps.list")).apps;
+  assert.deepEqual(listed.map((app: any) => [app.id, app.granted, app.enabled, app.running]), [["fixture", true, true, false]]);
+  assert.match(listed[0].error, /folder was not found/);
+
+  for (const word of ["apps.enable", "apps.restart"]) {
+    const refused = await words(w, word, { id: "fixture" });
+    assert.equal(refused.ok === false && refused.error.code, "not_found", word);
+    assert.match(refused.ok === false ? refused.error.message : "", /fixture\/ 下没有应用文件夹.*安装记录/, `${word} says the folder is missing`);
+  }
+  assert.equal(dataOf(await words(w, "apps.disable", { id: "fixture" })).enabled, false);
+
+  const removed = dataOf(await words(w, "apps.remove", { id: "fixture" }));
+  assert.deepEqual(removed, { id: "fixture", removed: true, kept: null });
+  assert.deepEqual(clock.received.map((m) => [m.word, m.body]), [["cancel.owner", { member: "app:fixture" }]]);
+  assert.deepEqual(dataOf(await words(w, "apps.list")).apps, []);
+  const again = await words(w, "apps.remove", { id: "fixture" });
+  assert.equal(again.ok === false && again.error.code, "not_found", "the record is gone now");
+
+  // revoke does the same for a record without a folder
+  installFixtureFolder(w.root);
+  assert.equal((await call(w, "service:apps", "apps.install", { id: "fixture" })).ok, true);
+  rmSync(join(w.root, "fixture"), { recursive: true, force: true });
+  await words(w, "apps.refresh");
+  const revoked = dataOf(await words(w, "apps.revoke", { id: "fixture" }));
+  assert.deepEqual([revoked.id, revoked.granted, revoked.running], ["fixture", false, false]);
+  assert.equal(clock.received.length, 2);
+  assert.deepEqual(dataOf(await words(w, "apps.list")).apps, []);
+});
