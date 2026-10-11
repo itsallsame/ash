@@ -208,6 +208,10 @@ export function boot({ bridge } = {}) {
         mounted();
         paintView(timeline.view, true, dirty);
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const lifetime = view.rows.get(`message:${id}`)?.lifetime;
+        if (lifetime) lifetime.cleanup.add(lifetime.sourceBudgetRelease ??= () => {
+          if (dataset === timeline.store.dataset && timeline.get(id)?.full === hash && !fullTexts.has(hash, id)) timeline.store.collapse(id);
+        });
         // Native selection can defer replacing the preview; keep automatic ownership until the actual body exists.
         while (!signal?.aborted && view.rows.get(`message:${id}`)?.deferred) await new Promise(resolve => setTimeout(resolve, 50));
         if (signal?.aborted) cancel();
