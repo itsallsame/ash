@@ -236,6 +236,15 @@ test("a message that waits to be sent says so under the bubble", () => {
   assert.match(fragment.children.find((node) => node.className?.includes("pending-local")).className, /\bwaiting\b/);
 });
 
+test("the gate's own review line becomes a note under the sentence, and the sentence keeps its lines", () => {
+  const ask = { id: "a2", seq: 1, from: "service:gate", title: "在改剪贴板", detail: "审核：会覆盖你剪贴板里现在的内容\nAsh 想做这件事：在改剪贴板。\n目的：发给朋友", state: "pending", expires_at: Date.now() + 60_000, options: [] };
+  const card = draw([{ type: "ask", ask }]).children[0];
+  assert.equal(card.children.find((node) => node.className === "card-note").textContent, "审核：会覆盖你剪贴板里现在的内容");
+  assert.equal(card.children.find((node) => node.className.includes("ask-detail")).textContent, "Ash 想做这件事：在改剪贴板。\n目的：发给朋友");
+  const plain = draw([{ type: "ask", ask: { ...ask, detail: "只有一句" } }]).children[0];
+  assert.equal(plain.children.some((node) => node.className === "card-note"), false);
+});
+
 test("an approval card keeps the line breaks of its detail", async () => {
   const { readFileSync } = await import("node:fs");
   const css = readFileSync(new URL("../index.html", import.meta.url), "utf8");
