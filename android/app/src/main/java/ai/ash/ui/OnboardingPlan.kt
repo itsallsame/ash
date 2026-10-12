@@ -78,8 +78,8 @@ object OnboardingPlan {
     const val BRAIN = "brain"
 
     /**
-     * One part of her body, as the checkup groups them (HANDOFF §3; the ids are the ones of `open_native("checkup/<id>")` in
-     * the page bridge, design/app/IMPLEMENTATION.md). The guide's dots are one per part, and its closing screen names the parts that stayed off.
+     * One part of her body, as the checkup groups them (HANDOFF §3; the ids are the ones of [ConsoleActivity.EXTRA_PART]).
+     * The guide's dots are one per part, and its closing screen names the parts that stayed off.
      * [items] are the ids of `config.status` (plus the keep-alive switches and the recovery grant, see [rows]); the brain's
      * own package and connection are not rows, the guide's brain screen is theirs.
      */

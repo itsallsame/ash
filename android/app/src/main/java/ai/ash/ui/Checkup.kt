@@ -61,11 +61,6 @@ object Checkup {
         /** Items to deal with, without the optional part (the number the home page shows: 「N 项要处理」). */
         val todo: Int get() = OnboardingPlan.PARTS.filter { !optional(it) }.sumOf { todo(it) }
         fun todo(part: OnboardingPlan.Part): Int = parts[part.id] ?: 0
-
-        /** `{type:"checkup", todo, groups:[{id, todo}]}` — what the web page is told (the page bridge, see design/app/IMPLEMENTATION.md). */
-        fun toJson(): JSONObject = JSONObject().put("type", "checkup").put("todo", todo).put("groups", JSONArray().apply {
-            OnboardingPlan.PARTS.forEach { put(JSONObject().put("id", it.id).put("todo", todo(it))) }
-        })
     }
 
     fun summarize(items: List<Item>): Summary = Summary(OnboardingPlan.PARTS.associate { p -> p.id to items.count { it.part.id == p.id && it.state == State.OFF } })

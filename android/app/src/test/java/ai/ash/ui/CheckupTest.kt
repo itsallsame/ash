@@ -27,16 +27,6 @@ class CheckupTest {
         assertEquals("the number the home page shows leaves the optional part out", 3, s.todo)
     }
 
-    @Test fun whatTheWebPageIsToldIsTheTotalAndOneCountPerPart() {
-        val json = Checkup.summarize(listOf(item("awake", false), item("location", false))).toJson()
-        assertEquals("checkup", json.getString("type"))
-        assertEquals(1, json.getInt("todo"))
-        val groups = json.getJSONArray("groups")
-        assertEquals(7, groups.length())
-        assertEquals(OnboardingPlan.PARTS.map { it.id }, (0 until 7).map { groups.getJSONObject(it).getString("id") })
-        assertEquals(listOf(0, 0, 0, 1, 0, 0, 1), (0 until 7).map { groups.getJSONObject(it).getInt("todo") })
-    }
-
     @Test fun aCellSaysFixAfterTroubleAndOnlyThat() {
         for (p in OnboardingPlan.PARTS) {
             val ok = Checkup.cellText(p, 0)

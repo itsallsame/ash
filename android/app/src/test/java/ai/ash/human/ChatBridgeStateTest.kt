@@ -49,25 +49,6 @@ class ChatBridgeStateTest {
         assertEquals("client:b", page.links().single().getString("client"))
     }
 
-    @Test fun `a page that asks again is told the last state, and a closed one is told it is closed`() {
-        val page = Page()
-        bridge.attach(page)
-        bridge.linkChanged(true, "client:a")
-        page.messages.clear()
-        assertTrue(bridge.resendLink())
-        assertEquals("client:a", page.links().single().getString("client"))
-        bridge.linkChanged(false)
-        page.messages.clear()
-        assertTrue(bridge.resendLink())
-        assertFalse(page.links().single().getBoolean("open"))
-        assertNull(page.links().single().opt("client"))
-    }
-
-    @Test fun `asking with no page attached says so and tells nobody`() {
-        bridge.linkChanged(true, "client:a")
-        assertFalse(bridge.resendLink())
-    }
-
     @Test fun `a screen that is closing does not drop the page of the one that replaced it`() {
         val old = Page(); val fresh = Page()
         bridge.attach(old)

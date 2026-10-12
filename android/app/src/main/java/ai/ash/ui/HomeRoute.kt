@@ -5,7 +5,7 @@ import android.content.Intent
 
 /** The two pages of Ash's home screen: there is no tab bar, the chat is the screen and the apps open over it (the chat's 「应用」 button). */
 enum class HomeTab(val key: String) {
-    /** The chat: the packaged web UI. */
+    /** The chat, drawn natively. */
     CHAT("chat"),
     /** The owner's apps (each one opens in its own task, in the isolated process). */
     APPS("apps");
@@ -44,20 +44,6 @@ object HomeRoute {
 
     /** Whether the chat is what the owner is looking at: it is what the presence, the island and notifications go by. */
     fun chatInFront(resumed: Boolean, tab: HomeTab): Boolean = resumed && tab == HomeTab.CHAT
-
-    /** What the web page may ask the app to open (`open_native`, the page bridge in design/app/IMPLEMENTATION.md): the apps grid, or the checkup (`checkup`, `checkup/<part>`). */
-    sealed class Native {
-        object Apps : Native()
-        class Checkup(val part: OnboardingPlan.Part?) : Native()
-    }
-
-    /** The page named by an `open_native` message, or null for anything that is not one of the few names. */
-    fun nativeFor(page: String?): Native? = when {
-        page == "apps" -> Native.Apps
-        page == "checkup" -> Native.Checkup(null)
-        page != null && page.startsWith("checkup/") -> ai.ash.ui.Checkup.part(page.removePrefix("checkup/"))?.let { Native.Checkup(it) }
-        else -> null
-    }
 
     /** Opens Ash with the [HomeTab.APPS] page in front (from anywhere, the apps' own process included). */
     fun appsIntent(ctx: Context): Intent =

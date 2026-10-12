@@ -87,7 +87,7 @@
 
         <meta-data android:name="moe.shizuku.client.V3_SUPPORT" android:value="true" />
 
-        <!-- The ash UI: the chat (served by ash core, in a WebView) and the 「应用」 tab (the owner's apps; each opens in AppActivity's own task). The only launcher icon. fullUser: follow the system rotation lock. -->
+        <!-- The ash UI: the chat (drawn natively) and the 「应用」 tab (the owner's apps; each opens in AppActivity's own task). The only launcher icon. fullUser: follow the system rotation lock. -->
         <activity
             android:name=".ui.HomeActivity"
             android:exported="true"

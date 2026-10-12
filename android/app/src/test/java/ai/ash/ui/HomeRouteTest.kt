@@ -45,15 +45,6 @@ class HomeRouteTest {
         assertFalse(HomeRoute.isLauncher(null, setOf("android.intent.category.LAUNCHER")))
     }
 
-    /** The page bridge: the web page asks for the apps grid or the checkup (a whole page or one part of it); anything else is nothing. */
-    @Test fun theWebPageMayOpenOnlyTheAppsAndTheCheckup() {
-        assertTrue(HomeRoute.nativeFor("apps") is HomeRoute.Native.Apps)
-        assertNull((HomeRoute.nativeFor("checkup") as HomeRoute.Native.Checkup).part)
-        for (p in OnboardingPlan.PARTS) assertEquals(p, (HomeRoute.nativeFor("checkup/${p.id}") as HomeRoute.Native.Checkup).part)
-        for (bad in listOf(null, "", "home", "checkup/", "checkup/sleep", "checkup/brain/x", "Apps", "ash://console", "../apps"))
-            assertNull("$bad", HomeRoute.nativeFor(bad))
-    }
-
     @Test fun onlyTheChatInFrontCountsAsAshInFront() {
         assertTrue(HomeRoute.chatInFront(resumed = true, tab = CHAT))
         assertFalse(HomeRoute.chatInFront(resumed = true, tab = APPS))

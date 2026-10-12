@@ -32,10 +32,10 @@ import android.widget.Toast
 import org.json.JSONObject
 
 /**
- * 「她的手和眼 · 体检」(the page the web's 「这台手机」 opens): the phone's state told as seven parts of a body ([Checkup]). A part with
+ * 「她的手和眼 · 体检」(the page 「这台手机」 opens): the phone's state told as seven parts of a body ([Checkup]). A part with
  * an item that is off shows 「去修」; tapping a part lists its items, each with one line of why and 「去开启」. Under the parts, the
  * rest of what the old diagnostics page did (starting and stopping the kernel, the guide, the virtual screen preview, the three
- * optional switches) — no business logic of its own. [EXTRA_PART] opens straight onto one part (`checkup/<id>` of the web).
+ * optional switches) — no business logic of its own. [EXTRA_PART] opens straight onto one part (an id of [OnboardingPlan.PARTS]).
  */
 class ConsoleActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())

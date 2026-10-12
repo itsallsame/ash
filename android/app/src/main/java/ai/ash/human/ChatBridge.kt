@@ -20,8 +20,7 @@ import java.util.concurrent.TimeoutException
  *    the protocol) is answered with an `error` frame carrying the frame's `id` (or its `sid`).
  *  - native to page `{type:"frame", frame}`: `send.result`, `sync.page`, `sync.msg`, `stream`, and the `chat` presents.
  *  - native to page `{type:"link", open, client?, local?}`: the human channel opened or closed. Its syncs end with it, so the
- *    page opens them again when it opens; the same message is sent when a page attaches, and again whenever the page asks
- *    ([resendLink]): the bridge keeps the last state, so a page that came late, or missed it, only has to ask.
+ *    page opens them again when it opens; the same message is sent when a page attaches (the bridge keeps the last state).
  *
  * Nothing in a frame is looked at, except to find the `chat` presents and to end the page's syncs when the page goes.
  */
@@ -80,16 +79,6 @@ class ChatBridge(
         trace("page attached; link state told: $message; ${queued.size} present(s) waited")
         page.post(message)
         queued.forEach { toPage(it) }
-    }
-
-    /** The chat screen asks for the state of the link again (it came late, or doubts what it has): it is told the last one. False when no page is attached. */
-    fun resendLink(): Boolean {
-        val sink: Page?
-        val message: String
-        synchronized(lock) { sink = page; message = linkMessage.toString() }
-        trace("page asked for the link state; " + if (sink == null) "no page attached" else "told: $message")
-        sink?.post(message)
-        return sink != null
     }
 
     /**
