@@ -153,13 +153,13 @@
     "rest": "其余 {n} 处都好", "fix": "去修",
     "run": "运行",
     "parts": {
-      "brain":    { "name": "大脑",       "icon": "cpu",    "bad": "我的大脑没连上" },
-      "alarm":    { "name": "闹钟",       "icon": "alarm",  "bad": "到点了我可能叫不醒你" },
-      "notify":   { "name": "叫你",       "icon": "bell",   "bad": "有事我没法提醒你" },
+      "brain":    { "name": "大脑",       "icon": "cpu" },
+      "alarm":    { "name": "闹钟",       "icon": "alarm" },
+      "notify":   { "name": "叫你",       "icon": "bell" },
       "awake":    { "name": "在后台醒着", "icon": "bolt",   "bad": "可能被系统清理掉" },
       "eyes":     { "name": "眼睛和手",   "icon": "eye",    "bad": "屏幕上的事我看不到了" },
-      "files":    { "name": "照片和文件", "icon": "folder", "bad": "你的照片和文件我读不到" },
-      "location": { "name": "位置和健康", "icon": "pin",    "bad": "我不知道你在哪、走了多少" }
+      "files":    { "name": "照片和文件", "icon": "folder" },
+      "location": { "name": "位置和健康", "icon": "pin" }
     }
   },
   "trend": { "title": "最近 24 小时", "act": "做事", "cpu": "CPU", "now": "现在", "empty": "过一个小时再来看，这里会画出我每小时忙了多少。" },

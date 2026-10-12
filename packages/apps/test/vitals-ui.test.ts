@@ -15,95 +15,76 @@ const { pages } = await load("../../../tools/gen-vitals-ui.mjs");
 const { COPY } = model;
 const { NOW, scenarios } = support;
 const MIN = 60_000, HOUR = 3_600_000;
-const view = (name: string, patch: Record<string, unknown> = {}) => model.build({ ...scenarios[name](), ...patch }, NOW);
+const view = (name: string, patch: (s: any, d: any) => void = () => {}) => { const { status, day } = scenarios[name](); patch(status, day); return model.build(status, day, NOW); };
 
-test("the lamp: nothing wrong is ok; one invariant over is err with her own sentence; an hour after it, warn", () => {
+test("the head: the lamp and the sentence are the server's; an invariant id as the sentence is that check's own line, with the device named", () => {
   assert.deepEqual([view("ok").level, view("ok").say], ["ok", COPY.say.ok]);
-  assert.equal(view("ok", { busy_what: "整理日程" }).say, COPY.say.ok_busy);
-  const err = view("err");
-  assert.equal(err.level, "err");
-  assert.equal(err.say, COPY.invariants["idle.msg_rate"].say, "of two over, the one first in priority speaks");
-  assert.equal(view("warn").level, "warn");
+  assert.equal(view("ok", (s) => { s.say = { id: "ok_busy" }; }).say, COPY.say.ok_busy);
+  assert.equal(view("err").say, COPY.invariants["idle.msg_rate"].say);
+  assert.equal(view("todo").say, "「我的电脑」一直断开又连上");
   assert.equal(view("warn").say, COPY.say.warn_recovered);
-  // the last one to go over was the loop: she says she stalled
-  const lag = scenarios.warn(); lag.events = lag.events.filter((e: any) => e.id === "loop.lag"); lag.events[0].ts = NOW - 20 * MIN;
-  assert.equal(model.build(lag, NOW).say, COPY.say.warn_recovered_lag);
-  // more than an hour ago is nothing to watch for any more
-  lag.events[0].ts = NOW - 2 * HOUR;
-  assert.equal(model.build(lag, NOW).level, "ok");
+  assert.equal(view("ok", (s) => { s.lamp = "warn"; s.say = { id: "warn_hands", args: { n: 2 } }; }).say, "我一切正常，但有 2 处要你帮我修");
+  assert.equal(view("down").say, COPY.say.err_brain_down);
+  assert.equal(view("ok", (s) => { s.say = { id: "mystery.thing" }; }).say, COPY.unknown.say, "an id the table does not know still says something");
+  assert.deepEqual([view("fresh").level, view("fresh").say], ["new", COPY.say.new]);
+  assert.equal(view("ok", (s) => { s.lamp = "paused"; s.say = { id: "paused" }; }).levelName, "暂停");
+  assert.equal(model.build(null, null, NOW).level, "err", "nothing read at all is not calm");
 });
 
-test("the lamp: required parts of the checkup that are off make it warn; the optional one does not; the brain gone, new, and paused", () => {
-  const todo = view("todo", { status: scenarios.ok().status, events: [] });
-  assert.equal(todo.level, "warn");
-  assert.equal(todo.say, model.fill(COPY.say.warn_hands, { n: 2 }));
-  const location = scenarios.ok(); location.checkup.groups.find((g: any) => g.id === "location").todo = 3;
-  assert.equal(model.build(location, NOW).level, "ok", "「位置和健康」 is optional");
-  assert.deepEqual([view("down").level, view("down").say], ["err", COPY.say.err_brain_down]);
-  assert.equal(view("fresh").level, "new");
-  const slow = scenarios.fresh(); slow.status.uptime_s = 600;
-  assert.notEqual(model.build(slow, NOW).level, "new", "after the first minute she is not new any more");
-  assert.deepEqual([view("err", { paused: true }).level, view("err", { paused: true }).say], ["paused", COPY.say.paused]);
+test("the chips: how many devices, idle or busy with what; the button goes to the alert the server named", () => {
+  assert.deepEqual(view("ok").chips, { online: "连着 2 台设备", idle: true, busy: null });
+  assert.deepEqual(view("todo").chips, { online: "连着 2 台设备", idle: false, busy: "整理你的日程" });
+  assert.equal(view("err").action.id, "idle.msg_rate");
+  assert.equal(view("ok").action, null);
+  assert.equal(view("warn").action, null, "only err has the button");
 });
 
 test("the three tiles say it in words; the one that is out turns colour; idle high cpu is err, busy high cpu is not", () => {
-  const ok = view("ok").tiles;
-  assert.deepEqual(ok.map((t: any) => [t.word, t.num, t.tone]), [["很闲", "CPU 2%", ""], ["不多", "186 MB", ""], ["很快", "延迟 12 毫秒", ""]]);
-  const err = view("err").tiles;
-  assert.deepEqual(err.map((t: any) => [t.word, t.num, t.tone]), [["很忙", "CPU 38% · 闲着", "err"], ["有点多", "342 MB", "warn"], ["很快", "延迟 24 毫秒", ""]]);
-  const busy = scenarios.err(); busy.status.idle = false;
-  assert.deepEqual(model.build(busy, NOW).tiles[0], { id: "busy", label: "忙不忙", word: "很忙", num: "CPU 38%", tone: "" });
+  assert.deepEqual(view("ok").tiles.map((t: any) => [t.word, t.num, t.tone]), [["很闲", "CPU 2%", ""], ["不多", "186 MB", ""], ["很快", "延迟 12 毫秒", ""]]);
+  assert.deepEqual(view("err").tiles.map((t: any) => [t.word, t.num, t.tone]), [["很忙", "CPU 38% · 闲着", "err"], ["有点多", "342 MB", "warn"], ["很快", "延迟 24 毫秒", ""]]);
+  assert.deepEqual(view("err", (s) => { s.vitals.idle = false; }).tiles[0], { id: "busy", label: "忙不忙", word: "很忙", num: "CPU 38%", tone: "" });
+  assert.deepEqual(view("down").tiles.map((t: any) => t.word), ["—", "—", "—"], "no reading is a dash, not a guess");
   assert.equal(model.band(COPY.now.lag.bands, 200).word, "卡住了", "the limit itself is in the next band");
   assert.equal(model.band(COPY.now.lag.bands, 199).word, "有点慢");
 });
 
-test("today: five numbers, the cost in yuan, zero faded, the one that is over red; no link_opens yet is a dash", () => {
+test("today: five numbers, the cost in yuan, zero faded, null a dash, the one that is over red; a new install counts from when it came", () => {
   const today = view("ok").today;
   assert.deepEqual(today.map((c: any) => c.text), ["12", "86", "¥3.42", "0", "0"]);
   assert.deepEqual(today.map((c: any) => !!c.zero), [false, false, false, true, true]);
-  assert.equal(view("todo").today.find((c: any) => c.id === "reconnects").tone, "err");
-  assert.equal(view("todo").today.find((c: any) => c.id === "reconnects").text, "7");
-  const noLink = scenarios.ok(); noLink.minutes.forEach((m: any) => { delete m.link_opens; });
-  assert.equal(model.build(noLink, NOW).today.find((c: any) => c.id === "reconnects").text, "—");
-  assert.equal(view("fresh").since, "14:07", "a new install counts from when it came");
+  assert.deepEqual([view("todo").today[3].text, view("todo").today[3].tone], ["7", "err"]);
+  assert.equal(view("ok", (_s, d) => { d.today.reconnects = null; }).today[3].text, "—");
+  assert.equal(view("warn").today[4].text, "2");
+  assert.equal(view("fresh").since, "14:07");
   assert.equal(view("ok").since, null);
 });
 
-test("recent alerts: one row per time it went over, newest first, five at most; live ones say so; the order of the page follows", () => {
+test("recent alerts: the server's rows in its order, live ones say so, recovered ones the past; the order of the page follows", () => {
   const err = view("err");
-  assert.deepEqual(err.alerts.map((a: any) => [a.id, a.live]), [["idle.msg_rate", true], ["idle.cpu", true], ["loop.lag", false]], "the two going on, newest first, then the one that went by");
+  assert.deepEqual(err.alerts.map((a: any) => [a.id, a.live]), [["idle.msg_rate", true], ["idle.cpu", true], ["loop.lag", false]]);
   assert.equal(err.alertsFirst, true);
   assert.equal(view("ok").alertsFirst, false);
-  const many = scenarios.ok();
-  many.events = Array.from({ length: 9 }, (_, i) => ({ ts: NOW - (i + 1) * 2 * HOUR, type: "breach", id: "loop.lag", value: 300, budget: 200, window_s: 60, since: NOW - (i + 1) * 2 * HOUR }));
-  assert.equal(model.build(many, NOW).alerts.length, 5);
-  // the same going-over written down every ten minutes is one row
-  const same = scenarios.ok();
-  same.events = [0, 10, 20].map((m) => ({ ts: NOW - 60 * MIN + m * MIN, type: "breach", id: "idle.cpu", value: 30 + m, budget: 5, window_s: 60, since: NOW - 60 * MIN }));
-  assert.equal(model.build(same, NOW).alerts.length, 1);
-  assert.equal(model.build(same, NOW).alerts[0].value, 50, "the latest write has the biggest number so far");
-  const old = scenarios.ok(); old.events = [{ ts: NOW - 30 * HOUR, type: "breach", id: "idle.cpu", value: 30, budget: 5, window_s: 60, since: NOW - 30 * HOUR }];
-  assert.equal(model.build(old, NOW).alerts.length, 0, "older than a day is not listed");
+  assert.equal(view("warn").alertsFirst, true);
+  assert.equal(err.alerts[0].key, `idle.msg_rate@${new Date(2026, 9, 12, 14, 2).getTime()}`);
 });
 
 test("an alert's detail: the numbers, how long, the words from the table; recovered says how long it lasted; unknown ids still say something", () => {
   const live = view("err").alerts[0];
   assert.deepEqual([live.title, live.minutes, live.value, live.limit, live.unit, live.limitUnit], ["我在空转", 6, 44, 30, "条 / 分钟", "条以内"]);
   assert.deepEqual(live.actions.map((a: any) => a.kind), ["restart_brain", "open_checkup", "dismiss"]);
-  const gone = view("err").alerts.find((a: any) => a.id === "loop.lag");
+  const gone = view("err").alerts[2];
   assert.equal(gone.live, false);
-  assert.equal(gone.minutes, 1, "the ok event says it lasted a minute");
+  assert.equal(gone.minutes, 1);
   assert.equal(gone.lead, COPY.invariants["loop.lag"].recovered.lead);
   assert.equal(gone.why, COPY.invariants["loop.lag"].recovered.why);
-  const odd = scenarios.ok(); odd.status.invariants[0] = { id: "mystery.thing", ok: false, value: 9, budget: 3, window_s: 60, since: NOW - 5 * MIN };
-  const unknown = model.build(odd, NOW);
-  assert.equal(unknown.say, model.fill(COPY.unknown.say, {}));
-  assert.deepEqual(unknown.alerts[0].actions.map((a: any) => a.kind), ["copy_debug"]);
-  assert.match(unknown.alerts[0].lead, /实际是 9，正常是 3 以内/);
-  // the device that keeps reconnecting is named
-  assert.equal(view("todo").say, "「我的电脑」一直断开又连上");
-  const strange = scenarios.todo(); strange.devices = {};
-  assert.equal(model.build(strange, NOW).say, "「一台设备」一直断开又连上");
+  const odd = view("ok", (s) => { s.alerts = [{ id: "mystery.thing", state: "live", since: NOW - 5 * MIN, ended: null, minutes: 5, value: 9, budget: 3, device: null }]; });
+  assert.deepEqual(odd.alerts[0].actions.map((a: any) => a.kind), ["copy_debug"]);
+  assert.match(odd.alerts[0].lead, /实际是 9，正常是 3 以内/);
+  assert.equal(odd.alerts[0].debug.value, 9, "what is copied for the developer is the alert itself");
+  const todo = view("todo").alerts[0];
+  assert.deepEqual(todo.device, { id: "device:laptop", name: "我的电脑" });
+  assert.equal(todo.title, "「我的电脑」重连了好多次");
+  assert.equal(view("todo", (s) => { s.alerts[0].device = { id: "device:x", name: "一台设备" }; }).alerts[0].title, "「一台设备」重连了好多次");
 });
 
 test("the gauge: the value and the normal limit as parts of one scale, both inside it", () => {
@@ -114,33 +95,43 @@ test("the gauge: the value and the normal limit as parts of one scale, both insi
   assert.deepEqual(model.gauge(0, 5), { v: 0, lim: 5 / 6 }, "nothing reads as an empty bar with the limit still shown");
 });
 
-test("the rules: six lines; idle-only ones do not count while she is busy and wait for the first minute; the one over says so", () => {
+test("the rules: six lines over the eight checks; the one over says so, then the ones still being watched, then the ones busy", () => {
   const rows = view("ok").rules;
-  assert.deepEqual(rows.map((r: any) => r.tone), ["ok", "ok", "ok", "ok", "ok", "ok"]);
+  assert.deepEqual(rows.map((r: any) => r.tone), Array(6).fill("ok"));
   assert.equal(rows[0].line, "每分钟 2 条消息，30 条以内");
   assert.deepEqual(view("err").rules.map((r: any) => r.tag), ["越界", "正常", "越界", "正常", "正常", "正常"]);
-  assert.deepEqual(view("todo").rules.slice(0, 3).map((r: any) => [r.tag, r.tone]), [["在忙，不算", "mute"], ["在忙，不算", "mute"], ["在忙，不算", "mute"]]);
+  assert.equal(view("err").rules[0].line, "每分钟 44 条消息，30 条以内");
+  assert.deepEqual(view("todo").rules.slice(0, 3).map((r: any) => [r.tag, r.tone]), Array(3).fill(["在忙，不算", "mute"]));
   assert.equal(view("todo").rules[3].tone, "err");
   assert.deepEqual(view("fresh").rules.slice(0, 3).map((r: any) => [r.tag, r.line]), Array(3).fill(["在看", "看满一分钟才知道"]));
+  const split = view("ok", (s) => { s.rules.find((r: any) => r.id === "idle.msg_key_rate").state = "err"; s.rules.find((r: any) => r.id === "idle.msg_key_rate").value = 9; });
+  assert.equal(split.rules[0].tag, "越界", "of the two checks under one line, the one over speaks");
+  assert.equal(split.rules[0].line, "每分钟 9 条消息，30 条以内");
 });
 
-test("the checkup: all good is one row; otherwise only the parts to fix with their own words, the rest counted", () => {
+test("the checkup: not told yet draws nothing; all good is one row; otherwise only the parts to fix, the optional one never", () => {
   assert.deepEqual(view("ok").checkup.good, { title: "7 处都好", sub: COPY.checkup.all_good_s });
   const todo = view("todo").checkup;
   assert.equal(todo.title, "手和眼 · 2 处要修");
   assert.deepEqual(todo.fix.map((p: any) => [p.id, p.name, p.bad]), [["awake", "在后台醒着", "可能被系统清理掉"], ["eyes", "眼睛和手", "屏幕上的事我看不到了"]]);
   assert.equal(todo.rest, "其余 5 处都好");
-  assert.equal(view("fresh").checkup, null, "no summary yet: nothing is said about it");
+  assert.equal(view("fresh").checkup, null);
+  assert.equal(view("ok", (s) => { s.checkup.groups.find((g: any) => g.id === "location").todo = 3; }).checkup.good.title, "7 处都好", "「位置和健康」 is optional");
+  const phone = view("ok", (s) => { s.checkup.groups.find((g: any) => g.id === "files").todo = 1; s.checkup.groups.find((g: any) => g.id === "files").text = "没给权限"; }).checkup;
+  assert.deepEqual(phone.fix[0], { id: "files", name: "照片和文件", icon: "folder", bad: "没给权限" }, "a part the design has no sentence for says what the phone said");
 });
 
-test("the 24 hours: one bar per hour, the busy rate per hour, the last one is now and never red; under an hour of data there is none", () => {
+test("the 24 hours: one bar per hour, the last one is now (scaled to an hour) and never red; no data yet, no chart", () => {
   const t = view("err").trend;
   assert.equal(t.act.length, 24);
   assert.equal(t.cpu.length, 24);
   assert.deepEqual(t.ticks, ["15:00", "21:00", "03:00", "09:00", "现在"]);
-  assert.ok(t.bad.includes(9) || t.bad.some((i: number) => i < 23), "the hour of an earlier breach is marked");
-  assert.ok(!t.bad.includes(23));
+  assert.ok(!t.bad.includes(23), "an alert in this very hour does not turn the 'now' bar red");
+  assert.deepEqual(view("warn").trend.bad, [18, 22], "the hours of the alerts' starts");
   assert.equal(view("fresh").trend, null);
+  const { day } = scenarios.ok();
+  const full = model.trend(day, [], NOW);
+  assert.ok(full.act[23] > 300, "8 minutes of this hour count as the rate of a whole hour");
 });
 
 test("every word on the pages comes from copy.json and every colour from a token", () => {
@@ -181,7 +172,11 @@ async function open(name: string, surface: "home.html" | "alert.html", theme: "l
   await frame.waitForSelector("#app > *", { timeout: 5000 });
   return { page, frame, context, errors, host: () => page.evaluate(() => (window as any).__host) };
 }
-const text = (frame: any) => frame.evaluate(() => document.body.innerText);
+const text = async (frame: any) => {
+  const body = await frame.evaluate(() => document.body.innerText);
+  assert.ok(!/NaN|undefined|\[object|\{[a-z]+\}/.test(body), `an unfilled value on the page: ${body.match(/NaN|undefined|\[object[^\]]*\]|\{[a-z]+\}/)?.[0]}`);
+  return body;
+};
 
 for (const theme of ["light", "dark"] as const) {
   test(`${theme}: normal — one calm sentence, no red or amber anywhere`, { skip }, async () => {
@@ -205,13 +200,14 @@ for (const theme of ["light", "dark"] as const) {
     assert.ok((await text(frame)).includes("我在空转"));
     await frame.click("text=重启我的大脑");
     await frame.waitForSelector("text=重启我的大脑？");
-    assert.deepEqual((await host()).called.filter((n: string) => n !== "vitals.snapshot"), [], "asking is not doing");
+    assert.deepEqual((await host()).called.filter((n: string) => !["vitals.status", "vitals.day"].includes(n)), [], "asking is not doing");
     await frame.click("text=先不重启");
     assert.equal(await frame.locator("text=重启我的大脑？").count(), 0);
-    assert.deepEqual((await host()).called.filter((n: string) => n !== "vitals.snapshot"), []);
+    assert.deepEqual((await host()).called.filter((n: string) => !["vitals.status", "vitals.day"].includes(n)), []);
     await frame.click("text=重启我的大脑");
     await frame.click("button:has-text('重启大脑')");
-    await page.waitForFunction(() => (window as any).__host.called.includes("vitals.restart_brain"));
+    await page.waitForFunction(() => (window as any).__host.called.includes("vitals.restart"));
+    assert.deepEqual((await host()).args["vitals.restart"], { confirmed: true }, "the server only restarts what was confirmed");
     await frame.click("text=去体检看看").catch(() => {});
     await context.close();
   });
@@ -226,7 +222,7 @@ test("the checkup: 去修 goes to that part, the whole row to the whole checkup;
   await frame.locator(".li", { hasText: "「我的电脑」重连了好多次" }).click();
   await frame.click("text=去看看这台电脑");
   await page.waitForFunction(() => (window as any).__host.opened.length === 3);
-  assert.deepEqual((await host()).opened, ["ash://checkup/awake", "ash://checkup", `ash://device/${encodeURIComponent("我的电脑")}`]);
+  assert.deepEqual((await host()).opened, ["ash://checkup/awake", "ash://checkup", `ash://device/${encodeURIComponent("device:laptop")}`]);
   await context.close();
 });
 
@@ -250,6 +246,7 @@ test("new, warn, and no data: she says so instead of pretending", { skip }, asyn
   const fresh = await open("fresh", "home.html", "light");
   const a = await text(fresh.frame);
   for (const word of ["刚到", "我刚到，还在熟悉这台手机", "从 14:07 开始算", "还没有记录", "看满一分钟才知道", "在看", "过一个小时再来看"]) assert.ok(a.includes(word), word);
+  assert.ok(!a.includes("手和眼"), "no summary from the phone yet: no block for it");
   await fresh.context.close();
   const warn = await open("warn", "home.html", "dark");
   const b = await text(warn.frame);

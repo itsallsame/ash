@@ -81,7 +81,7 @@ function alertRow(a, actions) {
     span("lt",
       h("span", { class: "t", style: "display:flex;align-items:center;gap:6px" }, a.title, a.live ? span("tag tag-err", COPY.detail.live_tag) : null),
       span("s", (a.live ? "" : COPY.alerts.recovered_prefix) + a.row)),
-    h("span", { class: "tx-caption tx-num", style: "white-space:nowrap" }, hhmm(a.at)),
+    h("span", { class: "tx-caption tx-num", style: "white-space:nowrap" }, hhmm(a.started)),
     ico("chev", "i i-s chev"));
 }
 function alertsSection(view, actions) {
@@ -169,7 +169,7 @@ export function detailPage(a, actions, { back, avatar }) {
   const g = gauge(a.value, a.limit);
   const tone = a.live ? "err" : "warn";
   const cols = a.live ? D.cols_live : D.cols_recovered;
-  const when = fill(a.live ? D.live_when : D.recovered_when, { hhmm: hhmm(a.live ? a.started : a.at), n: a.minutes });
+  const when = fill(a.live ? D.live_when : D.recovered_when, { hhmm: hhmm(a.started), n: a.minutes });
   const pct = (x) => `${x * 100}%`;
   const buttons = !a.live
     ? [h("button", { class: "a-btn btn-neutral btn-block", type: "button", onclick: () => actions.dismiss() }, D.recovered_action), span("group-foot", D.recovered_foot)]

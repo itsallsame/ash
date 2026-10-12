@@ -3,33 +3,32 @@ import { build, COPY } from "./model.mjs";
 import { call, openLink, ready } from "./host.mjs";
 import { confirmSheet, detailPage, drawTrend, h, homePage, unreadable } from "./view.mjs";
 
-/** 读数据用的工具（A 线的 server.mjs 提供）：一次给齐页面要的原始数据，形状见 model.mjs 的 build(raw)。 */
-export const TOOLS = { snapshot: "vitals.snapshot", restart: "vitals.restart_brain" };
-const REFRESH_MS = 10_000;
-const keyOf = (a) => `${a.id}@${a.started}`;
+/** 这个应用自己的工具（packages/apps/vitals 的服务端）：status 灯、说的话、告警、底线、体检（每 10 秒），day 今天和 24 小时（每 60 秒），restart 重启大脑（只在确认之后）。 */
+export const TOOLS = { status: "vitals.status", day: "vitals.day", restart: "vitals.restart" };
+const REFRESH_MS = 10_000, DAY_MS = 60_000;
 
 /**
  * [surface]: "home"（整页，点告警进详情，详情里有返回）或 "alert"（直接是详情：进行中的那条，没有就最近一条；「知道了」后回到列表）。
  * [avatar]: 她的头像（data: 地址，沙箱页面引不到主页面的文件）。
  */
-export function start({ surface, avatar, root = document.getElementById("app"), now = () => Date.now(), refreshMs = REFRESH_MS }) {
-  const state = { raw: null, failed: false, view: null, selected: null, sheet: null, picked: false };
+export function start({ surface, avatar, root = document.getElementById("app"), now = () => Date.now(), refreshMs = REFRESH_MS, dayMs = DAY_MS }) {
+  const state = { status: null, day: null, failed: false, view: null, selected: location.hash.slice(1) || null, sheet: null, picked: false };
 
   const alertOf = () => {
     const list = state.view?.alerts ?? [];
-    if (state.selected) return list.find((a) => keyOf(a) === state.selected) ?? null;
+    if (state.selected) return list.find((a) => a.key === state.selected) ?? null;
     if (surface === "alert" && !state.picked) return list.find((a) => a.live) ?? list[0] ?? null;
     return null;
   };
 
   const actions = {
-    open: (a) => { state.selected = keyOf(a); state.picked = true; render(true); },
+    open: (a) => { state.selected = a.key; state.picked = true; render(true); },
     dismiss: () => { state.selected = null; state.picked = true; render(true); },
     checkup: (part) => { void openLink(part ? `ash://checkup/${encodeURIComponent(part)}` : "ash://checkup").catch(() => {}); },
     act: (a, x) => {
       if (x.kind === "restart_brain") { state.sheet = { a, busy: false }; render(false); }
       else if (x.kind === "open_checkup") actions.checkup();
-      else if (x.kind === "open_device") void openLink(`ash://device/${encodeURIComponent(a.device)}`).catch(() => {});
+      else if (x.kind === "open_device") { if (a.device) void openLink(`ash://device/${encodeURIComponent(a.device.id)}`).catch(() => {}); }
       else if (x.kind === "open_keys") void openLink("ash://keys").catch(() => {});
       else if (x.kind === "dismiss") actions.dismiss();
       else if (x.kind === "copy_debug") actions.copyDebug(a);
@@ -57,7 +56,7 @@ export function start({ surface, avatar, root = document.getElementById("app"), 
     const sheet = state.sheet;
     if (!sheet || sheet.busy) return;
     sheet.busy = true; render(false);
-    try { await call(TOOLS.restart, {}); state.sheet = null; render(false); setTimeout(() => void load(), 12_000); }
+    try { await call(TOOLS.restart, { confirmed: true }); state.sheet = null; render(false); setTimeout(() => void load(), 12_000); }
     catch { state.sheet = null; render(false); toast(COPY.app.restart_failed); }
   }
 
@@ -77,15 +76,25 @@ export function start({ surface, avatar, root = document.getElementById("app"), 
   /** alert 页面没有任何告警：就是「最近一切正常」那一块（和首页同一块）。 */
   const alertsOnly = () => homePage({ ...state.view, alertsFirst: true, tiles: [], today: [], rules: [], trend: null, checkup: null, action: null }, actions);
 
+  /** 灯和告警：读不到就留着上一次的；一次都没读到过就说读不到。 */
   async function load() {
-    try { state.raw = await call(TOOLS.snapshot, {}); state.failed = false; }
-    catch { state.failed = true; }            // 读不到就留着上一次的；一次都没读到过就说读不到
-    state.view = state.raw ? build(state.raw, state.raw.now ?? now()) : null;
+    try { state.status = await call(TOOLS.status, {}); state.failed = false; }
+    catch { state.failed = true; }
+    if (!state.day) await loadDay(false);
+    paint();
+  }
+  async function loadDay(repaint = true) {
+    try { state.day = await call(TOOLS.day, {}); } catch { /* 今天和趋势读不到就先空着，下一轮再试 */ }
+    if (repaint) paint();
+  }
+  function paint() {
+    state.view = state.status ? build(state.status, state.day, state.status.now ?? now()) : null;
     render(false);
   }
 
   new ResizeObserver(() => drawTrend(root, state.view ?? {})).observe(root);
   void ready.then(load, () => { state.failed = true; render(false); });
   setInterval(() => { if (!document.hidden && !state.sheet) void load(); }, refreshMs);
+  setInterval(() => { if (!document.hidden) void loadDay(); }, dayMs);
   return { actions, state, load };
 }
