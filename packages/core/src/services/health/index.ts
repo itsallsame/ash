@@ -161,7 +161,8 @@ export class HealthService implements Member {
       return;
     }
     bump(this.open.msg, t.kind === "event" ? `${t.from}/${t.word}:event` : `${t.to}/${t.word}:${t.from.slice(0, t.from.indexOf(":"))}`);
-    if (t.kind === "request" && t.from === OWNER_ID && t.to && this.options.registry.find(t.to, t.word)?.contract.effect !== "read") this.lastActive = now;
+    if (t.from === OWNER_ID && ((t.kind === "event" && t.word === "typing") ||
+      (t.kind === "request" && t.to && this.options.registry.find(t.to, t.word)?.contract.effect !== "read"))) this.lastActive = now;
   }
 
   /** What the router published: the rows the ledger took (they have a seq), and the turns that start and end. */
