@@ -1,5 +1,6 @@
 // 应用页面和主机的话（MCP Apps 的视图一侧）：JSON-RPC，主机是父窗口，或者它先递过来的一个 MessagePort（安卓 WebView）。
 // 和 health 的页面是同一套话；主题跟主机给的 hostContext.theme 走（<html data-theme>）。
+// 这个脚本放在 <head> 里：主机在页面第一次画出来时就把端口递过来，监听器要在那之前就挂上，不然端口丢了、握手永远不成。
 let port = null, next = 0;
 const waiting = new Map(), listeners = [];
 const post = (message) => (port ? port.postMessage(JSON.stringify(message)) : window.parent.postMessage(message, "*"));

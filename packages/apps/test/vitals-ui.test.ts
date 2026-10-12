@@ -151,6 +151,7 @@ test("home.html and alert.html are what tools/gen-vitals-ui.mjs makes from the s
   for (const text of Object.values(made) as string[]) {
     assert.ok(text.includes("--you-soft") && text.includes(".lamp-err") && text.includes("prefers-color-scheme:dark") && text.includes(':root[data-theme=dark]'), "tokens, vitals.css and both themes inline");
     assert.ok(!/<script[^>]*\ssrc=|<link\b|@import|url\(\s*["']?https?:/i.test(text), "nothing is fetched: the page is one file");
+    assert.ok(text.indexOf("<script>") > 0 && text.indexOf("<script>") < text.indexOf("<body>"), "the host hands the page its port when the page first paints: the listener must be up by then, so the script is in the head");
   }
 });
 

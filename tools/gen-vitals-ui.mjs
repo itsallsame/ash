@@ -49,13 +49,13 @@ export async function pages() {
 <style>
 ${css}
 </style>
+<script>
+${await script(entry)}
+</script>
 </head>
 <body>
 ${sprite()}
 <div id="app"></div>
-<script>
-${await script(entry)}
-</script>
 </body>
 </html>
 `;
