@@ -18,13 +18,12 @@ import type { Member, WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger } from "../../kernel/ledger";
 import type { Registry, Router } from "../../kernel/types";
-import { INVARIANTS, topOf, total, type Counts, type Window } from "./budgets";
+import { INVARIANTS, read, topOf, total, type Counts, type Invariant, type Window } from "./budgets";
 
 export const HEALTH_ID = "service:health";
 
 const TICK_MS = 10_000;
 const HOUR_BUCKETS = 360;
-const PERSIST_MS = 30_000;
 const EVENT_GAP_MS = 600_000;
 const IDLE_QUIET_MS = 60_000;
 const TURN_MAX_MS = 1_800_000;
@@ -65,12 +64,14 @@ export interface HealthOptions {
   /** The time between ticks (tests shorten it). */
   tickMs?: number;
   sampler?: Sampler;
+  /** Default: the built-in invariants. */
+  invariants?: readonly Invariant[];
   log?: (message: string) => void;
 }
 
 interface Open { msg: Counts; ledger: Counts; err: Counts; internal: Counts; link: Counts }
 interface Bucket extends Open, Sample { t: number; dt: number; idle: boolean }
-interface HealthEvent { at: number; type: "breach" | "start"; id: string; value?: number; budget?: number; window_s?: number; idle?: boolean; top?: { key: string; n: number }[]; last_seen?: number }
+interface HealthEvent { at: number; type: "breach" | "start"; id: string; value?: number; budget?: number; window_s?: number; idle?: boolean; top?: { key: string; n: number }[]; note?: string; last_seen?: number }
 
 const fresh = (): Open => ({ msg: new Map(), ledger: new Map(), err: new Map(), internal: new Map(), link: new Map() });
 const bump = (counts: Counts, key: string): void => { counts.set(key, (counts.get(key) ?? 0) + 1); };
@@ -86,6 +87,7 @@ export class HealthService implements Member {
   private readonly now: () => number;
   private readonly sampler: Sampler;
   private readonly startedAt: number;
+  private readonly invariants: readonly Invariant[];
   private ring: Bucket[] = [];
   private open: Open = fresh();
   private turns = new Map<string, number>();
@@ -102,6 +104,7 @@ export class HealthService implements Member {
   constructor(private readonly options: HealthOptions) {
     this.now = options.now ?? Date.now;
     this.sampler = options.sampler ?? processSampler();
+    this.invariants = options.invariants ?? INVARIANTS;
     this.db = options.ledger.db();
     this.startedAt = this.lastTick = this.lastActive = this.now();
     this.lastMinute = Math.floor(this.startedAt / 60_000);
@@ -134,7 +137,7 @@ export class HealthService implements Member {
 
   /** For the host: `degraded` while a budget has been broken for long enough to be an event. */
   heartbeat(): { text: string; state: "running" | "degraded" } {
-    const ids = [...this.broken].filter(([, since]) => this.now() - since >= PERSIST_MS).map(([id]) => id);
+    const ids = this.invariants.filter((inv) => { const since = this.broken.get(inv.id); return since !== undefined && this.now() - since >= inv.persist_s * 1000; }).map((inv) => inv.id);
     return ids.length ? { text: `degraded: ${ids.join(", ")}`.slice(0, 200), state: "degraded" } : { text: "running", state: "running" };
   }
 
@@ -206,17 +209,17 @@ export class HealthService implements Member {
   }
 
   private evaluate(t: number): void {
-    for (const inv of INVARIANTS) {
+    for (const inv of this.invariants) {
       const w = this.window(inv.window_s, inv.idle);
-      const reading = w ? inv.read(w) : null;
+      const reading = w ? read(inv, w) : null;
       this.values.set(inv.id, reading ? reading.value : null);
       if (!reading || reading.value <= inv.budget) { this.broken.delete(inv.id); continue; }
       const since = this.broken.get(inv.id) ?? t;
       this.broken.set(inv.id, since);
-      if (t - since < PERSIST_MS || t - (this.lastEvent.get(inv.id) ?? -Infinity) < EVENT_GAP_MS) continue;
+      if (t - since < inv.persist_s * 1000 || t - (this.lastEvent.get(inv.id) ?? -Infinity) < EVENT_GAP_MS) continue;
       this.lastEvent.set(inv.id, t);
       const top = reading.top.map(([key, n]) => ({ key, n }));
-      this.addEvent({ at: t, type: "breach", id: inv.id, value: round(reading.value), budget: inv.budget, window_s: Math.round(w!.seconds), idle: inv.idle, top });
+      this.addEvent({ at: t, type: "breach", id: inv.id, value: round(reading.value), budget: inv.budget, window_s: Math.round(w!.seconds), idle: inv.idle, top, note: inv.note });
       this.options.log?.(`${inv.id} is ${round(reading.value)} against ${inv.budget}${top[0] ? `, most: ${top[0].key}` : ""}`);
     }
   }
@@ -257,7 +260,7 @@ export class HealthService implements Member {
       rates: { msg_per_min: per(total(w?.msg ?? new Map())), ledger_rows_per_min: per(total(w?.ledger ?? new Map())), link_opens: total(new Map([...(w?.link ?? [])].filter(([key]) => key.startsWith("open:")))), errors_per_min: per(total(w?.err ?? new Map())) },
       top: topOf(w?.msg ?? new Map(), 10).map(([key, n]) => ({ key, per_min: per(n) })),
       proc: { cpu_pct: round(w?.cpu_pct ?? 0), rss_mb: round((last?.rss ?? 0) / MB), heap_mb: round((last?.heap ?? 0) / MB), lag_p99_ms: round(w?.lag_p99_ms ?? 0) },
-      invariants: INVARIANTS.map((inv) => {
+      invariants: this.invariants.map((inv) => {
         const since = this.broken.get(inv.id);
         const value = this.values.get(inv.id) ?? null;
         return { id: inv.id, ok: since === undefined, value: value === null ? null : round(value), budget: inv.budget, ...(since === undefined ? {} : { since }) };

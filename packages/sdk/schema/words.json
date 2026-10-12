@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "a4f110b07d4e5ea107a132aea4e6ce453ff8fa816e43bd299f356df5ac85ea09",
+ "hash": "6ac12fa4544f17df09e5058c2ed8ecb2112e0455cddf4f4445489f4cbac463f9",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -665,6 +665,9 @@
           "additionalProperties": false
          }
         },
+        "note": {
+         "type": "string"
+        },
         "last_seen": {
          "type": "integer",
          "minimum": 0,
@@ -789,6 +792,9 @@
           ],
           "additionalProperties": false
          }
+        },
+        "note": {
+         "type": "string"
         },
         "last_seen": {
          "type": "integer",

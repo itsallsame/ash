@@ -3,18 +3,19 @@ import test from "node:test";
 import { compileSchema } from "../../../../sdk/src/word";
 import type { Message } from "../../../../sdk/src/message";
 import { createHealthService, type Sample } from "../../../src/services/health";
+import { INVARIANTS, type Invariant } from "../../../src/services/health/budgets";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { agent, call, owner } from "../support";
 
 const MB = 1024 * 1024;
 
-function setup(sample: Sample = { cpu_pct: 1, rss: 50 * MB, heap: 10 * MB, lag_p99_ms: 1 }) {
+function setup(sample: Sample = { cpu_pct: 1, rss: 50 * MB, heap: 10 * MB, lag_p99_ms: 1 }, invariants?: readonly Invariant[]) {
   const { ledger } = openLedger();
   let t = 1_000_000_000_000;
   let cb: (m: Message) => void = () => {};
   const logs: string[] = [];
   const service = createHealthService({
-    ledger, now: () => t, sampler: { sample: () => sample }, log: (m) => logs.push(m),
+    ledger, now: () => t, sampler: { sample: () => sample }, log: (m) => logs.push(m), ...(invariants ? { invariants } : {}),
     router: { subscribe: (_f, fn) => { cb = fn; return () => { cb = () => {}; }; } },
     registry: { find: (_to, word) => ({ contract: { effect: word === "say" ? "write" : "read" } }) as any },
   });
@@ -42,6 +43,7 @@ test("the busy loop of 10-12 is caught within 40 seconds of the first idle bucke
   assert.ok(breach, "the event is written");
   assert.equal(breach.top[0].key, "service:history/current:person");
   assert.ok(breach.value > 2000 && breach.budget === 6 && breach.idle === true);
+  assert.match(breach.note, /again and again/);
   assert.ok((await s.events()).some((e) => e.id === "idle.msg_rate"));
   assert.equal(s.service.heartbeat().state, "degraded");
   assert.match(s.service.heartbeat().text, /idle\.msg_key_rate/);
@@ -149,4 +151,14 @@ test("the answers fit their contracts, for the owner and for an agent", async ()
       assert.ok(ok(data), `${word}: ${JSON.stringify(ok.errors)}`);
     }
   }
+});
+
+test("the invariants are plain data: they survive JSON, and a record added to the list is evaluated by the same engine", async () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(INVARIANTS)), INVARIANTS);
+  const extra: Invariant = { id: "clock.calls", metric: "msg", agg: "rate", match: "^service:clock/", budget: 10, idle: false, window_s: 60, persist_s: 10, note: "The clock is asked too often." };
+  const s = setup(undefined, [extra]);
+  s.run(40, () => { for (let i = 0; i < 20; i++) s.feed("service:clock", "list"); s.feed("service:cost", "usage.get"); });
+  const found = (await s.events()).find((e) => e.id === "clock.calls");
+  assert.ok(found && found.note === "The clock is asked too often." && found.top.length === 1 && found.top[0].key.startsWith("service:clock/"));
+  assert.deepEqual((await s.status()).invariants.map((i: any) => i.id), ["clock.calls"]);
 });

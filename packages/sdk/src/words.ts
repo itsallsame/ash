@@ -120,7 +120,7 @@ add("service:admin", "settings.changed", "event", obj({ keys: strings, by: id },
 // service:health: how the hub itself is behaving (counts and budgets, never contents)
 // ===================================================================================================================
 const healthKey = obj({ key: nonempty, per_min: num }, ["key", "per_min"]);
-const healthEvent = obj({ at: nonnegativeSafe, type: choice("breach", "start"), id: nonempty, value: num, budget: num, window_s: integer, idle: bool, top: array(obj({ key: nonempty, n: num }, ["key", "n"])), last_seen: nonnegativeSafe },
+const healthEvent = obj({ at: nonnegativeSafe, type: choice("breach", "start"), id: nonempty, value: num, budget: num, window_s: integer, idle: bool, top: array(obj({ key: nonempty, n: num }, ["key", "n"])), note: str, last_seen: nonnegativeSafe },
   ["at", "type", "id"]);
 add("service:health", "status", "request", obj({ window_s: { type: "integer", minimum: 60, maximum: 3600 } }),
   obj({
