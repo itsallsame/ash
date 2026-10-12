@@ -3,9 +3,10 @@ import { build, COPY } from "./model.mjs";
 import { call, openLink, ready } from "./host.mjs";
 import { confirmSheet, detailPage, drawTrend, h, homePage, unreadable } from "./view.mjs";
 
-/** 这个应用自己的工具（packages/apps/vitals 的服务端）：status 灯、说的话、告警、底线、体检（每 10 秒），day 今天和 24 小时（每 60 秒），restart 重启大脑（只在确认之后）。 */
+/** 这个应用自己的工具（packages/apps/vitals 的服务端）：status 灯、说的话、告警、底线、体检（每 15 秒），day 今天和 24 小时（每 60 秒），restart 重启大脑（只在确认之后）。 */
 export const TOOLS = { status: "vitals.status", day: "vitals.day", restart: "vitals.restart" };
-const REFRESH_MS = 10_000, DAY_MS = 60_000;
+// 15 秒一次，不更勤：中枢「闲着时同一件事每分钟超 6 次就报空转」，页面每读一次就是窗口里的一次调用；退到后台 / 息屏就停，回来立刻读一次。
+const REFRESH_MS = 15_000, DAY_MS = 60_000;
 
 /**
  * [surface]: "home"（整页，点告警进详情，详情里有返回）或 "alert"（直接是详情：进行中的那条，没有就最近一条；「知道了」后回到列表）。
@@ -96,5 +97,6 @@ export function start({ surface, avatar, root = document.getElementById("app"), 
   void ready.then(load, () => { state.failed = true; render(false); });
   setInterval(() => { if (!document.hidden && !state.sheet) void load(); }, refreshMs);
   setInterval(() => { if (!document.hidden) void loadDay(); }, dayMs);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !state.sheet) { void load(); void loadDay(); } });
   return { actions, state, load };
 }
