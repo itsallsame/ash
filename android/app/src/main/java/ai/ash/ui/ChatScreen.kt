@@ -85,6 +85,8 @@ class ChatScreen(
     private var shown = false
     private var agents = JSONArray()
     private var chosen: String? = null
+    /** Her name as her home page reads it from IDENTITY.md: the bar and the box's hint follow it. */
+    private var herName = "Ash"
     private val outbox = Outbox(ctx)
     private var flushing = false
     private val tick = object : Runnable { override fun run() { paintProgress(); if (shown) main.postDelayed(this, 1_000) } }
@@ -286,6 +288,7 @@ class ChatScreen(
     }
 
     private fun nameOf(id: String?): String {
+        if (id != null && id == port.primary) return herName
         for (i in 0 until agents.length()) agents.optJSONObject(i)?.let { if (it.optString("id") == id) return it.optString("name").ifEmpty { "Ash" } }
         return "Ash"
     }
@@ -511,6 +514,27 @@ class ChatScreen(
     }
 
     private fun toast(s: String) = android.widget.Toast.makeText(ctx, s, android.widget.Toast.LENGTH_SHORT).show()
+
+    /** Her name changed (her home page read IDENTITY.md): the bar and the hint say it. */
+    fun setName(name: String) { herName = name; nameLine.text = name; paintTarget() }
+
+    /** Words from her home page go into the message box, which gets the cursor. */
+    fun compose(text: String) { input.setText(text); input.setSelection(input.text.length); focusInput() }
+
+    /** Shows message [id]: where it is when it is on screen, otherwise after reading the window around it. */
+    fun jumpTo(id: String) {
+        fun show() { rows[id]?.second?.let { v -> scroll.post { scroll.smoothScrollTo(0, maxOf(0, v.top - dp(60))) } } }
+        if (rows.containsKey(id)) { show(); return }
+        port.call("service:history", "window", JSONObject().put("limit", PAGE).put("around_id", id)) { data, _ ->
+            if (data == null) return@call
+            val had = moreBefore
+            val oldest = items.firstEntry()?.key ?: Long.MAX_VALUE
+            take(data, newest = false)
+            // reaching further back than what was loaded: that window says whether there is more; otherwise what was said stands
+            if (items.firstKey() >= oldest) moreBefore = had
+            paintList(); show()
+        }
+    }
 
     /** Puts the cursor in the message box and raises the keyboard. */
     fun focusInput() {
