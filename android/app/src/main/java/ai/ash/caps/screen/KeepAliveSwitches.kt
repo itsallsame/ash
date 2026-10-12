@@ -11,13 +11,15 @@ import org.json.JSONObject
 object KeepAliveSwitches {
     const val ASH_PACKAGE = "ai.ash.agent"
     const val KERNEL_PACKAGE = "ai.ash.kernel"
+    /** The kernel package's name as the phone lists it (its app_name). The owner-facing words call it her brain; this is the system's name for the row. */
+    const val KERNEL_LABEL = "Ash 内核"
     /** Opened by the flow when it is done: Ash's task comes back as it was left (see Ash's ReturnActivity). */
     const val RETURN_ACTIVITY = "ai.ash.ui.ReturnActivity"
 
     /** An app as the maker's settings list it. */
     data class Target(val pkg: String, val label: String)
     /** The only apps the flow ever touches. */
-    val targets: List<Target> = listOf(Target(ASH_PACKAGE, "Ash"), Target(KERNEL_PACKAGE, "Ash 大脑"))
+    val targets: List<Target> = listOf(Target(ASH_PACKAGE, "Ash"), Target(KERNEL_PACKAGE, KERNEL_LABEL))
     fun target(pkg: String): Target? = targets.firstOrNull { it.pkg == pkg }
 
     /** One switch, by the text next to it. */

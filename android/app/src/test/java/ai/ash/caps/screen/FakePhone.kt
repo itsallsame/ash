@@ -47,7 +47,7 @@ class FakeNode(
  * and the apps in two sections ([firstSection] apps in the first).
  */
 class FakePhone(
-    val apps: List<String> = listOf("微信", "地图", "Ash", "相机", "Ash 大脑", "音乐", "Ash 工具", "天气"),
+    val apps: List<String> = listOf("微信", "地图", "Ash", "相机", "Ash 内核", "音乐", "Ash 工具", "天气"),
     val oneSwitch: Map<String, String>? = null,
     /** ColorOS 15 list: the one switch per app. */
     val autostart: MutableMap<String, Boolean> = mutableMapOf(),
@@ -90,7 +90,7 @@ class FakePhone(
     private var dialog: FakeNode? = null
     private val due = mutableListOf<Pair<Long, () -> Unit>>()
     private var frames = 0
-    private val pkgOf = mapOf("Ash" to "ai.ash.agent", "Ash 大脑" to "ai.ash.kernel", "Ash 工具" to "test.ash.tools")
+    private val pkgOf = mapOf("Ash" to "ai.ash.agent", "Ash 内核" to "ai.ash.kernel", "Ash 工具" to "test.ash.tools")
     private val labelOf = pkgOf.entries.associate { it.value to it.key }
 
     private fun row(title: String, then: () -> Unit) = FakeNode(clickable = true, onClick = { clickedLabels += title; then() }).add(FakeNode(text = title))

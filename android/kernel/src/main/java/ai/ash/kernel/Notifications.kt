@@ -70,7 +70,7 @@ object Notifications {
     fun createChannel(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Ash 大脑常驻", NotificationManager.IMPORTANCE_MIN).apply {
+            NotificationChannel(CHANNEL, "Ash 内核常驻", NotificationManager.IMPORTANCE_MIN).apply {
                 setShowBadge(false); setSound(null, null); enableVibration(false)
                 description = "让 Ash 在后台保持运行；不响、不弹出，可以放心折叠。"
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
@@ -83,7 +83,7 @@ object Notifications {
     fun build(ctx: Context, text: String): Notification {
         val b = Notification.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_ash)
-            .setContentTitle("Ash 大脑")
+            .setContentTitle("Ash 内核")
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)

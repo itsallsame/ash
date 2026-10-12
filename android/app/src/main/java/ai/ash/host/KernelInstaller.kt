@@ -105,7 +105,7 @@ object KernelInstaller {
         when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 @Suppress("DEPRECATION") val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                if (confirm != null) BackgroundLaunch.start(ctx, confirm, "确认安装 Ash 大脑", "点这里确认安装")
+                if (confirm != null) BackgroundLaunch.start(ctx, confirm, "确认安装她的大脑", "点这里确认安装")
             }
             PackageInstaller.STATUS_SUCCESS -> { failure = null; Log.i(TAG, "kernel package installed") }
             else -> {

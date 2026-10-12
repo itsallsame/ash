@@ -46,8 +46,8 @@ object KernelAutostart {
 
     /** What to do on that page, in the words of the phone's settings. */
     fun guidance(rom: Rom): String = when (rom) {
-        Rom.MIUI -> "在「自启动管理」里找到「Ash 大脑」，打开它的开关"
-        Rom.COLOROS -> "在「自启动」里找到「Ash 大脑」，打开它的开关（有的版本要分别打开「开机自启动」和「后台自启动」）"
+        Rom.MIUI -> "在「自启动管理」里找到「${KeepAliveSwitches.KERNEL_LABEL}」（这是她的大脑），打开它的开关"
+        Rom.COLOROS -> "在「自启动」里找到「${KeepAliveSwitches.KERNEL_LABEL}」（这是她的大脑），打开它的开关（有的版本要分别打开「开机自启动」和「后台自启动」）"
     }
 
     /** True / false when the switch can be read, null when it cannot (the owner's word then stands). */
