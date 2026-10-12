@@ -113,6 +113,7 @@ object HostPresence {
         callback = cb
         try { cb.asBinder().linkToDeath({ gone(ctx, cb) }, 0) } catch (e: Exception) { callback = null; throw e }
         onChange?.invoke()
+        KernelPairing.cancel(ctx)
     }
 
     @Synchronized private fun gone(ctx: Context, cb: IHostCallback) {

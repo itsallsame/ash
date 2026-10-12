@@ -57,7 +57,7 @@
 
 | 来源 | 许可证 | 用到的部分 |
 |---|---|---|
-| **Shizuku** <https://github.com/RikkaApps/Shizuku> | Apache-2.0 | adb 客户端与配对（`adb/AdbKey.kt`、`adb/AdbClient.kt`、`adb/AdbMdns.kt`、`adb/AdbWire.kt`、`jni/adb_pairing.c`），以及经 ContentProvider 把连接信息交给 App 的做法（`ProviderClient.java`）。未使用 Shizuku 的名称、图标、包名或权限名 |
+| **Shizuku** <https://github.com/RikkaApps/Shizuku> | Apache-2.0 | adb 客户端与配对（`adb/AdbKey.kt`、`adb/AdbClient.kt`、`adb/AdbMdns.kt`、`adb/AdbWire.kt`、`jni/adb_pairing.c`），配对通知的 RemoteInput、独立通知频道、前台服务回复与权限检查做法（`host/KernelPairing.kt`、`Notifications.kt`），以及经 ContentProvider 把连接信息交给 App 的做法（`ProviderClient.java`）。未使用 Shizuku 的名称、图标、包名或权限名 |
 | **scrcpy** <https://github.com/Genymobile/scrcpy>，Copyright (C) 2018 Genymobile, (C) 2018-2026 Romain Vimont | Apache-2.0 | `FakeContext.java`、`Workarounds.java`（app_process 里的 Context） |
 | **BoringSSL** <https://boringssl.googlesource.com/boringssl>（经 `io.github.vvb2060.ndk:boringssl:20251124` 预编译包，静态链接进内核包的 `libashadb.so`） | Apache-2.0 | 配对用的 SPAKE2、HKDF、AES-GCM |
 | **okhttp-tls** <https://github.com/square/okhttp>（`com.squareup.okhttp3:okhttp-tls:4.12.0`） | Apache-2.0 | 为配对证书生成自签名证书 |

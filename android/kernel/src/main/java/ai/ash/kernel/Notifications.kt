@@ -67,6 +67,9 @@ object Notifications {
     /** Channels the pairing guide uses: progress (silent, same as the status channel) and a ringing one for what the owner must do now. */
     const val CH_STATUS = CHANNEL
     const val CH_URGENT = "ash.kernel.urgent"
+    // Dedicated, silent high-importance input channel, as in Shizuku's adb pairing service.
+    // Never share the resident service's MIN channel: owners must be able to see and expand this input.
+    const val CH_PAIRING = "ash.kernel.pairing.v1"
     /** The hand app's chat page (its only launcher activity). */
     const val HOME_ACTIVITY = "ai.ash.ui.HomeActivity"
 
@@ -81,6 +84,12 @@ object Notifications {
         )
         nm.createNotificationChannel(
             NotificationChannel(CH_URGENT, "Ash 内核配对", NotificationManager.IMPORTANCE_HIGH).apply { setShowBadge(false) },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_PAIRING, "输入配对码", NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(null, null); enableVibration(false); setShowBadge(false); setAllowBubbles(false)
+                description = "无线调试配对时显示输入按钮，不关闭系统配对框。"
+            },
         )
         // A channel still carrying a running service's notification cannot be deleted (SecurityException); the next start retires it.
         for (old in RETIRED_CHANNELS) runCatching { nm.deleteNotificationChannel(old) }

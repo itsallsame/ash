@@ -53,6 +53,10 @@ object KernelPairing {
     }
     fun developerOptions(ctx: Context) = Settings.Global.getInt(ctx.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
     fun wirelessDebugging(ctx: Context) = Settings.Global.getInt(ctx.contentResolver, "adb_wifi_enabled", 0) == 1
+    fun pairingNotificationsEnabled(ctx: Context): Boolean {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        return nm.areNotificationsEnabled() && nm.getNotificationChannel(Notifications.CH_PAIRING)?.importance != NotificationManager.IMPORTANCE_NONE
+    }
     fun onWifi(ctx: Context): Boolean = runCatching {
         val cm = ctx.getSystemService(ConnectivityManager::class.java)
         cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
@@ -76,9 +80,12 @@ object KernelPairing {
 }
 
 enum class PairingStage { IDLE, WAITING_CODE, PAIRING, CONNECTING, STARTING, READY, ERROR }
-data class PairingProgress(val stage: PairingStage = PairingStage.IDLE, val text: String = "", val pairingPort: Int = 0)
+data class PairingProgress(val stage: PairingStage = PairingStage.IDLE, val text: String = "", val pairingPort: Int = 0,
+    val pairing: Boolean = false) {
+    val acceptsCode: Boolean get() = pairing && stage in listOf(PairingStage.IDLE, PairingStage.WAITING_CODE, PairingStage.ERROR)
+}
 
-/** One worker owns pairing and launch; page progress does not depend on notification permission. */
+/** One worker owns pairing and launch. The input notification is posted first, before any port discovery. */
 class GuideService : Service() {
     private val work = Executors.newSingleThreadExecutor()
     private var mdns: AdbMdns? = null
@@ -88,144 +95,227 @@ class GuideService : Service() {
     private var busy = false
     private var waitingCode: String? = null
     private val main = Handler(Looper.getMainLooper())
-    private val expiry = Runnable {
-        if (progress.stage != PairingStage.READY) publish(PairingStage.ERROR, "等待超时，请在内核页面重试")
-        stopSelf()
+    @Volatile private var pendingMode = ""
+    @Volatile private var closed = false
+    @Volatile private var generation = 0
+    @Synchronized private fun newRequest(): Int = ++generation
+    @Synchronized private fun remember(next: String, request: Int = generation) {
+        if (request != generation || (closed && next.isNotEmpty())) return
+        pendingMode = next
+        getSharedPreferences("ash.pairing", MODE_PRIVATE).edit().putString("mode", next).apply()
     }
-    override fun onCreate() { super.onCreate(); running = true; Notifications.createChannel(this) }
+    override fun onCreate() {
+        super.onCreate()
+        running = true
+        Notifications.createChannel(this)
+        pendingMode = getSharedPreferences("ash.pairing", MODE_PRIVATE).getString("mode", "").orEmpty()
+        if (pendingMode == PAIR) progress = PairingProgress(PairingStage.WAITING_CODE, "输入配对码", pairing = true)
+    }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        foreground(progress.text.ifEmpty { "正在准备配对" })
-        when (intent?.action) {
-            PAIR, CONNECT -> work.execute { if (!busy) begin(intent.action!!) }
+        val action = intent?.action ?: pendingMode
+        when (action) {
+            PAIR -> {
+                val request = newRequest()
+                remember(PAIR)
+                // Highest priority: an actual input action, immediately, including before discovery has a port.
+                progress = PairingProgress(PairingStage.WAITING_CODE, "打开系统配对框，把 6 位码输在这条通知里", pairing = true)
+                foreground(progress.text)
+                work.execute { begin(PAIR, request) }
+            }
+            CONNECT -> {
+                val request = newRequest()
+                remember(CONNECT)
+                foreground("正在连接宿主")
+                work.execute { begin(CONNECT, request) }
+            }
             CODE -> {
-                val code = intent.getStringExtra(KEY_CODE)
-                    ?: RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_CODE)?.toString().orEmpty()
+                if (progress.stage == PairingStage.PAIRING) return START_STICKY
+                val request = newRequest()
+                foreground(progress.text.ifEmpty { "输入配对码" })
+                val code = intent?.getStringExtra(KEY_CODE)
+                    ?: intent?.let { RemoteInput.getResultsFromIntent(it) }?.getCharSequence(KEY_CODE)?.toString().orEmpty()
+                val replyPort = intent?.getIntExtra(EXTRA_PORT, 0) ?: 0
+                remember(PAIR)
                 work.execute {
                     if (!busy) {
-                        if (!validCode(code)) publish(PairingStage.ERROR, "请输入 6 位数字配对码")
-                        else if (pairingPort > 0) pair(pairingPort, code.trim())
+                        if (!validCode(code)) {
+                            begin(PAIR, request)
+                            publish(PairingStage.ERROR, "请输入 6 位数字配对码", request)
+                        }
+                        else if (replyPort in 1..65535) pair(replyPort, code.trim(), request)
+                        else if (pairingPort > 0) pair(pairingPort, code.trim(), request)
                         else {
                             waitingCode = code.trim()
-                            begin(PAIR)
-                            publish(PairingStage.WAITING_CODE, "正在寻找配对端口，请保持系统配对框打开")
+                            begin(PAIR, request)
+                            publish(PairingStage.WAITING_CODE, "正在寻找配对端口，请保持系统配对框打开", request)
                         }
                     }
                 }
             }
-            else -> stopSelf()
+            CANCEL -> {
+                newRequest()
+                closed = true
+                foreground("配对已取消")
+                remember("")
+                progress = PairingProgress()
+                stopSelf()
+            }
+            else -> { stopSelf(); return START_NOT_STICKY }
         }
-        main.removeCallbacks(expiry)
-        main.postDelayed(expiry, 170_000)
-        return START_NOT_STICKY
+        return START_STICKY
     }
-    private fun begin(next: String) {
-        if (KernelHost.ready()) { awaitCore(); return }
+    private fun begin(next: String, request: Int) {
+        if (closed || request != generation) return
+        if (next == CONNECT && KernelHost.ready()) { awaitCore(request); return }
         mdns?.stop()
         val epoch = ++discoveryEpoch
         mode = next
-        if (next == PAIR) publish(PairingStage.WAITING_CODE, "打开无线调试，查看配对码，在内核页面输入")
-        else publish(PairingStage.CONNECTING, "正在连接无线调试")
+        if (next == PAIR) publish(PairingStage.WAITING_CODE, "打开系统配对框后，下拉通知点「输入配对码」。系统分屏时也可以在本页输入", request)
+        else publish(PairingStage.CONNECTING, "正在连接无线调试", request)
         mdns = AdbMdns(applicationContext, if (next == PAIR) AdbMdns.PAIRING else AdbMdns.CONNECT) { port ->
             if (!work.isShutdown) runCatching { work.execute {
-                if (epoch == discoveryEpoch && mode == next && !busy) {
+                if (request == generation && epoch == discoveryEpoch && mode == next && !busy) {
                     if (next == PAIR) {
                         pairingPort = port
-                        publish(PairingStage.WAITING_CODE, "已找到配对端口，输入 6 位配对码")
-                        waitingCode?.also { waitingCode = null; pair(port, it) }
-                    } else connect(port)
+                        KernelPairing.log("found pairing port $port")
+                        publish(PairingStage.WAITING_CODE, "已找到配对端口，输入 6 位配对码", request)
+                        waitingCode?.also { waitingCode = null; pair(port, it, request) }
+                    } else { KernelPairing.log("found connect port $port"); connect(port, request) }
                 }
             } }
         }.also { it.start() }
     }
-    private fun pair(port: Int, code: String) {
-        if (!validCode(code)) { publish(PairingStage.ERROR, "请输入 6 位数字配对码"); return }
+    private fun pair(port: Int, code: String, request: Int) {
+        if (closed || request != generation) return
+        if (!validCode(code)) { publish(PairingStage.ERROR, "请输入 6 位数字配对码", request); return }
         busy = true
-        publish(PairingStage.PAIRING, "正在配对")
+        mode = PAIR
+        pairingPort = port
+        publish(PairingStage.PAIRING, "正在配对", request)
         try {
             val key = AdbKey.load(this, create = true) ?: error("无法生成配对密钥")
             AdbClient.pair(port, code, key, KernelPairing.keyName())
+            if (closed || request != generation) { busy = false; return }
             AdbKey.markPaired(this)
+            remember(CONNECT, request)
             pairingPort = 0
             busy = false
             KernelPairing.log("paired")
-            begin(CONNECT)
+            begin(CONNECT, request)
         } catch (_: AdbWrongCode) {
             busy = false
-            publish(PairingStage.ERROR, "配对码不对，请重新输入")
+            publish(PairingStage.ERROR, "配对码不对，请重新输入", request)
         } catch (e: Exception) {
             busy = false
             KernelPairing.log("pairing failed: ${e.javaClass.simpleName}")
-            publish(PairingStage.ERROR, "配对失败，请重新打开系统配对框、查看新码后重试")
+            publish(PairingStage.ERROR, "配对失败，请重新打开系统配对框、查看新码后重试", request)
         }
     }
-    private fun connect(port: Int) {
+    private fun connect(port: Int, request: Int) {
+        if (closed || request != generation) return
         busy = true
         try {
-            publish(PairingStage.CONNECTING, "配对已完成，正在连接无线调试")
+            publish(PairingStage.CONNECTING, "配对已完成，正在连接无线调试", request)
             val key = AdbKey.load(this, create = false) ?: throw AdbNotPaired("no key")
             if (!KernelHost.ready()) {
-                publish(PairingStage.STARTING, "正在拉起宿主，停止旧中枢")
+                publish(PairingStage.STARTING, "正在拉起宿主，停止旧中枢", request)
                 AdbClient.shell(port, key, KernelHost.startCommand(this))
             }
-            awaitCore()
+            awaitCore(request)
         } catch (_: AdbNotPaired) {
             busy = false
+            if (request != generation || closed) return
             AdbKey.forget(this)
-            begin(PAIR)
-            publish(PairingStage.ERROR, "配对已失效，请查看新的配对码后输入")
+            remember(PAIR, request)
+            begin(PAIR, request)
+            publish(PairingStage.ERROR, "配对已失效，请查看新的配对码后输入", request)
         } catch (e: Exception) {
             busy = false
             KernelPairing.log("connect failed: ${e.javaClass.simpleName}: ${e.message}")
-            publish(PairingStage.ERROR, "连接失败，请确认无线调试已打开，再点重新连接")
+            publish(PairingStage.ERROR, "连接失败，请确认无线调试已打开，再点重新连接", request)
         }
     }
-    private fun awaitCore() {
+    private fun awaitCore(request: Int) {
         busy = true
         mdns?.stop()
         discoveryEpoch++
-        publish(PairingStage.STARTING, "正在等待宿主和中枢启动")
+        publish(PairingStage.STARTING, "正在等待宿主和中枢启动", request)
         val deadline = android.os.SystemClock.elapsedRealtime() + 90_000
-        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+        while (!closed && request == generation && android.os.SystemClock.elapsedRealtime() < deadline) {
             if (KernelHost.ready() && HostPresence.coreReady) {
-                publish(PairingStage.READY, "宿主已连接，中枢已就绪。可以关闭无线调试")
+                publish(PairingStage.READY, "宿主已连接，中枢已就绪。可以关闭无线调试", request)
                 busy = false
-                main.post { stopSelf() }
+                main.post { finishReady(request) }
                 return
             }
-            if (KernelHost.ready()) publish(PairingStage.STARTING, "宿主已连接 · ${HostPresence.status}")
+            if (KernelHost.ready()) publish(PairingStage.STARTING, "宿主已连接 · ${HostPresence.status}", request)
             Thread.sleep(300)
         }
         busy = false
-        publish(PairingStage.ERROR, if (KernelHost.ready()) "宿主已连接，但中枢未就绪：${HostPresence.status}" else "宿主启动失败，请点重新连接")
+        publish(PairingStage.ERROR, if (KernelHost.ready()) "宿主已连接，但中枢未就绪：${HostPresence.status}" else "宿主启动失败，请点重新连接", request)
     }
-    private fun publish(stage: PairingStage, text: String) {
-        progress = PairingProgress(stage, text, pairingPort)
-        main.post { if (running) foreground(text) }
+    private fun finishReady(request: Int) {
+        if (closed || request != generation) return
+        remember("", request)
+        // Replace the reply/spinner with a final result before ending the foreground service.
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        val n = Notifications.builder(this, Notifications.CH_PAIRING)
+            .setContentTitle("配对成功，宿主已连接")
+            .setContentText("中枢已就绪。无线调试可以关闭了")
+            .setContentIntent(KernelPairing.openPage(this)).setAutoCancel(true).setOnlyAlertOnce(true)
+            .setTimeoutAfter(5_000).build()
+        getSystemService(NotificationManager::class.java).notify(ID, n)
+        stopSelf()
+    }
+    @Synchronized private fun publish(stage: PairingStage, text: String, request: Int) {
+        if (closed || request != generation) return
+        progress = PairingProgress(stage, text, pairingPort, pendingMode == PAIR)
+        main.post { if (running && request == generation) foreground(text) }
     }
     private fun foreground(text: String) {
-        val reply = PendingIntent.getService(this, 43, Intent(this, GuideService::class.java).setAction(CODE),
+        // Carry the discovered port in the reply, so input still works after this service was recreated.
+        val reply = PendingIntent.getForegroundService(this, 43,
+            Intent(this, GuideService::class.java).setAction(CODE).putExtra(EXTRA_PORT, progress.pairingPort),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-        val input = if (progress.stage == PairingStage.WAITING_CODE) Notification.Action.Builder(null, "输入配对码", reply)
+        val wantsInput = progress.acceptsCode
+        val input = if (wantsInput) Notification.Action.Builder(null, "输入配对码", reply)
             .addRemoteInput(RemoteInput.Builder(KEY_CODE).setLabel("6 位配对码").build()).build() else null
-        val n = KernelPairing.notification(this, "Ash 内核", text, KernelPairing.openPage(this), true, input, loud = false)
-        if (Build.VERSION.SDK_INT >= 34) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
+        val pairing = pendingMode == PAIR || input != null
+        val n = Notifications.builder(this, if (pairing) Notifications.CH_PAIRING else Notifications.CH_STATUS)
+            .setContentTitle(if (input != null) "输入配对码" else "Ash 内核")
+            .setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(KernelPairing.openPage(this)).setOngoing(true).setOnlyAlertOnce(true)
+            // Keep this card out of the resident/reconnect notification's automatic collapsed app group.
+            .apply { if (pairing) setGroup("ash.pairing.input") }
+            .apply {
+                if (input != null) addAction(input)
+                if (pairing) addAction(Notification.Action.Builder(null, "取消配对",
+                    PendingIntent.getForegroundService(this@GuideService, 44,
+                        Intent(this@GuideService, GuideService::class.java).setAction(CANCEL),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).build())
+            }.build()
+        if (Build.VERSION.SDK_INT >= 34) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else startForeground(ID, n)
     }
-    override fun onTimeout(startId: Int) { publish(PairingStage.ERROR, "等待超时，请在内核页面重试"); stopSelf() }
+    override fun onTimeout(startId: Int) { stopSelf() }
     override fun onDestroy() {
+        closed = true
         running = false
         main.removeCallbacksAndMessages(null)
         mdns?.stop()
         work.shutdownNow()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        // Keep the existing actionable notice across a service restart; the reply carries its port and restarts us.
+        stopForeground(if (pendingMode == PAIR) STOP_FOREGROUND_DETACH else STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
     companion object {
         const val PAIR = "ai.ash.hostshell.PAIR"
         const val CONNECT = "ai.ash.hostshell.CONNECT"
         private const val CODE = "ai.ash.hostshell.CODE"
+        private const val CANCEL = "ai.ash.hostshell.CANCEL"
         private const val KEY_CODE = "code"
+        private const val EXTRA_PORT = "port"
         private const val ID = 0x5a17
         @Volatile var progress = PairingProgress()
             private set
@@ -233,8 +323,8 @@ class GuideService : Service() {
             private set
         internal fun validCode(code: String) = code.trim().matches(Regex("[0-9]{6}"))
         fun start(ctx: Context, action: String) {
-            KernelService.start(ctx)
             ctx.startForegroundService(Intent(ctx, GuideService::class.java).setAction(action))
+            KernelService.start(ctx)
         }
         fun submit(ctx: Context, code: String) = ctx.startForegroundService(
             Intent(ctx, GuideService::class.java).setAction(CODE).putExtra(KEY_CODE, code))
