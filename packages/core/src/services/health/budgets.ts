@@ -75,7 +75,7 @@ export const INVARIANTS: readonly Invariant[] = [
   // A hand that keeps reconnecting is a flapping link or a refused token that is retried.
   { id: "link.reconnect_storm", metric: "link", agg: "peak", match: "^open:", budget: 5, idle: false, window_s: 300, persist_s: 30, note: "A hand connected again and again within five minutes: a flapping link, or a refused token that is retried." },
   // A part of the phone that keeps coming and going (the phone's debug identity, the accessibility service ...): the hand says so with config.changed.
-  { id: "hand.part_flap", metric: "msg", agg: "peak", match: "/config\\.changed:event$", budget: 6, idle: false, window_s: 600, persist_s: 0, note: "A part of the phone keeps coming and going (config.changed again and again): a host service that keeps dropping, such as the debug identity or the accessibility service." },
+  { id: "hand.part_flap", metric: "msg", agg: "peak", match: "/(config|checkup)\\.changed:event$", budget: 6, idle: false, window_s: 600, persist_s: 0, note: "A part of the phone keeps coming and going (config.changed or checkup.changed again and again): a host service that keeps dropping, such as the debug identity or the accessibility service." },
   // Answers that failed (a caller asking for what does not exist or is refused is not the hub's fault), and what the hub caught itself.
   { id: "errors.rate", metric: "err", agg: "rate", skip: ":(not_found|cancelled|denied)$", budget: 20, ...always, note: "Requests are failing at a high rate." },
   { id: "errors.internal", metric: "internal", agg: "rate", budget: 5, ...always, note: "The hub keeps catching errors of its own." },

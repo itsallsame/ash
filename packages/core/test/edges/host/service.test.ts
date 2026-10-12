@@ -18,6 +18,7 @@ const setup = (offline: string[] = [], onNetwork?: (network: unknown, online: bo
     powerRelease: async () => supported({}),
     handsHandoff: async (port: number, token: string) => { calls.push(["handoff", port, token]); return supported({ delivered: ["x"] }); },
     updateInstall: async () => supported({}),
+    lifecycleRestart: async (reason: string) => { calls.push(["restart", reason]); return {}; },
   };
   const router = {
     send: async (msg: Outgoing, caller: { member: string }): Promise<Reply> => {
@@ -74,4 +75,13 @@ test("env.changed/network also reaches onNetwork, with the proxy as the host gav
   reader.close();
   assert.deepEqual(seen, [[{ proxy: { http: "http://10.0.2.2:7890", no_proxy: "a.b" } }, true], [{ proxy: null }, false]]);
   assert.equal(s.sent.filter((x) => x.msg.to === "service:agents").length, 3, "the words still go out as before");
+});
+
+test("service:host restart: the answer goes first, the host is asked to restart a moment later; apps and the owner may ask, an agent may not", async () => {
+  const s = setup();
+  assert.deepEqual(await s.service.member.handle(msg("restart", { reason: "the owner asked in her status" }), ctx), { data: { restarting: true } });
+  assert.deepEqual(s.calls, [], "not before the answer is out");
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.deepEqual(s.calls, [["restart", "the owner asked in her status"]]);
+  assert.deepEqual(s.service.member.words().find((w) => w.word === "restart")!.callers, ["owner", "app"]);
 });

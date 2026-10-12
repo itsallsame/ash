@@ -73,7 +73,7 @@ export interface HealthOptions {
 
 interface Open { msg: Counts; ledger: Counts; err: Counts; internal: Counts; link: Counts }
 interface Bucket extends Open, Sample { t: number; dt: number; idle: boolean }
-interface HealthEvent { at: number; type: "breach" | "start"; id: string; value?: number; budget?: number; window_s?: number; idle?: boolean; top?: { key: string; n: number }[]; note?: string; last_seen?: number }
+interface HealthEvent { at: number; type: "breach" | "start" | "ok"; id: string; value?: number; budget?: number; window_s?: number; idle?: boolean; top?: { key: string; n: number }[]; note?: string; since?: number; peak?: number; last_seen?: number }
 
 const fresh = (): Open => ({ msg: new Map(), ledger: new Map(), err: new Map(), internal: new Map(), link: new Map() });
 const bump = (counts: Counts, key: string): void => { counts.set(key, (counts.get(key) ?? 0) + 1); };
@@ -98,6 +98,8 @@ export class HealthService implements Member {
   private lastMinute: number;
   /** Since when each budget is broken; the ones absent are kept. */
   private broken = new Map<string, number>();
+  /** The highest value of each budget that is broken now, for the word that it is over. */
+  private peaks = new Map<string, number>();
   private values = new Map<string, number | null>();
   private lastEvent = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -218,15 +220,25 @@ export class HealthService implements Member {
       const w = this.window(inv.window_s, inv.idle);
       const reading = w ? read(inv, w) : null;
       this.values.set(inv.id, reading ? reading.value : null);
-      if (!reading || reading.value <= inv.budget) { this.broken.delete(inv.id); continue; }
+      if (!reading || reading.value <= inv.budget) { this.recovered(inv.id, t); continue; }
       const since = this.broken.get(inv.id) ?? t;
       this.broken.set(inv.id, since);
+      this.peaks.set(inv.id, Math.max(this.peaks.get(inv.id) ?? 0, reading.value));
       if (t - since < inv.persist_s * 1000 || t - (this.lastEvent.get(inv.id) ?? -Infinity) < EVENT_GAP_MS) continue;
       this.lastEvent.set(inv.id, t);
       const top = reading.top.map(([key, n]) => ({ key, n }));
-      this.addEvent({ at: t, type: "breach", id: inv.id, value: round(reading.value), budget: inv.budget, window_s: Math.round(w!.seconds), idle: inv.idle, top, note: inv.note });
+      this.addEvent({ at: t, type: "breach", id: inv.id, value: round(reading.value), budget: inv.budget, window_s: Math.round(w!.seconds), idle: inv.idle, top, note: inv.note, since });
       this.options.log?.(`${inv.id} is ${round(reading.value)} against ${inv.budget}${top[0] ? `, most: ${top[0].key}` : ""}`);
     }
+  }
+
+  /** A budget is kept again. If its breach was written, the end is written too (`ok`, with when it began and the worst value), so a reader can say how long it lasted. */
+  private recovered(id: string, t: number): void {
+    const since = this.broken.get(id);
+    if (since === undefined) return;
+    this.broken.delete(id);
+    if ((this.lastEvent.get(id) ?? -Infinity) >= since) this.addEvent({ at: t, type: "ok", id, since, peak: round(this.peaks.get(id) ?? 0) });
+    this.peaks.delete(id);
   }
 
   private addEvent(event: HealthEvent): void {
@@ -241,10 +253,10 @@ export class HealthService implements Member {
     const rows = this.ring.filter((b) => Math.floor(b.t / 60_000) === this.lastMinute);
     if (rows.length) {
       const w = { seconds: 0, ...fresh() };
-      for (const b of rows) { w.seconds += b.dt; for (const key of ["msg", "ledger", "err"] as const) merge(w[key], b[key]); }
+      for (const b of rows) { w.seconds += b.dt; for (const key of ["msg", "ledger", "err", "link"] as const) merge(w[key], b[key]); }
       const last = rows[rows.length - 1]!;
       const row = {
-        idle: rows.every((b) => b.idle), msg: total(w.msg), ledger: total(w.ledger), err: total(w.err),
+        idle: rows.every((b) => b.idle), msg: total(w.msg), ledger: total(w.ledger), err: total(w.err), link_opens: total(new Map([...w.link].filter(([key]) => key.startsWith("open:")))),
         cpu_pct: round(rows.reduce((sum, b) => sum + b.cpu_pct * b.dt, 0) / w.seconds), rss_mb: round(last.rss / MB), lag_p99_ms: round(Math.max(...rows.map((b) => b.lag_p99_ms))),
         top: topOf(w.msg, MINUTE_TOP).map(([key, n]) => ({ key, per_min: round((n * 60) / w.seconds) })),
       };
