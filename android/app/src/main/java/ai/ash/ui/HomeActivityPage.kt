@@ -21,6 +21,7 @@ class HmActivity(env: HomeEnv, arg: String?) : HomePage(env, arg) {
     private var turns: List<HomeModel.Turn> = emptyList()
     private var page: JSONObject? = null
     private var loaded = false
+    private var failed = false
     private val stepPages = HashMap<String, StepPage>()
     private val open = HashSet<String>()
     private val seen = HashSet<String>()
@@ -51,8 +52,8 @@ class HmActivity(env: HomeEnv, arg: String?) : HomePage(env, arg) {
         val b = JSONObject().put("limit", 30).also { o -> agent?.let { o.put("agent", it) }; params?.keys()?.forEach { k -> o.put(k, params.get(k)) } }
         call("service:history", "activity.page", b) { r ->
             loading = false
-            if (!r.ok) return@call
-            page = r.data; loaded = true
+            if (!r.ok) { if (!loaded) { failed = true; draw() }; return@call }
+            page = r.data; loaded = true; failed = false
             turns = r.data.list("items").mapNotNull(HomeModel::turnOf)
             val ids = turns.map { it.id }.toSet()
             stepPages.keys.retainAll(ids); open.retainAll(ids); seen.retainAll(ids)
@@ -179,7 +180,11 @@ class HmActivity(env: HomeEnv, arg: String?) : HomePage(env, arg) {
         val days = HomeModel.activityByDay(turns)
         val row = chips.getChildAt(0) as LinearLayout
         row.removeAllViews(); timeline.removeAllViews(); pages.removeAllViews()
-        if (!loaded) { timeline.addView(Hk.note(ctx, "正在读取…")); return }
+        if (!loaded) {
+            timeline.addView(Hk.note(ctx, if (failed) "暂时读不到活动记录（不代表没有）。" else "正在读取…", if (failed) "warn" else null))
+            if (failed) timeline.addView(AshUi.button(ctx, "重试", Kind.NEUTRAL, AshUi.BtnSize.SM) { failed = false; draw(); load(null) })
+            return
+        }
         if (days.isEmpty()) { timeline.addView(Hk.note(ctx, "还没有活动记录。她做过的事会按天出现在这里。")); }
         else {
             if (day == null || days.none { it.day == day }) day = days[0].day

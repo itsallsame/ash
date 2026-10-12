@@ -49,12 +49,13 @@ class HmHands(env: HomeEnv, arg: String?) : HomePage(env, arg) {
                 }, LinearLayout.LayoutParams(0, -2, 1f))
             })
             if (s != null) addView(Hk.grid(ctx, 2, 8, OnboardingPlan.PARTS.mapNotNull { p -> parts.firstOrNull { it.first == p.id }?.let { p to it.second } }.map { (p, icon) ->
-                val bad = s.todo(p) > 0
-                AshUi.vstack(ctx, 6).apply {
+                val todoP = s.todo(p)
+                val bad = todoP > 0 && !Checkup.optional(p)
+                AshUi.vstack(ctx, 2).apply {
                     background = AshUi.rounded(if (bad) c.warnSoft else c.surface2, AshUi.dpF(ctx, 14f)); setPadding(dp(12), dp(10), dp(12), dp(10)); minimumHeight = dp(AshTokens.Size.touch)
                     isClickable = true; setOnClickListener { openCheckup(p.id) }
                     addView(AshUi.hstack(ctx, 6).apply { addView(Hk.tint(ctx, icon, if (bad) c.warn else c.text2, AshTokens.Size.iconXs)); addView(AshUi.text(ctx, p.title, AshType(13f, 18f, 400, null), if (bad) c.warn else c.text2)) })
-                    addView(AshUi.text(ctx, if (bad) "去修" else "正常", AshType(14f, 20f, 600, null), if (bad) c.warn else c.ok))
+                    addView(AshUi.text(ctx, Checkup.cellText(p, todoP), AshType(13f, 18f, 600, null), if (bad) c.warn else if (todoP > 0) c.text3 else c.ok))
                 }
             }))
         })
@@ -69,7 +70,7 @@ class HmHands(env: HomeEnv, arg: String?) : HomePage(env, arg) {
                 val kind = HomeModel.KIND_NAMES[p.str("kind")] ?: "设备"
                 rows.add(Hk.row(ctx, "laptop", p.str("name")?.ifEmpty { null } ?: "新${kind}想连上来", "等你批准", "warn", "warn") { env.nav.go("device", "p/${p.str("pair_id")}") })
             }
-            d.forEach { dev -> rows.add(Hk.row(ctx, if (dev.str("kind") == "browser") "globe" else "laptop", dev.str("name") ?: "", HomeModel.deviceLine(dev).text) { env.nav.go("device", "d/${dev.str("device")}") }) }
+            d.forEach { dev -> rows.add(Hk.row(ctx, when (dev.str("kind")) { "browser" -> "globe"; "phone" -> "phone"; "server" -> "server"; else -> "laptop" }, dev.str("name") ?: "", HomeModel.deviceLine(dev).text) { env.nav.go("device", "d/${dev.str("device")}") }) }
         }
         rows.add(Hk.row(ctx, "globe", "她的浏览器", "登录过的网站只存在这台手机上") { env.nav.go("browser") })
         rows.add(Hk.row(ctx, "grid", "应用", apps?.let { HomeModel.appsSummary(it) }) { env.nav.apps() })

@@ -61,6 +61,7 @@ class HomePages(private val activity: Activity, private val port: HumanPort) : C
     /** Opens the home page (of the agent [agent], or of her), and [section] on top of it ([arg]: what that page was asked about). */
     fun openPage(section: String?, agent: String?, arg: String? = null) {
         if (section == "apps") { apps(); return }
+        hideIme()
         disposeAll()
         this.agent = agent?.takeIf { Regex("^agent:[a-z][a-z0-9_-]*$").matches(it) && it != port.primary }
         if (!shown) { shown = true; port.onChange(onChange) }
@@ -83,11 +84,14 @@ class HomePages(private val activity: Activity, private val port: HumanPort) : C
 
     override fun pop() { back() }
 
+    private fun hideIme() { activity.currentFocus?.let { activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.hideSoftInputFromWindow(it.windowToken, 0) } }
+
     private fun disposeAll() { stack.forEach { it.page.dispose() }; stack.clear(); stage.removeAllViews() }
 
     // ---- HomeNav
     override fun close() {
         if (!shown) return
+        hideIme()
         shown = false
         port.removeChange(onChange)
         stack.forEach { it.page.dispose() }
@@ -138,10 +142,11 @@ class HomePages(private val activity: Activity, private val port: HumanPort) : C
 
     private fun push(id: String, arg: String?, animate: Boolean) {
         val page = make(id, arg) ?: return
+        hideIme()
         val bar = AshPage.navbar(activity, if (id == "home") null else page.title, if (stack.isEmpty()) "返回对话" else "返回", page.trailing) { back() }
         val screen = AshPage.screen(activity).apply {
             addView(bar)
-            addView(AshPage.scroll(activity, 20, listOf(page.content())), LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(AshPage.scroll(activity, 20, listOf(page.content()), 8), LinearLayout.LayoutParams(-1, 0, 1f))
         }
         val below = stack.lastOrNull()
         stack.add(Entry(page, screen))
@@ -154,6 +159,7 @@ class HomePages(private val activity: Activity, private val port: HumanPort) : C
     }
 
     private fun popPage() {
+        hideIme()
         val leaving = stack.removeAt(stack.size - 1)
         leaving.page.dispose()
         val under = stack.last()

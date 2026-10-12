@@ -119,7 +119,8 @@ abstract class HomePage(val env: HomeEnv, val arg: String?) {
     /** A word as the owner; [done] is not called once the page is gone. */
     protected fun call(to: String, word: String, args: JSONObject = JSONObject(), clientId: String? = null, done: (Reply) -> Unit) =
         env.port.ask(to, word, args, clientId) { if (alive) done(it) }
-    protected fun every(ms: Long, fn: () -> Unit) { val t = object : Runnable { override fun run() { if (!alive) return; fn(); main.postDelayed(this, ms) } }; main.postDelayed(t, ms) }
+    /** [fn] every [ms] while the page is alive and the window is on screen (a page does not read for nobody). */
+    protected fun every(ms: Long, fn: () -> Unit) { val t = object : Runnable { override fun run() { if (!alive) return; if (body.windowVisibility == View.VISIBLE) fn(); main.postDelayed(this, ms) } }; main.postDelayed(t, ms) }
     protected fun later(ms: Long, fn: () -> Unit) { main.postDelayed({ if (alive) fn() }, ms) }
     /** One timer by [key]: [fn] runs at [ts]; calling again moves it. */
     private val wakes = HashMap<String, Runnable>()
@@ -257,6 +258,7 @@ internal object Hk {
             else if (multiline) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             else if (url) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             else InputType.TYPE_CLASS_TEXT
+        typeface = android.graphics.Typeface.DEFAULT   // a password box turns its hint monospaced
         if (multiline) { minLines = 5; gravity = Gravity.TOP or Gravity.START } else { setSingleLine() }
         imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
     }
@@ -292,7 +294,7 @@ internal object Hk {
         cells.chunked(cols).forEach { rowCells ->
             addView(AshUi.hstack(ctx, gap).apply {
                 gravity = Gravity.TOP
-                rowCells.forEach { addView(it, LinearLayout.LayoutParams(0, -1, 1f)) }
+                rowCells.forEach { addView(it, LinearLayout.LayoutParams(0, -2, 1f)) }
                 repeat(cols - rowCells.size) { addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f)) }
             })
         }

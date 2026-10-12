@@ -16,7 +16,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Pause and resume (`service:admin`): pausing is at once, resuming asks once more. A lost answer keeps its request id, so the same request may be sent again. */
-class HomePause(private val env: HomeEnv, private val ctx: android.app.Activity, private val call: (word: String, body: JSONObject, clientId: String?, done: (Reply) -> Unit) -> Unit) {
+class HomePause(private val env: HomeEnv, private val ctx: android.app.Activity, kind: Kind = Kind.GHOST, private val call: (word: String, body: JSONObject, clientId: String?, done: (Reply) -> Unit) -> Unit) {
     private val c = AshUi.p(ctx)
     private var paused = false
     private var name = env.names.name
@@ -25,12 +25,12 @@ class HomePause(private val env: HomeEnv, private val ctx: android.app.Activity,
         background = AshUi.rounded(c.surface2, AshUi.dpF(ctx, AshTokens.Radius.md.toFloat())); setPadding(AshUi.dp(ctx, 14), AshUi.dp(ctx, 12), AshUi.dp(ctx, 14), AshUi.dp(ctx, 12)); visibility = View.GONE
     }
     private val confirmText = AshUi.text(ctx, "确定要恢复 $name 吗？", AshTokens.Type.sub)
-    private val button: TextView = AshUi.button(ctx, "暂停 $name", Kind.GHOST, block = true) { if (paused) confirm.visibility = View.VISIBLE else run("pause") }
+    private val button: TextView = AshUi.button(ctx, "暂停 $name", kind, block = true) { if (paused) confirm.visibility = View.VISIBLE else run("pause") }
     private val yes: TextView = AshUi.button(ctx, "确认恢复", Kind.PRIMARY, AshUi.BtnSize.SM) { confirm.visibility = View.GONE; run("resume") }
     val root: LinearLayout = AshUi.vstack(ctx, 8)
 
     init {
-        button.setTextColor(c.err)
+        if (kind == Kind.GHOST) button.setTextColor(c.err)
         confirm.addView(confirmText)
         confirm.addView(AshUi.hstack(ctx, 8).apply { addView(yes); addView(AshUi.button(ctx, "取消", Kind.NEUTRAL, AshUi.BtnSize.SM) { confirm.visibility = View.GONE }) })
         root.addView(button); root.addView(confirm); root.addView(feedback)
@@ -81,6 +81,7 @@ class HmHome(env: HomeEnv, arg: String?) : HomePage(env, arg) {
     private var files: List<JSONObject>? = null
     private var keys: Pair<String, String>? = null; private var provider = ""
     private var todo = 0
+    private var off: () -> Unit = {}
 
     // ---- the hero
     private var avatar: AshUi.AvatarView? = null
@@ -118,7 +119,7 @@ class HmHome(env: HomeEnv, arg: String?) : HomePage(env, arg) {
     private val whoBox = AshUi.vstack(ctx)
     private val filesBox = AshUi.vstack(ctx)
     private val backBox = AshUi.vstack(ctx)
-    private val pause = HomePause(env, ctx) { word, b, id, done -> call("service:admin", word, b, id, done) }
+    private val pause = HomePause(env, ctx, Kind.GHOST) { word, b, id, done -> call("service:admin", word, b, id, done) }
     private val blocks = AshUi.vstack(ctx, 26)
 
     override fun content(): View = FrameLayout(ctx).apply {
@@ -128,12 +129,14 @@ class HmHome(env: HomeEnv, arg: String?) : HomePage(env, arg) {
 
     init {
         (listOf(waitingBox, upcomingBox) + if (her) listOf(memoryBox, promisesBox, handsBox, whoBox, filesBox, backBox) else emptyList()).forEach { blocks.addView(it) }
-        env.names.listen { drawHero(); drawBackstage() }
+        off = env.names.listen { if (alive) { drawHero(); drawBackstage() } }
         drawAll()
         every(1000) { if (since() != null) drawHero() }
         every(15_000) { readAll() }
+        every(60_000) { readCheckup() }
     }
 
+    override fun onDispose() { off() }
     private fun online() = port.open
     private fun asks(): List<HomeModel.Ask> = current?.list("items")?.mapNotNull { it.optJSONObject("ask")?.let(HomeModel::askOf) } ?: emptyList()
     private fun waitingCount(): Long? = current?.num("total_count")
@@ -285,7 +288,7 @@ class HmHome(env: HomeEnv, arg: String?) : HomePage(env, arg) {
         val quote = soul?.let { HomeModel.quoteOf(it) }
         addView(Hk.section(ctx, "她是谁", "性格 · 名片", { env.nav.go("identity") }, AshUi.card(ctx, 10).apply {
             setPadding(dp(18), dp(18), dp(18), dp(16))
-            addView(AshUi.text(ctx, "“", AshType(40f, 20f, 700, null), c.herFill))
+            addView(AshUi.text(ctx, "“", AshType(40f, 40f, 700, null), c.herFill), Hk.lp(ctx, -2, -2).apply { bottomMargin = -dp(26) })
             addView(AshUi.text(ctx, if (!soulRead) "正在读取…" else quote?.ifEmpty { null } ?: "她的性格还没写下来。", AshType(15.5f, 26f, 400, Role.TEXT)))
             addView(AshUi.text(ctx, "想给她换个名字？直接跟她说。", AshTokens.Type.caption).apply { minHeight = dp(28); gravity = Gravity.CENTER_VERTICAL; isClickable = true; setOnClickListener { env.nav.compose("我想给你换个名字，以后叫你") } })
         }))
@@ -324,7 +327,7 @@ class HmHome(env: HomeEnv, arg: String?) : HomePage(env, arg) {
     }
 
     // ---- reading
-    override fun refresh() { env.names.refresh(); readAll(); pause.read() }
+    override fun refresh() { env.names.refresh(); readAll(); readCheckup(); pause.read() }
     override fun changed() { readCurrent(); countToday() }
 
     private fun readAll() {
@@ -362,8 +365,9 @@ class HmHome(env: HomeEnv, arg: String?) : HomePage(env, arg) {
                 drawBackstage()
             }
         }
-        Thread { val t = runCatching { Checkup.summary(ctx).todo }.getOrNull(); if (t != null) ctx.runOnUiThread { if (alive) { todo = t; drawHands() } } }.start()
     }
+
+    private fun readCheckup() { Thread { val t = runCatching { Checkup.summary(ctx).todo }.getOrNull(); if (t != null) ctx.runOnUiThread { if (alive) { todo = t; drawHands() } } }.start() }
 
     private fun readCurrent() {
         call("service:history", "current", JSONObject().put("limit", 40).also { o -> agent?.let { o.put("agent", it) } }) { r -> if (r.ok) { current = r.data; drawHero(); drawWaiting() } }

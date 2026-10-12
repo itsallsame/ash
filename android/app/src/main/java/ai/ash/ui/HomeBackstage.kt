@@ -64,7 +64,7 @@ class HmBackstage(env: HomeEnv, arg: String?) : HomePage(env, arg) {
     private var vault: List<JSONObject>? = null
     private var health: List<JSONObject> = emptyList()
     private var agents: List<JSONObject>? = null
-    private val pause = HomePause(env, ctx) { word, b, id, done -> call("service:admin", word, b, id, done) }
+    private val pause = HomePause(env, ctx, Kind.DANGER) { word, b, id, done -> call("service:admin", word, b, id, done) }
 
     init { draw() }
 
@@ -80,7 +80,7 @@ class HmBackstage(env: HomeEnv, arg: String?) : HomePage(env, arg) {
             }) { env.nav.go("keys") }
         }
         val model = agents?.firstOrNull { it.optBoolean("primary") }?.optJSONObject("runtime")?.str("model")
-        body.addView(AshUi.group(ctx, "让她能说话", rows = rows + Hk.row(ctx, "cpu", "模型", trailing = Hk.value(ctx, if (model != null) HomeModel.providerName(model) else if (saved("DEEPSEEK_API_KEY")) "DeepSeek" else ""), chev = false) { env.nav.go("model") }))
+        body.addView(AshUi.group(ctx, "让她能说话", rows = rows + Hk.row(ctx, "cpu", "模型", trailing = AshUi.hstack(ctx, 6).apply { addView(Hk.value(ctx, if (model != null) HomeModel.providerName(model) else if (saved("DEEPSEEK_API_KEY")) "DeepSeek" else "")); addView(Hk.chev(ctx)) }, chev = false) { env.nav.go("model") }))
         body.addView(AshUi.group(ctx, "高级", rows = listOf(Hk.row(ctx, "slider", "开发者选项", "主模型、插件") { env.nav.go("advanced") })))
         body.addView(pause.root)
     }

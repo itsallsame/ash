@@ -74,6 +74,8 @@ class DocEditor(private val page: HomePage, private val store: DocStore, private
 
     fun dispose() { disposed = true; root.removeAllViews() }
 
+    private fun hideIme() { ctx.currentFocus?.let { ctx.getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.hideSoftInputFromWindow(it.windowToken, 0) } }
+
     fun load(discardDraft: Boolean = false, done: () -> Unit = {}) {
         if (pending != null) { status = "上次的改动还没确认；请先再点一次同一个按钮。"; render(); return }
         if (loaded && draft != content && !discardDraft) { status = "还有没保存的修改；先保存或取消。"; render(); return }
@@ -93,7 +95,7 @@ class DocEditor(private val page: HomePage, private val store: DocStore, private
         else { editing = true; render() }
     }
 
-    fun cancelEdit() { if (pending != null) return; draft = content; editing = false; if (!truncated) status = ""; render() }
+    fun cancelEdit() { if (pending != null) return; hideIme(); draft = content; editing = false; if (!truncated) status = ""; render() }
 
     /** The page's 「编辑」 button: its label, whether it is off, and what a tap does; null while there is nothing to edit. */
     fun button(): Triple<String, Boolean, () -> Unit>? {
@@ -127,7 +129,7 @@ class DocEditor(private val page: HomePage, private val store: DocStore, private
                         if (!s.ok) { unverified = true; status = "已保存，但没能重新读取；请点「重新读取」看看现在的内容。" }
                         else {
                             if (s.content == null || s.truncated || s.content != p.content) { conflict = true; status = "保存后这段内容又在别处被改过。你的修改还在；请重新读取后再看。" }
-                            else { content = s.content; draft = s.content; editing = false; status = "已保存。" }
+                            else { content = s.content; draft = s.content; editing = false; status = "已保存。"; hideIme() }
                             unverified = false
                         }
                         render()
@@ -211,7 +213,7 @@ abstract class HmDocs(env: HomeEnv, arg: String?) : HomePage(env, arg) {
         slot.removeAllViews()
         val panel = AshUi.vstack(ctx)
         slot.addView(panel); slot.addView(AshPageFoot(foot(path)))
-        val ed = DocEditor(this, store(path), { content -> view(path, content) }, { saved(path) }) { x -> if (editor === x) { counts[path] = count(path, x.content); sync() } }
+        val ed = DocEditor(this, store(path), { content -> view(path, content) }, { saved(path) }) { x -> if (editor === x) { counts[path] = if (x.loaded) count(path, x.content) else null; sync() } }
         editor = ed
         panel.addView(ed.root)
         sync()
@@ -264,9 +266,11 @@ class HmIdentity(env: HomeEnv, arg: String?) : HmDocs(env, arg) {
         background = AshUi.rounded(c.bubbleMe, AshUi.dpF(ctx, 24f)); clipToOutline = true
         outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, AshUi.dpF(ctx, 24f)) } }
         AshUi.cardShadow(this, 2f)
-        addView(View(ctx).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0); setStroke(dp(18), c.herSoft) }
-        }, FrameLayout.LayoutParams(dp(200), dp(200), Gravity.TOP or Gravity.END).apply { topMargin = -dp(60); marginEnd = -dp(40) })
+        // the pale ring in the corner: drawn, not laid out, so it takes no room
+        addView(object : View(ctx) {
+            private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = AshUi.dpF(ctx, 18f); color = c.herSoft }
+            override fun onDraw(canvas: android.graphics.Canvas) { canvas.drawCircle(width - AshUi.dpF(ctx, 60f), AshUi.dpF(ctx, 40f), AshUi.dpF(ctx, 91f), paint) }
+        }, FrameLayout.LayoutParams(-1, -1))
         addView(AshUi.hstack(ctx, 16).apply {
             setPadding(dp(20), dp(20), dp(20), dp(20))
             addView(OnboardingViews.avatar(ctx, "default", 56))
