@@ -1,0 +1,14 @@
+/* 应用页面自己的几条（design/vitals/vitals.css 之外）：页面在沙箱 WebView 里，整页是文档流，不是一个固定高度的屏。 */
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);min-height:100vh}
+#app{display:flex;flex-direction:column;min-height:100vh;padding:8px 0 24px;box-sizing:border-box}
+#app .page{overflow:visible;flex:none}
+button{font:inherit;color:inherit}
+.li[role=button],.vt-sec .li[tabindex]{cursor:pointer}
+.vt-chart{min-width:0;display:block}.vt-chart .spark{width:100%}
+/* 确认抽屉：盖住整页的一层，幕布 + 从底部升起的抽屉 */
+.vt-layer{position:fixed;inset:0;z-index:20}
+.vt-layer .sheet{max-width:560px;margin:0 auto}
+.vt-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:30;padding:10px 16px;border-radius:20px;background:var(--ink);color:var(--on-ink);font-size:14px}
+/* 「有问题」的大灯外圈：浮一小会儿（3 圈）就停，不一直转；系统减少动画时一圈也不动（vitals.css） */
+.lamp-err.lamp-xl::after{animation-iteration-count:3}
