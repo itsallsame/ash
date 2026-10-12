@@ -106,11 +106,15 @@ export function memoryChip(line) {
   return chars.length > CHIP_LIMIT ? `${chars.slice(0, CHIP_LIMIT - 1).join("")}…` : head;
 }
 
-/** The labels of the home page's "她记得你": at most [limit] of them, the urgent groups' lines first, and how many lines are left out. */
+/**
+ * The labels of the home page's "她记得你": at most [limit] in all, the urgent groups' lines first. Up to [limit] lines are all
+ * shown; more than that, [limit] - 1 of them and a last label that says how many are left out (`more`).
+ */
 export function memoryChips(groups, limit = 5) {
   const all = (groups ?? []).flatMap((group) => group.items.map((line) => ({ text: memoryChip(line), urgent: urgentGroup(group.title) })));
   all.sort((a, b) => Number(b.urgent) - Number(a.urgent));
-  return { chips: all.slice(0, limit), more: Math.max(0, all.length - limit) };
+  const shown = all.length > limit ? limit - 1 : all.length;
+  return { chips: all.slice(0, shown), more: all.length - shown };
 }
 
 /** The times a timer fires in [from, to): its next time, and every repeat of it. */

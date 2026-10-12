@@ -91,12 +91,16 @@ test("labels count characters the reader sees: an emoji is one, and is never cut
   assert.equal(memoryChip("𠮷".repeat(13)), `${"𠮷".repeat(11)}…`, "a character outside the BMP is one");
 });
 
-test("the home page shows at most five labels, the urgent group's first, then how many are left", () => {
+test("the home page shows five labels in all: every line up to five, else four and 'N more', the urgent group's first", () => {
   const groups = groupMemory("## 生活\n- 住杭州：西湖边\n- 开电车\n- 养了一只猫，叫团子\n## 要紧的\n- 对花生过敏\n- 不吃香菜\n## 习惯\n- 早起\n- 爱跑步\n");
   const { chips, more } = memoryChips(groups);
-  assert.deepEqual(chips.map((chip) => chip.text), ["对花生过敏", "不吃香菜", "住杭州", "开电车", "养了一只猫"]);
-  assert.deepEqual(chips.map((chip) => chip.urgent), [true, true, false, false, false]);
-  assert.equal(more, 2);
+  assert.deepEqual(chips.map((chip) => chip.text), ["对花生过敏", "不吃香菜", "住杭州", "开电车"]);
+  assert.deepEqual(chips.map((chip) => chip.urgent), [true, true, false, false]);
+  assert.equal(more, 3, "seven lines: four shown, N = 7 - 4");
+  const five = memoryChips(groupMemory("## 生活\n- 甲\n- 乙\n- 丙\n- 丁\n- 戊\n"));
+  assert.deepEqual([five.chips.length, five.more], [5, 0], "exactly five: all shown, no 'more' label");
+  const six = memoryChips(groupMemory("## 生活\n- 甲\n- 乙\n- 丙\n- 丁\n- 戊\n- 己\n"));
+  assert.deepEqual([six.chips.length, six.more], [4, 2], "six: four and 'N more' where N = 6 - 4");
   assert.deepEqual(memoryChips(groupMemory("## 生活\n- 住杭州\n")), { chips: [{ text: "住杭州", urgent: false }], more: 0 });
   assert.deepEqual(memoryChips(null), { chips: [], more: 0 });
   assert.equal(memoryCount(groups), 7, "the page behind it still lists every line in full");
