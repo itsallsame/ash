@@ -236,4 +236,28 @@ class OnboardingPlanTest {
         assertEquals("brain", all.offParts.first().id)
         assertEquals(emptyList<OnboardingPlan.Part>(), OnboardingPlan.summary(bound, rows()).offParts)
     }
+
+    // ---- 「你说已开」: the owner said it is on though the system does not show it yet ----
+
+    private fun said(vararg items: String): List<Row> = rows().map { if (it.item in items) Row(it.item, OnboardingPlan.SAID) else it }
+
+    @Test fun anItemTheOwnerSaidIsOnIsNotAskedAgainAndTheGuideGoesOn() {
+        val r = said("notifications")
+        assertEquals(OnboardingPlan.Page(OnboardingPlan.Kind.DONE), OnboardingPlan.page(bound, r, false, emptySet()))
+        val missing = rows("exact_alarm", "notifications").map { if (it.item == "notifications") Row("notifications", OnboardingPlan.SAID) else it }
+        assertEquals(listOf("exact_alarm"), OnboardingPlan.pending(bound, missing, emptySet()))
+        assertEquals(OnboardingPlan.Page(OnboardingPlan.Kind.ITEM, "exact_alarm"), OnboardingPlan.page(bound, missing, false, emptySet()))
+    }
+
+    @Test fun theirWordEndsAStepAndCountsAsOnOnTheClosingScreen() {
+        assertEquals(OnboardingStep.DONE, OnboardingPlan.current(bound, said("accessibility", "notification_listener"), emptySet()))
+        val some = OnboardingPlan.summary(bound, said("overlay").map { if (it.item == "location") Row("location", "missing") else it })
+        assertEquals(listOf("location"), some.off)
+        assertEquals("their word counts as on", some.total - 1, some.on)
+    }
+
+    @Test fun aSaidAccessibilityStopsAskingForItsAutoRecoveryToo() {
+        val r = rows("screen_recovery").map { if (it.item == "accessibility") Row("accessibility", OnboardingPlan.SAID) else it }
+        assertEquals(emptyList<String>(), OnboardingPlan.pending(bound, r, emptySet()))
+    }
 }

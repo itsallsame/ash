@@ -30,6 +30,8 @@ object OnboardingPlan {
 
     private const val GRANTED = "granted"
     private const val UNSUPPORTED = "unsupported"
+    /** The owner said it is on (「你说已开」) though the system does not show it yet: the guide goes on, and it counts as on. */
+    const val SAID = "said"
 
     /** Step 3: the system's two special accesses. */
     private val SCREEN_ACCESS = listOf("accessibility", "notification_listener")
@@ -52,7 +54,7 @@ object OnboardingPlan {
     fun rows(step: OnboardingStep, kernel: KernelState, rows: List<Row>): List<Row> =
         rows.filter { stepOf(it.item) == step && !(it.item in KERNEL_SWITCHES && kernel == KernelState.NOT_INSTALLED) }
 
-    private fun done(row: Row) = row.state == GRANTED || row.state == UNSUPPORTED
+    private fun done(row: Row) = row.state == GRANTED || row.state == UNSUPPORTED || row.state == SAID
 
     fun complete(step: OnboardingStep, kernel: KernelState, rows: List<Row>): Boolean = when (step) {
         OnboardingStep.KERNEL -> kernel == KernelState.BOUND
@@ -129,9 +131,9 @@ object OnboardingPlan {
      */
     fun pending(kernel: KernelState, rows: List<Row>, skipped: Set<String>): List<String> {
         val state = rows.associate { it.item to it.state }
-        val accessOpen = SCREEN_ACCESS.any { state[it]?.let { s -> s != GRANTED && s != UNSUPPORTED } == true }
+        val accessOpen = SCREEN_ACCESS.any { state[it]?.let { s -> s != GRANTED && s != UNSUPPORTED && s != SAID } == true }
         return asked(kernel, rows).filter { item ->
-            state[item] != GRANTED && item !in skipped &&
+            state[item] != GRANTED && state[item] != SAID && item !in skipped &&
                 (item != RECOVERY_GRANT || (accessOpen && "accessibility" !in skipped))
         }
     }
@@ -158,7 +160,7 @@ object OnboardingPlan {
     fun summary(kernel: KernelState, rows: List<Row>): Summary {
         val state = rows.associate { it.item to it.state }
         val items = asked(kernel, rows)
-        val off = items.filter { state[it] != GRANTED }
+        val off = items.filter { state[it] != GRANTED && state[it] != SAID }
         val brain = kernel == KernelState.BOUND
         return Summary(items.size - off.size + if (brain) 1 else 0, (if (brain) emptyList() else listOf(BRAIN)) + off)
     }

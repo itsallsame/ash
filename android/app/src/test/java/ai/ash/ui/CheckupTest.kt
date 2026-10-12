@@ -63,4 +63,16 @@ class CheckupTest {
         assertEquals(expected.keys, Checkup.ITEM_IDS.toSet())
         for ((id, part) in expected) assertEquals(id, part, Checkup.partFor(id).id)
     }
+
+    @Test fun anItemTheOwnerSaidIsOnIsNotSomethingToDealWith() {
+        fun said(part: String) = Checkup.Item("x", part(part), "t", "w", State.SAID, "你说已开")
+        val s = Checkup.summarize(listOf(said("awake"), item("awake", false), said("eyes"), said("location")))
+        assertEquals(1, s.todo(part("awake"))); assertEquals(0, s.todo(part("eyes"))); assertEquals(0, s.todo(part("location")))
+        assertEquals(1, s.todo)
+    }
+
+    @Test fun whatTheOwnerSaidIsToldTruthfully() {
+        assertEquals("你说已开", Checkup.saidNote(false))
+        assertEquals("你说已开，但系统还显示没开", Checkup.saidNote(true))
+    }
 }

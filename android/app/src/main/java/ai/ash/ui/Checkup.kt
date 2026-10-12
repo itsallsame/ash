@@ -2,6 +2,8 @@ package ai.ash.ui
 
 import ai.ash.caps.config.ConfigStatus
 import ai.ash.caps.config.KernelAutostart
+import ai.ash.caps.config.OwnerWord
+import ai.ash.caps.config.Standing
 import ai.ash.caps.config.Permissions
 import ai.ash.caps.config.ScreenRecovery
 import ai.ash.host.KernelLauncher
@@ -41,7 +43,8 @@ object Checkup {
         "eyes" -> "没在工作"; "files" -> "还没给权限"; else -> "没开"
     }
 
-    enum class State { ON, OFF }
+    /** [SAID] is 「你说已开」: the owner said it is on and the system does not show otherwise (it is not counted as something to deal with). */
+    enum class State { ON, OFF, SAID }
 
     /**
      * One item of the check. [id] is a name of `config.status` ([ConfigStatus.NAMES]), a key of [Permissions] (the keep-alive switches,
@@ -49,7 +52,8 @@ object Checkup {
      * [title] and [why] are the owner's words (「大脑」, never 「内核」); [note] is what the phone says about it when it is off.
      */
     class Item(val id: String, val part: OnboardingPlan.Part, val title: String, val why: String, val state: State, val note: String? = null,
-               /** The owner may say it is done (a switch the phone keeps from Ash). */ val awaitsWord: Boolean = false,
+               /** The owner may say it is on (「我已经打开了」). */ val canSay: Boolean = false,
+               /** Reading it again can tell something new (it is a switch Ash can read). */ val canRecheck: Boolean = false,
                /** Has a 「测试」 button. */ val testable: Boolean = false)
 
     /** What the items of a part, and of all the parts but the optional one, add up to. */
@@ -119,38 +123,44 @@ object Checkup {
      */
     fun read(ctx: Context): List<Item> {
         val kernel = KernelLauncher.state(ctx)
+        val word = OwnerWord.of(ctx)
         return SPECS.mapNotNull { spec ->
-            fun item(on: Boolean, note: String? = null, awaits: Boolean = false) =
-                Item(spec.id, partFor(spec.id), spec.title, spec.why, if (on) State.ON else State.OFF, if (on) null else note, awaits, spec.testable)
+            fun plain(on: Boolean, note: String? = null) = Item(spec.id, partFor(spec.id), spec.title, spec.why, if (on) State.ON else State.OFF, if (on) null else note, testable = spec.testable)
+            /** An item the owner's word can stand in for. [read]: what the system says; for an [unreadable] switch, whether it can be set at all. */
+            fun said(read: Boolean, unreadable: Boolean, note: String?): Item = when (word.settle(spec.id, read, unreadable)) {
+                Standing.ON -> plain(true)
+                Standing.SAID -> Item(spec.id, partFor(spec.id), spec.title, spec.why, State.SAID, saidNote(word.contradicted(spec.id, read, unreadable)), testable = spec.testable, canRecheck = !unreadable)
+                Standing.OFF -> Item(spec.id, partFor(spec.id), spec.title, spec.why, State.OFF, note, canSay = !unreadable || read, canRecheck = !unreadable, testable = spec.testable)
+            }
             when (spec.id) {
-                KERNEL_PACKAGE -> item(kernel != KernelState.NOT_INSTALLED, "还没装")
-                KERNEL_LINK -> item(kernel == KernelState.BOUND, if (kernel == KernelState.NOT_INSTALLED) "先装好大脑" else "连不上，点「去开启」叫醒它")
+                KERNEL_PACKAGE -> plain(kernel != KernelState.NOT_INSTALLED, "还没装")
+                KERNEL_LINK -> plain(kernel == KernelState.BOUND, if (kernel == KernelState.NOT_INSTALLED) "先装好大脑" else "连不上，点「去开启」叫醒它")
                 "kernel_battery_optimization", "kernel_autostart" -> {
                     if (kernel == KernelState.NOT_INSTALLED || (spec.id == "kernel_autostart" && !KernelAutostart.applies())) return@mapNotNull null
                     val p = if (spec.id == "kernel_autostart") Permissions.all.firstOrNull { it.key == "kernel_autostart" } else null
-                    if (p != null) item(p.granted(ctx), p.status(ctx), p.awaitsWord(ctx))
-                    else ConfigStatus.item(ctx, spec.id).let { item(it.state == ConfigStatus.GRANTED, null) }
+                    if (p != null) said(p.ready(ctx), p.confirmable(ctx), p.status(ctx))
+                    else said(ConfigStatus.item(ctx, spec.id).state == ConfigStatus.GRANTED, false, null)
                 }
                 else -> {
                     val key = PERMISSION_KEYS[spec.id]
                     if (key != null) {
                         val p = Permissions.all.firstOrNull { it.key == key } ?: return@mapNotNull null
-                        if (spec.id == "screen_recovery") item(ScreenRecovery.granted(ctx), p.status(ctx))
-                        else item(p.granted(ctx), p.status(ctx), p.awaitsWord(ctx))
+                        if (spec.id == "screen_recovery") said(ScreenRecovery.granted(ctx), false, p.status(ctx))
+                        else said(p.ready(ctx), p.confirmable(ctx), p.status(ctx))
                     } else {
                         val r = ConfigStatus.item(ctx, spec.id)
                         when (r.state) {
                             ConfigStatus.UNSUPPORTED -> null
-                            else -> {
-                                val p = ConfigStatus.PERMISSION_KEY[spec.id]?.let { k -> Permissions.all.firstOrNull { it.key == k } }
-                                item(r.state == ConfigStatus.GRANTED, p?.status(ctx), p?.awaitsWord(ctx) == true)
-                            }
+                            else -> said(r.state == ConfigStatus.GRANTED, false, ConfigStatus.PERMISSION_KEY[spec.id]?.let { k -> Permissions.all.firstOrNull { it.key == k } }?.status(ctx))
                         }
                     }
                 }
             }
         }
     }
+
+    /** What 「你说已开」 says under the item: that the system disagrees, if it can tell and does. */
+    internal fun saidNote(contradicted: Boolean): String = if (contradicted) "你说已开，但系统还显示没开" else "你说已开"
 
     fun summary(ctx: Context): Summary = summarize(read(ctx))
 }

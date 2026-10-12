@@ -3,6 +3,7 @@ package ai.ash.ui
 import ai.ash.R
 import ai.ash.caps.Capabilities
 import ai.ash.caps.config.ConfigStatus
+import ai.ash.caps.config.OwnerWord
 import ai.ash.caps.config.Permissions
 import ai.ash.caps.config.ScreenRecovery
 import ai.ash.caps.senses.NotificationSenseSettings
@@ -47,6 +48,13 @@ class ConsoleActivity : Activity() {
     private var shown = ""
     private var resumed = false
     @Volatile private var reading = false
+    /** A read was asked for while one was under way: it runs once that one is done. */
+    @Volatile private var readAgain = false
+    /** Back from a settings page: read at once and again a few times, since some phones report a change late. */
+    private val recheck = ReturnRecheck(object : ReturnRecheck.Scheduler {
+        override fun postDelayed(task: Runnable, ms: Long) { ui.postDelayed(task, ms) }
+        override fun cancel(task: Runnable) { ui.removeCallbacks(task) }
+    }) { refresh() }
 
     private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
@@ -75,11 +83,12 @@ class ConsoleActivity : Activity() {
     override fun onResume() {
         super.onResume()
         resumed = true
-        refresh()
+        recheck.start()
     }
 
     override fun onPause() {
         resumed = false
+        recheck.cancel()
         ui.removeCallbacksAndMessages(null)
         super.onPause()
     }
@@ -99,19 +108,26 @@ class ConsoleActivity : Activity() {
     // ---------- reading the phone ----------
 
     private fun refresh() {
-        ui.removeCallbacksAndMessages(null)
-        if (!reading && !isFinishing) {
+        if (reading) { readAgain = true; return }
+        if (!isFinishing) {
             reading = true
             Thread({
                 val read = runCatching { Checkup.read(this) }.getOrNull()
                 val kernel = KernelLauncher.installedVersion(this)
                 val k = "${kernel?.let { "已安装 $it" } ?: "还没装"} · ${if (KernelLauncher.connected(this)) "已连上" else "没连上"}"
                 val a = "Ash ${packageManager.getPackageInfo(packageName, 0).versionName}　Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）"
-                ui.post { reading = false; if (read != null && !isDestroyed) { items = read; kernelLine = k; appLine = a; render() } }
+                ui.post {
+                    reading = false
+                    if (read != null && !isDestroyed) { items = read; kernelLine = k; appLine = a; render() }
+                    if (readAgain && !isDestroyed) { readAgain = false; refresh() }
+                }
             }, "ash-checkup").start()
         }
-        if (resumed) ui.postDelayed({ refresh() }, REFRESH_MS)
+        ui.removeCallbacks(periodic)
+        if (resumed) ui.postDelayed(periodic, REFRESH_MS)
     }
+
+    private val periodic = Runnable { refresh() }
 
     // ---------- drawing ----------
 
@@ -121,7 +137,7 @@ class ConsoleActivity : Activity() {
         val list = items
         val p = part
         val c = AshUi.p(this)
-        val sig = "${p?.id}|$night|" + (list?.joinToString(",") { "${it.id}:${it.state}:${it.note}:${it.awaitsWord}" } ?: "-") + "|$kernelLine" + switchSig()
+        val sig = "${p?.id}|$night|" + (list?.joinToString(",") { "${it.id}:${it.state}:${it.note}:${it.canSay}:${it.canRecheck}" } ?: "-") + "|$kernelLine" + switchSig()
         if (sig == shown) return
         shown = sig
         val y = scroll?.scrollY ?: 0
@@ -254,9 +270,12 @@ class ConsoleActivity : Activity() {
     private fun itemRow(item: Checkup.Item): View {
         val c = AshUi.p(this)
         val on = item.state == Checkup.State.ON
-        val warn = !on && !Checkup.optional(item.part)
+        val said = item.state == Checkup.State.SAID
+        val warn = item.state == Checkup.State.OFF && !Checkup.optional(item.part)
         val tone = if (on) AshUi.Tone.OK else if (warn) AshUi.Tone.WARN else AshUi.Tone.MUTE
         val (soft, strong) = AshUi.toneColors(this, tone)
+        val fixable = !on && !(said && !item.canRecheck) // a switch the system cannot read is the owner's word alone: nothing left to open
+        val note = item.note?.takeIf { it.isNotBlank() && !on }
         return AshUi.hstack(this, 12).apply {
             gravity = Gravity.TOP
             minimumHeight = d(AshTokens.Size.listRow)
@@ -264,17 +283,19 @@ class ConsoleActivity : Activity() {
             addView(android.widget.FrameLayout(this@ConsoleActivity).apply {
                 background = AshUi.rounded(if (tone == AshUi.Tone.MUTE) c.surface2 else soft, AshUi.dpF(this@ConsoleActivity, AshTokens.Radius.iconTile.toFloat()))
                 addView(View(this@ConsoleActivity).apply {
-                    background = AshPage.icon(this@ConsoleActivity, if (on) R.drawable.ash_ic_check else R.drawable.ash_ic_alert).apply { setTint(if (tone == AshUi.Tone.MUTE) c.text2 else strong) }
+                    background = AshPage.icon(this@ConsoleActivity, if (on || said) R.drawable.ash_ic_check else R.drawable.ash_ic_alert).apply { setTint(if (tone == AshUi.Tone.MUTE) c.text2 else strong) }
                 }, android.widget.FrameLayout.LayoutParams(d(AshTokens.Size.iconSm), d(AshTokens.Size.iconSm), Gravity.CENTER))
             }, LinearLayout.LayoutParams(d(30), d(30)))
             addView(AshUi.vstack(this@ConsoleActivity, 2).apply {
                 addView(AshUi.text(this@ConsoleActivity, item.title, AshTokens.Type.listTitle))
                 addView(AshUi.text(this@ConsoleActivity, item.why, AshTokens.Type.listSub))
-                if (!on && !item.note.isNullOrBlank()) addView(AshUi.text(this@ConsoleActivity, item.note, AshTokens.Type.listSub, if (warn) c.warn else c.text2))
+                if (note != null) addView(AshUi.text(this@ConsoleActivity, note, AshTokens.Type.listSub, if (warn) c.warn else c.text2))
                 if (!on || item.testable) addView(AshUi.hstack(this@ConsoleActivity, 8).apply {
-                    if (!on) addView(AshPage.smallButton(this@ConsoleActivity, "去开启", AshUi.Kind.SECONDARY) { fix(item) })
-                    if (item.awaitsWord) addView(AshPage.smallButton(this@ConsoleActivity, "已设好", AshUi.Kind.NEUTRAL) {
-                        Permissions.all.firstOrNull { p -> p.key == item.id }?.confirm(this@ConsoleActivity); shown = ""; refresh()
+                    if (fixable) addView(AshPage.smallButton(this@ConsoleActivity, "去开启", AshUi.Kind.SECONDARY) { fix(item) })
+                    // the owner opened it and Ash still does not see it on: look again, or take their word for it
+                    if (item.canRecheck && !on) addView(AshPage.smallButton(this@ConsoleActivity, OnboardingContent.Words.RECHECK, AshUi.Kind.NEUTRAL) { recheck.start() })
+                    if (item.canSay) addView(AshPage.smallButton(this@ConsoleActivity, OnboardingContent.Words.SAID_BUTTON, AshUi.Kind.NEUTRAL) {
+                        OwnerWord.of(this@ConsoleActivity).say(item.id); shown = ""; refresh()
                     })
                     if (item.testable) addView(AshPage.smallButton(this@ConsoleActivity, "测试", AshUi.Kind.NEUTRAL) {
                         Permissions.all.firstOrNull { p -> p.key == item.id }?.test?.invoke(this@ConsoleActivity)
@@ -282,6 +303,7 @@ class ConsoleActivity : Activity() {
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = d(AshTokens.Space.xs) })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (on) addView(AshUi.tag(this@ConsoleActivity, "已开", AshUi.Tone.OK))
+            else if (said) addView(AshUi.tag(this@ConsoleActivity, OnboardingContent.Words.SAID_MARK, AshUi.Tone.MUTE))
         }
     }
 

@@ -21,6 +21,8 @@ import ai.ash.caps.Capabilities
 import ai.ash.caps.config.ConfigStatus
 import ai.ash.caps.config.KeepAliveStatus
 import ai.ash.caps.config.KernelAutostart
+import ai.ash.caps.config.OwnerWord
+import ai.ash.caps.config.Standing
 import ai.ash.caps.config.Permission
 import ai.ash.caps.config.Permissions
 import ai.ash.caps.config.ScreenRecovery
@@ -64,6 +66,15 @@ class OnboardingActivity : Activity() {
     /** A read is under way (set on the main thread, cleared by the reading thread whatever happens). */
     @Volatile private var loading = false
     private val tick = Runnable { reload() }
+    /** Back from a settings page: read at once and again a few times, since some phones report a change late. */
+    private val recheck = ReturnRecheck(object : ReturnRecheck.Scheduler {
+        override fun postDelayed(task: Runnable, ms: Long) { ui.postDelayed(task, ms) }
+        override fun cancel(task: Runnable) { ui.removeCallbacks(task) }
+    }) { reload() }
+    /** A read was asked for while one was under way: it runs once that one is done. */
+    @Volatile private var readAgain = false
+    /** Until when 「再检查一次」 shows that it is looking (so a quick answer is still seen to have been looked for). */
+    private var checkingUntil = 0L
     private var startsTried = 0
     private var lastStart = 0L
     /** When the kernel step first saw the kernel installed but not running (0: it is running, or not yet seen). */
@@ -89,6 +100,7 @@ class OnboardingActivity : Activity() {
         setTheme(if (night) R.style.Ash_Setup_Dark else R.style.Ash_Setup_Light)
         super.onCreate(savedInstanceState)
         savedInstanceState?.getStringArray(KEY_SKIPPED)?.let { skipped += it }
+        savedInstanceState?.getStringArray(KEY_OPENED)?.let { opened += it }
         kernelSkipped = savedInstanceState?.getBoolean(KEY_KERNEL_SKIPPED) ?: false
         started = savedInstanceState?.getBoolean(KEY_STARTED) ?: !intent.getBooleanExtra(EXTRA_WELCOME, false)
         holder = FrameLayout(this).apply { setBackgroundColor(palette.bg) }
@@ -99,10 +111,11 @@ class OnboardingActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        reload()
+        recheck.start()
     }
 
     override fun onPause() {
+        recheck.cancel()
         ui.removeCallbacks(tick)
         super.onPause()
     }
@@ -117,18 +130,23 @@ class OnboardingActivity : Activity() {
         out.putStringArray(KEY_SKIPPED, skipped.toTypedArray())
         out.putBoolean(KEY_KERNEL_SKIPPED, kernelSkipped)
         out.putBoolean(KEY_STARTED, started)
+        out.putStringArray(KEY_OPENED, opened.toTypedArray())
     }
 
     /** Reads the kernel package and `config.status` (which may wait on Health Connect, so not on the main thread). */
     private fun reload() {
         ui.removeCallbacks(tick)
-        if (!loading) {
+        if (loading) readAgain = true
+        else {
             loading = true
             reader.execute {
                 try {
                     val read = runCatching { Loaded(KernelLauncher.state(this), items()) }.getOrNull()
                     ui.post { if (read != null && !isDestroyed) { loaded = read; keepKernelUp(read); render() } }
-                } finally { loading = false }
+                } finally {
+                    loading = false
+                    if (readAgain) { readAgain = false; ui.post { if (!isDestroyed) reload() } }
+                }
             }
         }
         ui.postDelayed(tick, 1000)
@@ -138,8 +156,17 @@ class OnboardingActivity : Activity() {
     private fun items(): List<ConfigStatus.Item> {
         val keepAlive = if (KeepAliveStatus.supported()) KeepAliveStatus.items(this).filter { it.item !in ConfigStatus.NAMES } else emptyList()
         val recovery = ConfigStatus.Item("screen_recovery", if (ScreenRecovery.granted(this)) ConfigStatus.GRANTED else ConfigStatus.MISSING)
-        return ConfigStatus.all(this) + keepAlive + recovery
+        val word = OwnerWord.of(this)
+        return (ConfigStatus.all(this) + keepAlive + recovery).map { row ->
+            // what the owner said counts until the system shows it on (and then the word is dropped); a switch the phone keeps from Ash is the word alone, already in its state
+            if (row.state == ConfigStatus.UNSUPPORTED || unreadable(row.item)) row
+            else if (word.settle(row.item, row.state == ConfigStatus.GRANTED, unreadable = false) == Standing.SAID) ConfigStatus.Item(row.item, OnboardingPlan.SAID, row.detail)
+            else row
+        }
     }
+
+    /** The phone keeps this switch where Ash cannot read it: the owner's word is all there is. */
+    private fun unreadable(item: String): Boolean = permissionOf(item)?.confirmable?.invoke(this) == true
 
     /** On the brain screen, an installed kernel that does not run is started, a few times, a while apart. */
     private fun keepKernelUp(l: Loaded) {
@@ -222,8 +249,8 @@ class OnboardingActivity : Activity() {
             Kind.BRAIN -> brainPhase(l).name + reviewing + startsTried + (waitingSince != 0L && SystemClock.elapsedRealtime() - waitingSince >= OnboardingPlan.KERNEL_WAIT_MS)
             Kind.ITEM -> {
                 val item = p.item!!
-                val granted = l.items.firstOrNull { it.item == item }?.state == ConfigStatus.GRANTED
-                "$granted$reviewing${item in opened}${awaitsWord(item)}${OnboardingPlan.dotParts(l.kernel, l.rows, skipped, history.mapNotNull { it.item }).joinToString(",")}"
+                val state = l.items.firstOrNull { it.item == item }?.state
+                "$state$reviewing${item in opened}${canRecheck(item)}${canSay(item)}${checking()}${OnboardingPlan.dotParts(l.kernel, l.rows, skipped, history.mapNotNull { it.item }).joinToString(",")}"
             }
             Kind.DONE -> OnboardingPlan.summary(l.kernel, l.rows).let { "${it.on}/${it.off.joinToString(",")}" }
         }
@@ -367,6 +394,7 @@ class OnboardingActivity : Activity() {
         val permission = permissionOf(item)
         val copy = OnboardingContent.of(item, permission?.title ?: item, permission?.why ?: "")
         val granted = row.state == ConfigStatus.GRANTED
+        val said = row.state == OnboardingPlan.SAID
         val seen = history.mapNotNull { it.item }
         // one dot per part of her body: the parts before this one are done, this one is the long bar
         val parts = OnboardingPlan.dotParts(l.kernel, l.rows, skipped, seen)
@@ -390,24 +418,48 @@ class OnboardingActivity : Activity() {
             }
         }
         if (granted) body.addView(AshUi.resolved(this, "已打开", ok = true))
+        else if (said) body.addView(AshUi.resolved(this, OnboardingContent.Words.SAID_MARK, ok = true))
         val buttons = mutableListOf<View>()
-        val awaits = awaitsWord(item)
         when {
-            granted -> buttons += primary("继续", { forward() })
-            awaits && item in opened -> {
-                buttons += primary("我已设好", { permission?.confirm(this); reload() })
-                buttons += AshUi.button(this, "再打开一次", AshUi.Kind.NEUTRAL, AshUi.BtnSize.MD, block = true) { act(item) }
-                buttons += OnboardingViews.ghost(this, OnboardingContent.Words.SKIP) { skip(item) }
-            }
+            granted || said -> buttons += primary("继续", { forward() })
             else -> {
                 buttons += OnboardingViews.iconButton(this, copy.primary, copy.icon) { opened += item; act(item); render() }
+                // the owner has been to the system's page and Ash still does not see it on: look again, or take their word for it
+                if (item in opened) {
+                    if (canRecheck(item)) {
+                        val looking = checking()
+                        buttons += AshUi.button(this, if (looking) OnboardingContent.Words.CHECKING else OnboardingContent.Words.RECHECK, AshUi.Kind.NEUTRAL, AshUi.BtnSize.MD, block = true,
+                            onClick = if (looking) null else ::recheckNow).also { if (looking) AshUi.disable(it) }
+                    }
+                    if (canSay(item)) buttons += AshUi.button(this, OnboardingContent.Words.SAID_BUTTON, AshUi.Kind.NEUTRAL, AshUi.BtnSize.MD, block = true) { sayOn(item) }
+                }
                 buttons += OnboardingViews.ghost(this, OnboardingContent.Words.SKIP) { skip(item) }
             }
         }
         return frame(OnboardingViews.dots(this, states), body, bottom(Layout.barAsk, *buttons.toTypedArray()))
     }
 
-    private fun awaitsWord(item: String): Boolean = permissionOf(item)?.awaitsWord(this) == true
+    /** A read can tell something new only for an item Ash can read at all. */
+    private fun canRecheck(item: String) = !unreadable(item)
+
+    /** The owner may say it is on: always for an item Ash can read; for one it cannot, once what it needs first is on. */
+    private fun canSay(item: String): Boolean = !unreadable(item) || permissionOf(item)?.ready(this) == true
+
+    private fun checking() = SystemClock.elapsedRealtime() < checkingUntil
+
+    /** 「再检查一次」: reads now; the button says it is looking for a moment. */
+    private fun recheckNow() {
+        checkingUntil = SystemClock.elapsedRealtime() + CHECK_SHOWN_MS
+        reload()
+        render()
+        ui.postDelayed({ render() }, CHECK_SHOWN_MS)
+    }
+
+    /** 「我已经打开了」: taken at the owner's word; the screen goes on, and the system's own reading takes over once it shows it on. */
+    private fun sayOn(item: String) {
+        OwnerWord.of(this).say(item)
+        reload()
+    }
 
     /** 「先不用」: the screen is not asked again; skipping accessibility passes on its auto-recovery too. */
     private fun skip(item: String) {
@@ -514,6 +566,8 @@ class OnboardingActivity : Activity() {
         private const val KEY_SKIPPED = "skipped"
         private const val KEY_KERNEL_SKIPPED = "kernel_skipped"
         private const val KEY_STARTED = "started"
+        private const val KEY_OPENED = "opened"
+        private const val CHECK_SHOWN_MS = 700L
         /** Set when the guide is the first thing the owner sees: it starts with the greeting. */
         private const val EXTRA_WELCOME = "ai.ash.ui.onboarding.welcome"
         private const val PREFS = "ash.ui"

@@ -371,9 +371,15 @@ object AshUi {
     class AvatarView(ctx: Context) : View(ctx) {
         enum class State { ONLINE, THINKING, WORKING, WAITING, OFFLINE, PLAIN }
         var state: State = State.PLAIN; set(v) { field = v; alpha = if (v == State.OFFLINE) 0.55f else 1f; restart(); invalidate() }
-        var image: Bitmap? = null; set(v) { field = v; invalidate() }
+        var image: Bitmap? = null; set(v) { field = v; face = null; invalidate() }
         private val imgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+        // what a frame of the turning ring needs is kept, not built again: the face's shader (until the picture or the size changes)
+        // and the ring's sweep, which only has its matrix turned
+        private var face: BitmapShader? = null
+        private var sweep: SweepGradient? = null
+        private val sweepMatrix = Matrix()
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { face = null; sweep = null }
         private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
         private var t = 0f
         private var anim: ValueAnimator? = null
@@ -397,11 +403,13 @@ object AshUi {
             // the face is a cut-out: the warm tile shows behind it
             imgPaint.shader = null; imgPaint.color = c.surface2; canvas.drawRoundRect(box, r, r, imgPaint)
             image?.let { bmp ->
-                val shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                val scale = maxOf(box.width() / bmp.width, box.height() / bmp.height)
-                // object-position 50% 18%: keep the face, crop from the top
-                val dy = (box.height() - bmp.height * scale) * 0.18f
-                shader.setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate(box.left + (box.width() - bmp.width * scale) / 2, box.top + dy) })
+                val shader = face ?: BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also { made ->
+                    val scale = maxOf(box.width() / bmp.width, box.height() / bmp.height)
+                    // object-position 50% 18%: keep the face, crop from the top
+                    val dy = (box.height() - bmp.height * scale) * 0.18f
+                    made.setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate(box.left + (box.width() - bmp.width * scale) / 2, box.top + dy) })
+                    face = made
+                }
                 imgPaint.shader = shader; canvas.drawRoundRect(box, r, r, imgPaint)
             }
 
@@ -410,8 +418,9 @@ object AshUi {
             ring.strokeWidth = dpF(context, 1.6f)
             when (state) {
                 State.WORKING -> {
-                    ring.shader = SweepGradient(outer.centerX(), outer.centerY(), intArrayOf(c.herFill, Color.TRANSPARENT, Color.TRANSPARENT, c.herFill), floatArrayOf(0f, .4f, .6f, 1f))
-                        .apply { setLocalMatrix(Matrix().apply { setRotate(t * 360f, outer.centerX(), outer.centerY()) }) }
+                    val shader = sweep ?: SweepGradient(outer.centerX(), outer.centerY(), intArrayOf(c.herFill, Color.TRANSPARENT, Color.TRANSPARENT, c.herFill), floatArrayOf(0f, .4f, .6f, 1f)).also { sweep = it }
+                    sweepMatrix.setRotate(t * 360f, outer.centerX(), outer.centerY()); shader.setLocalMatrix(sweepMatrix)
+                    ring.shader = shader
                     canvas.drawRoundRect(outer, ro, ro, ring); ring.shader = null
                 }
                 State.THINKING, State.WAITING -> {
@@ -460,7 +469,7 @@ object AshUi {
      * system's animations are off). [boxDp] is the view's side, [radiusDp] the ring's radius, [avatarDp] the face's diameter.
      */
     class RingAvatar(ctx: Context, private val boxDp: Int, private val radiusDp: Int, private val avatarDp: Int = 120, private val strokeDp: Float = 5f) : View(ctx) {
-        var image: Bitmap? = null; set(v) { field = v; invalidate() }
+        var image: Bitmap? = null; set(v) { field = v; face = null; invalidate() }
         var progress = 0f; private set
         var spinning = false; set(v) { field = v; restart(); invalidate() }
         private val c = p(ctx)
@@ -468,6 +477,7 @@ object AshUi {
         private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = c.herFill; strokeCap = Paint.Cap.ROUND }
         private val img = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         private var turn = 0f
+        private var face: BitmapShader? = null   // built once per picture and size, not once per frame of the turning arc
         private var spin: ValueAnimator? = null
         private var grow: ValueAnimator? = null
 
@@ -494,6 +504,7 @@ object AshUi {
         override fun onAttachedToWindow() { super.onAttachedToWindow(); restart() }
         override fun onDetachedFromWindow() { spin?.cancel(); grow?.cancel(); super.onDetachedFromWindow() }
         override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(dp(context, boxDp), dp(context, boxDp))
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { face = null }
 
         override fun onDraw(canvas: Canvas) {
             val cx = width / 2f; val cy = height / 2f
@@ -510,12 +521,13 @@ object AshUi {
             val box = RectF(cx - a, cy - a, cx + a, cy + a)
             img.shader = null; img.color = c.surface2; canvas.drawCircle(cx, cy, a, img)
             val bmp = image ?: return
-            val shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-            val scale = maxOf(box.width() / bmp.width, box.height() / bmp.height)
-            // object-position 50% 18%, as everywhere she is drawn: keep the face, crop from the top
-            val dy = (box.height() - bmp.height * scale) * 0.18f
-            shader.setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate(box.left + (box.width() - bmp.width * scale) / 2, box.top + dy) })
-            img.shader = shader
+            img.shader = face ?: BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also { made ->
+                val scale = maxOf(box.width() / bmp.width, box.height() / bmp.height)
+                // object-position 50% 18%, as everywhere she is drawn: keep the face, crop from the top
+                val dy = (box.height() - bmp.height * scale) * 0.18f
+                made.setLocalMatrix(Matrix().apply { setScale(scale, scale); postTranslate(box.left + (box.width() - bmp.width * scale) / 2, box.top + dy) })
+                face = made
+            }
             canvas.drawCircle(cx, cy, a, img)
         }
     }

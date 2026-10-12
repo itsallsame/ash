@@ -149,6 +149,11 @@ internal object OnboardingContent {
         const val START = "开始"
         const val BRAIN_TITLE = "我先把自己的大脑装好"
         const val SKIP = "先不用"
+        const val RECHECK = "再检查一次"
+        const val CHECKING = "正在检查…"
+        const val SAID_BUTTON = "我已经打开了"
+        /** What a screen the owner went back to says of an item they told Ash is on. */
+        const val SAID_MARK = "你说已开"
         const val DONE_TITLE = "准备好了"
         const val DONE_BUTTON = "去跟她说话"
     }
