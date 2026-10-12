@@ -33,7 +33,7 @@ import org.json.JSONObject
 /**
  * 「她的手和眼 · 体检」(the page 「这台手机」 opens): the phone's state told as seven parts of a body ([Checkup]). A part with
  * an item that is off shows 「去修」; tapping a part lists its items, each with one line of why and 「去开启」. Under the parts, the
- * rest of what the old diagnostics page did (starting and stopping the kernel, the guide, the virtual screen preview, the three
+ * rest of what the old diagnostics page did (starting and stopping the kernel, the guide, the three
  * optional switches) — no business logic of its own. [EXTRA_PART] opens straight onto one part (an id of [OnboardingPlan.PARTS]).
  */
 class ConsoleActivity : Activity() {
@@ -209,7 +209,6 @@ class ConsoleActivity : Activity() {
 
         blocks += AshUi.group(this, "其他", rows = listOf(
             AshUi.row(this, "再走一遍引导", "一项一项看哪些还没开", AshPage.icon(this, R.drawable.ash_ic_list), trailing = chevron()) { startActivity(Intent(this, OnboardingActivity::class.java)) },
-            AshUi.row(this, "显示虚拟屏预览", "Ash 在后台操作应用时，小窗里看她的屏幕", AshPage.icon(this, R.drawable.ash_ic_eye), trailing = chevron()) { showPreview() },
             switchRow("灵动岛常驻入口", residentLine(), TaskCapsule.residentKept(this), true) { TaskCapsule.setResidentKept(this, it); render() },
             switchRow("读取通知（可选）", notificationLine(), NotificationSenseSettings.enabled(this), true) { setNotificationSense(it) },
             AshUi.row(this, "系统的通知读取权限", null, AshPage.icon(this, R.drawable.ash_ic_bell), trailing = chevron()) { openNotificationAccess() },
@@ -365,14 +364,6 @@ class ConsoleActivity : Activity() {
         }
     }
 
-    private fun showPreview() {
-        val msg = when (VScreenPreview.show(this)) {
-            VScreenPreview.Shown.OK -> "已显示虚拟屏预览"
-            VScreenPreview.Shown.NO_SCREEN -> "现在没有虚拟屏（Ash 用到时会自动显示预览）"
-            VScreenPreview.Shown.NO_PERMISSION -> "先在「眼睛和手」里开悬浮窗"
-        }
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-    }
 
     companion object {
         /** Open straight onto one part ([OnboardingPlan.Part.id]). */

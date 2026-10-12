@@ -84,7 +84,7 @@ class CapabilityConformanceTest {
     // ---- capabilities
 
     @Test fun everyCapabilityIsStandardOrAnExtension() {
-        assertTrue(capabilities().size > 60)
+        assertTrue(capabilities().size > 50)
         for (c in capabilities()) assertTrue("${c.name} is neither a standard action nor x.<who>.<action>", c.name in standard || extension.matches(c.name))
     }
 

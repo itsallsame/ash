@@ -9,8 +9,8 @@ import android.os.Bundle
 import android.os.Process
 
 /**
- * Where the kernel host (the shell user, launched through wireless debugging) hands this app what it needs: the phone-action
- * whitelist (`call("actions", {actions})`) and the core's local link details (`call("hand", {port, token})`). The manifest
+ * Where the kernel host (the shell user, launched through wireless debugging) hands this app the core's local link details
+ * and its presence token (`call("hand", {port, token, host})`); it does so again whenever this app's process is new. The manifest
  * guards it with INTERACT_ACROSS_USERS_FULL, which only the shell user and the system hold, and the call is taken only from
  * the shell user or root: no ordinary app can push Ash a binder of its own.
  */
@@ -25,11 +25,11 @@ class HostShellDoor : ContentProvider() {
         val id = Binder.clearCallingIdentity()
         try {
             return when (method) {
-                "actions" -> HostShell.attach(ctx, extras?.getBinder("actions") ?: return null)
                 "hand" -> {
                     val port = extras?.getInt("port") ?: return null
                     val token = extras.getString("token") ?: return null
                     if (port in 1..65535 && token.isNotEmpty()) {
+                        extras.getBinder("host")?.let { HostShell.attach(ctx, it) }
                         ai.ash.link.Link.get(ctx).attach(port, token, extras.getString("version").orEmpty().take(40))
                         Bundle().apply { putBoolean("ok", true) }
                     } else null

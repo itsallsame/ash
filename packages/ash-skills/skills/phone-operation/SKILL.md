@@ -6,7 +6,7 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 
 # 在手机上办事
 
-这里的词都在主人的手机上：`capability_call {member: "device:<手机的 id>", word, body}`。手机的 id 从每轮上下文里的设备列表拿（名字是手机、能力里有 `screen.*` 的那一只），不要写死。列表里没有它，或显示 offline，先读技能 `connect-device`。
+这里的词分两处，都用 `capability_call`：看屏幕、点按输入、读应用列表、打开链接、改设置、剪贴板、权限（`screen.*`、`apps.list/info/usage`、`apps.open_url`、`settings.*`、`clipboard.*`、`config.*`）在主人的手机上，`{member: "device:<手机的 id>", word, body}`；手机的 id 从每轮上下文里的设备列表拿（名字是手机、能力里有 `screen.*` 的那一只），不要写死。虚拟屏、按键、打开应用（`vscreen.*`、`input.key`、`apps.open`）是宿主能力，在 `service:host` 上（固定名字，直接用）；没接上「后台也能动手」时这里只有媒体键和音量键，其余不在能力清单里——看不到就说明得先接。列表里没有手机，或显示 offline，先读技能 `connect-device`。
 
 ## 先分清要哪种
 
@@ -19,7 +19,7 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 | `foreground_task` | 要在真实屏幕办事，或需要主人自己登录、收验证码 | 用 `screen.*` 操作真实屏幕；需要他动手时把那一页留着并说明，最后一屏也留着 |
 | `no_preference` | 不需要屏幕 | 别无谓地开屏；以后要给主人打开应用仍然用真实屏幕 |
 
-在前台模式下用 `vscreen.*`（除了 `status`、`see`、`close`）会被拒绝，一个操作也不会执行。虚拟屏需要主人接上「后台也能动手」（手机的调试身份，Android 10 以上），`vscreen.status` 或 `config.status`（`host_shell` 一项）可以先看；用不了就按前台办，并告诉主人原因。手机重启后要主人自己重新接一下，Ash 不能替他开关无线调试。
+在前台模式下用 `vscreen.*`（除了 `status`、`see`、`close`）会被拒绝，一个操作也不会执行。虚拟屏、注入按键、`apps.open` 都要「后台也能动手」（手机的调试身份，Android 10 以上）：没接上时这些词不在 `service:host` 的能力清单里，`config.status`（`host_shell` 一项）可以先看。打开应用用不了就告诉主人去接「后台也能动手」；虚拟屏用不了就按前台办，并说明原因。手机重启后要主人自己重新接一下，Ash 不能替他开关无线调试。
 
 ## 先看，再点，再看
 

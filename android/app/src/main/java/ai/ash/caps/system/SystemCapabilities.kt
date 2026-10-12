@@ -4,7 +4,6 @@ import ai.ash.caps.result
 import ai.ash.caps.Overlay
 import ai.ash.caps.Risk
 import ai.ash.caps.Effect
-import ai.ash.caps.hostshell.HostShell
 import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.content.Context
@@ -190,24 +189,6 @@ object SystemCapabilities {
 
     private fun launchError(e: LaunchFailure): CapResult = CapResult.error(e.code, e.message ?: "could not start the screen", e.hint)
 
-    private val appsOpen = Cap(
-        "apps.open",
-        "Open (launch or bring to front) an app on the REAL foreground phone screen, by package name or launcher label. " +
-            "Use this when the owner asks you to open an app for them to use; leave it visible, not on a virtual display. Android 10+ blocks " +
-            "background apps from opening screens, so this works when ash is in the foreground, ash's accessibility service is " +
-            "enabled, the overlay permission is granted, or the phone's debug identity (「后台也能动手」) is connected (the start then goes through it); " +
-            "otherwise it fails and the recovery_hint says what the owner can turn on. " +
-            "When the screen can be read afterwards the result says whether the app is really in front (confirmed).",
-        schema("app" to prop("string", "Package name (e.g. com.tencent.mm) or launcher label (e.g. \"WeChat\").", required = true)),
-        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在打开应用", foreground = true, overlay = Overlay.PASSTHROUGH,
-        result = result("package:string", "opened:boolean", "confirmed:boolean", "via:string")
-    ) { ctx, args ->
-        val app = try { Apps.resolve(ctx, args.optString("app")) } catch (e: Exception) { return@Cap CapResult.fail(e.message ?: "unknown app") }
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(app.component)
-            .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        val l = try { Launcher.start(ctx, intent) } catch (e: LaunchFailure) { return@Cap launchError(e) }
-        CapResult.text("${app.label} (${app.pkg}): ${l.summary()}.", launchData(l).put("package", app.pkg).put("label", app.label))
-    }
 
     private val appsInfo = Cap(
         "apps.info",
@@ -505,74 +486,11 @@ object SystemCapabilities {
         CapResult.text("Opened $uri (handler: $handler): ${l.summary()}.", launchData(l))
     }
 
-    private val MEDIA_KEYS = mapOf(
-        "play_pause" to KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, "play" to KeyEvent.KEYCODE_MEDIA_PLAY, "pause" to KeyEvent.KEYCODE_MEDIA_PAUSE,
-        "next" to KeyEvent.KEYCODE_MEDIA_NEXT, "previous" to KeyEvent.KEYCODE_MEDIA_PREVIOUS, "stop" to KeyEvent.KEYCODE_MEDIA_STOP,
-        "rewind" to KeyEvent.KEYCODE_MEDIA_REWIND, "fast_forward" to KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
-    )
-    private val VOLUME_KEYS = mapOf(
-        "volume_up" to KeyEvent.KEYCODE_VOLUME_UP, "volume_down" to KeyEvent.KEYCODE_VOLUME_DOWN, "volume_mute" to KeyEvent.KEYCODE_VOLUME_MUTE,
-    )
-    private val SHELL_KEYS = mapOf(
-        "back" to 4, "home" to 3, "recents" to 187, "menu" to 82, "enter" to 66, "power" to 26, "wakeup" to 224, "sleep" to 223,
-        "notifications" to 83, "search" to 84, "camera" to 27, "brightness_up" to 221, "brightness_down" to 220,
-        "screenshot" to 120, "assist" to 219, "tab" to 61, "escape" to 111, "delete" to 67,
-        "dpad_up" to 19, "dpad_down" to 20, "dpad_left" to 21, "dpad_right" to 22, "dpad_center" to 23,
-    )
-
-    private val inputKey = Cap(
-        "input.key",
-        "Press a key on the phone. Media keys (${MEDIA_KEYS.keys.joinToString(", ")}) control whatever is playing and volume keys " +
-            "(${VOLUME_KEYS.keys.joinToString(", ")}) change the active volume; both need no permission. Other keys " +
-            "(${SHELL_KEYS.keys.joinToString(", ")}, or any Android keycode number) are injected on the main screen with the " +
-            "shell `input keyevent` and need the phone's debug identity (「后台也能动手」). For back/home/recents the accessibility screen " +
-            "capabilities also work.",
-        schema(
-            "key" to prop("string", "Key name or numeric KeyEvent keycode.", required = true),
-            "long_press" to prop("boolean", "Long-press (injected keys only)."),
-        ),
-        effect = Effect.ACT, risk = Risk.OUTWARD, label = "在按手机按键", foreground = true, overlay = Overlay.PASSTHROUGH
-    ) { ctx, args ->
-        val k = args.optString("key").trim().lowercase(Locale.ROOT)
-        val num = k.toIntOrNull()
-        val media = MEDIA_KEYS[k] ?: num?.takeIf { it in MEDIA_KEYS.values }
-        val vol = VOLUME_KEYS[k] ?: num?.takeIf { it in VOLUME_KEYS.values }
-        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        when {
-            media != null -> {
-                val t = SystemClock.uptimeMillis()
-                am.dispatchMediaKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, media, 0))
-                am.dispatchMediaKeyEvent(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, media, 0))
-                CapResult.text("Media key $k sent${if (!am.isMusicActive && media != KeyEvent.KEYCODE_MEDIA_PLAY && media != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) " (nothing is playing right now)" else ""}.")
-            }
-            vol != null -> {
-                val dir = when (vol) { KeyEvent.KEYCODE_VOLUME_UP -> AudioManager.ADJUST_RAISE; KeyEvent.KEYCODE_VOLUME_DOWN -> AudioManager.ADJUST_LOWER; else -> AudioManager.ADJUST_TOGGLE_MUTE }
-                try {
-                    am.adjustSuggestedStreamVolume(dir, AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI)
-                } catch (e: SecurityException) {
-                    return@Cap CapResult.fail("Android refused the volume change (Do Not Disturb policy): ${e.message}")
-                }
-                val m = am.getStreamVolume(AudioManager.STREAM_MUSIC)
-                CapResult.text("Volume key $k sent (media volume now $m/${am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)}).")
-            }
-            else -> {
-                val code = SHELL_KEYS[k] ?: num ?: return@Cap CapResult.fail("unknown key \"$k\"")
-                try {
-                    HostShell.key(code, args.optBoolean("long_press"))
-                    CapResult.text("Key $k ($code) injected.")
-                } catch (e: HostShell.Absent) {
-                    CapResult.error("unavailable", "injecting $k needs the phone's debug identity, which is not connected", HostShell.HINT)
-                } catch (e: Exception) {
-                    CapResult.fail("input keyevent failed: ${e.message?.take(400)}")
-                }
-            }
-        }
-    }
 
     val list: List<Capability> = listOf(
         clipboardGet, clipboardSet, deviceStatus,
-        appsList, appsOpen, appsInfo, appsUsage,
+        appsList, appsInfo, appsUsage,
         settingsOpen, settingsGet, settingsPut,
-        intentView, inputKey,
+        intentView,
     )
 }

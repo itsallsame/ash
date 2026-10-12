@@ -11,7 +11,6 @@ import ai.ash.caps.senses.SenseCapabilities
 import ai.ash.caps.senses.SenseError
 import ai.ash.caps.system.SystemCapabilities
 import ai.ash.screen.island.OwnerTypingException
-import ai.ash.caps.vscreen.VScreenCapabilities
 import android.content.Context
 import android.util.Log
 import org.json.JSONObject
@@ -26,7 +25,7 @@ object Capabilities {
 
     /** Every module contributes its list here. */
     val all: List<Capability> by lazy {
-        val list = SystemCapabilities.list + VScreenCapabilities.list + CalendarCapabilities.list + BrowserCapabilities.list +
+        val list = SystemCapabilities.list + CalendarCapabilities.list + BrowserCapabilities.list +
             MediaCapabilities.list + ScreenCapabilities.list + SenseCapabilities.list + ConfigCapabilities.list + DecisionCapabilities.list
         val names = list.map { it.name }
         require(names.size == names.toSet().size) { "a capability is declared twice: ${names.groupBy { it }.filterValues { it.size > 1 }.keys}" }

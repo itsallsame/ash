@@ -76,6 +76,8 @@ export class HostClient {
   powerRelease() { return this.optional("power.release", {}); }
   handsHandoff(port: number, token: string) { return this.optional("hands.handoff", { port, token }); }
   updateInstall(version: string, url: string, sha256: string) { return this.optional("update.install", { version, url, sha256 }); }
+  /** A phone action (vscreen.*, input.key, apps.open): forwarded as is; `{supported:false}` when the host did not declare its group. */
+  phone<M extends HostMethod>(method: M, req: HostMethods[M]["req"]) { return this.optional(method, req); }
 
   /** status.set every 60 s as the host's liveness signal; the first one goes out after one period. Returns the stopper. */
   startHeartbeat(status: () => HostHeartbeatStatus): () => void {

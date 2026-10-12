@@ -23,6 +23,7 @@ import type { Registry, Router } from "../../kernel/types";
 import { choiceAnswer, conversationQuestions, readConversation, taskOutcomeQuestions, TASK_OUTCOMES, type ConversationState, type Jev } from "./jev";
 import { judgeStopKeyword } from "./keywords";
 import { createScreenDecider } from "./screen";
+import type { VirtualScreen } from "../../edges/host/virtual";
 
 export { createJev, type Jev, type JevOptions, type JevPost, TASK_OUTCOMES, type TaskOutcome } from "./jev";
 export { judgeStopKeyword } from "./keywords";
@@ -41,6 +42,8 @@ export interface ReflexOptions {
   router: Pick<Router, "send">;
   /** Where the phone's hand is found (screen.plan, screen.reconcile). Without it both do nothing. */
   registry?: Pick<Registry, "findByWord">;
+  /** The virtual screen the host keeps (for the screen decision). */
+  virtual?: Pick<VirtualScreen, "available" | "state" | "close">;
   /** The JEV judge. Without it only the keywords judge and everything unclear is followup. */
   jev?: Pick<Jev, "evaluate">;
   threshold?: number;
@@ -200,7 +203,7 @@ export function createReflexService(options: ReflexOptions): Member {
     return { data: { ended: info.running ? await interrupt(info) : true } };
   }
 
-  const screen = options.registry ? createScreenDecider({ ledger, router, registry: options.registry, ...(options.jev ? { jev: options.jev } : {}), threshold, self: SELF, log }) : null;
+  const screen = options.registry ? createScreenDecider({ ledger, router, registry: options.registry, ...(options.virtual ? { virtual: options.virtual } : {}), ...(options.jev ? { jev: options.jev } : {}), threshold, self: SELF, log }) : null;
 
   return {
     id: REFLEX_ID,

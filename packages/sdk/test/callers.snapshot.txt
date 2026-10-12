@@ -213,20 +213,20 @@
   device:*/screen.touch  owner,agent,app
   device:*/screen.gesture  owner,agent,app
   device:*/screen.global_action  owner,agent,app
-  device:*/input.key  owner,agent,app
-  device:*/vscreen.create  owner,agent,app
-  device:*/vscreen.close  owner,agent,app
-  device:*/vscreen.status  owner,agent,app
-  device:*/vscreen.see  owner,agent,app
-  device:*/vscreen.launch  owner,agent,app
-  device:*/vscreen.tap  owner,agent,app
-  device:*/vscreen.swipe  owner,agent,app
-  device:*/vscreen.key  owner,agent,app
-  device:*/vscreen.type  owner,agent,app
+  service:host/input.key  owner,agent,app
+  service:host/vscreen.create  owner,agent,app
+  service:host/vscreen.close  owner,agent,app
+  service:host/vscreen.status  owner,agent,app
+  service:host/vscreen.see  owner,agent,app
+  service:host/vscreen.launch  owner,agent,app
+  service:host/vscreen.tap  owner,agent,app
+  service:host/vscreen.swipe  owner,agent,app
+  service:host/vscreen.key  owner,agent,app
+  service:host/vscreen.type  owner,agent,app
   device:*/apps.list  owner,agent,app
   device:*/apps.info  owner,agent,app
   device:*/apps.usage  owner,agent,app
-  device:*/apps.open  owner,agent,app
+  service:host/apps.open  owner,agent,app
   device:*/apps.open_url  owner,agent,app
   device:*/settings.get  owner,agent,app
   device:*/settings.put  owner,agent,app
@@ -281,4 +281,3 @@
 * device:*/decision.surface  kernel
 * device:*/decision.screen  kernel
 * device:*/decision.return  kernel
-* device:*/decision.virtual_close  kernel

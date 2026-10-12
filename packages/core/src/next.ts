@@ -19,7 +19,7 @@ import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
 import { createRemoteDrivers } from "./edges/agents/remote";
 import { createApps, installBuiltinOrgans, installContractDoc, newBuiltinReport } from "./edges/apps";
 import { createLocalBody, mainBodyKind } from "./edges/body/local";
-import { createHostService, HostClient, loadHostBoot } from "./edges/host";
+import { createHostService, createVirtualScreen, HostClient, loadHostBoot } from "./edges/host";
 import { createLlm } from "./edges/llm";
 import { createReviewer } from "./edges/llm/review";
 import { createLlmService } from "./edges/llm/service";
@@ -127,6 +127,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   if (!booted.ok) throw Object.assign(new Error(`cannot start: ${booted.reason}`), { exitCode: booted.exitCode });
   const { spec, secrets } = booted.boot;
   const host = new HostClient({ endpoint: spec.endpoint, token: secrets.token, capabilities: spec.capabilities });
+  const virtual = createVirtualScreen(host);
 
   // 2. ledger  3. vault (the host boot has already refused a start without the seal key: nothing is stored unsealed)
   const dataDir = opts.dataDir ?? spec.dirs.state;
@@ -178,7 +179,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const clock = createClockService({ ledger, router, now });
   const senses = createSensesService({ dataDir, now });
   const cost = createCostService({ ledger, now });
-  const reflex = createReflexService({ ledger, router, registry, jev: createJev({ post: (req) => llm.post("service:reflex", req) }) });
+  const reflex = createReflexService({ ledger, router, registry, virtual, jev: createJev({ post: (req) => llm.post("service:reflex", req) }) });
   const history = createHistoryService({ ledger, now });
   const admin = createAdminService({
     ledger, router, registry, version: hubVersion(), now, startedAt,
@@ -260,7 +261,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
     summarize: createSummarizer({ llm }),
   });
-  const hostService = createHostService({ client: host, router, onStop: (deadline) => stop(deadline), onNetwork: (network) => body.setNetwork(network), log });
+  const hostService = createHostService({ client: host, router, virtual, onStop: (deadline) => stop(deadline), onNetwork: (network) => body.setNetwork(network), log });
   link.onChannel("human", human.attach);
   link.mount("/mcp", tools.handler);
   link.mount("/", staticWeb(), { relay: true });

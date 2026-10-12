@@ -41,7 +41,7 @@ class CapabilityTest {
     @Test fun onlyTheScreenInputCapabilitiesPassUnderTheIsland() {
         val passing = Capabilities.all.filter { it.overlay == Overlay.PASSTHROUGH }.map { it.name }.toSet()
         assertEquals(setOf("screen.tap", "screen.type", "screen.scroll", "screen.swipe", "screen.hold", "screen.touch", "screen.gesture",
-            "screen.global_action", "input.key", "apps.open", "apps.open_url", "settings.open"), passing)
+            "screen.global_action", "apps.open_url", "settings.open"), passing)
         assertEquals(listOf("screen.see"), Capabilities.all.filter { it.overlay == Overlay.HIDDEN }.map { it.name })
     }
 }

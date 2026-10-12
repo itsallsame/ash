@@ -96,6 +96,9 @@ describe("host client", () => {
         power: () => Promise.all([client.powerHold(1, "x"), client.powerRelease()]),
         hands: () => Promise.all([client.handsHandoff(1, "t")]),
         update: () => Promise.all([client.updateInstall("1", "u", "s")]),
+        vscreen: () => Promise.all([client.phone("vscreen.status", {}), client.phone("vscreen.tap", { x: 1, y: 1 })]),
+        input: () => Promise.all([client.phone("input.key", { key: "home" })]),
+        apps: () => Promise.all([client.phone("apps.open", { app: "x" })]),
       }[capability];
       for (const answer of await attempts()) assert.deepEqual(answer, { supported: false });
       assert.equal(host.calls.length, 0, "nothing was sent");

@@ -30,7 +30,7 @@ export const HOST_POWER_HOLD_MAX_MS = 600_000;
 // ---- capabilities --------------------------------------------------------------------------------------------------
 
 export const HOST_REQUIRED_CAPABILITIES = ["identity", "lifecycle", "status"] as const;
-export const HOST_OPTIONAL_CAPABILITIES = ["wake", "power", "hands", "update"] as const;
+export const HOST_OPTIONAL_CAPABILITIES = ["wake", "power", "hands", "update", "vscreen", "input", "apps"] as const;
 export type HostRequiredCapability = (typeof HOST_REQUIRED_CAPABILITIES)[number];
 export type HostOptionalCapability = (typeof HOST_OPTIONAL_CAPABILITIES)[number];
 export type HostCapability = HostRequiredCapability | HostOptionalCapability;
@@ -105,6 +105,20 @@ export interface HostMethods {
   "power.release": { req: Record<string, never>; res: Record<string, never> };
   "hands.handoff": { req: { port: number; token: string }; res: { delivered: string[] } };
   "update.install": { req: { version: string; url: string; sha256: string }; res: Record<string, never> };
+  // The phone-action groups the kernel host serves (capability vscreen/input/apps). The host does the Android work and
+  // returns structured data (plus a short `message` for the reply, and the JPEG for vscreen.see); the kernel builds the
+  // word's content. Absent when the host cannot do them (unpaired: only `input`, media and volume keys).
+  "vscreen.create": { req: { orientation?: string; short_edge?: number; dpi?: number }; res: { displayId: number; width: number; height: number; dpi: number; reused: boolean; message: string } };
+  "vscreen.status": { req: Record<string, never>; res: { running: boolean; displayId?: number; width?: number; height?: number; dpi?: number } };
+  "vscreen.launch": { req: { app: string }; res: { package: string; component: string; message: string } };
+  "vscreen.see": { req: Record<string, never>; res: { jpeg: string; displayId: number; screenW: number; screenH: number; imageW: number; imageH: number } };
+  "vscreen.tap": { req: { x: number; y: number }; res: { message: string } };
+  "vscreen.swipe": { req: { x1: number; y1: number; x2: number; y2: number; duration_ms?: number }; res: { message: string } };
+  "vscreen.key": { req: { key: string; long_press?: boolean }; res: { message: string } };
+  "vscreen.type": { req: { text: string }; res: { message: string } };
+  "vscreen.close": { req: Record<string, never>; res: { message: string } };
+  "input.key": { req: { key: string; long_press?: boolean }; res: { message: string } };
+  "apps.open": { req: { app: string }; res: { package: string; opened: boolean; message: string } };
 }
 export type HostMethod = keyof HostMethods;
 
@@ -121,6 +135,17 @@ export const HOST_METHOD_CAPABILITY: { readonly [M in HostMethod]: HostCapabilit
   "power.release": "power",
   "hands.handoff": "hands",
   "update.install": "update",
+  "vscreen.create": "vscreen",
+  "vscreen.status": "vscreen",
+  "vscreen.launch": "vscreen",
+  "vscreen.see": "vscreen",
+  "vscreen.tap": "vscreen",
+  "vscreen.swipe": "vscreen",
+  "vscreen.key": "vscreen",
+  "vscreen.type": "vscreen",
+  "vscreen.close": "vscreen",
+  "input.key": "input",
+  "apps.open": "apps",
 };
 
 /** Error codes of the host interface: the shared set (SPEC-02 section 7). */

@@ -3,21 +3,34 @@ import test from "node:test";
 import { WordError, type Caller, type HandleContext, type Message, type Outgoing, type Reply, type WordResult } from "../../../../sdk/src/message";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { createReflexService } from "../../../src/services/reflex";
+import { createVirtualScreen } from "../../../src/edges/host/virtual";
 
 const ctx = (signal = new AbortController().signal): HandleContext => ({ signal, caller: { member: "service:agents", via: "service", local: true }, raw: null });
 const request = (word: string, body: unknown): Message => ({ seq: 0, id: "m_req", ts: 0, from: "service:agents", to: "service:reflex", kind: "request", word, body });
 const ok = (data: unknown): Reply => ({ ok: true, result: { data } });
 
-const SURFACE = { home_visible: true, page_live: true, visibility_epoch: 3, virtual_available: true };
-const SCREEN = { foreground_package: "ai.ash", state_epoch: 10, virtual_generation: 0, virtual_owner_turn: "", virtual_open: false };
+const SURFACE = { home_visible: true, page_live: true, visibility_epoch: 3 };
+const SCREEN = { foreground_package: "ai.ash", state_epoch: 10 };
 const pick = (choice: string, confidence = 0.9) => ({ answers: { execution_screen: { choice, confidence } } });
 const cleanup = (virtual: string) => ({ answers: { virtual_screen: { choice: virtual, confidence: 0.9 } } });
 
-function setup(opts: { hand?: boolean; jev?: (() => unknown) | "none"; hands?: Record<string, (body: any, caller: Caller) => Reply> } = {}) {
+function setup(opts: { hand?: boolean; jev?: (() => unknown) | "none"; hands?: Record<string, (body: any, caller: Caller) => Reply>;
+  /** Whether the host can make a virtual screen (default yes). */ available?: () => boolean;
+  /** How the host answers vscreen.close (default: closed). */ close?: () => unknown } = {}) {
   const { ledger } = openLedger();
   const sent: { msg: Outgoing; caller: Caller }[] = [];
   const hands: Record<string, (body: any, caller: Caller) => Reply> = {
-    "decision.surface": () => ok(SURFACE), "decision.screen": () => ok(SCREEN), "decision.virtual_close": () => ok({ acted: true }), ...opts.hands };
+    "decision.surface": () => ok(SURFACE), "decision.screen": () => ok(SCREEN), ...opts.hands };
+  // The host side: a real virtual-screen ledger over a host that records what it is asked.
+  const host: { word: string; body: unknown }[] = [];
+  const virtual = createVirtualScreen({
+    has: () => (opts.available ?? (() => true))(),
+    phone: (async (word: string, body: unknown) => {
+      host.push({ word, body });
+      if (word === "vscreen.close" && opts.close) { const r = opts.close(); if (r instanceof Error) throw r; return r; }
+      return { supported: true, result: word === "vscreen.create" ? { reused: false } : {} };
+    }) as any,
+  });
   const router = { send: async (msg: Outgoing, who: Caller): Promise<Reply> => {
     sent.push({ msg, caller: who });
     const h = msg.to === "device:phone" ? hands[msg.word] : undefined;
@@ -31,11 +44,12 @@ function setup(opts: { hand?: boolean; jev?: (() => unknown) | "none"; hands?: R
     if (answer instanceof Error) throw answer;
     return answer;
   } };
-  const service = createReflexService({ ledger, router, registry, log: () => {}, ...(jev ? { jev } : {}) });
+  const service = createReflexService({ ledger, router, registry, virtual, log: () => {}, ...(jev ? { jev } : {}) });
   const call = async (word: string, body: unknown): Promise<any> => ((await service.handle(request(word, body), ctx())) as WordResult).data;
   const owner = (text: string) => ledger.append({ from: "person:owner", to: "agent:main", kind: "request", word: "say", body: { text } });
   const calls = (word: string) => sent.filter((s) => s.msg.to === "device:phone" && s.msg.word === word);
-  return { ledger, service, call, owner, sent, asked, calls };
+  const closes = () => host.filter((h) => h.word === "vscreen.close").length;
+  return { ledger, service, call, owner, sent, asked, calls, virtual, closes };
 }
 const planBody = (m: { id: string }) => ({ agent: "agent:main", lane: "front", ids: [m.id] });
 const done = { turn: "t1", agent: "agent:main", lane: "front", outcome: "completed" };
@@ -67,13 +81,13 @@ test("plan: no_preference and an unsure answer are mode none with no text", asyn
 });
 
 test("plan: a virtual screen that is not available becomes the real screen", async () => {
-  const f = setup({ jev: () => pick("virtual_task"), hands: { "decision.surface": () => ok({ ...SURFACE, virtual_available: false }) } });
+  const f = setup({ jev: () => pick("virtual_task"), available: () => false });
   assert.equal((await f.call("screen.plan", planBody(f.owner("查价格")))).mode, "foreground_task");
 });
 
 test("plan: a virtual screen that went away while JEV thought becomes the real screen", async () => {
   let n = 0;
-  const f = setup({ jev: () => pick("virtual_task"), hands: { "decision.surface": () => ok({ ...SURFACE, virtual_available: ++n === 1 }) } });
+  const f = setup({ jev: () => pick("virtual_task"), available: () => ++n === 1 });
   assert.equal((await f.call("screen.plan", planBody(f.owner("查价格")))).mode, "foreground_task");
 });
 
@@ -124,90 +138,102 @@ test("without a registry the words answer none and do nothing", async () => {
 
 // ---- reconcile ----------------------------------------------------------------------------------------------
 
-/** A phone whose screen state moves on with `state`, and a plan that saw Ash in front. */
-async function planned(mode: string, state: () => Record<string, unknown>, jev: () => unknown, extra: Record<string, (b: any, c: Caller) => Reply> = {}) {
+/**
+ * A plan that saw Ash in front, then a turn: `owner` (if any) made the virtual screen; afterwards the real screen is
+ * what `screen` says. `opts` passes on to setup.
+ */
+async function planned(mode: string, owner: string | null, jev: () => unknown, screen: () => Record<string, unknown> = () => ({}), opts: Parameters<typeof setup>[0] = {}) {
   let answer: () => unknown = () => pick(mode);
-  let later = false; // the screen is Ash's while plan looks, and what `state` says afterwards
-  const f = setup({ jev: () => answer(), hands: { "decision.screen": () => ok({ ...SCREEN, ...(later ? state() : {}) }), ...extra } });
+  let later = false; // the screen is Ash's while plan looks, and what `screen` says afterwards
+  const f = setup({ ...opts, jev: () => answer(), hands: { "decision.screen": () => ok({ ...SCREEN, ...(later ? screen() : {}) }), ...opts.hands } });
   await f.call("screen.plan", planBody(f.owner("请办一下")));
+  if (owner) await f.virtual.call("vscreen.create", {}, owner);
   answer = jev;
   later = true;
   return f;
 }
 
-test("reconcile: a finished virtual task closes the virtual screen it owns, for that turn and generation", async () => {
-  const f = await planned("virtual_task", () => ({ virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 4 }), () => cleanup("close"));
+test("reconcile: a finished virtual task closes the virtual screen it owns", async () => {
+  const f = await planned("virtual_task", "t1", () => cleanup("close"));
   assert.deepEqual(await f.call("screen.reconcile", done), { acted: ["virtual_close"] });
-  const close = f.calls("decision.virtual_close");
-  assert.equal(close.length, 1);
-  assert.deepEqual({ ...(close[0]!.msg.body as object), decision_id: "x" }, { expected_generation: 4, owner_turn: "t1", decision_id: "x" });
-  assert.equal(close[0]!.caller.turn, "t1");
+  assert.equal(f.closes(), 1);
+  assert.equal(f.virtual.state().open, false);
   assert.equal(f.calls("decision.return").length, 0);
   // the phone is told about the turn before anything else
   assert.equal(f.sent.filter((s) => s.msg.to === "device:phone" && s.caller.turn === "t1")[0]!.msg.word, "decision.surface");
 });
 
-test("reconcile: the virtual screen of another turn, or JEV saying keep, is left alone", async () => {
-  const other = await planned("virtual_task", () => ({ virtual_open: true, virtual_owner_turn: "t9" }), () => cleanup("close"));
+test("reconcile: the virtual screen of another turn, one another turn touched, or JEV saying keep, is left alone", async () => {
+  const other = await planned("virtual_task", "t9", () => cleanup("close"));
   assert.deepEqual(await other.call("screen.reconcile", done), { acted: [] });
-  assert.equal(other.calls("decision.virtual_close").length, 0);
-  const keep = await planned("virtual_task", () => ({ virtual_open: true, virtual_owner_turn: "t1" }), () => cleanup("keep"));
+  assert.equal(other.closes(), 0);
+  const touched = await planned("virtual_task", "t1", () => cleanup("close"));
+  await touched.virtual.call("vscreen.tap", { x: 1, y: 1 }, "t2");
+  assert.deepEqual(await touched.call("screen.reconcile", done), { acted: [] });
+  assert.equal(touched.closes(), 0);
+  const keep = await planned("virtual_task", "t1", () => cleanup("keep"));
   assert.deepEqual(await keep.call("screen.reconcile", done), { acted: [] });
-  assert.equal(keep.calls("decision.virtual_close").length, 0);
+  assert.equal(keep.closes(), 0);
 });
 
 test("reconcile: the real screen is never touched, however the turn left it", async () => {
   for (const mode of ["foreground_task", "foreground_handoff", "virtual_task"]) {
-    const f = await planned(mode, () => ({ foreground_package: "com.xianyu", state_epoch: 15 }), () => cleanup("close"));
+    const f = await planned(mode, null, () => cleanup("close"), () => ({ foreground_package: "com.xianyu", state_epoch: 15 }));
     assert.deepEqual(await f.call("screen.reconcile", done), { acted: [] }, mode);
     assert.equal(f.asked.length, 1, mode); // only the plan asked JEV: no virtual screen, nothing to decide
-    assert.equal(f.calls("decision.return").length + f.calls("decision.virtual_close").length, 0, mode);
+    assert.equal(f.calls("decision.return").length + f.closes(), 0, mode);
   }
 });
 
 test("reconcile: nothing is done when the screen moved on between the look and the act (epoch, package or generation)", async () => {
-  for (const field of ["state_epoch", "foreground_package", "virtual_generation"]) {
+  for (const field of ["state_epoch", "foreground_package", "generation"]) {
     let looks = 0;
-    const f = await planned("virtual_task", () => {
+    const base = { foreground_package: "com.xianyu", state_epoch: 15 };
+    const f: Awaited<ReturnType<typeof planned>> = await planned("virtual_task", "t1", () => cleanup("close"), () => {
       looks++;
-      const base = { foreground_package: "com.xianyu", state_epoch: 15, virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 4 };
-      return looks <= 1 ? base : { ...base, [field]: field === "foreground_package" ? "com.other" : 99 };
-    }, () => cleanup("close"));
+      if (looks <= 1 || field === "generation") {
+        // the turn used its screen once more after the look: the generation moved on
+        if (looks === 2 && field === "generation") void f.virtual.call("vscreen.tap", { x: 1, y: 1 }, "t1");
+        return base;
+      }
+      return { ...base, [field]: field === "foreground_package" ? "com.other" : 99 };
+    });
     assert.deepEqual(await f.call("screen.reconcile", done), { acted: [] }, field);
-    assert.equal(f.calls("decision.virtual_close").length, 0, field);
+    assert.equal(f.closes(), 0, field);
   }
 });
 
 test("reconcile: a turn that used both screens only has its virtual screen closed", async () => {
-  const f = await planned("foreground_task", () => ({ foreground_package: "com.xianyu", virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 2 }), () => cleanup("close"));
+  const f = await planned("foreground_task", "t1", () => cleanup("close"), () => ({ foreground_package: "com.xianyu" }));
   assert.deepEqual(await f.call("screen.reconcile", done), { acted: ["virtual_close"] });
   assert.equal(f.calls("decision.return").length, 0);
 });
 
-test("reconcile: a phone that says it did not act, a failing JEV or hand, an unfinished turn, or no plan: nothing happens and nothing throws", async () => {
-  const state = () => ({ virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 1 });
-  const refused = await planned("virtual_task", state, () => cleanup("close"), { "decision.virtual_close": () => ok({ acted: false }) });
+test("reconcile: a host that cannot close, a failing JEV or host, an unfinished turn, or no plan: nothing happens and nothing throws", async () => {
+  const refused = await planned("virtual_task", "t1", () => cleanup("close"), undefined, { close: () => ({ supported: false }) });
   assert.deepEqual(await refused.call("screen.reconcile", done), { acted: [] });
-  const jevDown = await planned("virtual_task", state, () => new Error("down"));
+  const jevDown = await planned("virtual_task", "t1", () => new Error("down"));
   assert.deepEqual(await jevDown.call("screen.reconcile", done), { acted: [] });
-  const handDown = await planned("virtual_task", state, () => cleanup("close"), { "decision.virtual_close": () => ({ ok: false, error: { code: "offline", message: "x" } }) });
-  assert.deepEqual(await handDown.call("screen.reconcile", done), { acted: [] });
-  const cancelled = await planned("virtual_task", state, () => cleanup("close"));
+  const hostDown = await planned("virtual_task", "t1", () => cleanup("close"), undefined, { close: () => new Error("offline") });
+  assert.deepEqual(await hostDown.call("screen.reconcile", done), { acted: [] });
+  const cancelled = await planned("virtual_task", "t1", () => cleanup("close"));
   assert.deepEqual(await cancelled.call("screen.reconcile", { ...done, outcome: "cancelled" }), { acted: [] });
-  assert.equal(cancelled.calls("decision.virtual_close").length, 0);
-  const noPlan = setup({ hands: { "decision.screen": () => ok({ ...SCREEN, ...state() }) } });
+  assert.equal(cancelled.closes(), 0);
+  const noPlan = setup();
+  await noPlan.virtual.call("vscreen.create", {}, "t1");
   assert.deepEqual(await noPlan.call("screen.reconcile", done), { acted: [] });
   assert.equal(noPlan.calls("decision.surface").length, 0);
   // what plan saw is used once: a second reconcile finds nothing
-  const once = await planned("virtual_task", state, () => cleanup("close"));
+  const once = await planned("virtual_task", "t1", () => cleanup("close"));
   await once.call("screen.reconcile", done);
   assert.deepEqual(await once.call("screen.reconcile", done), { acted: [] });
 });
 
 test("reconcile: a plan that gave no advice (JEV down) still lets a virtual screen the turn opened be closed", async () => {
   let down = true;
-  const f = setup({ jev: () => (down ? new Error("down") : cleanup("close")), hands: { "decision.screen": () => ok({ ...SCREEN, virtual_open: true, virtual_owner_turn: "t1", virtual_generation: 1 }) } });
+  const f = setup({ jev: () => (down ? new Error("down") : cleanup("close")) });
   assert.equal((await f.call("screen.plan", planBody(f.owner("查一下")))).mode, "none");
+  await f.virtual.call("vscreen.create", {}, "t1");
   down = false;
   assert.deepEqual(await f.call("screen.reconcile", done), { acted: ["virtual_close"] });
 });

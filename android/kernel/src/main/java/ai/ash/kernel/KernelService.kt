@@ -57,7 +57,8 @@ class KernelService : Service() {
             override fun onRestart(reason: String) = supervisor.onRestart(reason)
             override fun onStatus(text: String, state: String) = supervisor.onStatus(text, state)
         }
-        val api = HostApi(HostApi.CAPABILITIES, Keys, wake, AndroidPower.get(this), connector, callbacks) { Log.w(TAG, it) }
+        // On its own identity the kernel can only press media and volume keys; the rest of the phone actions need the shell host.
+        val api = HostApi(HostApi.CAPABILITIES + "input", Keys, wake, AndroidPower.get(this), connector, callbacks, { Log.w(TAG, it) }, ai.ash.kernel.host.AppPhone(this))
         server = KernelHostServer(api) { Log.w(TAG, it) }
         server.start()
 

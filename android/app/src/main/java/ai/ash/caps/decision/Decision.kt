@@ -3,14 +3,10 @@ package ai.ash.caps.decision
 import ai.ash.caps.CapResult
 import ai.ash.caps.Capabilities
 import ai.ash.caps.screen.Screen
-import ai.ash.caps.hostshell.HostShell
-import ai.ash.caps.vscreen.VScreenClient
 import ai.ash.host.AppState
 import ai.ash.ui.HomeActivity
-import ai.ash.ui.VScreenPreview
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
@@ -18,9 +14,9 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 
 /**
- * What the kernel's reflex asks of the phone to decide whether to bring Ash back or close the virtual screen
- * (`decision.*`, see [DecisionCapabilities]), and the bookkeeping behind it: which screen state a decision saw, and who
- * owns the virtual screen. Every other capability call passes through [call] so that bookkeeping sees it.
+ * What the kernel's reflex asks of the phone to decide whether to bring Ash back (`decision.*`, see
+ * [DecisionCapabilities]), and the bookkeeping behind it: which screen state a decision saw. Every other capability call
+ * passes through [call] so that bookkeeping sees it. The virtual screen is the kernel host's, and so is its bookkeeping.
  */
 object Decision {
     private val state = ScreenDecisionState()
@@ -30,7 +26,6 @@ object Decision {
         state.beginTurn(turn)
         return JSONObject().put("home_visible", AppState.homeVisible).put("page_live", AppState.homePageLive)
             .put("visibility_epoch", AppState.visibilityEpoch.get())
-            .put("virtual_available", Build.VERSION.SDK_INT >= 29 && HostShell.ready())
     }
 
     /** Screen changes, as the accessibility service counts them, with Ash's own turns and visibility. */
@@ -42,34 +37,18 @@ object Decision {
         val screen = Screen.screenState(settle = true)
         return synchronized(state) {
             JSONObject().put("foreground_package", foreground(ctx, screen)).put("state_epoch", epoch(screen))
-                .put("virtual_generation", state.virtualGeneration).put("virtual_owner_turn", state.virtualOwner)
-                .put("virtual_open", state.virtualOpen && VScreenClient.running())
         }
     }
 
     /** Runs capability [capability] for the kernel's call, keeping the decision state in step with what it did to the screens. */
     fun call(ctx: Context, capability: String, args: JSONObject, turn: String): CapResult {
         if (capability.startsWith("screen.") || capability in SCREEN_CHANGERS) state.screenChanged()
-        if (!capability.startsWith("vscreen.")) return Capabilities.call(ctx, capability, args, turn)
-        // Virtual calls and cleanup are serialized so a newer display can never be closed by an old decision.
-        return synchronized(this) { virtualCall(ctx, capability, args, turn) }
+        return Capabilities.call(ctx, capability, args, turn)
     }
 
     /** Capabilities that change what is on the owner's screen without being `screen.*`. */
-    private val SCREEN_CHANGERS = setOf("apps.open", "apps.open_url", "settings.open", "input.key", "x.android.browser.show")
+    private val SCREEN_CHANGERS = setOf("apps.open_url", "settings.open", "x.android.browser.show")
 
-    private fun virtualCall(ctx: Context, capability: String, args: JSONObject, turn: String): CapResult {
-        val result = Capabilities.call(ctx, capability, args, turn)
-        if (result.toJson().optBoolean("ok")) {
-            when (capability) {
-                "vscreen.create" -> state.virtualCreated(turn, result.toJson().optJSONObject("data")?.optBoolean("reused") ?: false)
-                "vscreen.close" -> state.virtualClosed()
-                "vscreen.status", "vscreen.see" -> Unit
-                else -> state.virtualUsed(turn)
-            }
-        }
-        return result
-    }
 
     fun returnToAsh(ctx: Context, turn: String, b: JSONObject): JSONObject {
         val screen = Screen.screenState(settle = false)
@@ -95,15 +74,4 @@ object Decision {
         return JSONObject().put("acted", acted)
     }
 
-    @Synchronized fun closeVirtual(ctx: Context, b: JSONObject): JSONObject {
-        val id = b.optString("decision_id") + ":close"
-        if (!state.mayClose(id, b.optString("owner_turn"), b.optLong("expected_generation", -1))) return JSONObject().put("acted", false)
-        // Claim before dispatch: an uncertain reply must not repeat destruction of a later display.
-        state.applied(id)
-        VScreenPreview.hide()
-        val result = VScreenClient.call(ctx, "close", timeoutMs = 8000, start = false)
-        VScreenClient.stop()
-        state.virtualClosed()
-        return JSONObject().put("acted", result.optBoolean("ok"))
-    }
 }

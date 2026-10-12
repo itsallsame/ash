@@ -70,13 +70,12 @@ object ShellHost {
             override fun onStatus(text: String, state: String) = supervisor.onStatus(text, state)
         }
         val power = BridgePower(bridge)
-        val api = HostApi(HostApi.CAPABILITIES, BridgeIdentity(bridge), WakeManager(BridgeAlarm(bridge)), power, ShellHands(pkg, userId), callbacks) { Log.w(TAG, it) }
+        val hands = ShellHands(HAND_PACKAGE, userId).also { it.watch() }
+        // The phone actions (a virtual screen, keys, launching an app) are served to the core right here, as service:host.
+        val phone = ShellPhone(ctx, ShellPhone.kernelApk(ctx, pkg)) { Log.i(TAG, it) }
+        val api = HostApi(HostApi.CAPABILITIES + PHONE_CAPABILITIES, BridgeIdentity(bridge), WakeManager(BridgeAlarm(bridge)), power, hands, callbacks, { Log.w(TAG, it) }, phone)
         val server = KernelHostServer(api) { Log.w(TAG, it) }
         server.start()
-
-        // The phone-action whitelist (a virtual screen, a key, starting an app, the app in front) the hand app no longer
-        // holds: the kernel host runs them and hands the binder to the hand app's door, so device:phone keeps working.
-        pushPhoneActions(ctx, userId)
 
         val version = runCatching { ctx.packageManager.getPackageInfo(pkg, 0).versionName }.getOrNull() ?: "0"
         supervisor = KernelSupervisor(
@@ -87,7 +86,8 @@ object ShellHost {
             stopped = { false },
             show = { Log.i(TAG, "status: $it") },
             note = { Log.i(TAG, it) },
-            onNodeGone = { api.token = null },
+            // A new core knows of no virtual screen: do not leave the old one behind.
+            onNodeGone = { api.token = null; runCatching { phone.close() } },
             powerSaver = { false },
         )
 
@@ -102,19 +102,9 @@ object ShellHost {
         Log.i(TAG, "started for $pkg (uid $kernelUid)")
     }
 
+    /** What the shell host declares on top of the base host: everything the debug identity can do for the phone. */
+    private val PHONE_CAPABILITIES = listOf("vscreen", "input", "apps")
     private const val HAND_PACKAGE = "ai.ash.agent"
-
-    private fun pushPhoneActions(ctx: android.content.Context, userId: Int) {
-        try {
-            val info = ctx.packageManager.getApplicationInfo(HAND_PACKAGE, 0)
-            val build = ctx.packageManager.getPackageInfo(HAND_PACKAGE, 0).lastUpdateTime
-            val extras = android.os.Bundle().apply { putBinder("actions", PhoneActions(info.uid, info.sourceDir, build)) }
-            val ok = ProviderClient.call("$HAND_PACKAGE.hostshell", userId, "actions", extras)
-            Log.i(TAG, "pushed phone actions to $HAND_PACKAGE: ${if (ok != null) "ok" else "no door"}")
-        } catch (t: Throwable) {
-            Log.w(TAG, "cannot push phone actions", t)
-        }
-    }
 }
 
 /** Installing is done once up front (bridge.provision); the supervisor needs nothing more. */

@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `5ff1c57e73df0571`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `786b3aa912238500`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -26,12 +26,12 @@
 - [`service:directory`](#servicedirectory) (2)
 - [`service:history`](#servicehistory) (8)
 - [`service:blobs`](#serviceblobs) (2)
-- [`service:host`](#servicehost) (8)
+- [`service:host`](#servicehost) (19)
 - [`service:bodies`](#servicebodies) (4)
 - [`person:owner`](#personowner) (8)
 - [`agent:*`](#agent) (8)
 - [`app:*`](#app) (1)
-- [`device:*`](#device) (71)
+- [`device:*`](#device) (59)
 - [`body:*`](#body) (10)
 
 ## 错误码
@@ -331,6 +331,17 @@
 | `env.changed` | kernel | read / none | event out | what*, network*, online*, saver* | 在转达环境变化 | The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay). |
 | `hands.handoff` | kernel | act / none | - | port*, token* (secret) | 在交接本机的手 | Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down. |
 | `update.install` | owner | execute / structure | - | version*, url*, sha256* | 在安装大脑更新 | Have the host download and install a new kernel package (checked against sha256). Only the owner. |
+| `input.key` | owner, agent, app | act / outward | foreground | key*, long_press | 在按手机按键 | Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need the phone's debug identity (「后台也能动手」), which the owner connects. |
+| `vscreen.create` | owner, agent, app | act / structure | - | orientation, short_edge, dpi | 在创建虚拟屏 | Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.close` | owner, agent, app | act / structure | - | - | 在关闭虚拟屏 | Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.status` | owner, agent, app | read / none | - | - | 在看虚拟屏状态 | Report whether the virtual screen exists, its display id, size and dpi, and whether it has rendered a frame. |
+| `vscreen.see` | owner, agent, app | read / none | - | - | 在看虚拟屏 | Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.launch` | owner, agent, app | act / outward | - | app* | 在虚拟屏里打开应用 | Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.tap` | owner, agent, app | act / outward | - | x*, y* | 在点虚拟屏 | Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.swipe` | owner, agent, app | act / outward | - | x1*, y1*, x2*, y2*, duration_ms | 在滑动虚拟屏 | Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.key` | owner, agent, app | act / outward | - | key*, long_press | 在虚拟屏按键 | Send a key press to the virtual screen: a name (back, home, enter, menu, app_switch, tab, escape, delete ...) or an Android keycode number. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.type` | owner, agent, app | act / outward | - | text* | 在虚拟屏输入 | Type text into the focused field of the virtual screen (tap the field first). Text with non-ASCII characters is pasted through the clipboard, replacing the owner's clipboard content. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `apps.open` | owner, agent, app | act / outward | foreground | app* | 在打开应用 | Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. Android may block this while Ash is in the background. |
 
 ## `service:bodies`
 
@@ -389,20 +400,9 @@
 | `screen.touch` | owner, agent, app | act / outward | foreground | action*, finger, fx, fy, x, y | 在操作触屏 | A stateful virtual touchscreen for multi-finger control: action down presses finger N and keeps it pressed after the call, move slides a held finger, up lifts it, release_all lifts every finger. |
 | `screen.gesture` | owner, agent, app | act / outward | foreground | strokes* | 在做屏幕手势 | Perform a multi-finger gesture on the phone's screen: strokes run one after another on one timeline and are injected together as one real multi-touch gesture (total at most 60 s). |
 | `screen.global_action` | owner, agent, app | act / outward | foreground | action* | 在操作手机系统键 | Press a system button on the phone: back, home, recents, notifications (pull down the shade), quick_settings, power_dialog, split_screen, lock_screen. |
-| `input.key` | owner, agent, app | act / outward | foreground | key*, long_press | 在按手机按键 | Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need the phone's debug identity (「后台也能动手」), which the owner connects. |
-| `vscreen.create` | owner, agent, app | act / structure | - | orientation, short_edge, dpi | 在创建虚拟屏 | Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `vscreen.close` | owner, agent, app | act / structure | - | - | 在关闭虚拟屏 | Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `vscreen.status` | owner, agent, app | read / none | - | - | 在看虚拟屏状态 | Report whether the virtual screen exists, its display id, size and dpi, and whether it has rendered a frame. |
-| `vscreen.see` | owner, agent, app | read / none | - | - | 在看虚拟屏 | Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `vscreen.launch` | owner, agent, app | act / outward | - | app* | 在虚拟屏里打开应用 | Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `vscreen.tap` | owner, agent, app | act / outward | - | x*, y* | 在点虚拟屏 | Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `vscreen.swipe` | owner, agent, app | act / outward | - | x1*, y1*, x2*, y2*, duration_ms | 在滑动虚拟屏 | Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `vscreen.key` | owner, agent, app | act / outward | - | key*, long_press | 在虚拟屏按键 | Send a key press to the virtual screen: a name (back, home, enter, menu, app_switch, tab, escape, delete ...) or an Android keycode number. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `vscreen.type` | owner, agent, app | act / outward | - | text* | 在虚拟屏输入 | Type text into the focused field of the virtual screen (tap the field first). Text with non-ASCII characters is pasted through the clipboard, replacing the owner's clipboard content. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `apps.list` | owner, agent, app | read / none | - | query, include_system | 在看装了哪些应用 | List the apps on the phone that have a launcher icon: label and package name, sorted by label. Optionally filter by a substring of the label or package. |
 | `apps.info` | owner, agent, app | read / none | - | app*, permissions | 在查看应用信息 | Details of an installed package: label, version, install and update time, system or disabled, SDK levels, installer, launcher activity, APK path, and the permissions it requests with their grant state. |
 | `apps.usage` | owner, agent, app | read / none | - | days, limit, app | 在看应用使用情况 | How long each app was used in the foreground (screen time), most used first, with the last time it was used. Needs the Usage access permission. |
-| `apps.open` | owner, agent, app | act / outward | foreground | app* | 在打开应用 | Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. Android may block this while Ash is in the background. |
 | `apps.open_url` | owner, agent, app | act / outward | foreground | uri*, package | 在打开链接 | Open a URL or deep link on the phone's screen with the app that handles it (https in the browser or a matching app, geo:, tel: opens the dialer without calling, mailto:, app schemes). |
 | `settings.get` | owner, agent, app | read / none | - | namespace*, key* | 在读系统设置 | Read an Android system setting from system, secure or global (e.g. screen_brightness, screen_off_timeout, airplane_mode_on). A few protected keys cannot be read by an app. |
 | `settings.put` | owner, agent, app | write / structure | - | namespace*, key*, value* | 在改系统设置 | Change an Android system setting in the system namespace (brightness, screen timeout, rotation, font scale ...); needs the owner's Modify system settings grant. Secure and global settings are the owner's to change in Settings. volume_music, volume_ring and the other volume_* keys set that volume. Returns the previous and the new value. |
@@ -445,9 +445,8 @@
 | `config.permission.request` | owner, agent, app | act / none | foreground | name* | 在请求权限 | Show the system permission prompt, or open the matching settings page, for one permission or switch the owner has to grant by hand. |
 | `config.keepalive.status` | owner, agent, app | read / none | - | - | 在看保活状态 | The vendor's auto-start and background-limit switches for Ash's apps, and whether each is on. |
 | `decision.surface` | kernel | read / none | - | - | 在看界面是否在前台 | Whether the hand app's home page is visible and live, with an epoch that changes when visibility changes. For the hub's reflex only. |
-| `decision.screen` | kernel | read / none | - | - | 在看前台应用 | The foreground app and a state epoch, and whether a virtual screen is open and which turn owns it. For the hub's reflex only. |
+| `decision.screen` | kernel | read / none | - | - | 在看前台应用 | The foreground app and a state epoch. For the hub's reflex only (the virtual screen is the host's, see service:host). |
 | `decision.return` | kernel | act / none | - | expected_package*, expected_state_epoch*, decision_id* | 在回到原来的应用 | Return to the app that was in front, when the state epoch still matches. For the hub's reflex only. |
-| `decision.virtual_close` | kernel | act / none | - | expected_generation*, owner_turn*, decision_id* | 在关闭后台屏幕 | Close the virtual screen when it still belongs to the given turn and generation. For the hub's reflex only. |
 
 ## `body:*`
 

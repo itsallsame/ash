@@ -364,15 +364,17 @@ service:reflex/surface.get -> {
 
 service:reflex/screen.get -> {
   foreground_package,
-  state_epoch,
-  virtual_generation,
-  virtual_owner_turn,
-  virtual_open
+  state_epoch
 }
 
 service:reflex/screen.return { expected_state_epoch, expected_package, decision_id }
-service:reflex/virtual.close { expected_generation, owner_turn, decision_id }
 ```
+
+The virtual screen is not the hand's: it is served by the kernel host as
+`service:host/vscreen.*` (0.4.7). Its bookkeeping (`generation`, owner turn,
+open) lives in the hub next to that member (`edges/host/virtual.ts`): every
+vscreen call goes through it one at a time, and the reflex reads it and closes
+the screen through it (`close(expected_generation, owner_turn, decision_id)`).
 
 They are available only to the local authenticated `service:reflex` path, not
 as general model tools. The Android host performs compare-and-act atomically
@@ -380,8 +382,9 @@ where possible. `return_to_ash` launches the existing Ash activity; it does not
 simulate Back, because Back has app-specific and stack-specific consequences.
 
 `surface.get` reads Android lifecycle state without requiring the phone's debug
-identity or the accessibility service. It now also reports a cheap readiness
-boolean for the debug identity (`virtual_available`), but does not create a display.
+identity or the accessibility service. Whether a virtual screen can be made is
+the host's to say (`service:host` declares the `vscreen` capability only while
+the shell host is paired).
 `screen.get` is only needed after the
 turn and for the final freshness check; it is not on the normal task-start
 critical path.

@@ -66,9 +66,9 @@ class DeviceCallsTest {
         assertEquals("structure", HandHandlersProbe.assess("settings.put").risk)
         assertEquals("structure", HandHandlersProbe.assess("nope.nothing").risk)
         assertEquals("none", HandHandlersProbe.assess("decision.surface").risk)
-        assertEquals("structure", HandHandlersProbe.assess("vscreen.create").risk)
-        // A removed capability is no longer one: the riskiest is assumed.
+        // A removed capability is no longer one: the riskiest is assumed (the virtual screen is the kernel host's now).
         assertEquals("structure", HandHandlersProbe.assess("shell.run").risk)
+        assertEquals("structure", HandHandlersProbe.assess("vscreen.tap").risk)
         // The old name of a renamed capability is no longer one.
         assertEquals("structure", HandHandlersProbe.assess("intent.view").risk)
     }

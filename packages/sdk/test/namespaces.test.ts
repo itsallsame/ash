@@ -98,7 +98,7 @@ test("the namespaces of SPEC-02 §4.3 are all there with the actions the phone a
     sensors: ["steps"],
     sense: ["status", "configure", "delete"],
     config: ["status", "permission.request", "keepalive.status"],
-    decision: ["surface", "screen", "return", "virtual_close"],
+    decision: ["surface", "screen", "return"],
   };
   assert.deepEqual(Object.keys(STANDARD_NAMESPACES), Object.keys(expected));
   for (const [namespace, actions] of Object.entries(expected)) {

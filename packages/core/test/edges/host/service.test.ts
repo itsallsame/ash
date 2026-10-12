@@ -2,15 +2,24 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { lintWords } from "../../../../sdk/src/word";
-import type { Message, Outgoing, Reply } from "../../../../sdk/src/message";
-import { createHostService } from "../../../src/edges/host";
+import type { Message, Outgoing, Reply, WordResult } from "../../../../sdk/src/message";
+import { createHostService, createVirtualScreen } from "../../../src/edges/host";
 
-const setup = (offline: string[] = [], onNetwork?: (network: unknown, online: boolean) => void) => {
+const capOfMethod = (m: string) => (m.startsWith("vscreen.") ? "vscreen" : m === "input.key" ? "input" : "apps");
+const PHONE_RESULTS: Record<string, unknown> = {
+  "vscreen.create": { displayId: 3, width: 720, height: 1280, dpi: 320, reused: false, message: "Virtual screen created." },
+  "vscreen.see": { jpeg: "AAAA", displayId: 3, screenW: 720, screenH: 1280, imageW: 360, imageH: 640 },
+  "vscreen.tap": { message: "Tapped." },
+  "input.key": { message: "Media key play_pause sent." },
+  "apps.open": { package: "com.x", opened: true, message: "started and confirmed in front (com.x)" },
+};
+const setup = (offline: string[] = [], onNetwork?: (network: unknown, online: boolean) => void, phoneCaps: string[] = ["vscreen", "input", "apps"]) => {
   const sent: { msg: Outgoing; from: string }[] = [];
   const calls: unknown[][] = [];
   const stops: unknown[][] = [];
   const logs: string[] = [];
   const supported = <R>(result: R) => ({ supported: true as const, result });
+  const caps = new Set<string>(["wake", "power", "hands", "update", ...phoneCaps]);
   const client = {
     wakeAt: async (at: number) => { calls.push(["wakeAt", at]); return supported({}); },
     wakeClear: async () => { calls.push(["wakeClear"]); return { supported: false as const }; },
@@ -18,6 +27,12 @@ const setup = (offline: string[] = [], onNetwork?: (network: unknown, online: bo
     powerRelease: async () => supported({}),
     handsHandoff: async (port: number, token: string) => { calls.push(["handoff", port, token]); return supported({ delivered: ["x"] }); },
     updateInstall: async () => supported({}),
+    has: (cap: string) => caps.has(cap),
+    phone: async (method: string, req: unknown): Promise<any> => {
+      calls.push(["phone", method, req]);
+      if (!caps.has(capOfMethod(method))) return { supported: false as const };
+      return supported(PHONE_RESULTS[method] ?? { message: "ok" });
+    },
   };
   const router = {
     send: async (msg: Outgoing, caller: { member: string }): Promise<Reply> => {
@@ -25,7 +40,7 @@ const setup = (offline: string[] = [], onNetwork?: (network: unknown, online: bo
       return offline.includes(msg.to ?? "") ? { ok: false, error: { code: "offline", message: "off" } } : { ok: true };
     },
   };
-  const service = createHostService({ client, router, onStop: (deadline, reason) => { stops.push([deadline, reason]); }, ...(onNetwork ? { onNetwork } : {}), log: (m) => logs.push(m) });
+  const service = createHostService({ client, router, virtual: createVirtualScreen(client), onStop: (deadline, reason) => { stops.push([deadline, reason]); }, ...(onNetwork ? { onNetwork } : {}), log: (m) => logs.push(m) });
   return { service, sent, calls, stops, logs };
 };
 const msg = (word: string, body: unknown): Message => ({ seq: 1, id: "m1", ts: 1, from: "service:clock", to: "service:host", kind: "request", word, body });
@@ -41,6 +56,27 @@ test("service:host: its words are the host client's calls; what the host lacks a
   await assert.rejects(s.service.member.handle(msg("wake.clear", {}), ctx), (e: any) => e.code === "unavailable");
   await assert.rejects(s.service.member.handle(msg("nope", {}), ctx), (e: any) => e.code === "not_found");
   assert.deepEqual(s.calls, [["wakeAt", 5], ["handoff", 9, "t"], ["wakeClear"]]);
+});
+
+test("service:host: phone actions are forwarded to the host and shaped (data, the host's message, the see JPEG)", async () => {
+  const s = setup();
+  assert.deepEqual(await s.service.member.handle(msg("input.key", { key: "play_pause" }), ctx), { content: [{ type: "text", text: "Media key play_pause sent." }] });
+  assert.deepEqual(await s.service.member.handle(msg("apps.open", { app: "x" }), ctx), { data: { package: "com.x", opened: true }, content: [{ type: "text", text: "started and confirmed in front (com.x)" }] });
+  assert.deepEqual(await s.service.member.handle(msg("vscreen.create", { short_edge: 720 }), ctx), { data: { displayId: 3, width: 720, height: 1280, dpi: 320, reused: false }, content: [{ type: "text", text: "Virtual screen created." }] });
+  const see = await s.service.member.handle(msg("vscreen.see", {}), ctx) as WordResult;
+  assert.deepEqual(see.content?.[1], { type: "image", mime: "image/jpeg", b64: "AAAA" });
+  assert.match((see.content?.[0] as { text: string }).text, /display 3\) 720x1280; image 360x640: multiply image coordinates by 2\.0000/);
+  assert.deepEqual(s.calls, [["phone", "input.key", { key: "play_pause" }], ["phone", "apps.open", { app: "x" }], ["phone", "vscreen.create", { short_edge: 720 }], ["phone", "vscreen.see", {}]]);
+});
+
+test("service:host: a phone word is listed only while the host has its group, and answers unavailable otherwise", async () => {
+  const s = setup([], undefined, ["input"]); // host can do media/volume keys (unpaired), but no virtual screen, no launching
+  const listed = s.service.member.words().map((w) => w.word);
+  assert.ok(listed.includes("input.key"), "input.key is listed");
+  assert.ok(!listed.some((w) => w.startsWith("vscreen.")), "no vscreen word is listed");
+  assert.ok(!listed.includes("apps.open") && !listed.includes("apps.open_url"), "apps.open is not listed");
+  await assert.rejects(s.service.member.handle(msg("vscreen.create", {}), ctx), (e: any) => e.code === "unavailable");
+  assert.deepEqual(await s.service.member.handle(msg("input.key", { key: "play_pause" }), ctx), { content: [{ type: "text", text: "Media key play_pause sent." }] });
 });
 
 test("host events become words sent as service:host; a missing service:link is not an error; lifecycle.stop reaches onStop", async () => {

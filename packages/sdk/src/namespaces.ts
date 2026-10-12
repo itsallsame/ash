@@ -590,14 +590,11 @@ const CONFIG_ACTIONS: readonly StandardAction[] = [
 const KERNEL: CallerKind[] = ["kernel"];
 const DECISION_ACTIONS: readonly StandardAction[] = [
   action("decision.surface", "在看界面是否在前台", "Whether the hand app's home page is visible and live, with an epoch that changes when visibility changes. For the hub's reflex only.",
-    object({}), loose({ home_visible: bool(), page_live: bool(), visibility_epoch: int(), virtual_available: bool() }, ["home_visible", "page_live", "visibility_epoch"]), "read", "none", { callers: KERNEL }),
-  action("decision.screen", "在看前台应用", "The foreground app and a state epoch, and whether a virtual screen is open and which turn owns it. For the hub's reflex only.",
-    object({}), loose({ foreground_package: str(), state_epoch: int(), virtual_generation: int(), virtual_owner_turn: str(), virtual_open: bool() }, ["foreground_package", "state_epoch", "virtual_generation", "virtual_owner_turn", "virtual_open"]), "read", "none", { callers: KERNEL }),
+    object({}), loose({ home_visible: bool(), page_live: bool(), visibility_epoch: int() }, ["home_visible", "page_live", "visibility_epoch"]), "read", "none", { callers: KERNEL }),
+  action("decision.screen", "在看前台应用", "The foreground app and a state epoch. For the hub's reflex only (the virtual screen is the host's, see service:host).",
+    object({}), loose({ foreground_package: str(), state_epoch: int() }, ["foreground_package", "state_epoch"]), "read", "none", { callers: KERNEL }),
   action("decision.return", "在回到原来的应用", "Return to the app that was in front, when the state epoch still matches. For the hub's reflex only.",
     object({ expected_package: str(), expected_state_epoch: int(), decision_id: text1() }, ["expected_package", "expected_state_epoch", "decision_id"]),
-    loose({ acted: bool() }, ["acted"]), "act", "none", { callers: KERNEL }),
-  action("decision.virtual_close", "在关闭后台屏幕", "Close the virtual screen when it still belongs to the given turn and generation. For the hub's reflex only.",
-    object({ expected_generation: int(), owner_turn: text1(), decision_id: text1() }, ["expected_generation", "owner_turn", "decision_id"]),
     loose({ acted: bool() }, ["acted"]), "act", "none", { callers: KERNEL }),
 ];
 
@@ -621,8 +618,17 @@ export const namespaceOf = (name: string): string | null => (name.includes(".") 
 /** Hand capabilities with this prefix are not standard; they are named x.<who>.<action>. */
 export const isExtensionName = (name: string): boolean => /^x\.[a-z0-9_-]+\.[a-z0-9_.-]+$/.test(name);
 
-/** The member a standard action is registered under: `workspace.*` and `body.info` live on the body, the rest on the hand. */
-export const standardMember = (name: string): "body:*" | "device:*" => (name.startsWith("workspace.") || name === "body.info" ? "body:*" : "device:*");
+/**
+ * The member a standard action is registered under: `workspace.*` and `body.info` live on the body; the phone's
+ * high-privilege actions (the virtual screen, injected keys, launching an app in the background) live on `service:host`,
+ * the kernel's host layer, so they keep working when the hand app is not running and are absent until the host is
+ * paired ("部位不在就不列"); the rest live on the hand.
+ */
+export const standardMember = (name: string): "body:*" | "device:*" | "service:host" => {
+  if (name.startsWith("workspace.") || name === "body.info") return "body:*";
+  if (name.startsWith("vscreen.") || name === "input.key" || name === "apps.open") return "service:host";
+  return "device:*";
+};
 
 /** A standard action as a word contract (the form words.json and the lint use). */
 export function standardContract(item: StandardAction): WordContract {

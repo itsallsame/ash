@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "5ff1c57e73df057156ede8acf5a90a9b62d08f1842bf1136624d80a15a557545",
+ "hash": "786b3aa912238500dc088b26a89f7190240476fbce5e2ad12ea10a5670143c57",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -13915,6 +13915,485 @@
    }
   },
   {
+   "member": "service:host",
+   "word": "input.key",
+   "kind": "request",
+   "direction": "in",
+   "description": "Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need the phone's debug identity (「后台也能动手」), which the owner connects.",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "key"
+    ],
+    "properties": {
+     "key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Key name, or a numeric KeyEvent keycode."
+     },
+     "long_press": {
+      "type": "boolean",
+      "description": "Long-press (injected keys only)."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {}
+   },
+   "effect": "act",
+   "risk": "outward",
+   "foreground": true,
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在按手机按键"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.create",
+   "kind": "request",
+   "direction": "in",
+   "description": "Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+     "orientation": {
+      "type": "string",
+      "enum": [
+       "portrait",
+       "landscape"
+      ],
+      "description": "portrait (9:16, default) or landscape (16:9)."
+     },
+     "short_edge": {
+      "type": "integer",
+      "minimum": 288,
+      "maximum": 1440,
+      "description": "Short side in pixels, rounded to a multiple of 144 (288..1440, default 720)."
+     },
+     "dpi": {
+      "type": "integer",
+      "minimum": 120,
+      "maximum": 640,
+      "description": "Density (default 320)."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+     "displayId"
+    ],
+    "properties": {
+     "displayId": {
+      "type": "integer"
+     },
+     "width": {
+      "type": "integer"
+     },
+     "height": {
+      "type": "integer"
+     },
+     "dpi": {
+      "type": "integer"
+     },
+     "reused": {
+      "type": "boolean"
+     }
+    }
+   },
+   "effect": "act",
+   "risk": "structure",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在创建虚拟屏"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.close",
+   "kind": "request",
+   "direction": "in",
+   "description": "Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {}
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {}
+   },
+   "effect": "act",
+   "risk": "structure",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在关闭虚拟屏"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.status",
+   "kind": "request",
+   "direction": "in",
+   "description": "Report whether the virtual screen exists, its display id, size and dpi, and whether it has rendered a frame.",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {}
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+     "running"
+    ],
+    "properties": {
+     "running": {
+      "type": "boolean"
+     },
+     "displayId": {
+      "type": "integer"
+     },
+     "width": {
+      "type": "integer"
+     },
+     "height": {
+      "type": "integer"
+     },
+     "dpi": {
+      "type": "integer"
+     }
+    }
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在看虚拟屏状态"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.see",
+   "kind": "request",
+   "direction": "in",
+   "description": "Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {}
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {}
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在看虚拟屏"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.launch",
+   "kind": "request",
+   "direction": "in",
+   "description": "Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ],
+    "properties": {
+     "app": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Package name or launcher label of the app."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {
+     "package": {
+      "type": "string"
+     },
+     "component": {
+      "type": "string"
+     }
+    }
+   },
+   "effect": "act",
+   "risk": "outward",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在虚拟屏里打开应用"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.tap",
+   "kind": "request",
+   "direction": "in",
+   "description": "Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "x",
+     "y"
+    ],
+    "properties": {
+     "x": {
+      "type": "number",
+      "description": "X in virtual-screen pixels."
+     },
+     "y": {
+      "type": "number",
+      "description": "Y in virtual-screen pixels."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {}
+   },
+   "effect": "act",
+   "risk": "outward",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在点虚拟屏"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.swipe",
+   "kind": "request",
+   "direction": "in",
+   "description": "Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "x1",
+     "y1",
+     "x2",
+     "y2"
+    ],
+    "properties": {
+     "x1": {
+      "type": "number",
+      "description": "Start X."
+     },
+     "y1": {
+      "type": "number",
+      "description": "Start Y."
+     },
+     "x2": {
+      "type": "number",
+      "description": "End X."
+     },
+     "y2": {
+      "type": "number",
+      "description": "End Y."
+     },
+     "duration_ms": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 10000,
+      "description": "Duration in ms (default 300; 1000 and more acts like a drag)."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {}
+   },
+   "effect": "act",
+   "risk": "outward",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在滑动虚拟屏"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.key",
+   "kind": "request",
+   "direction": "in",
+   "description": "Send a key press to the virtual screen: a name (back, home, enter, menu, app_switch, tab, escape, delete ...) or an Android keycode number. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "key"
+    ],
+    "properties": {
+     "key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Key name, or a numeric KeyEvent keycode."
+     },
+     "long_press": {
+      "type": "boolean",
+      "description": "Long-press instead of a short press."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {}
+   },
+   "effect": "act",
+   "risk": "outward",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在虚拟屏按键"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.type",
+   "kind": "request",
+   "direction": "in",
+   "description": "Type text into the focused field of the virtual screen (tap the field first). Text with non-ASCII characters is pasted through the clipboard, replacing the owner's clipboard content. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "text"
+    ],
+    "properties": {
+     "text": {
+      "type": "string",
+      "description": "Text to type."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {}
+   },
+   "effect": "act",
+   "risk": "outward",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在虚拟屏输入"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "apps.open",
+   "kind": "request",
+   "direction": "in",
+   "description": "Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. Android may block this while Ash is in the background.",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ],
+    "properties": {
+     "app": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Package name (e.g. com.tencent.mm) or launcher label."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {
+     "package": {
+      "type": "string"
+     },
+     "opened": {
+      "type": "boolean"
+     }
+    }
+   },
+   "effect": "act",
+   "risk": "outward",
+   "foreground": true,
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在打开应用"
+   }
+  },
+  {
    "member": "service:bodies",
    "word": "list",
    "kind": "request",
@@ -16243,440 +16722,6 @@
   },
   {
    "member": "device:*",
-   "word": "input.key",
-   "kind": "request",
-   "direction": "in",
-   "description": "Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need the phone's debug identity (「后台也能动手」), which the owner connects.",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "key"
-    ],
-    "properties": {
-     "key": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Key name, or a numeric KeyEvent keycode."
-     },
-     "long_press": {
-      "type": "boolean",
-      "description": "Long-press (injected keys only)."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {}
-   },
-   "effect": "act",
-   "risk": "outward",
-   "foreground": true,
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在按手机按键"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.create",
-   "kind": "request",
-   "direction": "in",
-   "description": "Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [],
-    "properties": {
-     "orientation": {
-      "type": "string",
-      "enum": [
-       "portrait",
-       "landscape"
-      ],
-      "description": "portrait (9:16, default) or landscape (16:9)."
-     },
-     "short_edge": {
-      "type": "integer",
-      "minimum": 288,
-      "maximum": 1440,
-      "description": "Short side in pixels, rounded to a multiple of 144 (288..1440, default 720)."
-     },
-     "dpi": {
-      "type": "integer",
-      "minimum": 120,
-      "maximum": 640,
-      "description": "Density (default 320)."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [
-     "displayId"
-    ],
-    "properties": {
-     "displayId": {
-      "type": "integer"
-     },
-     "width": {
-      "type": "integer"
-     },
-     "height": {
-      "type": "integer"
-     },
-     "dpi": {
-      "type": "integer"
-     },
-     "reused": {
-      "type": "boolean"
-     }
-    }
-   },
-   "effect": "act",
-   "risk": "structure",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在创建虚拟屏"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.close",
-   "kind": "request",
-   "direction": "in",
-   "description": "Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [],
-    "properties": {}
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {}
-   },
-   "effect": "act",
-   "risk": "structure",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在关闭虚拟屏"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.status",
-   "kind": "request",
-   "direction": "in",
-   "description": "Report whether the virtual screen exists, its display id, size and dpi, and whether it has rendered a frame.",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [],
-    "properties": {}
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [
-     "running"
-    ],
-    "properties": {
-     "running": {
-      "type": "boolean"
-     },
-     "displayId": {
-      "type": "integer"
-     },
-     "width": {
-      "type": "integer"
-     },
-     "height": {
-      "type": "integer"
-     },
-     "dpi": {
-      "type": "integer"
-     }
-    }
-   },
-   "effect": "read",
-   "risk": "none",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在看虚拟屏状态"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.see",
-   "kind": "request",
-   "direction": "in",
-   "description": "Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [],
-    "properties": {}
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {}
-   },
-   "effect": "read",
-   "risk": "none",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在看虚拟屏"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.launch",
-   "kind": "request",
-   "direction": "in",
-   "description": "Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "app"
-    ],
-    "properties": {
-     "app": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Package name or launcher label of the app."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {
-     "package": {
-      "type": "string"
-     },
-     "component": {
-      "type": "string"
-     }
-    }
-   },
-   "effect": "act",
-   "risk": "outward",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在虚拟屏里打开应用"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.tap",
-   "kind": "request",
-   "direction": "in",
-   "description": "Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "x",
-     "y"
-    ],
-    "properties": {
-     "x": {
-      "type": "number",
-      "description": "X in virtual-screen pixels."
-     },
-     "y": {
-      "type": "number",
-      "description": "Y in virtual-screen pixels."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {}
-   },
-   "effect": "act",
-   "risk": "outward",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在点虚拟屏"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.swipe",
-   "kind": "request",
-   "direction": "in",
-   "description": "Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "x1",
-     "y1",
-     "x2",
-     "y2"
-    ],
-    "properties": {
-     "x1": {
-      "type": "number",
-      "description": "Start X."
-     },
-     "y1": {
-      "type": "number",
-      "description": "Start Y."
-     },
-     "x2": {
-      "type": "number",
-      "description": "End X."
-     },
-     "y2": {
-      "type": "number",
-      "description": "End Y."
-     },
-     "duration_ms": {
-      "type": "integer",
-      "minimum": 10,
-      "maximum": 10000,
-      "description": "Duration in ms (default 300; 1000 and more acts like a drag)."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {}
-   },
-   "effect": "act",
-   "risk": "outward",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在滑动虚拟屏"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.key",
-   "kind": "request",
-   "direction": "in",
-   "description": "Send a key press to the virtual screen: a name (back, home, enter, menu, app_switch, tab, escape, delete ...) or an Android keycode number. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "key"
-    ],
-    "properties": {
-     "key": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Key name, or a numeric KeyEvent keycode."
-     },
-     "long_press": {
-      "type": "boolean",
-      "description": "Long-press instead of a short press."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {}
-   },
-   "effect": "act",
-   "risk": "outward",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在虚拟屏按键"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "vscreen.type",
-   "kind": "request",
-   "direction": "in",
-   "description": "Type text into the focused field of the virtual screen (tap the field first). Text with non-ASCII characters is pasted through the clipboard, replacing the owner's clipboard content. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "text"
-    ],
-    "properties": {
-     "text": {
-      "type": "string",
-      "description": "Text to type."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {}
-   },
-   "effect": "act",
-   "risk": "outward",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在虚拟屏输入"
-   }
-  },
-  {
-   "member": "device:*",
    "word": "apps.list",
    "kind": "request",
    "direction": "in",
@@ -16843,51 +16888,6 @@
    ],
    "label": {
     "doing": "在看应用使用情况"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "apps.open",
-   "kind": "request",
-   "direction": "in",
-   "description": "Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. Android may block this while Ash is in the background.",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "app"
-    ],
-    "properties": {
-     "app": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Package name (e.g. com.tencent.mm) or launcher label."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {
-     "package": {
-      "type": "string"
-     },
-     "opened": {
-      "type": "boolean"
-     }
-    }
-   },
-   "effect": "act",
-   "risk": "outward",
-   "foreground": true,
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在打开应用"
    }
   },
   {
@@ -19808,9 +19808,6 @@
      },
      "visibility_epoch": {
       "type": "integer"
-     },
-     "virtual_available": {
-      "type": "boolean"
      }
     }
    },
@@ -19828,7 +19825,7 @@
    "word": "decision.screen",
    "kind": "request",
    "direction": "in",
-   "description": "The foreground app and a state epoch, and whether a virtual screen is open and which turn owns it. For the hub's reflex only.",
+   "description": "The foreground app and a state epoch. For the hub's reflex only (the virtual screen is the host's, see service:host).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -19840,10 +19837,7 @@
     "additionalProperties": true,
     "required": [
      "foreground_package",
-     "state_epoch",
-     "virtual_generation",
-     "virtual_owner_turn",
-     "virtual_open"
+     "state_epoch"
     ],
     "properties": {
      "foreground_package": {
@@ -19851,15 +19845,6 @@
      },
      "state_epoch": {
       "type": "integer"
-     },
-     "virtual_generation": {
-      "type": "integer"
-     },
-     "virtual_owner_turn": {
-      "type": "string"
-     },
-     "virtual_open": {
-      "type": "boolean"
      }
     }
    },
@@ -19918,55 +19903,6 @@
    ],
    "label": {
     "doing": "在回到原来的应用"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "decision.virtual_close",
-   "kind": "request",
-   "direction": "in",
-   "description": "Close the virtual screen when it still belongs to the given turn and generation. For the hub's reflex only.",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "expected_generation",
-     "owner_turn",
-     "decision_id"
-    ],
-    "properties": {
-     "expected_generation": {
-      "type": "integer"
-     },
-     "owner_turn": {
-      "type": "string",
-      "minLength": 1
-     },
-     "decision_id": {
-      "type": "string",
-      "minLength": 1
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [
-     "acted"
-    ],
-    "properties": {
-     "acted": {
-      "type": "boolean"
-     }
-    }
-   },
-   "effect": "act",
-   "risk": "none",
-   "callers": [
-    "kernel"
-   ],
-   "label": {
-    "doing": "在关闭后台屏幕"
    }
   },
   {

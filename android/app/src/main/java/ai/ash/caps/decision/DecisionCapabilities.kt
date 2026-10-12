@@ -36,12 +36,12 @@ object DecisionCapabilities {
     val list: List<Capability> = listOf(
         DecisionCap("decision.surface", "Whether the hand app's home page is visible and live, with an epoch that changes when visibility changes. For the hub's reflex only.",
             effect = Effect.READ, label = "在看界面是否在前台",
-            result = result("home_visible:boolean!", "page_live:boolean!", "visibility_epoch:integer!", "virtual_available:boolean")) { _, _, turn ->
+            result = result("home_visible:boolean!", "page_live:boolean!", "visibility_epoch:integer!")) { _, _, turn ->
             CapResult.json(Decision.surface(turn))
         },
-        DecisionCap("decision.screen", "The foreground app and a state epoch, and whether a virtual screen is open and which turn owns it. For the hub's reflex only.",
+        DecisionCap("decision.screen", "The foreground app and a state epoch. For the hub's reflex only (the virtual screen is the host's, see service:host).",
             effect = Effect.READ, label = "在看前台应用",
-            result = result("foreground_package:string!", "state_epoch:integer!", "virtual_generation:integer!", "virtual_owner_turn:string!", "virtual_open:boolean!")) { ctx, _, _ ->
+            result = result("foreground_package:string!", "state_epoch:integer!")) { ctx, _, _ ->
             CapResult.json(Decision.snapshot(ctx))
         },
         DecisionCap("decision.return", "Return to the app that was in front, when the state epoch still matches. For the hub's reflex only.",
@@ -52,15 +52,6 @@ object DecisionCapabilities {
             ),
             effect = Effect.ACT, label = "在回到原来的应用", result = result("acted:boolean!")) { ctx, args, turn ->
             CapResult.json(Decision.returnToAsh(ctx, turn, args))
-        },
-        DecisionCap("decision.virtual_close", "Close the virtual screen when it still belongs to the given turn and generation. For the hub's reflex only.",
-            schema(
-                "expected_generation" to prop("integer", "The virtual screen's generation the decision saw.", required = true),
-                "owner_turn" to prop("string", "The turn that owns the virtual screen.", required = true),
-                "decision_id" to prop("string", "The decision, so that it acts once.", required = true),
-            ),
-            effect = Effect.ACT, label = "在关闭后台屏幕", result = result("acted:boolean!")) { ctx, args, _ ->
-            CapResult.json(Decision.closeVirtual(ctx, args))
         },
     )
 }

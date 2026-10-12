@@ -35,6 +35,8 @@ class HostApi(
     private val hands: HandsPort,
     private val callbacks: HostCallbacks,
     private val log: (String) -> Unit = {},
+    /** The phone actions (vscreen / input / apps). Non-null when any of those groups is declared. */
+    private val phone: PhonePort? = null,
 ) {
     /** The token of the current core run; null while none runs (every call is refused). */
     @Volatile var token: String? = null
@@ -60,6 +62,12 @@ class HostApi(
             ok(call(method, json))
         } catch (e: BadRequest) {
             error(400, "bad_request", e.message ?: "bad request")
+        } catch (e: PhoneBadRequest) {
+            error(400, "bad_request", e.message ?: "bad request")
+        } catch (e: PhoneUnavailable) {
+            error(503, "unavailable", e.message ?: "not available")
+        } catch (e: PhoneFailed) {
+            error(500, "failed", e.message ?: "failed")
         } catch (e: Exception) {
             log("host call $method failed: ${e.javaClass.simpleName}")
             error(500, "failed", e.javaClass.simpleName)
@@ -111,7 +119,11 @@ class HostApi(
             val delivered = hands.handoff(b.int("port", 1, 65535), b.str("token"))
             JSONObject().put("delivered", org.json.JSONArray(delivered))
         }
-        else -> throw BadRequest("unsupported $method")
+        else -> {
+            val port = phone ?: throw BadRequest("unsupported $method")
+            // What went wrong on the phone (am start refused, the virtual screen gone) is the caller's to read.
+            try { port.call(method, b) } catch (e: IllegalStateException) { throw PhoneFailed(e.message ?: e.javaClass.simpleName) }
+        }
     }
 
     private class BadRequest(message: String) : Exception(message)
@@ -151,6 +163,11 @@ class HostApi(
             "power.hold" to "power", "power.release" to "power",
             "hands.handoff" to "hands",
             "update.install" to "update",
+            "vscreen.create" to "vscreen", "vscreen.status" to "vscreen", "vscreen.launch" to "vscreen",
+            "vscreen.see" to "vscreen", "vscreen.tap" to "vscreen", "vscreen.swipe" to "vscreen",
+            "vscreen.key" to "vscreen", "vscreen.type" to "vscreen", "vscreen.close" to "vscreen",
+            "input.key" to "input",
+            "apps.open" to "apps",
         )
         private val STATES = listOf("starting", "running", "degraded", "stopping")
         private const val MAX_HOLD_MS = 600_000L
