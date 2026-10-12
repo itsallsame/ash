@@ -70,7 +70,8 @@ export function alertView(a, now) {
     tone: live ? "err" : "warn", icon: ICONS[a.id] ?? "alert",
     title: fill(c.title, v), lead: fill(past?.lead ?? c.lead, v), row: fill(c.row, v), why: fill(past?.why ?? c.why, v),
     value: a.value, limit: num(a.budget), unit: c.value?.unit ?? "", limitUnit: c.value?.limit_unit ?? "",
-    actions: (c.actions ?? []).map(([label, kind]) => ({ label: fill(label, v), kind })),
+    // 没有查到是哪台设备时，「去看看这台电脑」没有地方可去：不放这个按钮
+    actions: (c.actions ?? []).filter(([, kind]) => kind !== "open_device" || a.device).map(([label, kind]) => ({ label: fill(label, v), kind })),
     restartEffect: c.restart_effect ?? "",
     device: a.device ?? null,
     debug: { ...a },

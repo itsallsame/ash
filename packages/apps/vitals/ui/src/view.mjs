@@ -39,7 +39,7 @@ function header(view, actions) {
     span("vt-chip", ico("laptop", "i i-xs"), view.chips.online),
     view.chips.idle
       ? span("vt-chip", ico("moon", "i i-xs"), COPY.chips.idle)
-      : h("span", { class: "vt-chip", style: "color:var(--her)" }, h("span", { class: "spinner", style: "width:12px;height:12px" }), fill(COPY.chips.busy, { what: view.chips.busy || COPY.app.busy_unknown })),
+      : h("span", { class: "vt-chip", style: "color:var(--her)" }, h("span", { class: "spinner", style: "width:12px;height:12px" }), view.chips.busy ? fill(COPY.chips.busy, { what: view.chips.busy }) : COPY.chips.busy.split(" · ")[0]),
   ];
   return h("div", { style: "position:relative;padding:2px 16px 22px;display:flex;flex-direction:column;gap:14px" },
     halo,

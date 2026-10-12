@@ -34,6 +34,7 @@ test("the head: the lamp and the sentence are the server's; an invariant id as t
 test("the chips: how many devices, idle or busy with what; the button goes to the alert the server named", () => {
   assert.deepEqual(view("ok").chips, { online: "连着 2 台设备", idle: true, busy: null });
   assert.deepEqual(view("todo").chips, { online: "连着 2 台设备", idle: false, busy: "整理你的日程" });
+  assert.equal(view("todo", (s) => { delete s.busy_what; }).chips.busy, null, "she is busy and nobody says with what");
   assert.equal(view("err").action.id, "idle.msg_rate");
   assert.equal(view("ok").action, null);
   assert.equal(view("warn").action, null, "only err has the button");
@@ -85,6 +86,8 @@ test("an alert's detail: the numbers, how long, the words from the table; recove
   assert.deepEqual(todo.device, { id: "device:laptop", name: "我的电脑" });
   assert.equal(todo.title, "「我的电脑」重连了好多次");
   assert.equal(view("todo", (s) => { s.alerts[0].device = { id: "device:x", name: "一台设备" }; }).alerts[0].title, "「一台设备」重连了好多次");
+  assert.deepEqual(view("todo", (s) => { s.alerts[0].device = null; }).alerts[0].actions.map((a: any) => a.kind), ["dismiss"], "no device found: no button that goes to it");
+  assert.deepEqual(view("todo").alerts[0].actions.map((a: any) => a.kind), ["open_device", "dismiss"]);
 });
 
 test("the gauge: the value and the normal limit as parts of one scale, both inside it", () => {

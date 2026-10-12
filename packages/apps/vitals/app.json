@@ -2,7 +2,7 @@
   "contract": "ash-app/1",
   "id": "vitals",
   "name": "她的状态",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "icon": "icon.svg",
   "summary": "她自己的运行状态：忙不忙、占了多少内存、今天做了多少事，哪里不对劲，以及要不要重启大脑",
   "role": "主人问「你怎么样」「为什么慢」「手机发热」时用它：vitals.status 是她此刻的状态和最近的告警，vitals.day 是今天和最近 24 小时，vitals.restart 重启大脑（先问主人）",
