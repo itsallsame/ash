@@ -65,6 +65,15 @@ class HostBoundaryTest {
         assertFalse("the kernel does not ask for WRITE_SECURE_SETTINGS", manifest.contains("WRITE_SECURE_SETTINGS"))
     }
 
+    @Test fun theHostStopsAndExitsWhenTheKernelPackageGoes() {
+        // An upgrade replaces the kernel package; the new kernel service starts a core. This host must not leave a second
+        // one running: it watches the bridge binder and, when it dies, stops its core and exits.
+        val host = src("host/ShellHost.kt")
+        assertTrue(host.contains("bridgeBinder.linkToDeath"))
+        val onDeath = host.substringAfter("linkToDeath").substringBefore("}, 0)")
+        assertTrue(onDeath.contains("supervisor.shutdown") && onDeath.contains("System.exit"))
+    }
+
     @Test fun theCoreIsLaunchedThroughRunAs() {
         assertTrue("the core runs via run-as (outside the package cgroup)", src("host/ShellNodeLauncher.kt").contains("/system/bin/run-as"))
     }

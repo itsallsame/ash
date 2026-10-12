@@ -51,7 +51,8 @@ object ShellHost {
         val userId = kernelUid / 100_000
         val bundle = ProviderClient.call("$pkg.kernelhost", userId, "bridge", null)
             ?: throw IllegalStateException("the kernel bridge is not there (is $pkg installed?)")
-        val bridge = IKernelBridge.Stub.asInterface(bundle.getBinder("bridge"))
+        val bridgeBinder = bundle.getBinder("bridge") ?: throw IllegalStateException("the kernel bridge is not usable")
+        val bridge = IKernelBridge.Stub.asInterface(bridgeBinder)
             ?: throw IllegalStateException("the kernel bridge is not usable")
 
         val dataDir = ctx.packageManager.getApplicationInfo(pkg, 0).dataDir
@@ -96,6 +97,18 @@ object ShellHost {
             override fun shutdown(reason: String) { Thread({ supervisor.shutdown(reason, 5_000) }, "ash-host-shutdown").start() }
         }
         runCatching { bridge.attach(cb) }
+
+        // The bridge — this host's only way to the Keystore, the alarm and host.json — belongs to the kernel package's
+        // process. When that process goes (an upgrade replaces the package, or it is killed), the new kernel service
+        // starts its own core; this host's core would be a second one it can no longer serve. So stop this host's core
+        // (which ends its agents) and exit, leaving the one core. A later reconnect starts a fresh host.
+        runCatching {
+            bridgeBinder.linkToDeath({
+                Log.i(TAG, "the kernel package went away; stopping this host")
+                runCatching { supervisor.shutdown("kernel_package_gone", 3_000) }
+                System.exit(0)
+            }, 0)
+        }
 
         Thread({ supervisor.run() }, "ash-kernel-host").start()
         Log.i(TAG, "started for $pkg (uid $kernelUid)")
