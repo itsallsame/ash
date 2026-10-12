@@ -16,9 +16,9 @@
 
 ## 组件
 
-能画：`Text`、`Image`、`Icon`、`Row`、`Column`、`Stack`、`Grid`、`List`、`Card`、`Tabs`、`Divider`、`Spacer`、`Button`、`CheckBox`、`Switch`、`ChoicePicker`、`ProgressBar`、`Badge`、`Clock`（实时）、`Timer`（实时正计时或倒计时）。
+能画：`Text`、`Image`、`Icon`、`Row`、`Column`、`Stack`、`Grid`、`List`、`Card`、`Tabs`、`Divider`、`Spacer`、`Button`、`CheckBox`、`Switch`、`ChoicePicker`、`ProgressBar`、`Badge`、`Clock`（实时）、`Timer`（实时正计时或倒计时）、`Chart`（折线或柱状图，`series` 里 1–4 组，`style.height` 必填，由手机按实际大小画成位图）。
 
-画不了，会被拒绝并给出原因：`Video`、`AudioPlayer`、`TextField`、`DateTimeInput`、`Slider`、`Modal`、网页、脚本、动画、图表、地图、SVG 图片；`style` 里的 `border`、`shadow`、`gradient`、`fontFamily`、`transform`。要边框，把元素放进背景色是边框色、padding 是边框宽的容器；要图表，用 `ProgressBar`、`Row` 的色块，或送一张图片。
+画不了，会被拒绝并给出原因：`Video`、`AudioPlayer`、`TextField`、`DateTimeInput`、`Slider`、`Modal`、网页、脚本、动画、地图、SVG 图片；`style` 里的 `border`、`shadow`、`gradient`、`fontFamily`、`transform`。要边框，把元素放进背景色是边框色、padding 是边框宽的容器；要图表，用 `Chart`。
 
 `style` 可用：`background`、`color`（子孙继承）、`cornerRadius`、`padding`、`margin`（数字、`[上下, 左右]`、`[上, 右, 下, 左]` 或 `{top, end, bottom, start}`，单位 dp）、`width`/`height`（dp、`fill`、`wrap`）、`fontSize`、`fontWeight`、`italic`、`underline`、`strikethrough`、`textAlign`、`maxLines`、`ellipsize`（`end`/`middle`/`start`/`none`）、`lineHeight`、`letterSpacing`、`opacity`、`place`（`Stack` 子项位置）。
 

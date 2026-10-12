@@ -19,9 +19,9 @@ const words = (w: World, word: string, body: unknown = {}, caller?: Parameters<t
 test("service:apps speaks every word its contract lists, and no word more", async () => {
   const w = await installed();
   const names = wordsOf("service:apps").map((word) => word.word);
-  assert.equal(names.length, 16);
+  assert.equal(names.length, 17);
   assert.ok(["apps.list", "apps.describe", "apps.install", "apps.enable", "apps.disable", "apps.revoke", "apps.refresh", "apps.restart", "apps.logs", "apps.reset",
-    "apps.remove", "apps.contract", "apps.scaffold", "apps.validate", "apps.surface", "apps.icon"].every((name) => names.includes(name)));
+    "apps.remove", "apps.contract", "apps.scaffold", "apps.validate", "apps.surface", "apps.icon", "apps.badge"].every((name) => names.includes(name)));
   assert.deepEqual(w.apps.service.words().map((word) => word.word), names);
   for (const word of names) {
     const reply = await words(w, word, { id: "no-such-app", surface: "home", name: "x" });
@@ -345,4 +345,21 @@ test("an installed app whose folder is gone: listed with the reason, removable a
   assert.deepEqual([revoked.id, revoked.granted, revoked.running], ["fixture", false, false]);
   assert.equal(clock.received.length, 2);
   assert.deepEqual(dataOf(await words(w, "apps.list")).apps, []);
+});
+
+test("badge: an app lights the dot of its own icon while it runs; ok takes it away; nobody else can set one", async () => {
+  const w = await installed();
+  const set = (member: string, tone: string) => w.apps.service.handle({ seq: 1, id: "m1", ts: 1, from: member, to: "service:apps", kind: "request", word: "apps.badge", body: { tone } },
+    { signal: new AbortController().signal, caller: { member, via: member.startsWith("app:") ? "app" : "human", local: true } as never, raw: { tone } });
+  const badge = async () => dataOf(await words(w, "apps.describe", { id: "fixture" })).badge;
+  assert.equal(await badge(), undefined);
+  await set("app:fixture", "err");
+  assert.equal(await badge(), "err");
+  assert.equal(dataOf(await words(w, "apps.list")).apps.find((a: { id: string }) => a.id === "fixture").badge, "err");
+  await set("app:fixture", "ok");
+  assert.equal(await badge(), undefined);
+  await assert.rejects(set("person:owner", "warn"), /own icon/);
+  await set("app:fixture", "warn");
+  await words(w, "apps.disable", { id: "fixture" });
+  assert.equal(await badge(), undefined, "an app that does not run shows no dot");
 });

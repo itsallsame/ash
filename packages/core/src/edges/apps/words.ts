@@ -32,6 +32,10 @@ export function createAppsService(runtime: AppRuntime): Member {
       case "apps.enable": return { data: await runtime.enable(id) };
       case "apps.disable": return { data: await runtime.disable(id) };
       case "apps.revoke": return { data: await runtime.revoke(id, typeof body.need === "string" ? body.need : undefined) };
+      case "apps.badge": {
+        if (!ctx.caller.member.startsWith("app:")) throw new WordError("forbidden", "an app sets the dot of its own icon");
+        return { data: runtime.setBadge(ctx.caller.member.slice(4), body.tone as "ok" | "warn" | "err" | "paused") };
+      }
       case "apps.restart": return { data: await runtime.restart(id) };
       case "apps.logs": return { data: runtime.logs(id, typeof body.lines === "number" ? body.lines : 100) };
       case "apps.reset": return { data: await runtime.reset(id) };

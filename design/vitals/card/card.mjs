@@ -2,10 +2,12 @@
 // 一张卡三个尺寸：2×2 = 150×150、4×2 = 330×150、4×4 = 330×330（a2ui.sizes，手机按小组件大小挑能放下的最大那个）。
 // 颜色全部是 tokens.json 的 {light, dark} 对，手机跟系统暗色走；不依赖手机上 "red"/"teal" 这些主题色名映射到哪。
 // 图用新部件 Chart（见 ../HANDOFF.md §8）。过期（60 分钟没更新）由外框统一处理，卡片本身不画过期态。
-import { readFileSync } from 'node:fs';
 import { bucket } from '../chart/chart.mjs';
+import tokens from '../../app/tokens.json' with { type: 'json' };
+import copy from '../copy.json' with { type: 'json' };
 
-const TOKENS = JSON.parse(readFileSync(new URL('../../tokens.json', import.meta.url), 'utf8')).color;
+const TOKENS = tokens.color;
+const W = copy.widget;
 const hex = (v) => {
   if (v.startsWith('#')) return v.toUpperCase();
   const m = /rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(v);
@@ -16,11 +18,11 @@ const hex = (v) => {
 export const tok = (name) => { const t = TOKENS[name]; if (!t) throw new Error('no token ' + name); return { light: hex(t.light), dark: hex(t.dark) }; };
 
 const LEVEL = {
-  ok: { name: '正常', fill: 'ok-fill', soft: 'ok-soft', text: 'ok' },
-  warn: { name: '留意', fill: 'warn-fill', soft: 'warn-soft', text: 'warn' },
-  err: { name: '有问题', fill: 'err-fill', soft: 'err-soft', text: 'err' },
-  new: { name: '刚到', fill: 'her-fill', soft: 'her-soft', text: 'her' },
-  paused: { name: '暂停', fill: 'text-3', soft: 'surface-2', text: 'text-3' },
+  ok: { name: copy.levels.ok.name, fill: 'ok-fill', soft: 'ok-soft', text: 'ok' },
+  warn: { name: copy.levels.warn.name, fill: 'warn-fill', soft: 'warn-soft', text: 'warn' },
+  err: { name: copy.levels.err.name, fill: 'err-fill', soft: 'err-soft', text: 'err' },
+  new: { name: copy.levels.new.name, fill: 'her-fill', soft: 'her-soft', text: 'her' },
+  paused: { name: copy.levels.paused.name, fill: 'text-3', soft: 'surface-2', text: 'text-3' },
 };
 // 24 格里的圆（只用 M/C/Z，手机的路径解析器都认）
 const CIRCLE = 'M12 2C17.523 2 22 6.477 22 12C22 17.523 17.523 22 12 22C6.477 22 2 17.523 2 12C2 6.477 6.477 2 12 2Z';
@@ -46,7 +48,7 @@ export function stableMax(state, next, now) {
  *   cost7: 近 7 天每天的钱（元），旧 → 新；now: {cpu, mem, load, cost: '¥3.42'}
  *   scale: {cpu, load} 纵轴上限（stableMax 算好的；内存固定从 0 到 max(400, 最大值×1.25)）
  *   today: {turns, calls, errors, reconnects}
- *   alert: null | {tone: 'warn'|'err', short, long}（short 给 2×2，long 给 4×2 / 4×4）
+ *   alert: null | {tone: 'warn'|'err', long}（只有 4×4 画告警那一行；2×2、4×2 没有）
  *   marks: {cpu?, load?, mem?: {from, to?, tone}}  越界（to 省略 = 到现在）或一小时内已过去（有 to）的那段
  *   limits: {cpu?, load?}  只在出事时给：正常上限虚线
  * }
@@ -81,12 +83,12 @@ export function vitalsCard(s) {
     mem: { series: [{ type: 'line', values: s.mem, color: tok('her-fill'), fill: true, max: memMax, ...hi(s.marks?.mem) }] },
     cost: { series: [{ type: 'bars', values: s.cost7, color: tok('surface-3'), lastColor: tok('you-mark') }], gap: 3 },
   });
-  const alertBox = (p, text, short) => add({ id: `${p}alert`, component: 'Column', style: { background: tok(s.alert.tone === 'warn' ? 'warn-soft' : 'err-soft'), cornerRadius: short ? 11 : 14, padding: short ? [5, 9, 5, 9] : [7, 11, 7, 11] }, children: [
-    ...(short ? [] : [txt(`${p}alertk`, '最近告警', 11, s.alert.tone === 'warn' ? 'warn' : 'err')]),
-    txt(`${p}alertv`, text, short ? 12.5 : 13.5, s.alert.tone === 'warn' ? 'warn' : 'err', { fontWeight: 600 }),
+  const alertBox = (p, text) => add({ id: `${p}alert`, component: 'Column', style: { background: tok(s.alert.tone === 'warn' ? 'warn-soft' : 'err-soft'), cornerRadius: 14, padding: [7, 11, 7, 11] }, children: [
+    txt(`${p}alertk`, W.alert_k, 11, s.alert.tone === 'warn' ? 'warn' : 'err'),
+    txt(`${p}alertv`, text, 13.5, s.alert.tone === 'warn' ? 'warn' : 'err', { fontWeight: 600 }),
   ] });
-  const root = (id, children) => add({ id, component: 'Column', children, action: { openApp: { app: 'vitals' } },
-    style: { background: tok('surface'), padding: [14, 14, 14, 14], cornerRadius: 22 } });
+  const root = (id, children, padding = [14, 14, 14, 14]) => add({ id, component: 'Column', children, action: { openApp: { app: 'vitals' } },
+    style: { background: tok('surface'), padding, cornerRadius: 22 } });
   const head = (p, size) => add({ id: `${p}hd`, component: 'Row', align: 'center', children: [
     lamp(p), txt(`${p}say`, s.say, size, 'ink', { fontWeight: 650, margin: [0, 0, 0, 7] }), add({ id: `${p}gap`, component: 'Spacer', weight: 1 }),
     txt(`${p}at`, s.at, 11.5, 'text-3', { margin: [0, 0, 0, 8] }),
@@ -108,11 +110,10 @@ export function vitalsCard(s) {
       txt(`${p2}at`, s.at, 11.5, 'text-3'),
     ] }),
     add({ id: `${p2}fill`, component: 'Spacer', weight: 1 }),
-    ...(s.alert ? [alertBox(p2, s.alert.short, true), add({ id: `${p2}sp`, component: 'Spacer', size: 8 })] : []),
-    row2('cpu', 'CPU', String(s.now.cpu), '%', charts(1).cpu),
+    row2('cpu', W.cpu, String(s.now.cpu), W.cpu_unit, charts(1).cpu),
     add({ id: `${p2}sp2`, component: 'Spacer', size: 8 }),
-    row2('cost', '今天花', s.now.cost, '', charts(1).cost),
-  ]);
+    row2('cost', W.cost, s.now.cost, '', charts(1).cost),
+  ], [14, 14, 9, 14]); // 2×2 has no alert line (the redlines have none): the lamp and the CPU chart carry it; the content ends 9 above the edge
 
   // ---- 4×2：一句话 / 四格
   const p4 = 's4.', c3 = charts(3);
@@ -120,13 +121,13 @@ export function vitalsCard(s) {
     head(p4, 14),
     add({ id: `${p4}fill`, component: 'Spacer', weight: 1 }),
     add({ id: `${p4}cells`, component: 'Row', children: [
-      cell(p4, 'load', '负载', String(s.now.load), '条/分', c3.load, 30),
+      cell(p4, 'load', W.load, String(s.now.load), W.load_unit, c3.load, 30),
       add({ id: `${p4}g1`, component: 'Spacer', size: 10 }),
-      cell(p4, 'cpu', 'CPU', String(s.now.cpu), '%', c3.cpu, 30),
+      cell(p4, 'cpu', W.cpu, String(s.now.cpu), W.cpu_unit, c3.cpu, 30),
       add({ id: `${p4}g2`, component: 'Spacer', size: 10 }),
-      cell(p4, 'mem', '内存', String(s.now.mem), 'MB', c3.mem, 30),
+      cell(p4, 'mem', W.mem, String(s.now.mem), W.mem_unit, c3.mem, 30),
       add({ id: `${p4}g3`, component: 'Spacer', size: 10 }),
-      cell(p4, 'cost', '今天花', s.now.cost, '', c3.cost, 30),
+      cell(p4, 'cost', W.cost, s.now.cost, '', c3.cost, 30),
     ] }),
   ]);
 
@@ -144,30 +145,28 @@ export function vitalsCard(s) {
     ] }),
     add({ id: `${p8}${key}c`, component: 'Chart', ...chart, style: { width: 'fill', height: 30, margin: [4, 0, 0, 0] } }),
   ] });
-  const todayRow = () => add({ id: `${p8}today`, component: 'Row', align: 'end', children: [
-    ['turns', '做的事'], ['calls', '想了几次'], ['errors', '出错'], ['reconnects', '断线'],
-  ].flatMap(([k, label], i) => [
+  const todayRow = () => add({ id: `${p8}today`, component: 'Row', align: 'end', children: W.today.flatMap(([k, label], i) => [
     ...(i ? [add({ id: `${p8}tg${i}`, component: 'Spacer', weight: 1 })] : []),
     txt(`${p8}t${k}`, String(s.today[k]), 16, s.today[k] === 0 && i > 1 ? 'text-3' : 'ink', { fontWeight: 700 }),
     txt(`${p8}t${k}l`, label, 11.5, 'text-3', { margin: [0, 0, 1, 4] }),
   ]) });
   const legend = add({ id: `${p8}lg`, component: 'Row', align: 'center', style: { margin: [12, 0, 0, 0] }, children: [
-    txt(`${p8}lgc`, `CPU ${s.now.cpu}%`, 11.5, s.marks?.cpu && s.marks.cpu.to === undefined ? 'err' : 'text-2'),
-    txt(`${p8}lgl`, `负载 ${s.now.load} 条/分`, 11.5, s.marks?.load && s.marks.load.to === undefined ? 'err' : 'text-3', { margin: [0, 0, 0, 12] }),
-    add({ id: `${p8}lgg`, component: 'Spacer', weight: 1 }), txt(`${p8}lgw`, '最近 1 小时', 11.5, 'text-3'),
+    txt(`${p8}lgc`, `${W.cpu} ${s.now.cpu}${W.cpu_unit}`, 11.5, s.marks?.cpu && s.marks.cpu.to === undefined ? 'err' : 'text-2'),
+    txt(`${p8}lgl`, `${W.load} ${s.now.load} ${W.load_unit}`, 11.5, s.marks?.load && s.marks.load.to === undefined ? 'err' : 'text-3', { margin: [0, 0, 0, 12] }),
+    add({ id: `${p8}lgg`, component: 'Spacer', weight: 1 }), txt(`${p8}lgw`, W.legend_window, 11.5, 'text-3'),
   ] });
   const l44 = root('l44', [
     head(p8, 16),
-    txt(`${p8}sub`, `连着 ${s.online} 台设备 · ${s.busy ? `在忙 · ${s.busy}` : '闲着'}`, 12, 'text-3', { margin: [2, 0, 0, 23] }),
+    txt(`${p8}sub`, W.sub.replace('{n}', s.online).replace('{idle_or_busy}', s.busy ? copy.chips.busy.replace('{what}', s.busy) : copy.chips.idle), 12, 'text-3', { margin: [2, 0, 0, 23] }),
     legend,
-    add({ id: `${p8}big`, component: 'Chart', ...big, style: { width: 'fill', height: 84, margin: [6, 0, 0, 0] } }),
+    add({ id: `${p8}big`, component: 'Chart', ...big, style: { width: 'fill', height: s.alert ? 77 : 84, margin: [6, 0, 0, 0] } }), // with the alert line the chart gives up 7 so that all of it fits in 330
     add({ id: `${p8}tiles`, component: 'Row', style: { margin: [10, 0, 0, 0] }, children: [
-      tile('mem', '内存', String(s.now.mem), 'MB', c1.mem),
+      tile('mem', W.mem, String(s.now.mem), W.mem_unit, c1.mem),
       add({ id: `${p8}tgap`, component: 'Spacer', size: 8 }),
-      tile('cost', '今天花 · 近 7 天', s.now.cost, '', c1.cost),
+      tile('cost', W.cost_7d, s.now.cost, '', c1.cost),
     ] }),
     add({ id: `${p8}fill`, component: 'Spacer', weight: 1 }),
-    s.alert ? alertBox(p8, s.alert.long, false) : todayRow(),
+    s.alert ? alertBox(p8, s.alert.long) : todayRow(),
   ]);
 
   void l22; void l42; void l44;

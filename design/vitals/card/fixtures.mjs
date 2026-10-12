@@ -13,10 +13,10 @@ export const FIXTURES = {
     now: { cpu: 2, mem: 186, load: 8, cost: '¥3.42' }, alert: null }),
   warn: mk({ level: 'warn', say: '我刚才有点忙，已经缓过来了', cpu: series(1, 1, 3, [[30, 33, 38]]), load: series(2, 0, 4, [[30, 33, 26]]), mem: series(3, 190, 8, [[30, 40, 214]]),
     now: { cpu: 3, mem: 204, load: 8, cost: '¥3.42' }, today: { ...base.today, errors: 2 },
-    alert: { tone: 'warn', short: '13:40 · 大脑很忙', long: '13:40 · 闲着时大脑很忙，3 分钟' },
+    alert: { tone: 'warn', long: '13:40 · 闲着时大脑很忙，3 分钟' },
     marks: { cpu: { from: 30, to: 33, tone: 'warn' }, load: { from: 30, to: 33, tone: 'warn' } }, limits: { cpu: 5 } }),
   err: mk({ level: 'err', say: '我在空转，可能很费电', at: '14:08', cpu: series(1, 1, 3, [[54, 59, 38]]), load: series(2, 0, 4, [[54, 59, 44]]), mem: series(3, 300, 6, [[54, 59, 342]]),
     now: { cpu: 38, mem: 342, load: 44, cost: '¥3.42' },
-    alert: { tone: 'err', short: '14:02 起 · 6 分钟', long: '14:02 起 · 闲着时消息不停来回，已经 6 分钟' },
+    alert: { tone: 'err', long: '14:02 起 · 闲着时消息不停来回，已经 6 分钟' },
     marks: { cpu: { from: 54, tone: 'err' }, load: { from: 54, tone: 'err' }, mem: { from: 54, tone: 'warn' } }, limits: { cpu: 5, load: 30 } }),
 };

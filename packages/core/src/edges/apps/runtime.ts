@@ -71,6 +71,8 @@ export interface AppReport { id: string; path: string; ok: boolean; problems: Ap
 export interface AppInfo {
   id: string; name: string; version: string; summary: string; role: string; publisher: string; enabled: boolean; granted: boolean; running: boolean;
   needs: AppNeed[]; surfaces: { id: string; title: string; resource: string }[]; events: string[]; tools: string[]; listens: string[]; error?: string;
+  /** The dot the app asked for on its icon, while it runs: `warn`, `err` or `paused`. */
+  badge?: "warn" | "err" | "paused";
   /** What kind of trouble `error` is, for a screen that must not show it as it is (it is for an agent): `manifest` (app.json cannot be read or does not pass), `folder` (an installed app whose folder is gone), `run` (it did not start or stopped). */
   problem?: "manifest" | "folder" | "run";
   /** The folder as the agent sees it, and who made the app. */
@@ -117,6 +119,8 @@ export class AppRuntime {
   private readonly failures = new Map<string, number>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastError = new Map<string, string>();
+  /** The dot an app asked for on its icon (apps.badge); memory only, shown while it runs. */
+  private readonly badges = new Map<string, "warn" | "err" | "paused">();
   /** What the approval card of each install request showed (needs and listens), by request id; memory only. */
   private readonly shown = new Map<string, string>();
   private readonly output = new Map<string, { lines: string[]; exit: LastExit | null }>();
@@ -292,8 +296,13 @@ export class AppRuntime {
       id, name: m?.name ?? id, version: m?.version ?? "", summary: m?.summary ?? "", role: m?.role ?? m?.summary ?? "", publisher: m?.publisher ?? "",
       enabled: Boolean(grant?.enabled), granted: Boolean(grant), running: Boolean(state?.online),
       needs: grant?.needs ?? m?.needs ?? [], surfaces: m?.surfaces ?? [], events: m?.events ?? [], tools: state ? [...state.tools] : [],
-      listens: grant?.listens ?? [], ...(error ? { error, problem } : {}), path: this.agentPath(id), origin: this.origin(id),
+      listens: grant?.listens ?? [], ...(error ? { error, problem } : {}), ...(state?.online && this.badges.has(id) ? { badge: this.badges.get(id)! } : {}), path: this.agentPath(id), origin: this.origin(id),
     };
+  }
+  /** An app's own dot: `ok` takes it away. */
+  setBadge(id: string, tone: "ok" | "warn" | "err" | "paused"): { tone: string } {
+    if (tone === "ok") this.badges.delete(id); else this.badges.set(id, tone);
+    return { tone };
   }
   /** Every app with a folder and every installed app (a record without a folder is listed too, with `error` saying so, so it can be removed). */
   list(): AppInfo[] { return [...new Set([...this.found.keys(), ...this.grants.ids()])].sort().map((id) => this.info(id)!); }
