@@ -67,7 +67,7 @@ async function pairing(t: Parameters<typeof startScenario>[0]) {
   return { owner, state, started, secret };
 }
 
-test("SPEC-03 §9.5.4, SPEC-00 §6.9: an agent starts a pairing and never sees the code; the ledger keeps the code masked", async (t) => {
+test("SPEC-03 §9.5.4, SPEC-00 §6.9: an agent starts a pairing and never sees the code; the ledger never holds it", async (t) => {
   const { owner, state, started, secret } = await pairing(t);
 
   assert.ok(started.pair_id && started.expires_at, "the agent gets pair_id and expires_at");
@@ -76,9 +76,8 @@ test("SPEC-03 §9.5.4, SPEC-00 §6.9: an agent starts a pairing and never sees t
   assert.equal(errorCode(state.peek!), "forbidden", "asking for the code is refused");
   assert.ok(!JSON.stringify(state.started).includes(secret) && !state.peek!.text.includes(secret));
   const ledger = await owner.ledger();
-  const record = ledger.find((m) => m.from === "service:devices" && m.word === "pair_code");
-  assert.ok(record, "the owner's reading is recorded");
-  assert.notEqual((record.body as { result: { data: { code: string } } }).result.data.code, secret, "with the code masked");
+  assert.ok(!ledger.some((m) => m.from === "service:devices" && m.word === "pair_code"), "the owner's reading of the code is only a read: it leaves no row at all");
+  assert.ok(!JSON.stringify(ledger).includes(secret), "and the code is nowhere in the ledger");
 });
 
 // The ledger's copy of `pair_code` masks `code` but keeps `url`, and the real relay's `url` is `<origin>/p/<code>`.

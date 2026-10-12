@@ -44,6 +44,24 @@ test("SPEC-00 §6.12: the owner's words, agent requests (reads too) and effects 
   assert.ok(!has((m) => m.to === "service:persona" && m.word === "get"), "loading the persona is a service's read: not recorded");
 });
 
+test("the owner's page reading the history leaves no trace: nothing in the ledger, nothing echoed to a following sync, and a page at rest does not grow it", async (t) => {
+  const s = await startScenario(t);
+  const owner = await s.human();
+  const aboutHistory = (m: Message): boolean => m.to === "service:history" || m.from === "service:history";
+
+  // what the page does on every open and refresh (all of them service:history reads, over the human channel)
+  for (let i = 0; i < 5; i++) {
+    assert.ok((await owner.call("service:history", "current", { limit: 20 })).ok, "current");
+    assert.ok((await owner.call("service:history", "window", { limit: 20 })).ok, "window");
+    assert.ok((await owner.call("service:history", "activity.page", { limit: 20 })).ok, "activity.page");
+  }
+  // then it sits there for ten seconds with its sync following the ledger
+  await new Promise((resolve) => setTimeout(resolve, 10_000));
+
+  assert.deepEqual((await owner.ledger()).filter(aboutHistory), [], "the ledger holds no row of these reads, request or response");
+  assert.deepEqual(owner.messages.filter(aboutHistory), [], "and the following sync was never handed one");
+});
+
 test("SPEC-00 §6.9, S159: a secret put in the vault is in no ledger record; only that it is set remains", async (t) => {
   const s = await startScenario(t);
   const owner = await s.human();
@@ -52,7 +70,7 @@ test("SPEC-00 §6.9, S159: a secret put in the vault is in no ledger record; onl
   const set = await owner.call("service:vault", "set", { ref: "deepseek", value: secret, label: "DeepSeek", kind: "model" });
   assert.ok(set.ok, "the owner sets a key from this machine");
 
-  // Reading the ledger is itself recorded (a `query` to service:history, whose filter may hold what was searched for): those are left out.
+  // An agent's reading of the ledger is itself recorded (a `query` to service:history, whose filter may hold what was searched for): those are left out.
   const notOwnQuery = (m: Message): boolean => !(m.to === "service:history" && m.word === "query");
   const ledger = (await owner.ledger()).filter(notOwnQuery);
   assert.ok(!JSON.stringify(ledger).includes(secret), "the secret is not in the ledger");

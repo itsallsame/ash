@@ -319,6 +319,20 @@ class HomeActivity : Activity() {
         }
     }
 
+    /**
+     * Out of sight the page stops: its timers, animation frames and compositing pause, and `document.hidden` is true so it keeps its own
+     * quiet. Only this WebView is paused ([WebView.onPause]); `pauseTimers()` is process-wide and would stop the agent's off-screen browsers too.
+     */
+    override fun onStart() {
+        super.onStart()
+        if (::web.isInitialized) web.onResume()
+    }
+
+    override fun onStop() {
+        if (::web.isInitialized) web.onPause()
+        super.onStop()
+    }
+
     override fun onPause() {
         resumed = false
         ui.removeCallbacks(checkupTick)
