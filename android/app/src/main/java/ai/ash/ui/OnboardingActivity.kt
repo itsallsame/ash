@@ -33,6 +33,7 @@ import ai.ash.host.KernelState
 import ai.ash.ui.OnboardingContent.Look
 import ai.ash.ui.OnboardingViews.Layout
 import ai.ash.ui.OnboardingPlan.Kind
+import ai.ash.ui.design.AshPage
 import ai.ash.ui.design.AshTokens
 import ai.ash.ui.design.AshUi
 import org.json.JSONObject
@@ -424,14 +425,16 @@ class OnboardingActivity : Activity() {
             granted || said -> buttons += primary("继续", { forward() })
             else -> {
                 buttons += OnboardingViews.iconButton(this, copy.primary, copy.icon) { opened += item; act(item); render() }
-                // the owner has been to the system's page and Ash still does not see it on: look again, or take their word for it
+                // the owner has been to the system's page and Ash still does not see it on: look again, or take their word for it (two small buttons side by side)
                 if (item in opened) {
-                    if (canRecheck(item)) {
-                        val looking = checking()
-                        buttons += AshUi.button(this, if (looking) OnboardingContent.Words.CHECKING else OnboardingContent.Words.RECHECK, AshUi.Kind.NEUTRAL, AshUi.BtnSize.MD, block = true,
-                            onClick = if (looking) null else ::recheckNow).also { if (looking) AshUi.disable(it) }
+                    val looking = checking()
+                    val two = listOfNotNull(
+                        if (canRecheck(item)) AshPage.smallButtonFill(this, if (looking) OnboardingContent.Words.CHECKING else OnboardingContent.Words.RECHECK, AshUi.Kind.NEUTRAL, if (looking) null else ::recheckNow) else null,
+                        if (canSay(item)) AshPage.smallButtonFill(this, OnboardingContent.Words.SAID_BUTTON, AshUi.Kind.NEUTRAL) { sayOn(item) } else null,
+                    )
+                    if (two.isNotEmpty()) buttons += AshUi.hstack(this, AshTokens.Space.xs).apply {
+                        two.forEach { addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
                     }
-                    if (canSay(item)) buttons += AshUi.button(this, OnboardingContent.Words.SAID_BUTTON, AshUi.Kind.NEUTRAL, AshUi.BtnSize.MD, block = true) { sayOn(item) }
                 }
                 buttons += OnboardingViews.ghost(this, OnboardingContent.Words.SKIP) { skip(item) }
             }
@@ -443,7 +446,7 @@ class OnboardingActivity : Activity() {
     private fun canRecheck(item: String) = !unreadable(item)
 
     /** The owner may say it is on: always for an item Ash can read; for one it cannot, once what it needs first is on. */
-    private fun canSay(item: String): Boolean = !unreadable(item) || permissionOf(item)?.ready(this) == true
+    private fun canSay(item: String): Boolean = OwnerWord.mayBeSaid(item) && (!unreadable(item) || permissionOf(item)?.ready(this) == true)
 
     private fun checking() = SystemClock.elapsedRealtime() < checkingUntil
 

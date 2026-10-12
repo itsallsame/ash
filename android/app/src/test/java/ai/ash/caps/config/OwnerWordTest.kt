@@ -65,4 +65,9 @@ class OwnerWordTest {
         assertFalse("nothing to contradict it with", word.contradicted("autostart", read = true, unreadable = true))
         assertEquals("not settable yet: the word does not count", Standing.OFF, word.settle("autostart", read = false, unreadable = true))
     }
+
+    @Test fun theRecoveryGrantIsNotSomethingTheOwnerCanSayIsOn() {
+        assertFalse("it takes a computer or Shizuku", OwnerWord.mayBeSaid("screen_recovery"))
+        assertTrue(OwnerWord.mayBeSaid("accessibility")); assertTrue(OwnerWord.mayBeSaid("notifications"))
+    }
 }

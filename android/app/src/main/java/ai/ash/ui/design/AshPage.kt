@@ -237,6 +237,16 @@ object AshPage {
         layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, AshUi.dp(ctx, AshTokens.Size.touch))
     }
 
+    /**
+     * 小号按钮占满所在格的宽（几个按钮并排各占一份时用）：画 34dp 高，外面同样套 44dp 的点击区。[onClick] 为空时不可点（按钮 40% 透明）。
+     */
+    fun smallButtonFill(ctx: Context, label: CharSequence, kind: AshUi.Kind, onClick: (() -> Unit)?): FrameLayout = FrameLayout(ctx).apply {
+        val button = AshUi.button(ctx, label, kind, AshUi.BtnSize.SM, onClick = onClick)
+        if (onClick == null) AshUi.disable(button) else { isClickable = true; isFocusable = false; setOnClickListener { button.performClick() } }
+        addView(button, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AshUi.dp(ctx, AshTokens.Size.buttonSm), Gravity.CENTER_VERTICAL))
+        minimumHeight = AshUi.dp(ctx, AshTokens.Size.touch)
+    }
+
     /** 红色角标：「!」，24dp（20 + 2 圈页面色的边）。 */
     fun errorBadge(ctx: Context): TextView = AshUi.text(ctx, "!", AshType(12f, 16f, 700, null), Color.WHITE).apply {
         val c = AshUi.p(ctx)

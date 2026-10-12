@@ -130,7 +130,7 @@ object Checkup {
             fun said(read: Boolean, unreadable: Boolean, note: String?): Item = when (word.settle(spec.id, read, unreadable)) {
                 Standing.ON -> plain(true)
                 Standing.SAID -> Item(spec.id, partFor(spec.id), spec.title, spec.why, State.SAID, saidNote(word.contradicted(spec.id, read, unreadable)), testable = spec.testable, canRecheck = !unreadable)
-                Standing.OFF -> Item(spec.id, partFor(spec.id), spec.title, spec.why, State.OFF, note, canSay = !unreadable || read, canRecheck = !unreadable, testable = spec.testable)
+                Standing.OFF -> Item(spec.id, partFor(spec.id), spec.title, spec.why, State.OFF, note, canSay = OwnerWord.mayBeSaid(spec.id) && (!unreadable || read), canRecheck = !unreadable, testable = spec.testable)
             }
             when (spec.id) {
                 KERNEL_PACKAGE -> plain(kernel != KernelState.NOT_INSTALLED, "还没装")

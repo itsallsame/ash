@@ -50,6 +50,9 @@ class OwnerWord(private val store: Store) {
         private const val PREFS = "ash.permissions"
         private const val PREFIX = "confirmed:"
 
+        /** Items the owner cannot give by hand: the recovery grant takes a computer or Shizuku, so their word for it is not asked. */
+        fun mayBeSaid(item: String): Boolean = item != "screen_recovery"
+
         fun of(ctx: Context): OwnerWord = OwnerWord(Prefs(ctx.applicationContext))
 
         /** The key of an item's mark: the entry of [Permissions] it is when it has one (so the checkup's and the guide's ids meet), else the item's own id. */
