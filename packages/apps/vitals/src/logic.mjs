@@ -61,12 +61,14 @@ export class Vitals {
   // ---- the lamp and everything the pages show of her now ----
   async status() {
     const now = this.now();
-    const [health, events, admin, checkup] = await Promise.all([
+    const [answer, events, admin, checkup] = await Promise.all([
       this.read("service:health", "status", { window_s: 60 }, 15_000),
       this.read("service:health", "recent", { kind: "event", since: this.back(), limit: 100 }, 30_000),
       this.read("service:admin", "status", {}, 30_000),
       this.read("service:admin", "checkup", {}, 60_000),
     ]);
+    // An answer without the process in it is not an answer (the hub did not report): the brain counts as not running.
+    const health = answer?.proc && Array.isArray(answer.invariants) ? answer : null;
     if (admin?.time_zone) this.zone = admin.time_zone;
     const invariants = health?.invariants ?? [];
     const live = invariants.filter((item) => !item.ok).sort((a, b) => rank(a.id) - rank(b.id));

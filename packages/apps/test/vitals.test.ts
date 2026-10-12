@@ -64,6 +64,8 @@ test("the lamp: ok, busy, new, paused, the brain not answering", async () => {
   const down = await (await make({ down: true })).status();
   assert.deepEqual(pick(down), { lamp: "err", say: { id: "err_brain_down" }, stale: true });
   assert.equal(down.vitals, null);
+  const empty = await (async () => { const { Vitals, Store } = await load("logic.mjs"); return new Vitals({ ash: { call: async () => ({}) }, store: new Store(join(mkdtempSync(join(tmpdir(), "v-")), "d.json")), now: () => NOW }).status(); })();
+  assert.deepEqual(pick(empty), { lamp: "err", say: { id: "err_brain_down" }, stale: true }, "an empty answer is no answer");
 });
 const pick = (s: any) => ({ lamp: s.lamp, say: s.say, stale: s.stale });
 
