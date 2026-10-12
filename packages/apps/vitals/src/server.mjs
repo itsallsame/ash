@@ -23,9 +23,10 @@ await server.connect(new StdioServerTransport());
 
 // The card: looked at every minute (a few reads of the hub, remembered between), drawn again when the lamp changed or 15 minutes have gone.
 if (process.env.ASH_TRIAL !== "1") {
-  let drawn = { lamp: null, at: 0 };
+  let drawn = { lamp: null, at: 0 }, dot = null;
   const draw = async () => {
     const { a2ui, lamp } = await vitals.card();
+    if (lamp !== dot) { await vitals.ash.call("service:apps", "apps.badge", { tone: lamp === "new" ? "ok" : lamp }); dot = lamp; }
     if (lamp === drawn.lamp && Date.now() - drawn.at < 15 * 60_000) return;
     await vitals.ash.call("service:widgets", "widget.card.put", { id: "vitals.status", title: copy.widget.card_title, size: "4x2", a2ui });
     drawn = { lamp, at: Date.now() };

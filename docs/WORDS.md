@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `e664ed454a9042c9`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `2d1b595df421ed9a`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -14,7 +14,7 @@
 - [`service:devices`](#servicedevices) (15)
 - [`service:link`](#servicelink) (16)
 - [`service:agents`](#serviceagents) (31)
-- [`service:apps`](#serviceapps) (16)
+- [`service:apps`](#serviceapps) (17)
 - [`service:clock`](#serviceclock) (5)
 - [`service:llm`](#servicellm) (4)
 - [`service:persona`](#servicepersona) (2)
@@ -191,6 +191,7 @@
 | `apps.disable` | owner, agent, app | write / structure | - | id* | 在停用应用 | Stop an app; its grants are kept so it can be turned on again. |
 | `apps.revoke` | owner, agent, app | write / structure | - | id*, need | 在收回应用的权限 | Take back one need (need: a member id such as device:<hand_id>, or notify / widgets / card), or every grant when need is left out, which stops the app. Works on an installed app whose folder is gone too. |
 | `apps.refresh` | owner, agent, app | read / none | - | - | 在查找新应用 | Read /root/apps again: new apps appear, removed ones stop. |
+| `apps.badge` | app | write / none | - | tone* | 在亮应用的小点 | An app says how it is, for the dot on its icon in the app grid: ok (no dot), warn, err or paused. Only about itself; it shows while the app runs and is asked again by the app when it starts. |
 | `apps.restart` | owner, agent, app | act / none | - | id* | 在重启应用 | Restart an installed app's server so edits to its files (server.mjs, tools, app.json cards) take effect. It is checked first as apps.validate does: a failing app is not restarted and the problems come back (error.detail.problems). If app.json's needs changed, use apps.install instead (the owner approves them). Pages need no restart. |
 | `apps.logs` | owner, agent, app | read / none | - | id*, lines | 在看应用日志 | An app's recent output: what its server wrote to stderr, protocol errors (anything but MCP on stdout), and Ash's notes on starts, exits and restarts (newest last, default 100 lines, at most 400). last_exit says how the server last ended (exit code or signal); error is why it is not running, if Ash knows. |
 | `apps.reset` | owner, agent, app | write / none | - | id* | 在清空应用数据 | Empty the app's data folder (app.json data_dir, e.g. /root/apps/<id>/data) and restart it, so it starts over with no data; its cards redraw. Only for an app that declares data_dir. The owner's data is gone afterwards: do it only when the owner wants it, or for an app you are still building. |

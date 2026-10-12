@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "e664ed454a9042c9ea89e37059f41b3197baa4e97e39ed28e701143f0072014f",
+ "hash": "2d1b595df421ed9a332829330066ae1afd4a57cf503ad8c0f526b4dd87b6ceaa",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -7411,6 +7411,14 @@
         "error": {
          "type": "string"
         },
+        "badge": {
+         "type": "string",
+         "enum": [
+          "warn",
+          "err",
+          "paused"
+         ]
+        },
         "cards": {
          "type": "array",
          "items": {
@@ -7556,6 +7564,14 @@
      "error": {
       "type": "string"
      },
+     "badge": {
+      "type": "string",
+      "enum": [
+       "warn",
+       "err",
+       "paused"
+      ]
+     },
      "cards": {
       "type": "array",
       "items": {
@@ -7693,6 +7709,14 @@
      },
      "error": {
       "type": "string"
+     },
+     "badge": {
+      "type": "string",
+      "enum": [
+       "warn",
+       "err",
+       "paused"
+      ]
      },
      "cards": {
       "type": "array",
@@ -7832,6 +7856,14 @@
      "error": {
       "type": "string"
      },
+     "badge": {
+      "type": "string",
+      "enum": [
+       "warn",
+       "err",
+       "paused"
+      ]
+     },
      "cards": {
       "type": "array",
       "items": {
@@ -7969,6 +8001,14 @@
      },
      "error": {
       "type": "string"
+     },
+     "badge": {
+      "type": "string",
+      "enum": [
+       "warn",
+       "err",
+       "paused"
+      ]
      },
      "cards": {
       "type": "array",
@@ -8112,6 +8152,14 @@
      "error": {
       "type": "string"
      },
+     "badge": {
+      "type": "string",
+      "enum": [
+       "warn",
+       "err",
+       "paused"
+      ]
+     },
      "cards": {
       "type": "array",
       "items": {
@@ -8248,6 +8296,14 @@
         "error": {
          "type": "string"
         },
+        "badge": {
+         "type": "string",
+         "enum": [
+          "warn",
+          "err",
+          "paused"
+         ]
+        },
         "cards": {
          "type": "array",
          "items": {
@@ -8308,6 +8364,57 @@
    ],
    "label": {
     "doing": "在查找新应用"
+   }
+  },
+  {
+   "member": "service:apps",
+   "word": "apps.badge",
+   "kind": "request",
+   "direction": "in",
+   "description": "An app says how it is, for the dot on its icon in the app grid: ok (no dot), warn, err or paused. Only about itself; it shows while the app runs and is asked again by the app when it starts.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "tone": {
+      "type": "string",
+      "enum": [
+       "ok",
+       "warn",
+       "err",
+       "paused"
+      ]
+     }
+    },
+    "required": [
+     "tone"
+    ],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "tone": {
+      "type": "string",
+      "enum": [
+       "ok",
+       "warn",
+       "err",
+       "paused"
+      ]
+     }
+    },
+    "required": [
+     "tone"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "write",
+   "risk": "none",
+   "callers": [
+    "app"
+   ],
+   "label": {
+    "doing": "在亮应用的小点"
    }
   },
   {

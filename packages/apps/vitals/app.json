@@ -23,6 +23,7 @@
     { "member": "service:admin", "words": ["status", "checkup"], "why": "看她是不是被暂停了、连着几台设备，以及手机报来的体检摘要" },
     { "member": "service:devices", "words": ["list"], "why": "告警里写出是哪台设备" },
     { "member": "service:host", "words": ["restart"], "why": "你点了「重启大脑」并确认之后重启它" },
-    { "member": "service:widgets", "words": ["widget.card.put"], "why": "把她的状态画在桌面小组件上" }
+    { "member": "service:widgets", "words": ["widget.card.put"], "why": "把她的状态画在桌面小组件上" },
+    { "member": "service:apps", "words": ["apps.badge"], "why": "不正常时，在应用图标右上角亮一个小点" }
   ]
 }
