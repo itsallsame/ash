@@ -536,8 +536,19 @@ export class AgentManager {
     this.bg((async () => { await this.halt(slot, "restart"); await this.reconcile(slot, slot.why); })(), `restart ${slot.id} for the new proxy`);
   }
 
+  /**
+   * A turn the ledger still shows as open belongs to a process that is gone (this one has not taken a message yet): the hub died with
+   * it, so nobody wrote its end, and the chat would say "working" for ever. Close each with `interrupted`, the lane from its start. It is
+   * not a failure: the wake below tells the agent, which decides whether to go on.
+   */
+  private endStaleTurns(id: string): void {
+    const open = this.deps.ledger.db().prepare("SELECT fact_turn AS turn, lane FROM messages WHERE fact_type='turn.start' AND \"from\"=? AND turn_end_seq IS NULL AND fact_turn IS NOT NULL").all(id) as { turn: string; lane: string }[];
+    for (const { turn, lane } of open) this.emit(id, "turn.ended", { turn, lane, outcome: "interrupted", error: "the hub restarted" }, turn);
+  }
+
   /** What was in flight when the agent went away is not sent again; the agent hears that it was cut off and decides. */
   private interruptedNotice(id: string, why: string): void {
+    this.endStaleTurns(id);
     const rows = this.inbox.unfinished(id);
     if (!rows.length) return;
     const cut = rows.filter((r) => r.turn);

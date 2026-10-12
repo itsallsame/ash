@@ -283,3 +283,22 @@ test("the home-screen card: today's weight and steps from the same data as the p
   const blank = validateCard(todayCard(await empty.today()));
   assert.equal(blank.components.find((c) => c.id === "wv")!.text, "—");
 });
+
+test("a phone that stays away is said once on stderr, again only after it came back and went away", async () => {
+  const { Health, Store } = await load("logic.mjs");
+  const store = new Store(join(mkdtempSync(join(tmpdir(), "ash-health-")), "data.json"));
+  const now = MONDAY;
+  const lines: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => { lines.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try {
+    const away = new Health({ ash: fakeAsh(now, { fail: true }).ash, store, now: () => now });
+    await away.readings(3); await away.readings(3); await away.readings(3);
+    assert.equal(lines.filter((l) => l.includes("health.read failed")).length, 1);
+    away.ash = fakeAsh(now).ash;
+    await away.readings(3);
+    away.ash = fakeAsh(now, { fail: true }).ash;
+    await away.readings(3);
+    assert.equal(lines.filter((l) => l.includes("health.read failed")).length, 2);
+  } finally { process.stderr.write = write; }
+});

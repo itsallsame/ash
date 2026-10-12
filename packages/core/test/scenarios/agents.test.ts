@@ -165,6 +165,22 @@ test("S170, S171, SPEC-00 §6.5: the hub restarts in the middle of a turn: the b
   assert.equal(hand.calls.length, 1, "the call in flight was not replayed");
 });
 
+test("the hub is killed in the middle of a front turn (nothing written at the stop): after the restart the chat does not say it is still working", async (t) => {
+  const s = await startScenario(t);
+  const hand = await s.hand({ capabilities: [extensionCapability("x.test.act", { effect: "act", risk: "none" })] });
+  const held = hand.hold("x.test.act");
+  s.driver.script(byOwnerText({ "做一件慢事": async (turn) => { await turn.call(hand.member, "x.test.act", {}); } }));
+  const owner = await s.human();
+  accepted(await owner.say("做一件慢事"));
+  await held.started;
+  const state = async () => dataOf(await (await s.human({ name: "after" })).call("service:history", "current")).presence.state;
+  assert.notEqual(await state(), "idle", "while the turn runs the chat shows it");
+
+  await s.restart(undefined, { crash: true });
+
+  await eventually(async () => !["working", "thinking"].includes(await state()), "the chat no longer showing the cut turn as running");
+});
+
 test("S172: the hub has just restarted and the main agent's runtime is still coming up: the owner's first words are not refused, and the agent answers once it is up", async (t) => {
   const s = await startScenario(t);
   s.driver.script((turn) => { for (const m of turn.messages) if (m.from === OWNER) turn.say(`听到了：${m.text}`); });
