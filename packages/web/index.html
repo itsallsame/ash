@@ -34,10 +34,10 @@ header.topbar{position:relative;flex:none;z-index:2;height:auto;min-height:calc(
 #presence[data-net=connecting] #stateNet,#presence[data-net=offline] #stateNet{display:flex}
 #presence[data-net=offline] #face{opacity:.55}
 .av .dot.gone{display:none}
-#presence[data-state=working][data-net=online] #state::before,#stateNet[data-kind=connecting]::before{content:"";flex:none;width:11px;height:11px;border-radius:50%;border:1.6px solid var(--her-soft);border-top-color:var(--her-fill);animation:spin .9s linear infinite;will-change:transform}
+#presence[data-state=working][data-net=online] #state::before,#stateNet[data-kind=connecting]::before{content:"";flex:none;width:11px;height:11px;border-radius:50%;border:1.6px solid var(--her-soft);border-top-color:var(--her-fill)}
 #stateNet[data-kind=connecting]::before{border-color:var(--surface-3);border-top-color:var(--text-3)}
 #presence[data-state=waiting_you][data-net=online] #state::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--warn-fill)}
-#presence[data-state=thinking][data-net=online] #state::after{content:"";flex:none;width:4px;height:4px;margin-right:14px;border-radius:50%;background:currentColor;box-shadow:7px 0 currentColor,14px 0 currentColor;animation:dots 1.2s ease-in-out infinite}
+#presence[data-state=thinking][data-net=online] #state::after{content:"";flex:none;width:4px;height:4px;margin-right:14px;border-radius:50%;background:currentColor;box-shadow:7px 0 currentColor,14px 0 currentColor}
 #presenceNotice{position:absolute;top:100%;left:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-xs);padding:4px 10px;font-size:12px;color:var(--text-2)}
 #presenceNotice:empty{display:none}
 #netBanner{max-width:732px;width:calc(100% - 28px);margin:0 auto 6px;background:var(--surface-2);color:var(--text-2)}
@@ -54,8 +54,6 @@ header.topbar{position:relative;flex:none;z-index:2;height:auto;min-height:calc(
 .msg.run-start{margin-top:15px}
 #log>.msg.me:not(.run-start){margin-top:1px}
 #log>.msg.ai:not(.run-start){margin-top:0}
-.msg.enter,.a-card.enter{animation:rise var(--dur-message) var(--ease) both}
-@keyframes rise{from{opacity:0;transform:translateY(6px)}}
 .msg.waiting{opacity:.7}
 .from{align-self:flex-end;font-size:11.5px;line-height:16px;color:var(--text-3);padding:0 6px}
 .delivery.r,.meta-pending.r{align-self:flex-end}
@@ -164,10 +162,7 @@ header.topbar{position:relative;flex:none;z-index:2;height:auto;min-height:calc(
 .send:disabled{opacity:.5}
 /* ---- sheets over the page: who to talk to, what to attach ---- */
 .layer{position:fixed;inset:0;z-index:4}
-.layer .scrim{animation:fade var(--dur-sheet) var(--ease)}
-.layer .sheet{max-width:760px;margin:0 auto;padding-bottom:max(28px,env(safe-area-inset-bottom));animation:slide var(--dur-sheet) var(--ease)}
-@keyframes fade{from{opacity:0}}
-@keyframes slide{from{transform:translateY(100%)}}
+.layer .sheet{max-width:760px;margin:0 auto;padding-bottom:max(28px,env(safe-area-inset-bottom))}
 .layer .list{box-shadow:none;background:var(--surface-2)}
 .layer .li{width:100%;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
 .layer .li:disabled{opacity:.5;cursor:default}

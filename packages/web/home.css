@@ -226,7 +226,6 @@
 .hm-pill input{inset:-8px;width:calc(100% + 16px);height:calc(100% + 16px)}
 @media (prefers-reduced-motion:reduce){
   .hm-root,.hm-screen{transition:none}
-  .hm-root .av-live::before,.hm-root .av-breath::before,.hm-root .av-wait::before,.hm-root .spinner,.hm-root .sk::after{animation:none}
 }
 .hm-root .li .lt .s.hm-wrap{white-space:normal}
 

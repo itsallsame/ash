@@ -49,19 +49,14 @@ body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums
 /* 醒着：头像外一圈青色光环缓慢转动（在做事）；呼吸（在想） */
 .av-live::before{content:"";position:absolute;inset:-3px;border-radius:36%;padding:1.6px;
   background:conic-gradient(from 0deg,var(--her-fill),transparent 40%,transparent 60%,var(--her-fill));
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
-  animation:spin 2.4s linear infinite;will-change:transform}
-.av-breath::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--her-fill);animation:breath 1.8s ease-in-out infinite}
-.av-wait::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--warn-fill);animation:breath 1.6s ease-in-out infinite}
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+.av-breath::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--her-fill)}
+.av-wait::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--warn-fill)}
 .av-letter{display:flex;align-items:center;justify-content:center;border-radius:32%;font-weight:650;color:var(--on-helper)}
 .av-tone-purple{background:var(--helper-purple)}.av-tone-blue{background:var(--helper-blue)}.av-tone-teal{background:var(--helper-teal)}.av-tone-green{background:var(--helper-green)}.av-tone-amber{background:var(--helper-amber)}.av-tone-rose{background:var(--helper-rose)}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes breath{0%,100%{opacity:.25;transform:scale(.97)}50%{opacity:1;transform:scale(1)}}
-@keyframes dots{0%,100%{opacity:.25}50%{opacity:1}}
 .a-typing{display:inline-flex;gap:3px;vertical-align:middle}
-.a-typing i{width:4px;height:4px;border-radius:50%;background:currentColor;animation:dots 1.2s ease-in-out infinite}
-.a-typing i:nth-child(2){animation-delay:.2s}.a-typing i:nth-child(3){animation-delay:.4s}
-.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--her-soft);border-top-color:var(--her-fill);animation:spin .9s linear infinite;will-change:transform;flex:none}
+.a-typing i{width:4px;height:4px;border-radius:50%;background:currentColor}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--her-soft);border-top-color:var(--her-fill);flex:none}
 
 /* ---------- 6. Top bar / tab bar ---------- */
 .topbar{height:56px;flex:none;display:flex;align-items:center;gap:10px;padding:0 6px 0 14px}
@@ -203,12 +198,10 @@ body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums
 .banner{flex:none;margin:0 14px 6px;padding:9px 12px;border-radius:14px;display:flex;align-items:center;gap:8px;font-size:13px}
 .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:0 40px}
 .sk{background:var(--surface-2);border-radius:8px;position:relative;overflow:hidden}
-.sk::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:shimmer 1.6s infinite}
+.sk::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent)}
 @media (prefers-color-scheme:dark){.sk::after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent)}}
-@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 .hr{height:.5px;background:var(--line);flex:none}
 
-@media (prefers-reduced-motion:reduce){.av-live::before,.av-breath::before,.av-wait::before,.a-typing i,.spinner,.sk::after{animation:none;will-change:auto}}
 
 /* 滚动区里的直接子元素不被压缩，超出部分就是「还能往下滑」 */
 .page>*,.stream>*{flex-shrink:0}
