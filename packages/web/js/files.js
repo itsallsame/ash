@@ -29,17 +29,11 @@ const add = (parent, tag, text, cls) => {
   const el = document.createElement(tag); if (text !== undefined) el.textContent = text;
   if (cls) el.className = cls; parent.append(el); return el;
 };
-const base64 = (bytes) => {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 16_384) binary += String.fromCharCode(...bytes.subarray(offset, offset + 16_384));
-  return btoa(binary);
-};
 
 /** The file list and the links in the conversation share this one viewer and the same live reads from the bodies. */
 export class Files {
-  /** [save]: in the app, `({name, mime, b64}) -> {ok, cancelled}` through the system file picker; absent in a browser. */
-  constructor(net, { save = null } = {}) {
-    this.net = net; this.save = save; this.generation = 0;
+  constructor(net) {
+    this.net = net; this.generation = 0;
     this.root = add(document.body, "dialog", undefined, "files-view");
     this.root.setAttribute("aria-label", "文件");
     this.root.addEventListener("close", () => { this.generation++; this.release(); this.body?.replaceChildren(); });
@@ -110,15 +104,9 @@ export class Files {
       try {
         const file = await fetchFile();
         const name = ref.path.split("/").pop();
-        if (this.save) {
-          const result = await this.save({ name, mime: file.mime, b64: base64(file.data) });
-          if (!result.ok && !result.cancelled) throw new Error("保存失败");
-          if (generation === this.generation) this.note.textContent = result.cancelled ? "已取消保存" : "文件已保存";
-        } else {
-          const url = URL.createObjectURL(new Blob([file.data], { type: file.mime || "application/octet-stream" })), link = document.createElement("a");
-          link.href = url; link.download = name; link.click();
-          setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        }
+        const url = URL.createObjectURL(new Blob([file.data], { type: file.mime || "application/octet-stream" })), link = document.createElement("a");
+        link.href = url; link.download = name; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
       } catch (error) { if (generation === this.generation) this.note.textContent = error.message || "下载失败"; }
       finally { download.disabled = false; }
     };

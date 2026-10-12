@@ -29,7 +29,6 @@
 - 图标：`R.drawable.ash_ic_<名字>`（50 个，名字同 `design/app/icons/<名字>.svg`），用 `setTint` 着色。
 - 页面里不写 `Color.rgb(…)`、`0xFF…`、魔法数字；缺组件先加进 `AshUi`。
 - 整页的骨架：`ai.ash.ui.design.AshPage`（顶栏 `navbar`、大标题 `largeTitle`、滚动页 `scroll`、空状态 `empty`、底部抽屉 `Sheet`、应用图标块 `appIcon`、小号按钮的 44dp 点击区 `smallButton`）。原生页不要自己拼这些。
-- 网页 ↔ 原生：网页调 `__ashOpenNative("apps" | "checkup" | "checkup/<部位>")` 让原生打开应用网格 / 体检页；原生把体检摘要 `{todo, groups:[{id, todo}]}` 推给网页（`__ashCheckup()` 取最后一份，`ash:checkup` 事件）。`todo` 不含「位置和健康（可选）」那一格，`groups` 里含。分组表在 `ui/Checkup.kt`。
 - 单测：`AshTokensTest`（`android/app/src/test/java/ai/ash/ui/design/`）检查两套调色板、数值、字阶、动效、图标文件和 `ash_colors.xml` 都和 `tokens.json` 一致。`AshUi` 本身是 View 代码，JVM 单测测不到，要在真机/模拟器上看。
 
 ## App 图标
@@ -50,7 +49,6 @@
 - 代码：`packages/web/js/home*.js` + `packages/web/home.css`（`tools/gen-ui.mjs` 内联）。页面壳 `index.html` 不认识它们：它们在 `<body>` 上挂自己的层，监听 `ash:open`（`{page: "home" | "apps", agent?, section?, arg?}`，处理了就 `preventDefault()`）。`section` 取：`waiting upcoming memory promises hands backstage identity files activity`，以及主页再往下的 `settled device connect browser apps app keys model usage advanced`。
 - 数据：页面启动时通过 `connectHome(net, homeFeed)` 显式共享同一份连接与有限 current 状态（`home-feed.js`）；没有账本回放或连接猴补。主页的每一页拿到一个 `screen`：`screen.ask(to, word, body)` 以主人身份调一个词，页面或连接换掉后迟到的回答抛 `{code: "stale"}`，不会画到别处。
 - 把话放进对话框：`ctx.compose(text)` 发 `ash:compose`（`detail: {text, turn?}`，可取消）；没人处理就直接填 `#t`。
-- 原生入口：`globalThis.__ashOpenNative(page)`、`globalThis.__ashCheckup()` / `ash:checkup`（`page` 取 `apps`、`checkup`、`checkup/<部位>`；部位 id 见 `OnboardingPlan.PARTS`），没有原生时「这台手机」格不显示。
 - 删除类操作都是两次点击：第一次写后果，第二次执行（`twoTap`）。
 
 ## Stable conversation rendering

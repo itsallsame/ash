@@ -185,16 +185,6 @@
 .hm-switchrow{min-height:56px}
 
 /* hands */
-.hm-checkhead{display:flex;align-items:center;gap:10px;border:0;background:none;padding:0;text-align:left;color:inherit;width:100%;cursor:pointer;min-height:44px}
-.hm-checkicon{width:24px;height:24px;color:var(--ok);display:flex}
-.hm-checkicon.bad{color:var(--warn)}
-.hm-checkt{flex:1;display:flex;flex-direction:column}
-.hm-parts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.hm-part{padding:10px 12px;border-radius:14px;background:var(--surface-2);display:flex;flex-direction:column;gap:6px;border:0;text-align:left;color:inherit;cursor:pointer;min-height:44px}
-.hm-part.bad{background:var(--warn-soft)}
-.hm-part-name{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2)}
-.hm-part.bad .hm-part-name{color:var(--warn)}
-.hm-part-state{font-size:14px;font-weight:600}
 
 /* apps */
 .hm-appgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px 8px;padding:8px 0}

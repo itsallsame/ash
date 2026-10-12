@@ -13,11 +13,11 @@ const remembered = () => { try { const id = globalThis.localStorage?.getItem(PRI
 
 export class Net {
   /**
-   * [bridge] is the app's AshNative bridge (absent in a browser). [pendingStore], [connector] and [clock] are for tests.
+   * [pendingStore], [connector] and [clock] are for tests.
    * The callbacks: onMessage(safeFact), onHistory(displayPage), onCurrent(currentPage), onHistoryReady(), onState(status, detail),
    * onOpen(info) after every (re)connection, onQueue(count, outbox), onPresent(frame) -> {ok, data?, error?}.
    */
-  constructor({ bridge, label = "网页", pendingStore = null, url, connector, clock, random, onMessage = () => {}, onHistory = () => {},
+  constructor({ label = "网页", pendingStore = null, url, connector, clock, random, onMessage = () => {}, onHistory = () => {},
     onHistoryReady = () => {}, onCurrent = () => {}, historyTarget = () => ({}), onState = () => {}, onOpen = () => {}, onQueue = () => {}, onPresent = async () => ({ ok: false, error: { code: "unavailable", message: "not shown here" } }) } = {}) {
     this.onMessage = onMessage;
     this.onHistory = onHistory;
@@ -50,8 +50,7 @@ export class Net {
       state: (state, info) => this.portState(state, info),
       present: (frame) => this.present(frame),
       log: () => {},
-    }, { bridge, label, url, connector, clock, random });
-    this.embedded = this.port.native === true;
+    }, { label, url, connector, clock, random });
   }
 
   // ---- the connection ----
@@ -152,9 +151,9 @@ export class Net {
 
   // ---- presence ----
 
-  /** Whether this tab is in view. The app's native layer reports this itself, so there the page says nothing. */
+  /** Whether this tab is in view. */
   setVisible(visible) {
-    if (this.embedded || this.visible === visible) return;
+    if (this.visible === visible) return;
     this.visible = visible;
     this.port.presence({ visible });
   }

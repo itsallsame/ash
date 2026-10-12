@@ -1,9 +1,7 @@
 // The page's one connection to the kernel: the `human` channel of ash-link/1 (SPEC-03 §5).
 //
-// Two transports, one interface. In a browser the page opens the WebSocket itself with the browser client of
-// packages/link (the handshake, the heartbeat and the reconnecting are the client's). In the app the page has no
-// socket: the native layer owns the one connection and hands the page's frames across `AshNative` unchanged
-// (`{type:"frame", frame}` both ways, and `{type:"link", open, client?, local?}` when the channel opens or closes).
+// The page opens the WebSocket itself with the browser client of packages/link (the handshake, the heartbeat and the
+// reconnecting are the client's). (The phone app draws its own chat natively and does not run this page.)
 //
 // Everything above this file (net.js and the sheets) sees only a `Port`:
 //   start() / stop() / reconnect()
@@ -109,7 +107,6 @@ const wsUrl = () => {
 export class BrowserPort extends BasePort {
   constructor(hooks, { url, label = "网页", connector, clock, random } = {}) {
     super(hooks);
-    this.native = false;
     this.client = new HandClient({
       url: url ?? wsUrl, connector: connector ?? browserConnector, ...(clock ? { clock } : {}), ...(random ? { random } : {}),
       hand: { kind: "browser", name: label, version: "web", platform: globalThis.navigator?.platform || "web" },
@@ -160,134 +157,7 @@ export class BrowserPort extends BasePort {
   }
 }
 
-// --- the app ----------------------------------------------------------------------------------------------------------------
-
-/**
- * The page inside the app. [bridge] is what native-bootstrap.js sets up over `AshNative`:
- * `{post(frame), onFrame(fn), onLink(fn)}`.
- */
-export class NativePort extends BasePort {
-  constructor(hooks, bridge) {
-    super(hooks);
-    this.native = true;
-    this.bridge = bridge;
-    this.requests = new Map();
-    this.syncs = new Map();
-    this.incoming = new Map();
-    this.epoch = 0;
-    this.started = false;
-    this.early = null;
-    bridge.onFrame((frame) => this.receive(frame));
-    // A state told while the page is still being built (it came before the port was ready) waits for `start`: whoever reacts
-    // to the port going online may need the rest of the page.
-    bridge.onLink((message) => { if (this.started) this.linked(message); else this.early = message; });
-  }
-
-  start() {
-    this.started = true;
-    if (this.state !== "online") this.set("connecting");
-    if (this.early) { const message = this.early; this.early = null; this.linked(message); }
-    // The native layer pushes every change, but a page that came late (a slow phone) or missed the first one asks once.
-    this.bridge.requestLink?.();
-  }
-  stop() { this.drop(); this.lastLinkKey = null; this.set("offline"); }
-  reconnect() { this.bridge.requestLink?.(); /* the native layer keeps the connection and says when it changes */ }
-
-  linked(message) {
-    // The same state told twice (pushed and asked for) is one state.
-    const key = JSON.stringify([message.open === true, message.client ?? null, message.local === true]);
-    if (key === this.lastLinkKey) return;
-    this.lastLinkKey = key;
-    if (message.open === true && typeof message.client === "string") {
-      this.epoch++;
-      this.set("online", { client: message.client, local: message.local === true, session: `${message.client}#${this.epoch}` });
-    } else {
-      this.drop();
-      this.set("offline");
-    }
-  }
-
-  /** The channel closed: what was waiting for the kernel will not get an answer on this connection. */
-  drop() {
-    for (const waiter of this.requests.values()) waiter.resolve(failure("result_unknown", "连接断了，还不知道有没有送到"));
-    this.requests.clear();
-    for (const sync of this.syncs.values()) sync.listener.error?.(failure("offline", "连接断了").error);
-    this.syncs.clear();
-    this.incoming.clear();
-    this.streams.reset();
-  }
-
-  post(frame) { this.bridge.post(frame); }
-
-  send(request) {
-    if (this.state !== "online") return Promise.resolve(failure("offline", "还没连上"));
-    const id = newId("s_");
-    return new Promise((resolve) => {
-      this.requests.set(id, { resolve });
-      this.post({ t: "send", ch: "human", id, request });
-    });
-  }
-
-  sync(params, listener) {
-    if (this.state !== "online") return null;
-    const sid = newId("y_");
-    this.syncs.set(sid, { listener });
-    this.post({ t: "sync", ch: "human", sid, ...params });
-    return { sid, close: () => { if (this.syncs.delete(sid)) this.post({ t: "sync.close", sid }); } };
-  }
-
-  presence(state) {
-    if (this.state === "online") this.post({ t: "presence", ch: "human", ...state });
-  }
-
-  receive(frame) {
-    switch (frame.t) {
-      case "send.result": {
-        const waiter = this.requests.get(frame.id);
-        this.requests.delete(frame.id);
-        return waiter?.resolve(frame);
-      }
-      case "sync.page": return this.syncs.get(frame.sid)?.listener.page(frame);
-      case "sync.msg": return this.syncs.get(frame.sid)?.listener.message(frame);
-      case "present": return void this.present(frame);
-      case "stream": return this.stream_(frame);
-      case "error": {
-        // The native layer could not send the frame, or the kernel refused it; [id] names the send or the sync.
-        const waiter = this.requests.get(frame.id);
-        if (waiter) { this.requests.delete(frame.id); return waiter.resolve(failure(frame.code, frame.message)); }
-        const sync = this.syncs.get(frame.id);
-        if (sync) { this.syncs.delete(frame.id); sync.listener.error?.({ code: frame.code, message: frame.message }); }
-        return;
-      }
-      default:
-    }
-  }
-
-  async present(frame) {
-    let outcome;
-    try { outcome = await this.hooks.present(frame); }
-    catch (error) { outcome = failure("failed", text(error)); }
-    this.post(outcome.ok
-      ? { t: "present.result", id: frame.id, ok: true, ...(outcome.data !== undefined ? { data: outcome.data } : {}) }
-      : { t: "present.result", id: frame.id, ok: false, error: outcome.error });
-  }
-
-  stream_(frame) {
-    if (frame.op === "open") { this.incoming.set(frame.sid, { mime: frame.mime, chunks: [] }); return; }
-    const partial = this.incoming.get(frame.sid);
-    if (!partial) return;
-    if (frame.op === "data") { partial.chunks.push(Uint8Array.from(atob(frame.b64), (char) => char.charCodeAt(0))); return; }
-    this.incoming.delete(frame.sid);
-    if (frame.op === "error") { this.streams.broken(frame.sid, frame.code, frame.message); return; }
-    const size = partial.chunks.reduce((total, chunk) => total + chunk.length, 0);
-    const data = new Uint8Array(size);
-    let at = 0;
-    for (const chunk of partial.chunks) { data.set(chunk, at); at += chunk.length; }
-    this.streams.deliver({ sid: frame.sid, mime: partial.mime, data });
-  }
-}
-
-/** The port for this page: the native one when the app's bridge is there, else the browser's own. */
-export function openPort(hooks, { bridge, ...browser } = {}) {
-  return bridge ? new NativePort(hooks, bridge) : new BrowserPort(hooks, browser);
+/** The port for this page. */
+export function openPort(hooks, browser = {}) {
+  return new BrowserPort(hooks, browser);
 }

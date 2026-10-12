@@ -59,7 +59,7 @@ export function memoryPage(ctx, screen) {
 export function identityPage(ctx, screen) {
   const files = [{ path: "SOUL.md", label: "她的性格" }, { path: "IDENTITY.md", label: "名片" }];
   const header = h("div", { class: "hm-idcard" }, h("span", { class: "hm-idring", "aria-hidden": "true" }),
-    h("span", { class: "av av-56" }, h("img", { src: `${globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars"}/default.webp`, alt: "" })),
+    h("span", { class: "av av-56" }, h("img", { src: "/avatars/default.webp", alt: "" })),
     h("span", { class: "hm-id-t" }, h("span", { class: "hm-id-name" }, ctx.name), h("span", { class: "hm-id-sub" })));
   const view = (path, content, parent) => { parent.append(h("div", { class: "list hm-doc-card" }, (() => { const box = h("div", { class: "hm-doc-body" }); readable(box, content, { empty: "还没有写下什么。点「编辑」写几句。", skipTitle: true }); if (path === "SOUL.md" && content.trim()) box.append(h("span", { class: "hm-doc-sig" }, `— ${ctx.name}`)); return box; })())); };
   const page = twoFiles(ctx, screen, { title: "她是谁", files, store: (binding) => personaStore(ctx.net, binding), view,

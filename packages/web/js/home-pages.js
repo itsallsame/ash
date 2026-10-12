@@ -6,7 +6,7 @@ import { activityPage } from "./home-activity.js";
 import { upcomingPage } from "./home-upcoming.js";
 import { memoryPage, identityPage } from "./home-memory.js";
 import { promisesPage } from "./home-promises.js";
-import { handsPage, browserPage } from "./home-hands.js";
+import { handsPage } from "./home-hands.js";
 import { devicePage, connectPage } from "./home-devices.js";
 import { appsPage, appPage } from "./home-apps.js";
 import { backstagePage, keysPage, modelPage, usagePage, advancedPage } from "./home-backstage.js";
@@ -14,7 +14,7 @@ import { filesPage } from "./home-files.js";
 
 export const PAGES = {
   home: homePage, waiting: waitingPage, settled: settledPage, activity: activityPage, upcoming: upcomingPage, memory: memoryPage, promises: promisesPage,
-  hands: handsPage, device: devicePage, connect: connectPage, browser: browserPage, apps: appsPage, app: appPage, backstage: backstagePage,
+  hands: handsPage, device: devicePage, connect: connectPage, apps: appsPage, app: appPage, backstage: backstagePage,
   keys: keysPage, model: modelPage, usage: usagePage, advanced: advancedPage, identity: identityPage, files: filesPage,
 };
 // The names the kernel and the page used before the pages were moved.

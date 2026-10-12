@@ -1,5 +1,5 @@
 import { fill } from "./home-dom.js";
-// 应用 in a browser (the app has its own native grid): a grid of the apps in her container, and one app's page: what it needs,
+// 应用: a grid of the apps in her container, and one app's page: what it needs,
 // what it may use, and the switches. Every action is a service:apps word, the same an agent calls.
 import { appBroken, appState, appTrouble } from "./home-text.js";
 import { readApps } from "./home-data.js";

@@ -2,9 +2,8 @@
 import { icon } from "./ash-icons.js";
 import { graphemesOf } from "./graphemes.js";
 
-const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars";
-/** Where the face [name] (default, thinking, listening...) is served: the browser's own server, or the app's packaged assets. */
-export const avatarUrl = (name) => `${AVATAR_ROOT}/${name}.webp`;
+/** Where the face [name] (default, thinking, listening...) is served: the kernel's own server. */
+export const avatarUrl = (name) => `/avatars/${name}.webp`;
 
 /** Appends `<tag class>value</tag>` and returns it. */
 export function text(parent, tag, value, className = "") {

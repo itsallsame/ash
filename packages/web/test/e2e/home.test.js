@@ -40,7 +40,6 @@ test(...withBrowser("the home page shows her state, what waits for you, what is 
   assert.equal(await home.getByText(/AGENTS\.md|PULSE\.md|SOUL\.md/).count(), 0, "her own settings files are not documents she made");
   assert.equal(await home.getByText(/semantic|pulse|整理记忆/).count(), 0, "a plan the system made for itself is not listed");
   await home.getByText("DeepSeek", { exact: true }).waitFor();
-  assert.equal(await home.locator("#homeCellPhone").count(), 0, "outside the app there is no phone checkup");
   assert.doesNotMatch(await home.textContent(), /service:|agent:|body:|\bJEV\b|DSH/);
   const upcoming = await open(page, "upcoming");
   await upcoming.locator('.hm-plan[data-timer="c1"]').waitFor();

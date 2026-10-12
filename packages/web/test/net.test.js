@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { startKernel } from "./kernel.js";
-import { nativeBridgeFor, netFor, until } from "./support.js";
+import { netFor, until } from "./support.js";
 
 const ready = async (kernel, options) => {
   const handle = netFor(kernel, options);
@@ -149,56 +149,6 @@ test("a device the owner has not allowed to chat is told why, and does not retry
   await until(() => handle.net.status === "closed");
   assert.deepEqual(handle.events.states.at(-1), ["closed", "the owner has not allowed this device web access"]);
   kernel.close();
-});
-
-test("in the app the same page code runs over frames passed through AshNative", async () => {
-  const kernel = startKernel();
-  kernel.append(say(1));
-  const native = await nativeBridgeFor(kernel);
-  const { net, events } = netFor(kernel, { bridge: native.bridge, connector: undefined });
-  net.start();
-  await until(() => net.status === "online" && events.ready === 1);
-  assert.equal(net.embedded, true);
-  assert.deepEqual(events.histories.flatMap(page => page.items).map((m) => m.seq), [1]);
-  const clientId = await net.enqueueSay("from the app");
-  await until(() => kernel.requests.some((r) => r.client_id === clientId));
-  net.setVisible(true);
-  net.setTyping(true);
-  assert.deepEqual(native.sent.filter((f) => f.t === "presence").map(({ t, ch, ...rest }) => rest), [{ typing: true, agent: "agent:main" }], "the native layer reports visibility, not the page");
-  // a chat open comes to the page as a frame and is answered with present.result
-  const answered = await kernel.present("chat", "open", { target: "memory" });
-  assert.equal(answered.ok, true);
-  assert.deepEqual(events.presents, [{ target: "memory" }]);
-  // the channel closing ends the syncs; opening it again syncs after the cursor
-  native.close();
-  await until(() => net.status === "offline");
-  net.stop(); kernel.close();
-});
-
-test("in the app the channel opened before the page was built: the state told first still shows online", async () => {
-  const kernel = startKernel();
-  const native = await nativeBridgeFor(kernel);
-  await until(() => native.linked(), 2000, "the channel opened before any page listened");
-  const { net, events } = netFor(kernel, { bridge: native.bridge, connector: undefined });
-  net.start();
-  await until(() => net.status === "online" && events.ready === 1, 2000, "online though the state came first");
-  assert.equal(net.status, "online");
-  net.stop(); kernel.close();
-});
-
-test("an error frame for a send is the send's failure; a channel that closes mid-send is result_unknown", async () => {
-  const kernel = startKernel();
-  const native = await nativeBridgeFor(kernel);
-  const { net } = netFor(kernel, { bridge: native.bridge });
-  net.start();
-  await until(() => net.status === "online");
-  const result = net.port.send({ to: "agent:main", kind: "request", word: "say", body: { text: "x" } });
-  net.port.receive({ t: "error", id: [...net.port.requests.keys()][0], code: "offline", message: "not sent" });
-  assert.deepEqual(await result, { ok: false, error: { code: "offline", message: "not sent" } });
-  const pending = net.port.send({ to: "agent:main", kind: "request", word: "say", body: { text: "y" }, wait: true });
-  native.close();
-  assert.equal((await pending).error.code, "result_unknown");
-  net.stop(); kernel.close();
 });
 
 test("an option click keeps the card's identity in the same persisted say across an offline retry", async () => {
