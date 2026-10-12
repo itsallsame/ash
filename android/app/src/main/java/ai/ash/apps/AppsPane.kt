@@ -61,16 +61,6 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
         return false
     }
 
-    /** How her status app is now (see [AppLamp]): null until read, or when the kernel cannot be asked. */
-    private var lamp: String? = null
-
-    private fun readLamp() {
-        Thread({
-            val level = AppLamp.read(activity)
-            activity.runOnUiThread { if (!closed && !activity.isDestroyed && level != lamp) { lamp = level; render() } }
-        }, "apps-lamp").start()
-    }
-
     fun refresh() {
         if (loading || closed) return
         loading = true
@@ -80,7 +70,7 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
             activity.runOnUiThread {
                 loading = false
                 if (closed || activity.isDestroyed) return@runOnUiThread
-                result.onSuccess { apps = it; failure = null; if (detail != null && it.none { a -> a.id == detail }) detail = null; if (it.any { a -> a.id == AppLamp.APP && a.usable }) readLamp() }
+                result.onSuccess { apps = it; failure = null; if (detail != null && it.none { a -> a.id == detail }) detail = null }
                     .onFailure { failure = it.message ?: "连不上 Ash"; if (apps == null) detail = null }
                 render()
             }
@@ -179,8 +169,8 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
                 if (a.hasTrouble && !stopped) addView(AshPage.errorBadge(activity).apply {
                     (layoutParams as FrameLayout.LayoutParams).apply { gravity = Gravity.TOP or Gravity.END; marginEnd = d(6); topMargin = -d(5) }
                 })
-                // Her status: a dot of its lamp's colour, the badge's size, when she is not simply fine.
-                else if (a.id == AppLamp.APP && !stopped) when (lamp) { "warn" -> c.warnFill; "err" -> c.errFill; "paused" -> c.text3; else -> null }?.let { fill ->
+                // An app that keeps its own state (her status): a dot of its colour, the badge's size, when it is not simply fine.
+                else if (!stopped) when (a.badge) { "warn" -> c.warnFill; "err" -> c.errFill; "paused" -> c.text3; else -> null }?.let { fill ->
                     addView(AshPage.statusDot(activity, fill).apply { (layoutParams as FrameLayout.LayoutParams).apply { gravity = Gravity.TOP or Gravity.END; marginEnd = d(6); topMargin = -d(5) } })
                 }
             })
