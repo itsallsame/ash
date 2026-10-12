@@ -3,7 +3,7 @@
  * (shell commands) and the DSH driver (the agent process) both start things through it.
  */
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { HostProotIsolation } from "../../../../sdk/src/host";
 
@@ -56,6 +56,26 @@ export function runInProot(proot: ProotConfig, argv: string[], opts: ProotSpawnO
   const run = prootCommand(proot, argv, opts);
   mkdirSync(run.env.PROOT_TMP_DIR!, { recursive: true });
   return spawn(run.command, run.args, { env: run.env, detached: opts.detached ?? false, stdio: opts.stdio ?? ["ignore", "pipe", "pipe"] });
+}
+
+/**
+ * Ends what an earlier core left running in the container: every process whose program lives under the container's
+ * directory (proot itself, and what runs under it through its loader). Called once when a core opens the container,
+ * before it starts anything there, so each such process belongs to a core that is gone (one that handed over to the
+ * other host mode, or one that was killed). Returns how many were ended.
+ */
+export function reapContainer(proot: Pick<ProotConfig, "root">, self = process.pid): number {
+  const root = `${proot.root.replace(/\/+$/, "")}/`;
+  let ended = 0;
+  for (const name of readdirSync("/proc")) {
+    const pid = Number(name);
+    if (!Number.isSafeInteger(pid) || pid <= 1 || pid === self) continue;
+    let exe: string;
+    try { exe = readlinkSync(`/proc/${pid}/exe`); } catch { continue; } // gone, or not ours
+    if (!exe.startsWith(root)) continue;
+    try { process.kill(pid, "SIGKILL"); ended++; } catch { /* gone */ }
+  }
+  return ended;
 }
 
 /** The container's mounts that have a counterpart on the host side: `storage_binds` entries `host:guest` whose host side exists. */

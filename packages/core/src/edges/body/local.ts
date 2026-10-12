@@ -20,7 +20,7 @@ import type { Member, Risk, WordContract } from "../../../../sdk/src/word";
 import { Workspace, type Executor, type StreamPublisher } from "../../../../workspace/src";
 import type { AppJson } from "../../../../sdk/src/app";
 import { proxyEnv } from "../../../../sdk/src/proxy";
-import { PROOT_WORKDIR, prootCommand, prootMounts, runInProot, type ProotConfig, type ProotSpawnOptions } from "./proot";
+import { PROOT_WORKDIR, prootCommand, prootMounts, reapContainer, runInProot, type ProotConfig, type ProotSpawnOptions } from "./proot";
 import { startProvision, type ProvisionState } from "./provision";
 
 /** Where DSH and its patch file are inside the container; the agent runtime only says `dsh --patch <that file>`. */
@@ -79,6 +79,8 @@ export interface LocalBodyOptions {
   runProot?: (proot: ProotConfig, argv: string[], opts: ProotSpawnOptions) => ChildProcess;
   /** Runs a command instead of the default (proot, or the machine's own shell for native): for tests and unusual hosts. */
   exec?: Executor;
+  /** Where the body says what it did on its own (default: standard error). */
+  log?: (line: string) => void;
 }
 
 /** How the apps module starts an app's server and where the apps live (the shape of its `AppLauncher`). */
@@ -155,6 +157,12 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     });
   };
   const isolation = o.isolation;
+  // A core that handed over to the other host mode, or was killed, can leave its agents and apps running in the
+  // container: end them before this core starts its own.
+  if (isolation.kind === "proot") {
+    const ended = reapContainer(isolation.proot);
+    if (ended) (o.log ?? ((line: string) => console.error(line)))(`[body] ended ${ended} process(es) an earlier core left in the container`);
+  }
   return {
     id: MAIN_BODY_ID,
     kind: "body",
@@ -165,7 +173,8 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
         writeResolvConf(isolation.proot);
         const runtime = argv[0] === "dsh";
         return runProot(isolation.proot, runtime ? [PROOT_DSH, ...argv.slice(1)] : argv, {
-          ...(opts.cwd ? { workdir: opts.cwd } : {}), env: { ...proxyEnv(network), ...(runtime ? PROOT_DSH_ENV : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"],
+          // Its own process group: stopping it reaches what runs under proot too (proot does not pass a signal on).
+          ...(opts.cwd ? { workdir: opts.cwd } : {}), env: { ...proxyEnv(network), ...(runtime ? PROOT_DSH_ENV : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"], detached: true,
         }) as ChildProcessWithoutNullStreams;
       }
       if (isolation.kind === "native") {

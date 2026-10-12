@@ -7,7 +7,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 /** What the driver needs of a started process (a Node child process is one). */
-export type DriverProcess = Pick<ChildProcessWithoutNullStreams, "stdin" | "stdout" | "stderr" | "kill" | "on">;
+export type DriverProcess = Pick<ChildProcessWithoutNullStreams, "stdin" | "stdout" | "stderr" | "kill" | "on"> & { pid?: number };
 /** Start a command on the main body. Injected by the assembly (the body edge); the driver never starts a process itself. */
 export type SpawnFn = (argv: string[], opts: { env?: Record<string, string>; cwd?: string }) => DriverProcess;
 
@@ -60,13 +60,21 @@ export class AcpClient {
   }
   notify(method: string, params: unknown): void { if (!this.exited) this.write({ jsonrpc: "2.0", method, params }); }
 
-  /** End the process: close its input, ask it to stop, and kill it if it does not. */
+  /**
+   * End the process: close its input, ask it to stop, and kill it if it does not. A process started in its own group
+   * (the agent under proot) gets the signal as a group, so what runs under it ends too.
+   */
   close(): void {
     if (this.exited) return;
     try { this.child.stdin.end(); } catch { /* closed */ }
-    const timer = setTimeout(() => { try { this.child.kill("SIGKILL"); } catch { /* gone */ } }, 3000);
+    const signal = (name: NodeJS.Signals) => {
+      const pid = this.child.pid;
+      try { if (pid) { process.kill(-pid, name); return; } } catch { /* not a group of its own */ }
+      try { this.child.kill(name); } catch { /* gone */ }
+    };
+    const timer = setTimeout(() => signal("SIGKILL"), 3000);
     timer.unref();
-    try { this.child.kill("SIGTERM"); } catch { /* gone */ }
+    signal("SIGTERM");
   }
 
   private write(message: unknown): void {
