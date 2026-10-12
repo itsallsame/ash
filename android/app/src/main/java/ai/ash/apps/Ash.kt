@@ -221,9 +221,10 @@ class Ash(ctx: Context, private val app: String?, private val inProcess: Boolean
         }
     }
 
+    /** The app's icon: a picture the system decodes, or an SVG (the first-party apps' icons) drawn by [SvgIcon]. */
     fun icon(id: String): Bitmap? = runCatching {
         val bytes = Base64.decode(Replies.data(call("service:apps", "apps.icon", JSONObject().put("id", id)))?.optString("data") ?: return null, Base64.DEFAULT)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: SvgIcon.render(String(bytes, Charsets.UTF_8))
     }.getOrNull()
 
     fun surface(id: String, surface: String): Surface {

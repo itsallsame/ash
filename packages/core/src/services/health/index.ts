@@ -71,9 +71,6 @@ export interface HealthOptions {
   log?: (message: string) => void;
 }
 
-/** The first-party app whose page shows her state (packages/apps/vitals). */
-const STATUS_APP = "app:vitals";
-
 interface Open { msg: Counts; ledger: Counts; err: Counts; internal: Counts; link: Counts }
 interface Bucket extends Open, Sample { t: number; dt: number; idle: boolean }
 interface HealthEvent { at: number; type: "breach" | "start" | "ok"; id: string; value?: number; budget?: number; window_s?: number; idle?: boolean; top?: { key: string; n: number }[]; note?: string; since?: number; peak?: number; last_seen?: number }
@@ -165,9 +162,6 @@ export class HealthService implements Member {
       if (t.error) bump(this.open.err, `${t.to ?? t.from}/${t.word}:${t.error}`);
       return;
     }
-    // The status app's own reads (it asks the hub about herself every few seconds while its page is open) are not her working: counted, looking
-    // at her would make her report the spinning that the looking causes. Anyone else polling still shows (the test below).
-    if (t.from === STATUS_APP) return;
     bump(this.open.msg, t.kind === "event" ? `${t.from}/${t.word}:event` : `${t.to}/${t.word}:${t.from.slice(0, t.from.indexOf(":"))}`);
     if (t.from === OWNER_ID && ((t.kind === "event" && t.word === "typing") ||
       (t.kind === "request" && t.to && this.options.registry.find(t.to, t.word)?.contract.effect !== "read"))) this.lastActive = now;

@@ -46,7 +46,7 @@ export class Store {
 
 export class Vitals {
   /** ash: { call(member, word, body) → result }; store: Store. */
-  constructor({ ash, store, now = Date.now }) { this.ash = ash; this.store = store; this.now = now; this.cache = new Map(); this.zone = undefined; }
+  constructor({ ash, store, now = Date.now }) { this.ash = ash; this.store = store; this.now = now; this.cache = new Map(); this.zone = undefined; this.lastValue = new Map(); }
 
   /** A read of the hub, remembered for `ttl` ms (the page asks often; the hub is not made to answer as often). Null when the hub could not answer. */
   async read(member, word, body, ttl) {
@@ -93,10 +93,12 @@ export class Vitals {
       hands_online: admin?.hands_online ?? 0, busy: health ? health.idle === false : false, busy_what: null, // what she is busy with has no source in the hub yet; the pages say "busy" without it
       uptime_s: health?.uptime_s ?? 0,
       vitals: health ? { cpu_pct: health.proc.cpu_pct, rss_mb: health.proc.rss_mb, lag_p99_ms: health.proc.lag_p99_ms, idle: health.idle } : null,
-      rules: invariants.map((item) => ({
-        id: item.id, value: item.value, budget: item.budget,
-        state: !item.ok ? "err" : item.value !== null ? "ok" : IDLE_ONLY.has(item.id) && health.idle === false ? "busy" : "wait",
-      })),
+      rules: invariants.map((item) => {
+        const state = !item.ok ? "err" : item.value !== null ? "ok" : IDLE_ONLY.has(item.id) && health.idle === false ? "busy" : "wait";
+        if (item.value !== null) this.lastValue.set(item.id, item.value);
+        // The hub measures the idle-only checks only while she is idle; while she is busy the last reading is shown (the line says it does not count now).
+        return { id: item.id, value: state === "busy" ? this.lastValue.get(item.id) ?? null : item.value, budget: item.budget, state };
+      }),
       alerts,
       checkup: known ? { known: true, todo: checkup.todo, groups: checkup.groups ?? [], at: checkup.at } : { known: false, todo: 0, groups: [], at: 0 },
     };

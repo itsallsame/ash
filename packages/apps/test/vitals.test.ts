@@ -30,7 +30,7 @@ const budgets: Record<string, number> = { "idle.msg_rate": 30, "idle.msg_key_rat
 
 interface World {
   down?: boolean; paused?: boolean; idle?: boolean; uptime_s?: number; broken?: Record<string, { value: number; since: number }>; events?: any[]; minutes?: any[];
-  checkup?: any; devices?: any[]; turns?: number; usage?: any; calls?: [string, string, any][];
+  checkup?: any; devices?: any[]; turns?: number; usage?: any; calls?: [string, string, any][]; unmeasured?: boolean;
 }
 const minutesRows = (n: number, o: Partial<Record<string, number>> = {}) => Array.from({ length: n }, (_, i) => ({ at: NOW - (i + 1) * MIN, idle: true, msg: 8, ledger: 0, err: 0, link_opens: 0, cpu_pct: 2, rss_mb: 186, lag_p99_ms: 3, top: [], ...o }));
 function fakeAsh(w: World) {
@@ -42,7 +42,7 @@ function fakeAsh(w: World) {
         case "service:health/status":
           if (w.down) throw new Error("offline");
           return data({ now: NOW, uptime_s: w.uptime_s ?? 86_400, idle: w.idle ?? true, window_s: 60, rates: {}, top: [], proc: { cpu_pct: 2.4, rss_mb: 186.2, heap_mb: 40, lag_p99_ms: 3 },
-            invariants: INVARIANTS.map((id) => ({ id, ok: !w.broken?.[id], value: w.broken?.[id]?.value ?? 1, budget: budgets[id], ...(w.broken?.[id] ? { since: w.broken[id].since } : {}) })), last_events: [] });
+            invariants: INVARIANTS.map((id) => ({ id, ok: !w.broken?.[id], value: w.unmeasured && !w.broken?.[id] && id.startsWith("idle.") ? null : w.broken?.[id]?.value ?? 1, budget: budgets[id], ...(w.broken?.[id] ? { since: w.broken[id].since } : {}) })), last_events: [] });
         case "service:health/recent": return data(body.kind === "minute" ? { minutes: w.minutes ?? minutesRows(120) } : { events: w.events ?? [] });
         case "service:admin/status": return data({ now: NOW, paused: Boolean(w.paused), time_zone: "UTC", hands_online: 2 });
         case "service:admin/checkup": return data(w.checkup ?? { known: false });
@@ -273,4 +273,18 @@ test("every budget the hub keeps has its words in the copy table, its place in t
     assert.ok(copy.rules.some((rule: { ids: string[] }) => rule.ids.includes(id)), `${id} is in no rule group`);
     assert.ok(copy.priority.includes(id), `${id} is not in the priority`);
   }
+});
+
+test("while she is busy the idle-only checks show their last reading, marked busy; before any reading there is nothing to show", async () => {
+  const w: World = {};
+  const v = await make(w);
+  await v.status();                                  // idle: every check read
+  w.idle = false; w.unmeasured = true;
+  v.cache.clear();
+  const busy = await v.status();
+  const row = (id: string) => busy.rules.find((r: any) => r.id === id);
+  assert.deepEqual([row("idle.msg_rate").state, row("idle.msg_rate").value], ["busy", 1]);
+  assert.deepEqual([row("loop.lag").state, row("loop.lag").value], ["ok", 1], "the checks that are always measured are as they are");
+  const first = await (await make({ idle: false, unmeasured: true })).status();
+  assert.deepEqual([first.rules.find((r: any) => r.id === "idle.cpu").state, first.rules.find((r: any) => r.id === "idle.cpu").value], ["busy", null]);
 });
