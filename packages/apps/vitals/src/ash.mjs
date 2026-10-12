@@ -20,7 +20,7 @@ export function ashClient(url, token) {
       // owner_text is Ash's sentence for the owner; recent is what Ash already recorded when the phone could not answer.
       if (!out.ok) throw Object.assign(new Error(`${out.error?.code ?? "failed"}: ${out.error?.message ?? ""}`),
         { code: out.error?.code, ownerText: out.error?.owner_text, recent: out.error?.recent });
-      return out.result;
+      return out;
     } catch (error) {
       if (!error.code) {
         try { await client?.close(); } catch { /* gone */ }
@@ -31,9 +31,10 @@ export function ashClient(url, token) {
     }
   };
   return {
-    call: (member, word, body) => tool("capability_call", { member, word, body }),
+    /** A word's result as the hub's words answer: { data } (what the bridge calls `result`) and { content } when it came with parts. */
+    call: async (member, word, body) => { const out = await tool("capability_call", { member, word, body }); return { data: out.result, ...(out.content ? { content: out.content } : {}) }; },
     /** The members this app may use and the words it may call on each (capability_list). */
-    members: async () => (await tool("capability_list", {}))?.members ?? [],
-    event: (name, body) => tool("ash_event", { name, body }),
+    members: async () => (await tool("capability_list", {}))?.result?.members ?? [],
+    event: async (name, body) => (await tool("ash_event", { name, body })).result,
   };
 }

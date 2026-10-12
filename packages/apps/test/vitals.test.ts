@@ -2,12 +2,17 @@
 // and the bundled server over stdio.
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { checkManifest } from "../../core/src/edges/apps/check";
 import { validateCard } from "../../core/src/services/widgets/card";
 import { bundleApp } from "../bundle.mjs";
@@ -219,4 +224,42 @@ test("the chart geometry the page draws is the one in chart/vectors.json (the ph
     near(JSON.parse(JSON.stringify(layout(v.chart, v.w, v.h))), v.expect, v.name);
     assert.match(chartSvg(v.chart, v.w, v.h), /^<svg /, v.name);
   }
+});
+
+test("through the real Ash client and the hub's bridge shape (a word's data comes back as `result`, not wrapped), the status reads", async () => {
+  const { ashClient } = await load("ash.mjs");
+  const { Vitals, Store } = await load("logic.mjs");
+  // what the app bridge answers (edges/apps/bridge.ts): { ok: true, result: <the word's data> }
+  const answers: Record<string, unknown> = {
+    "service:health/status": { now: NOW, uptime_s: 3600, idle: true, window_s: 60, proc: { cpu_pct: 2, rss_mb: 186, heap_mb: 90, lag_p99_ms: 12 },
+      invariants: INVARIANTS.map((id) => ({ id, ok: true, value: 1, budget: budgets[id] })) },
+    "service:health/recent": { events: [] },
+    "service:admin/status": { hands_online: 2, paused: false },
+    "service:admin/checkup": { known: false },
+  };
+  const http = createServer(async (request, response) => {
+    let raw = ""; for await (const chunk of request) raw += chunk;
+    const server = new Server({ name: "ash", version: "1.0.0" }, { capabilities: { tools: {} } });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
+    server.setRequestHandler(CallToolRequestSchema, async (call) => {
+      const a = (call.params.arguments ?? {}) as { member?: string; word?: string };
+      const result = { ok: true, result: answers[`${a.member}/${a.word}`] ?? {} };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+    });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    response.on("close", () => { void transport.close(); void server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(request, response, raw ? JSON.parse(raw) : undefined);
+  });
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "ash-vitals-"));
+    const vitals = new Vitals({ ash: ashClient(`http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, "t"), store: new Store(join(dir, "data.json")), now: () => NOW });
+    const status = await vitals.status();
+    assert.equal(status.stale, false, "a word that answered is not 'the brain is down'");
+    assert.equal(status.lamp, "ok");
+    assert.deepEqual(status.vitals, { cpu_pct: 2, rss_mb: 186, lag_p99_ms: 12, idle: true });
+    assert.equal(status.hands_online, 2);
+    assert.equal(status.rules.length, 8);
+  } finally { http.close(); http.closeAllConnections(); }
 });

@@ -2954,7 +2954,7 @@
      }
     ]
    },
-   "result": "component \"root\" has unknown type \"Foo\"; widgets draw Text, Image, Icon, Row, Column, List, Card, Tabs, Divider, Button, CheckBox, ChoicePicker, Switch, Stack, Grid, Spacer, ProgressBar, Badge, Clock, Timer"
+   "result": "component \"root\" has unknown type \"Foo\"; widgets draw Text, Image, Icon, Row, Column, List, Card, Tabs, Divider, Button, CheckBox, ChoicePicker, Switch, Stack, Grid, Spacer, ProgressBar, Badge, Clock, Timer, Chart"
   },
   {
    "name": "plain http images are not fetched",

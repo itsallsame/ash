@@ -79,8 +79,8 @@ export function start({ surface, avatar, root = document.getElementById("app"), 
 
   /** 灯和告警：读不到就留着上一次的；一次都没读到过就说读不到。 */
   async function load() {
-    try { state.status = await call(TOOLS.status, {}); state.failed = false; }
-    catch { state.failed = true; }
+    try { state.status = await call(TOOLS.status, {}); state.failed = false; delete document.documentElement.dataset.error; }
+    catch (error) { state.failed = true; document.documentElement.dataset.error = String(error && error.message || error).slice(0, 200); }   // 给调试看的，界面上不显示
     if (!state.day) await loadDay(false);
     paint();
   }
