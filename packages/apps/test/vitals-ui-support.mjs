@@ -11,10 +11,10 @@ const MIN = 60_000, HOUR = 3_600_000;
 export const NOW = new Date(2026, 9, 12, 14, 8, 0).getTime();
 const at = (h, m) => new Date(2026, 9, 12, h, m, 0).getTime();
 
-const IDS = ["idle.msg_rate", "idle.msg_key_rate", "idle.cpu", "idle.ledger_growth", "link.reconnect_storm", "errors.rate", "errors.internal", "loop.lag"];
-const BUDGET = { "idle.msg_rate": 30, "idle.msg_key_rate": 6, "idle.cpu": 5, "idle.ledger_growth": 10, "link.reconnect_storm": 5, "errors.rate": 20, "errors.internal": 5, "loop.lag": 200 };
-const READ = { "idle.msg_rate": 2, "idle.msg_key_rate": 1, "idle.cpu": 1, "idle.ledger_growth": 0, "link.reconnect_storm": 0, "errors.rate": 0, "errors.internal": 0, "loop.lag": 12 };
-/** 八条底线，服务端判好的 state；over 里写哪几条是什么 state / 值。 */
+const IDS = ["idle.msg_rate", "idle.msg_key_rate", "idle.cpu", "idle.ledger_growth", "link.reconnect_storm", "errors.rate", "errors.internal", "hand.part_flap", "loop.lag"];
+const BUDGET = { "idle.msg_rate": 30, "idle.msg_key_rate": 6, "idle.cpu": 5, "idle.ledger_growth": 10, "link.reconnect_storm": 5, "errors.rate": 20, "errors.internal": 5, "hand.part_flap": 6, "loop.lag": 200 };
+const READ = { "idle.msg_rate": 2, "idle.msg_key_rate": 1, "idle.cpu": 1, "idle.ledger_growth": 0, "link.reconnect_storm": 0, "errors.rate": 0, "errors.internal": 0, "hand.part_flap": 0, "loop.lag": 12 };
+/** 九条检查，服务端判好的 state；over 里写哪几条是什么 state / 值。 */
 const rules = (over = {}) => IDS.map((id) => ({ id, state: "ok", value: READ[id], budget: BUDGET[id], ...(over[id] ?? {}) }));
 const alert = (id, state, since, value, minutes, extra = {}) => ({ id, state, since, ended: state === "live" ? null : since + minutes * MIN, minutes, value, budget: BUDGET[id], device: null, ...extra });
 const groups = (todo = {}) => ["brain", "alarm", "notify", "awake", "eyes", "files", "location"].map((id) => ({ id, title: { brain: "大脑", alarm: "闹钟", notify: "叫你", awake: "在后台醒着", eyes: "眼睛和手", files: "照片和文件", location: "位置和健康" }[id], todo: todo[id] ?? 0, optional: id === "location", text: todo[id] ? "要处理" : "正常" }));

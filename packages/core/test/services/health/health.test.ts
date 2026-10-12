@@ -97,6 +97,16 @@ test("a reader that polls the health every second shows: the meter counts its ow
   assert.ok((await s.events()).some((e) => e.id === "idle.msg_key_rate" && e.top[0].key === "service:health/status:person"));
 });
 
+test("the status app's own reads are not counted: the page being open does not make her report spinning; the same reads from anyone else are", async () => {
+  const s = setup();
+  s.run(60);
+  s.run(60, () => { for (let i = 0; i < 20; i++) { s.service.tap({ phase: "in", kind: "request", from: "app:vitals", to: "service:health", word: "status", via: "app" }); } });
+  assert.ok(!(await s.events()).some((e) => e.id === "idle.msg_rate" || e.id === "idle.msg_key_rate"));
+  assert.equal((await s.status()).rates.msg_per_min, 0);
+  s.run(60, () => { for (let i = 0; i < 20; i++) s.feed("service:health", "status"); });
+  assert.ok((await s.events()).some((e) => e.id === "idle.msg_rate"));
+});
+
 test("a plain read that the ledger does not take is seen all the same", async () => {
   const s = setup();
   s.run(60);

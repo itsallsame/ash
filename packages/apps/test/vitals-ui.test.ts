@@ -95,11 +95,11 @@ test("the gauge: the value and the normal limit as parts of one scale, both insi
   assert.deepEqual(model.gauge(0, 5), { v: 0, lim: 5 / 6 }, "nothing reads as an empty bar with the limit still shown");
 });
 
-test("the rules: six lines over the eight checks; the one over says so, then the ones still being watched, then the ones busy", () => {
+test("the rules: one line per group of the table over the nine checks; the one over says so, then the ones still being watched, then the ones busy", () => {
   const rows = view("ok").rules;
-  assert.deepEqual(rows.map((r: any) => r.tone), Array(6).fill("ok"));
+  assert.deepEqual(rows.map((r: any) => r.tone), Array(COPY.rules.length).fill("ok"));
   assert.equal(rows[0].line, "每分钟 2 条消息，30 条以内");
-  assert.deepEqual(view("err").rules.map((r: any) => r.tag), ["越界", "正常", "越界", "正常", "正常", "正常"]);
+  assert.deepEqual(view("err").rules.map((r: any) => r.tag), ["越界", "正常", "越界", "正常", "正常", "正常", "正常"]);
   assert.equal(view("err").rules[0].line, "每分钟 44 条消息，30 条以内");
   assert.deepEqual(view("todo").rules.slice(0, 3).map((r: any) => [r.tag, r.tone]), Array(3).fill(["在忙，不算", "mute"]));
   assert.equal(view("todo").rules[3].tone, "err");

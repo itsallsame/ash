@@ -18,7 +18,7 @@ const sentWords = (hub: Awaited<ReturnType<typeof startHub>>) => hub.router.sent
 
 test("a declared event goes to the fixed service of its namespace, as the hand, from a phone or a computer alike", async (t) => {
   const hub = await startHub(); t.after(() => hub.stop());
-  const events = ["sense.location", "widget.placed", "config.changed"];
+  const events = ["sense.location", "widget.placed", "config.changed", "checkup.changed"];
   const phone = await connected(hub, { kind: "phone", events });
   const computer = await connected(hub, { kind: "computer", events });
 
@@ -26,14 +26,15 @@ test("a declared event goes to the fixed service of its namespace, as the hand, 
     await hand.client.emit("sense.location", { n: 1 });
     await hand.client.emit("widget.placed", { widgets: [] });
     await hand.client.emit("config.changed", { item: "location", state: "granted" });
+    await hand.client.emit("checkup.changed", { todo: 0, groups: [] });
   }
-  await eventually(() => hub.router.sent.length === 6, "six events routed");
+  await eventually(() => hub.router.sent.length === 8, "eight events routed");
 
-  assert.deepEqual(sentWords(hub).slice(0, 3), [["service:senses", "sense.location"], ["service:widgets", "widget.placed"], ["service:devices", "config.changed"]]);
+  assert.deepEqual(sentWords(hub).slice(0, 4), [["service:senses", "sense.location"], ["service:widgets", "widget.placed"], ["service:devices", "config.changed"], ["service:admin", "checkup.changed"]]);
   for (const sent of hub.router.sent) assert.equal(sent.msg.kind, "event");
   assert.deepEqual(hub.router.sent[0]!.msg.body, { n: 1 });
-  assert.deepEqual(hub.router.sent.slice(0, 3).map((s) => s.caller), Array(3).fill({ member: phone.member, via: "hand", local: true }));
-  assert.deepEqual(hub.router.sent.slice(3).map((s) => s.caller.member), Array(3).fill(computer.member));
+  assert.deepEqual(hub.router.sent.slice(0, 4).map((s) => s.caller), Array(4).fill({ member: phone.member, via: "hand", local: true }));
+  assert.deepEqual(hub.router.sent.slice(4).map((s) => s.caller.member), Array(4).fill(computer.member));
 });
 
 test("an event the manifest did not declare is refused with an error frame and never sent on", async (t) => {

@@ -265,6 +265,7 @@ test("through the real Ash client and the hub's bridge shape (a word's data come
     assert.equal(status.hands_online, 2);
     assert.equal(status.rules.length, 8);
   } finally { http.close(); http.closeAllConnections(); }
+});
 
 test("every budget the hub keeps has its words in the copy table, its place in the rules and in the priority", () => {
   for (const { id } of HUB_INVARIANTS) {
