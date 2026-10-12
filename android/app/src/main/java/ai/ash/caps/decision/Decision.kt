@@ -47,7 +47,7 @@ object Decision {
     }
 
     /** Capabilities that change what is on the owner's screen without being `screen.*`. */
-    private val SCREEN_CHANGERS = setOf("apps.open_url", "settings.open", "x.android.browser.show")
+    private val SCREEN_CHANGERS = setOf("apps.open_direct", "apps.open_url", "settings.open", "x.android.browser.show")
 
 
     fun returnToAsh(ctx: Context, turn: String, b: JSONObject): JSONObject {

@@ -399,7 +399,7 @@ The decision is discarded if, after collection and before effect:
 
 - a newer conversational turn started;
 - the foreground package or state epoch changed;
-- user interaction changed the combined monotonic `state_epoch`;
+- user interaction changed the combined monotonic `state_epoch`, or the kernel host opened an app or pressed a key on the real screen (the phone app cannot see those; the hub counts them next to the epoch);
 - the virtual screen no longer exists or is no longer owned by the turn;
 - Ash is shutting down or paused in a way which invalidates the action.
 

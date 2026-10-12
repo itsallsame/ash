@@ -193,7 +193,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     ledger, router, registry, version: hubVersion(), now, startedAt,
     readLogs: ({ lines }) => tailFile(join(spec.dirs.logs, "core.log"), lines),
   });
-  const health = late.health = createHealthService({ ledger, router, registry, now, log: (message) => log(`health: ${message}`), ...(opts.healthTickMs ? { tickMs: opts.healthTickMs } : {}) });
+  const health = late.health = createHealthService({ ledger, router, registry, now, log: (message) => log(`health: ${message}`), viewing: () => late.human?.viewing() ?? false, ...(opts.healthTickMs ? { tickMs: opts.healthTickMs } : {}) });
   const widgets = createWidgetsService({ ledger, router, now });
   const directory = createDirectoryService({ registry, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords, appGranted: (app, member, word) => late.apps!.runtime.granted(app, member, word) });
   const vaultService = createVaultService({ vault, ledger, router });
@@ -273,7 +273,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     router, ledger, settings: () => admin.settings(), primary: () => agents.primary(), now, log,
     summarize: createSummarizer({ llm }),
   });
-  const hostService = createHostService({ client: host, router, virtual, onStop: (deadline) => stop(deadline), onNetwork: (network) => body.setNetwork(network), log });
+  const hostService = createHostService({ client: host, router, registry, virtual, onStop: (deadline) => stop(deadline), onNetwork: (network) => body.setNetwork(network), log });
   link.onChannel("human", human.attach);
   link.mount("/mcp", tools.handler);
   link.mount("/", staticWeb(), { relay: true });

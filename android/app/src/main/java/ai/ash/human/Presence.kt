@@ -8,7 +8,10 @@ import org.json.JSONObject
  * away, and once after every (re)connect, since the kernel knows nothing of a new connection. What the owner is typing, and to
  * which agent, is sent by the chat page itself as `presence {typing, agent}`, through [ChatBridge].
  */
-class Presence(private val client: LinkClient, private val visible: () -> Boolean) {
-    /** Says whether the chat page is in front now (call it when that changes, and when the human channel opens). */
-    fun tell() { client.presence(JSONObject().put("visible", visible())) }
+class Presence(private val client: LinkClient, private val visible: () -> Boolean, private val watching: () -> Boolean = { false }) {
+    /**
+     * Says whether the chat page is in front now, and whether a live view (the virtual screen's preview) is being watched, which
+     * counts as using Ash even with the chat page away. Call it when either changes, and when the human channel opens.
+     */
+    fun tell() { client.presence(JSONObject().put("visible", visible()).put("watching", watching())) }
 }

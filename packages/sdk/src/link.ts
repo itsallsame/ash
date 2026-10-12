@@ -207,8 +207,8 @@ const syncMsg = obj({ t: lit("sync.msg"), sid: id, message: record() });
 const syncClose = obj({ t: lit("sync.close"), sid: id });
 const presence = obj(
   { t: lit("presence"), ch: lit("human") },
-  { visible: boolean(), typing: boolean(), agent: string({ minLength: 1 }) },
-  { anyOf: [{ required: ["visible"] }, { required: ["typing"] }, { required: ["agent"] }] },
+  { visible: boolean(), watching: boolean(), typing: boolean(), agent: string({ minLength: 1 }) },
+  { anyOf: [{ required: ["visible"] }, { required: ["watching"] }, { required: ["typing"] }, { required: ["agent"] }] },
 );
 const presentOf = <S extends string, O extends string, B>(surface: S, op: O, body: Schema<B>) =>
   obj({ t: lit("present"), ch: lit("human"), id, surface: lit(surface), op: lit(op), body });
@@ -218,6 +218,7 @@ const present = union(
   presentOf("notification", "alert", obj({ id: string({ minLength: 1 }) })),
   presentOf("island", "query", obj({})),
   presentOf("status", "frame", record()),
+  presentOf("status", "vscreen", obj({ open: boolean() })),
   presentOf("widget", "state", record()),
   presentOf("widget", "preview", obj({ card: anything(), size: anything() })),
   presentOf("chat", "focus", obj({})),

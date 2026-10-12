@@ -73,7 +73,7 @@ class HumanChannelTest {
         )
         client = link.client
         bridge = ChatBridge(ChatBridge.LinkUplink { client!! }, object : ChatBridge.ChatUi { override fun bringToFront() = focused })
-        presence = Presence(client) { visible }
+        presence = Presence(client, { visible })
         return link.connect(human = human)
     }
 
@@ -386,7 +386,7 @@ class HumanChannelTest {
         visible = true
         val conn = start()
         val first = conn.awaitFrame("presence")
-        assertEquals("human", first.getString("ch")); assertTrue(first.getBoolean("visible"))
+        assertEquals("human", first.getString("ch")); assertTrue(first.getBoolean("visible")) ; assertFalse(first.getBoolean("watching"))
         visible = false
         presence.tell()
         awaitTrue("a second presence") { conn.framesOf("presence").size == 2 }

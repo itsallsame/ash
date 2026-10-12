@@ -209,6 +209,7 @@ class ConsoleActivity : Activity() {
 
         blocks += AshUi.group(this, "其他", rows = listOf(
             AshUi.row(this, "再走一遍引导", "一项一项看哪些还没开", AshPage.icon(this, R.drawable.ash_ic_list), trailing = chevron()) { startActivity(Intent(this, OnboardingActivity::class.java)) },
+            AshUi.row(this, "显示虚拟屏预览", "Ash 在后台操作应用时，小窗里看她的屏幕", AshPage.icon(this, R.drawable.ash_ic_eye), trailing = chevron()) { showPreview() },
             switchRow("灵动岛常驻入口", residentLine(), TaskCapsule.residentKept(this), true) { TaskCapsule.setResidentKept(this, it); render() },
             switchRow("读取通知（可选）", notificationLine(), NotificationSenseSettings.enabled(this), true) { setNotificationSense(it) },
             AshUi.row(this, "系统的通知读取权限", null, AshPage.icon(this, R.drawable.ash_ic_bell), trailing = chevron()) { openNotificationAccess() },
@@ -364,6 +365,15 @@ class ConsoleActivity : Activity() {
         }
     }
 
+
+    private fun showPreview() = VScreenPreview.show(this) { shown ->
+        val msg = when (shown) {
+            VScreenPreview.Shown.OK -> "已显示虚拟屏预览"
+            VScreenPreview.Shown.NO_SCREEN -> "现在没有虚拟屏（Ash 用到时会自动显示预览）"
+            VScreenPreview.Shown.NO_PERMISSION -> "先在「眼睛和手」里开悬浮窗"
+        }
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
 
     companion object {
         /** Open straight onto one part ([OnboardingPlan.Part.id]). */

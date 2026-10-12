@@ -14,7 +14,7 @@ import type { ContentPart } from "../../../../sdk/src/link";
 import { namespaceOf, standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
-import type { Router } from "../../kernel/types";
+import type { Registry, Router } from "../../kernel/types";
 import type { HostEventReader, HostPipe } from "./pipe";
 import { HostCallError, type HostClient, type HostOptional } from "./client";
 import type { VirtualScreen } from "./virtual";
@@ -24,12 +24,16 @@ const SELF: Caller = { member: HOST_ID, via: "service", local: true };
 
 /** The phone namespaces the host serves and the host capability that gates each: a word is listed only when the host has it. */
 const PHONE_CAPABILITY: Readonly<Record<string, HostCapability>> = { vscreen: "vscreen", input: "input", apps: "apps" };
+/** What the hand app itself does for `apps.open` when the host cannot (not paired): the agent sees one `apps.open`, here. */
+const HAND_OPEN = "apps.open_direct";
 /** The phone capability a word needs, or undefined for a word that is not a phone action. */
 const phoneCapabilityOf = (word: string): HostCapability | undefined => PHONE_CAPABILITY[namespaceOf(word) ?? ""];
 
 export interface HostServiceDeps {
   client: Pick<HostClient, "wakeAt" | "wakeClear" | "powerHold" | "powerRelease" | "handsHandoff" | "updateInstall" | "lifecycleRestart" | "phone" | "has">;
   router: Pick<Router, "send">;
+  /** Finds the phone's hand, for the apps.open the host cannot do. */
+  registry: Pick<Registry, "findByWord">;
   /** The virtual screen's bookkeeping: every vscreen.* call goes through it. */
   virtual: VirtualScreen;
   /** The host asked the kernel to stop before `deadline` (Unix ms). */
@@ -60,9 +64,11 @@ export function createHostService(deps: HostServiceDeps): HostService {
 
   const member: Member = {
     id: HOST_ID, kind: "service", name: "host",
-    words: () => [...wordsOf(HOST_ID), ...phoneWords.filter((c) => client.has(phoneCapabilityOf(c.word)!))],
+    // apps.open is always listed: with the host's `apps` it goes through the host, without it through the hand app (viaHand).
+    words: () => [...wordsOf(HOST_ID), ...phoneWords.filter((c) => c.word === "apps.open" || client.has(phoneCapabilityOf(c.word)!))],
     async handle(msg: Message, ctx: HandleContext): Promise<WordResult> {
       const b = (msg.body ?? {}) as Record<string, any>;
+      if (msg.word === "apps.open" && !client.has("apps")) return viaHand(b, ctx);
       if (phoneCapabilityOf(msg.word)) return phone(msg.word as HostMethod, b, ctx?.caller?.turn);
       switch (msg.word) {
         case "wake.at": return done(await client.wakeAt(b.at));
@@ -88,6 +94,7 @@ export function createHostService(deps: HostServiceDeps): HostService {
       throw error;
     }
     if (!r.supported) throw new WordError("unavailable", "the phone cannot do this now: pair the phone's debug identity (「后台也能动手」)");
+    if (word === "apps.open" || word === "input.key") deps.virtual.noteScreenChanged();
     const res = r.result as Record<string, any>;
     if (word === "vscreen.see") {
       const { screenW: sw, screenH: sh, imageW: iw, imageH: ih, displayId, jpeg } = res;
@@ -104,10 +111,24 @@ export function createHostService(deps: HostServiceDeps): HostService {
     return out;
   }
 
+  /** `apps.open` without the host's `apps`: the hand app opens it itself (it is in front, or accessibility / overlay lets it), and says what to turn on when the system blocks it. */
+  async function viaHand(body: Record<string, any>, ctx: HandleContext): Promise<WordResult> {
+    const hand = deps.registry.findByWord(HAND_OPEN, { kind: "device" })[0]?.id;
+    if (!hand) throw new WordError("unavailable", "the phone's app is not connected, and the host cannot open apps without the debug identity pairing");
+    const turn = ctx?.caller?.turn;
+    const reply = await router.send({ to: hand, kind: "request", word: HAND_OPEN, body }, turn ? { ...SELF, turn } : SELF, ctx?.signal ? { signal: ctx.signal } : undefined);
+    if (!reply.ok) throw new WordError(reply.error.code, reply.error.message, reply.error.recovery_hint ? { recovery_hint: reply.error.recovery_hint } : {});
+    deps.virtual.noteScreenChanged();
+    return reply.result ?? {};
+  }
+
   const pass = async (to: string, word: string, body: object): Promise<void> => {
     const reply = await router.send({ to, kind: "event", word, body }, SELF);
     if (!reply.ok && reply.error.code !== "offline") log(`${word} to ${to}: ${reply.error.code}: ${reply.error.message}`);
   };
+
+  // The owner's screens show or hide the live preview when the virtual screen is made or closed.
+  deps.virtual.subscribe((open) => { void pass("person:owner", "vscreen.state", { open }).catch((error) => log("vscreen.state failed", error)); });
 
   return {
     member,

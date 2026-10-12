@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "f2fbdaf783f38fc0f89fea4a2824d4017ddff8fe7cc54f21d1d350031877b195",
+ "hash": "faa999d28931c5b8f1d0355661ecd18e35d8132f21acfa4d1e061b1fce9f016a",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -14068,6 +14068,33 @@
   },
   {
    "member": "service:host",
+   "word": "vscreen.state",
+   "kind": "event",
+   "direction": "out",
+   "description": "The virtual screen was made or closed: the host module passes it on to person:owner, whose screens show or hide the live preview (the human edge pushes it as present{status/vscreen}).",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "open": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "open"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在转达虚拟屏开关"
+   }
+  },
+  {
+   "member": "service:host",
    "word": "env.changed",
    "kind": "event",
    "direction": "out",
@@ -14480,7 +14507,20 @@
     "type": "object",
     "additionalProperties": false,
     "required": [],
-    "properties": {}
+    "properties": {
+     "max_side": {
+      "type": "integer",
+      "minimum": 160,
+      "maximum": 1280,
+      "description": "Longest side of the image in pixels (160-1280, default 1280); the owner's live preview asks for less."
+     },
+     "quality": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 90,
+      "description": "JPEG quality (30-90, default 80)."
+     }
+    }
    },
    "result_schema": {
     "type": "object",
@@ -14723,7 +14763,7 @@
    "word": "apps.open",
    "kind": "request",
    "direction": "in",
-   "description": "Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. Android may block this while Ash is in the background.",
+   "description": "Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. With the phone's debug identity connected (「后台也能动手」) the host opens it; without, Ash opens it itself, which Android allows only while Ash is in front or its accessibility service or overlay permission is on (the error says what to turn on).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -17258,6 +17298,49 @@
    ],
    "label": {
     "doing": "在看应用使用情况"
+   }
+  },
+  {
+   "member": "device:*",
+   "word": "apps.open_direct",
+   "kind": "request",
+   "direction": "in",
+   "description": "Open an app on the real foreground screen from the hand app itself, which needs Ash in front or its accessibility service or overlay permission. For the hub's `service:host/apps.open`, which uses it when the host cannot open apps; an agent calls apps.open.",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ],
+    "properties": {
+     "app": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Package name (e.g. com.tencent.mm) or launcher label."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {
+     "package": {
+      "type": "string"
+     },
+     "opened": {
+      "type": "boolean"
+     }
+    }
+   },
+   "effect": "act",
+   "risk": "outward",
+   "foreground": true,
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在直接打开应用"
    }
   },
   {

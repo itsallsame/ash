@@ -237,3 +237,13 @@ test("reconcile: a plan that gave no advice (JEV down) still lets a virtual scre
   down = false;
   assert.deepEqual(await f.call("screen.reconcile", done), { acted: ["virtual_close"] });
 });
+
+test("reconcile: the host opening an app or pressing a key between the look and the act (which the app cannot see) keeps the screen", async () => {
+  let looks = 0;
+  const f: Awaited<ReturnType<typeof planned>> = await planned("virtual_task", "t1", () => cleanup("close"), () => {
+    if (++looks === 2) f.virtual.noteScreenChanged();
+    return {};
+  });
+  assert.deepEqual(await f.call("screen.reconcile", done), { acted: [] });
+  assert.equal(f.closes(), 0);
+});

@@ -82,13 +82,13 @@ object Link {
         )
 
         /** Where the owner is: told to the kernel as `presence`. */
-        val presence = Presence(client) { AppState.homeVisible }
+        val presence = Presence(client, { AppState.homeVisible }, { ai.ash.ui.VScreenPreview.watching })
 
         /** The human channel opened or closed: the page is told, the kernel is told where the owner is, and what waited is sent. */
         private fun humanChannelChanged(open: Boolean, welcome: JSONObject?) {
             val grant = welcome?.optJSONObject("channels")?.optJSONObject("human")
             chat.linkChanged(open, grant?.optString("client"), grant?.optBoolean("local") ?: false)
-            if (open) { presence.tell(); Present.flushAsync(ctx); ai.ash.caps.config.CheckupWatch.connected(ctx) }
+            if (open) { presence.tell(); Present.flushAsync(ctx); ai.ash.caps.config.CheckupWatch.connected(ctx); ai.ash.ui.VScreenPreview.sync(ctx) }
             TaskStatus.refresh()
         }
 

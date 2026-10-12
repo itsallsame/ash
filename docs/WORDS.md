@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `f2fbdaf783f38fc0`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `faa999d28931c5b8`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -26,12 +26,12 @@
 - [`service:directory`](#servicedirectory) (2)
 - [`service:history`](#servicehistory) (9)
 - [`service:blobs`](#serviceblobs) (2)
-- [`service:host`](#servicehost) (20)
+- [`service:host`](#servicehost) (21)
 - [`service:bodies`](#servicebodies) (4)
 - [`person:owner`](#personowner) (8)
 - [`agent:*`](#agent) (8)
 - [`app:*`](#app) (1)
-- [`device:*`](#device) (59)
+- [`device:*`](#device) (60)
 - [`body:*`](#body) (10)
 
 ## 错误码
@@ -332,6 +332,7 @@
 | `power.hold` | kernel | act / none | - | ms*, reason* | 在保持唤醒 | Keep the device awake for a while (at most 10 minutes) for a stated reason; released by itself when the time is up. |
 | `power.release` | kernel | act / none | - | - | 在放开唤醒锁 | Release the wake lock before its time is up. |
 | `wake.fired` | kernel | read / none | event out | at* | 在转达唤醒闹钟 | The host's alarm went off (the device woke): the host module passes it on to service:clock. |
+| `vscreen.state` | kernel | read / none | event out | open* | 在转达虚拟屏开关 | The virtual screen was made or closed: the host module passes it on to person:owner, whose screens show or hide the live preview (the human edge pushes it as present{status/vscreen}). |
 | `env.changed` | kernel | read / none | event out | what*, network*, online*, saver* | 在转达环境变化 | The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay). |
 | `restart` | owner, app | act / none | - | reason | 在重启大脑 | Have the host restart the kernel: it is away for about ten seconds and what it was doing is cut off. The caller has asked the owner first (an app puts the question on its own screen); an agent cannot call it. |
 | `hands.handoff` | kernel | act / none | - | port*, token* (secret) | 在交接本机的手 | Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down. |
@@ -340,13 +341,13 @@
 | `vscreen.create` | owner, agent, app | act / structure | - | orientation, short_edge, dpi | 在创建虚拟屏 | Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.close` | owner, agent, app | act / structure | - | - | 在关闭虚拟屏 | Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.status` | owner, agent, app | read / none | - | - | 在看虚拟屏状态 | Report whether the virtual screen exists, its display id, size and dpi, and whether it has rendered a frame. |
-| `vscreen.see` | owner, agent, app | read / none | - | - | 在看虚拟屏 | Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.see` | owner, agent, app | read / none | - | max_side, quality | 在看虚拟屏 | Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.launch` | owner, agent, app | act / outward | - | app* | 在虚拟屏里打开应用 | Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.tap` | owner, agent, app | act / outward | - | x*, y* | 在点虚拟屏 | Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.swipe` | owner, agent, app | act / outward | - | x1*, y1*, x2*, y2*, duration_ms | 在滑动虚拟屏 | Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.key` | owner, agent, app | act / outward | - | key*, long_press | 在虚拟屏按键 | Send a key press to the virtual screen: a name (back, home, enter, menu, app_switch, tab, escape, delete ...) or an Android keycode number. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.type` | owner, agent, app | act / outward | - | text* | 在虚拟屏输入 | Type text into the focused field of the virtual screen (tap the field first). Text with non-ASCII characters is pasted through the clipboard, replacing the owner's clipboard content. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
-| `apps.open` | owner, agent, app | act / outward | foreground | app* | 在打开应用 | Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. Android may block this while Ash is in the background. |
+| `apps.open` | owner, agent, app | act / outward | foreground | app* | 在打开应用 | Open (launch or bring to front) an app on the real foreground screen, by package name or launcher label, for the owner to use. With the phone's debug identity connected (「后台也能动手」) the host opens it; without, Ash opens it itself, which Android allows only while Ash is in front or its accessibility service or overlay permission is on (the error says what to turn on). |
 
 ## `service:bodies`
 
@@ -408,6 +409,7 @@
 | `apps.list` | owner, agent, app | read / none | - | query, include_system | 在看装了哪些应用 | List the apps on the phone that have a launcher icon: label and package name, sorted by label. Optionally filter by a substring of the label or package. |
 | `apps.info` | owner, agent, app | read / none | - | app*, permissions | 在查看应用信息 | Details of an installed package: label, version, install and update time, system or disabled, SDK levels, installer, launcher activity, APK path, and the permissions it requests with their grant state. |
 | `apps.usage` | owner, agent, app | read / none | - | days, limit, app | 在看应用使用情况 | How long each app was used in the foreground (screen time), most used first, with the last time it was used. Needs the Usage access permission. |
+| `apps.open_direct` | kernel | act / outward | foreground | app* | 在直接打开应用 | Open an app on the real foreground screen from the hand app itself, which needs Ash in front or its accessibility service or overlay permission. For the hub's `service:host/apps.open`, which uses it when the host cannot open apps; an agent calls apps.open. |
 | `apps.open_url` | owner, agent, app | act / outward | foreground | uri*, package | 在打开链接 | Open a URL or deep link on the phone's screen with the app that handles it (https in the browser or a matching app, geo:, tel: opens the dialer without calling, mailto:, app schemes). |
 | `settings.get` | owner, agent, app | read / none | - | namespace*, key* | 在读系统设置 | Read an Android system setting from system, secure or global (e.g. screen_brightness, screen_off_timeout, airplane_mode_on). A few protected keys cannot be read by an app. |
 | `settings.put` | owner, agent, app | write / structure | - | namespace*, key*, value* | 在改系统设置 | Change an Android system setting in the system namespace (brightness, screen timeout, rotation, font scale ...); needs the owner's Modify system settings grant. Secure and global settings are the owner's to change in Settings. volume_music, volume_ring and the other volume_* keys set that volume. Returns the previous and the new value. |

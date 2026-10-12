@@ -600,6 +600,8 @@ add("service:host", "power.hold", "request", obj({ ms: { type: "integer", minimu
 add("service:host", "power.release", "request", empty, empty, { callers: KERNEL, effect: "act", label: "在放开唤醒锁", description: "Release the wake lock before its time is up." });
 add("service:host", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]), undefined,
   { callers: KERNEL, direction: "out", label: "在转达唤醒闹钟", description: "The host's alarm went off (the device woke): the host module passes it on to service:clock." });
+add("service:host", "vscreen.state", "event", obj({ open: bool }, ["open"]), undefined,
+  { callers: KERNEL, direction: "out", label: "在转达虚拟屏开关", description: "The virtual screen was made or closed: the host module passes it on to person:owner, whose screens show or hide the live preview (the human edge pushes it as present{status/vscreen})." });
 add("service:host", "env.changed", "event", ENV_CHANGED, undefined,
   { callers: KERNEL, direction: "out", label: "在转达环境变化", description: "The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay)." });
 add("service:host", "restart", "request", obj({ reason: { type: "string", maxLength: 200 } }), obj({ restarting: { const: true } }, ["restarting"]),

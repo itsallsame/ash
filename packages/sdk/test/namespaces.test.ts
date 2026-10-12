@@ -82,7 +82,7 @@ test("the namespaces of SPEC-02 §4.3 are all there with the actions the phone a
     screen: ["read", "see", "screenshot", "touch_status", "tap", "type", "scroll", "swipe", "hold", "touch", "gesture", "global_action"],
     input: ["key"],
     vscreen: ["create", "close", "status", "see", "launch", "tap", "swipe", "key", "type"],
-    apps: ["list", "info", "usage", "open", "open_url"],
+    apps: ["list", "info", "usage", "open", "open_direct", "open_url"],
     settings: ["get", "put", "open"],
     clipboard: ["get", "set"],
     device: ["status"],
@@ -133,7 +133,7 @@ test("effect and risk follow the phone's CapabilityPolicy and the computer's wor
   // name -> effect / risk. Old effect "send" is act and old "structure" is write; sense.configure is risk none (HUB-MODULES §7).
   const table: Record<string, [string, string]> = {
     "clipboard.get": ["read", "none"], "clipboard.set": ["act", "structure"], "device.status": ["read", "none"],
-    "apps.list": ["read", "none"], "apps.open": ["act", "outward"], "apps.info": ["read", "none"], "apps.usage": ["read", "none"], "apps.open_url": ["act", "outward"],
+    "apps.list": ["read", "none"], "apps.open": ["act", "outward"], "apps.open_direct": ["act", "outward"], "apps.info": ["read", "none"], "apps.usage": ["read", "none"], "apps.open_url": ["act", "outward"],
     "settings.open": ["act", "outward"], "settings.get": ["read", "none"], "settings.put": ["write", "structure"], "input.key": ["act", "outward"],
     "screen.read": ["read", "none"], "screen.see": ["read", "none"], "screen.screenshot": ["read", "none"], "screen.touch_status": ["read", "none"],
     "screen.tap": ["act", "outward"], "screen.type": ["act", "outward"], "screen.scroll": ["act", "outward"], "screen.swipe": ["act", "outward"],
@@ -163,12 +163,14 @@ test("effect and risk follow the phone's CapabilityPolicy and the computer's wor
 test("foreground, per-call risk and kernel-only marks", () => {
   const foreground = STANDARD_ACTIONS.filter((item) => item.foreground).map((item) => item.name).sort();
   assert.deepEqual(foreground, [
-    "apps.open", "apps.open_url", "config.permission.request", "input.key",
+    "apps.open", "apps.open_direct", "apps.open_url", "config.permission.request", "input.key",
     "screen.gesture", "screen.global_action", "screen.hold", "screen.scroll", "screen.swipe", "screen.tap", "screen.touch", "screen.type", "settings.open",
   ]);
   assert.deepEqual(STANDARD_ACTIONS.filter((item) => item.per_call_risk).map((item) => item.name), ["workspace.write", "workspace.edit"]);
-  for (const item of STANDARD_ACTIONS.filter((candidate) => candidate.name.startsWith("decision."))) assert.deepEqual(item.callers, ["kernel"], item.name);
-  for (const item of STANDARD_ACTIONS.filter((candidate) => !candidate.name.startsWith("decision."))) assert.equal(item.callers, undefined, item.name);
+  // decision.* is for the reflex, apps.open_direct for service:host (which an agent calls as apps.open when the host cannot open apps).
+  const kernelOnly = (name: string) => name.startsWith("decision.") || name === "apps.open_direct";
+  for (const item of STANDARD_ACTIONS.filter((candidate) => kernelOnly(candidate.name))) assert.deepEqual(item.callers, ["kernel"], item.name);
+  for (const item of STANDARD_ACTIONS.filter((candidate) => !kernelOnly(candidate.name))) assert.equal(item.callers, undefined, item.name);
 });
 
 test("sample calls of the new namespaces validate", () => {

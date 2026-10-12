@@ -510,7 +510,7 @@ export class Human {
   }
   /** Goes away (a normal close). */
   disconnect(): void { this.client.stop(); }
-  presence(state: { visible?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
+  presence(state: { visible?: boolean; watching?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
 
   // --- seeing things
 

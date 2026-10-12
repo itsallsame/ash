@@ -66,6 +66,8 @@ export interface VirtualScreenView {
   available(): boolean;
   state(): { open: boolean; generation: number; owner: string };
   close(generation: number, owner: string, decisionId: string): Promise<boolean>;
+  /** How many times the host has changed the real screen (opening an app, a key): the app cannot see those. */
+  screenChanges(): number;
 }
 
 export interface ScreenDeciderOptions {
@@ -160,6 +162,7 @@ export function createScreenDecider(o: ScreenDeciderOptions) {
       await ask(phone, "decision.surface", {}, signal, turn);
       const front = await ask(phone, "decision.screen", {}, signal, turn);
       if (!isScreen(front)) return { data: { acted } };
+      const changesSeen = virtual.screenChanges();
       const seen = { ...front, virtual_generation: owned.generation, virtual_owner_turn: owned.owner, virtual_open: owned.open };
       const replies = (o.ledger.db().prepare(`SELECT body FROM messages WHERE turn=? AND "from"=? AND "to"=? AND kind='request' AND word='say' ORDER BY seq`).all(turn, agent, OWNER) as { body: unknown }[])
         .map((row) => { try { return clip((JSON.parse(String(row.body)) as { text?: unknown }).text, 4000); } catch { return ""; } });
@@ -168,7 +171,8 @@ export function createScreenDecider(o: ScreenDeciderOptions) {
       if (answer.choice !== "close" || answer.confidence < o.threshold) return { data: { acted } };
       // Look once more: the screen must be exactly as it was when JEV was asked.
       const now = await ask(phone, "decision.screen", {}, signal, turn);
-      if (!isScreen(now) || now.state_epoch !== seen.state_epoch || now.foreground_package !== seen.foreground_package)
+      // The app counts what it did to the screen itself (state_epoch); the host's own actions are counted here.
+      if (!isScreen(now) || now.state_epoch !== seen.state_epoch || now.foreground_package !== seen.foreground_package || virtual.screenChanges() !== changesSeen)
         return { data: { acted } };
       if (await virtual.close(seen.virtual_generation, turn, `reflex_${turn}`)) acted.push("virtual_close");
     } catch (error) {

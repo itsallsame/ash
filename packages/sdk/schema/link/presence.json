@@ -12,6 +12,9 @@
     "visible": {
       "type": "boolean"
     },
+    "watching": {
+      "type": "boolean"
+    },
     "typing": {
       "type": "boolean"
     },
@@ -29,6 +32,11 @@
     {
       "required": [
         "visible"
+      ]
+    },
+    {
+      "required": [
+        "watching"
       ]
     },
     {

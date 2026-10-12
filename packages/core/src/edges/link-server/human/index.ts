@@ -59,6 +59,8 @@ export interface HumanEdge {
   /** For `link.onChannel("human", …)`. */
   attach: ChannelAttach;
   clients(): ClientInfo[];
+  /** The owner is looking at a live view (the virtual screen's preview) on some channel: that counts as using Ash. */
+  viewing(): boolean;
   /** The channels open now, as little as the agents' environment needs (「主人在哪」): which kind, what it is called, local or not (whether it is being looked at is `clients()`, for delivery). */
   channels(): { client: string; kind: ClientInfo["channel"]; label: string; local: boolean }[];
   /**
@@ -129,6 +131,9 @@ export function createHuman(deps: HumanDeps): HumanEdge {
       switch (msg.word) {
         case "widget.preview": return preview(body as { card: string; size?: string });
         case "widget.state": void pushWidgets(body, clients.withSurface("widget")); return;
+        case "vscreen.state":
+          for (const c of clients.withSurface("status")) void presenter.send(c, { surface: "status", op: "vscreen", body: { open: body.open === true } });
+          return;
         case "say":
           void notifier.say(msg).catch((error) => log("notification failed", error));
           return { data: { accepted: true } };
@@ -186,7 +191,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     const c: LiveClient = {
       client: grant.client, hand: `device:${ctx.handId}`, channel: hand.kind === "phone" ? "app" : hand.kind === "im" ? "im" : "web",
       ...(hand.kind === "im" ? { provider: hand.platform } : {}), label: declared.label ?? hand.name, local: ctx.local, surfaces,
-      connected_at: at, last_seen: at, visible: false, visible_at: 0, active_at: at, session,
+      connected_at: at, last_seen: at, visible: false, visible_at: 0, active_at: at, watching: false, session,
     };
     clients.add(c);
     // After the welcome, which the link server sends right after this returns.
@@ -211,6 +216,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
           case "presence":
             clients.touch(c);
             if (frame.visible !== undefined) { c.visible = frame.visible; if (frame.visible) c.visible_at = now(); }
+            if (frame.watching !== undefined) c.watching = frame.watching;
             if (frame.typing === true && frame.agent && isAgentId(frame.agent)) sendEvent({ to: frame.agent, kind: "event", word: "typing", body: {} });
             return;
         }
@@ -253,6 +259,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
       return c.session.sendStream("human", bytes, { mime });
     },
     clients: () => clients.info(),
+    viewing: () => clients.viewing(),
     channels: () => clients.all().map((c) => ({ client: c.client, kind: c.channel, label: c.label, local: c.local })),
     async focus(client) {
       const c = client ? clients.get(client) : clients.current();

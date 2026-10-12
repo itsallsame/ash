@@ -33,7 +33,7 @@ class ShellPhone(private val ctx: Context, private val kernelApk: String, privat
         "vscreen.create" -> vscreen.create(a)
         "vscreen.status" -> vscreen.status()
         "vscreen.launch" -> vscreen.launch(resolveApp(a.str("app")))
-        "vscreen.see" -> vscreen.see()
+        "vscreen.see" -> vscreen.see(a)
         "vscreen.tap" -> vscreen.tap(a.dbl("x"), a.dbl("y"))
         "vscreen.swipe" -> vscreen.swipe(a)
         "vscreen.key" -> vscreen.key(vscreenKeycode(a.str("key")), a.optBoolean("long_press"))
@@ -216,9 +216,11 @@ class ShellPhone(private val ctx: Context, private val kernelApk: String, privat
                 .put("message", "Launched ${app.label} (${app.pkg}) on the virtual screen$warn.")
         }
 
-        fun see(): JSONObject {
+        fun see(a: JSONObject): JSONObject {
             needScreen()
-            val r = send("see", JSONObject().put("maxSide", 1280).put("quality", 80), 15_000)
+            val maxSide = a.optInt("max_side", 1280).coerceIn(160, 1280)
+            val quality = a.optInt("quality", 80).coerceIn(30, 90)
+            val r = send("see", JSONObject().put("maxSide", maxSide).put("quality", quality), 15_000)
             return JSONObject().put("jpeg", r.optString("jpeg")).put("displayId", r.optInt("displayId"))
                 .put("screenW", r.optInt("screenW")).put("screenH", r.optInt("screenH"))
                 .put("imageW", r.optInt("imageW")).put("imageH", r.optInt("imageH"))

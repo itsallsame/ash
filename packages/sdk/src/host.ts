@@ -119,7 +119,7 @@ export interface HostMethods {
   "vscreen.create": { req: { orientation?: string; short_edge?: number; dpi?: number }; res: { displayId: number; width: number; height: number; dpi: number; reused: boolean; message: string } };
   "vscreen.status": { req: Record<string, never>; res: { running: boolean; displayId?: number; width?: number; height?: number; dpi?: number } };
   "vscreen.launch": { req: { app: string }; res: { package: string; component: string; message: string } };
-  "vscreen.see": { req: Record<string, never>; res: { jpeg: string; displayId: number; screenW: number; screenH: number; imageW: number; imageH: number } };
+  "vscreen.see": { req: { max_side?: number; quality?: number }; res: { jpeg: string; displayId: number; screenW: number; screenH: number; imageW: number; imageH: number } };
   "vscreen.tap": { req: { x: number; y: number }; res: { message: string } };
   "vscreen.swipe": { req: { x1: number; y1: number; x2: number; y2: number; duration_ms?: number }; res: { message: string } };
   "vscreen.key": { req: { key: string; long_press?: boolean }; res: { message: string } };

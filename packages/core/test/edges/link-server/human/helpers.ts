@@ -159,7 +159,7 @@ export class Channel {
   }
 
   get client() { return this.hand.client; }
-  presence(state: { visible?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
+  presence(state: { visible?: boolean; watching?: boolean; typing?: boolean; agent?: string }): void { this.client.presence(state); }
 
   /** Follows the whole ledger from the start. */
   follow(params: { after?: number; limit?: number } = {}) {

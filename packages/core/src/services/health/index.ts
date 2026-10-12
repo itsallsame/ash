@@ -69,6 +69,8 @@ export interface HealthOptions {
   /** Default: the built-in invariants. */
   invariants?: readonly Invariant[];
   log?: (message: string) => void;
+  /** The owner is looking at a live view of what Ash does (the virtual screen's preview): that is use, not idling. */
+  viewing?: () => boolean;
 }
 
 interface Open { msg: Counts; ledger: Counts; err: Counts; internal: Counts; link: Counts }
@@ -187,6 +189,7 @@ export class HealthService implements Member {
     const t = this.now();
     if (t <= this.lastTick) return;
     for (const [turn, since] of this.turns) if (t - since > TURN_MAX_MS) this.turns.delete(turn);
+    if (this.options.viewing?.()) this.lastActive = t;
     const idle = this.turns.size === 0 && t - this.lastActive >= IDLE_QUIET_MS;
     this.ring.push({ ...this.open, ...this.sampler.sample(), t, dt: (t - this.lastTick) / 1000, idle });
     if (this.ring.length > HOUR_BUCKETS) this.ring.shift();

@@ -53,3 +53,28 @@ test("virtual screen: available follows the host's vscreen capability", () => {
   assert.equal(host(undefined, () => false).virtual.available(), false);
   assert.equal(host().virtual.available(), true);
 });
+
+test("virtual screen: looking does not wait for the actions in front of it, and listeners hear it made and closed", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const calls: string[] = [];
+  const client = { has: () => true, phone: (async (word: string) => {
+    calls.push(word);
+    if (word === "vscreen.tap") await gate;
+    return { supported: true, result: word === "vscreen.create" ? { reused: false } : {} };
+  }) as any };
+  const virtual = createVirtualScreen(client);
+  const heard: boolean[] = [];
+  virtual.subscribe((open) => heard.push(open));
+  await virtual.call("vscreen.create", {}, "t1");
+  const tap = virtual.call("vscreen.tap", { x: 1, y: 1 }, "t1");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await virtual.call("vscreen.see", {}, "");
+  assert.deepEqual(calls, ["vscreen.create", "vscreen.tap", "vscreen.see"], "see went through while the tap was still out");
+  release();
+  await tap;
+  await virtual.call("vscreen.close", {}, "t1");
+  assert.deepEqual(heard, [true, false]);
+  virtual.noteScreenChanged();
+  assert.equal(virtual.screenChanges(), 1);
+});

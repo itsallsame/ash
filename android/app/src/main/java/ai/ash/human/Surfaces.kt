@@ -8,6 +8,7 @@ import ai.ash.host.TaskStatus
 import ai.ash.host.screen.ScreenBridge
 import ai.ash.link.PresentOutcome
 import ai.ash.ui.HomeActivity
+import ai.ash.ui.VScreenPreview
 import ai.ash.widget.WidgetHost
 import android.content.Context
 import android.content.Intent
@@ -41,8 +42,12 @@ internal object Surfaces {
                 }
             },
             "status" to ready { op, body ->
-                if (op != "frame") unknown("status", op)
-                else if (TaskStatus.accept(app, body)) PresentOutcome(true) else PresentOutcome(false, null, "bad_request", "invalid task frame")
+                when (op) {
+                    "frame" -> if (TaskStatus.accept(app, body)) PresentOutcome(true) else PresentOutcome(false, null, "bad_request", "invalid task frame")
+                    // The virtual screen was made or closed: the live preview comes up or goes down.
+                    "vscreen" -> { VScreenPreview.screenState(app, body.optBoolean("open")); PresentOutcome(true) }
+                    else -> unknown("status", op)
+                }
             },
         ))
     }

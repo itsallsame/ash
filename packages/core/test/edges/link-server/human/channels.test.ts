@@ -188,3 +188,27 @@ test("a stream goes to the channel that asked, whole, and to nobody else; a call
   assert.throws(() => hub.human.openStream(undefined, bytes, "image/png"), { code: "unavailable" });
   assert.throws(() => hub.human.openStream("client:nobody", bytes, "image/png"), { code: "unavailable" });
 });
+
+const HOST = { member: "service:host", via: "service" as const, local: true };
+
+test("the virtual screen being made or closed reaches the channels that show status, as a vscreen present; watching a live view is told by presence", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const phone = await Channel.open(hub, { surfaces: ["chat", "status"] });
+  const chatOnly = await Channel.open(hub, { surfaces: ["chat"], kind: "browser" });
+  await eventually(() => phone.presented("status").length === 1, "the first status frame on connect");
+  await hub.mini.send({ to: "person:owner", kind: "event", word: "vscreen.state", body: { open: true } }, HOST);
+  await eventually(() => phone.presented("status", "vscreen").length === 1, "the vscreen present");
+  await hub.mini.send({ to: "person:owner", kind: "event", word: "vscreen.state", body: { open: false } }, HOST);
+  await eventually(() => phone.presented("status", "vscreen").length === 2, "the second vscreen present");
+  assert.deepEqual(phone.presented("status", "vscreen").map((f) => f.body), [{ open: true }, { open: false }]);
+  assert.equal(chatOnly.presents.length, 0);
+
+  assert.equal(hub.human.viewing(), false);
+  phone.presence({ watching: true });
+  await eventually(() => hub.human.viewing(), "watching");
+  phone.presence({ watching: false });
+  await eventually(() => !hub.human.viewing(), "not watching");
+  phone.presence({ visible: true });
+  await quiet();
+  assert.equal(hub.human.viewing(), false, "being in front is not watching a live view");
+});

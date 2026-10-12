@@ -14,8 +14,9 @@ function setup(sample: Sample = { cpu_pct: 1, rss: 50 * MB, heap: 10 * MB, lag_p
   let t = 1_000_000_000_000;
   let cb: (m: Message) => void = () => {};
   const logs: string[] = [];
+  let viewing = false;
   const service = createHealthService({
-    ledger, now: () => t, sampler: { sample: () => sample }, log: (m) => logs.push(m), ...(invariants ? { invariants } : {}),
+    ledger, now: () => t, viewing: () => viewing, sampler: { sample: () => sample }, log: (m) => logs.push(m), ...(invariants ? { invariants } : {}),
     router: { subscribe: (_f, fn) => { cb = fn; return () => { cb = () => {}; }; } },
     registry: { find: (_to, word) => ({ contract: { effect: word === "say" ? "write" : "read" } }) as any },
   });
@@ -32,7 +33,7 @@ function setup(sample: Sample = { cpu_pct: 1, rss: 50 * MB, heap: 10 * MB, lag_p
   /** Moves the clock by `seconds` in ticks of ten, `each` before every tick. */
   const run = (seconds: number, each: () => void = () => {}) => { for (let i = 0; i < seconds / 10; i++) { each(); t += 10_000; service.tick(); } };
   const events = async () => (await call(service, owner, "recent", {})).events as any[];
-  return { service, ledger, logs, feed, fail, run, events, status: () => call(service, owner, "status", {}), clock: () => t };
+  return { service, ledger, logs, feed, fail, run, events, watch: (on: boolean) => { viewing = on; }, status: () => call(service, owner, "status", {}), clock: () => t };
 }
 
 const spin = (s: ReturnType<typeof setup>) => () => { for (let i = 0; i < 440; i++) s.feed("service:history", "current"); };
@@ -217,4 +218,14 @@ test("the minute rows say how many times a hand connected", async () => {
   s.run(60);
   const { minutes } = await call(s.service, owner, "recent", { kind: "minute" });
   assert.ok(minutes.some((m: any) => m.link_opens >= 1), JSON.stringify(minutes));
+});
+
+test("while the owner watches a live view (the virtual screen's preview) the hub is in use, not idle; when she stops it idles again", async () => {
+  const s = setup();
+  s.watch(true);
+  s.run(180);
+  assert.equal((await s.status()).idle, false);
+  s.watch(false);
+  s.run(60);
+  assert.equal((await s.status()).idle, true);
 });

@@ -28,6 +28,8 @@ export interface LiveClient extends ClientInfo {
   /** When it last became visible, and when it last did anything; "the channel the owner is on" is chosen by these. */
   visible_at: number;
   active_at: number;
+  /** The owner is looking at a live view on this channel (the virtual screen's preview), whether or not Ash is in front. */
+  watching: boolean;
 }
 
 const SCHEMA = `
@@ -61,6 +63,8 @@ export class Clients {
   withSurface(surface: Surface): LiveClient[] { return this.all().filter((c) => c.surfaces.includes(surface)); }
   /** The owner is looking at Ash when any channel is visible. */
   watching(): boolean { return this.all().some((c) => c.visible); }
+  /** The owner is looking at a live view on some channel. */
+  viewing(): boolean { return this.all().some((c) => c.watching); }
 
   /** The channel the owner is on: the one most recently made visible, else the most recently active one that shows chat. */
   current(): LiveClient | undefined {
@@ -72,6 +76,6 @@ export class Clients {
   touch(c: LiveClient): void { c.active_at = this.now(); }
 
   info(): ClientInfo[] {
-    return this.all().map(({ session: _session, visible_at: _v, active_at: _a, ...info }) => info);
+    return this.all().map(({ session: _session, visible_at: _v, active_at: _a, watching: _w, ...info }) => info);
   }
 }

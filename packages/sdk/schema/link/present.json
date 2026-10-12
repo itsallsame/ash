@@ -232,6 +232,49 @@
           "maxLength": 128
         },
         "surface": {
+          "const": "status"
+        },
+        "op": {
+          "const": "vscreen"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "open": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "open"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
           "const": "widget"
         },
         "op": {

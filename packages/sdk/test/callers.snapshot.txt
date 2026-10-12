@@ -159,6 +159,7 @@
 * service:host/power.hold  kernel
 * service:host/power.release  kernel
 * service:host/wake.fired  kernel  event-out
+* service:host/vscreen.state  kernel  event-out
 * service:host/env.changed  kernel  event-out
 * service:host/restart  owner,app
 * service:host/hands.handoff  kernel
@@ -232,6 +233,7 @@
   device:*/apps.info  owner,agent,app
   device:*/apps.usage  owner,agent,app
   service:host/apps.open  owner,agent,app
+* device:*/apps.open_direct  kernel
   device:*/apps.open_url  owner,agent,app
   device:*/settings.get  owner,agent,app
   device:*/settings.put  owner,agent,app
