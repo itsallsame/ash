@@ -92,13 +92,38 @@ class FileAccess(private val port: HumanPort) {
             val hash = (raw as? JSONObject)?.optString("\$blob").orEmpty()
             when {
                 raw is String -> done(Inline(name, mime, raw), null)
-                hash.isNotEmpty() -> port.call("service:blobs", "get", JSONObject().put("hash", hash)) { info, why ->
-                    if (info == null) return@call done(null, why)
-                    port.stream(info.optString("stream")) { _, bytes, why2 -> if (bytes != null) done(Inline(name, mime, String(bytes, Charsets.UTF_8)), null) else done(null, why2) }
-                }
+                hash.isNotEmpty() -> blobText(hash) { text, why -> if (text != null) done(Inline(name, mime, text), null) else done(null, why) }
                 else -> done(null, gone)
             }
         }
+    }
+
+    /**
+     * The base64 text a long attachment's blob holds: read in pieces (`service:blobs read`), which needs no stream; a blob that is not
+     * text to the hub (`bad_request`) is asked for as a stream (`get`) instead.
+     */
+    private fun blobText(hash: String, done: (String?, HumanPort.Failure?) -> Unit) {
+        val text = StringBuilder()
+        fun piece(offset: Long, count: Int) {
+            port.call("service:blobs", "read", JSONObject().put("hash", hash).put("offset", offset).put("limit", 200_000)) { data, why ->
+                when {
+                    data == null && offset == 0L && why?.code == "bad_request" ->
+                        port.call("service:blobs", "get", JSONObject().put("hash", hash)) { info, why2 ->
+                            if (info == null) return@call done(null, why2)
+                            port.stream(info.optString("stream")) { _, bytes, why3 -> if (bytes != null) done(String(bytes, Charsets.UTF_8), null) else done(null, why3) }
+                        }
+                    data == null -> done(null, why)
+                    else -> {
+                        text.append(data.optString("text"))
+                        val next = if (data.isNull("next_offset")) null else data.optLong("next_offset", -1)
+                        if (next == null || next < 0) done(text.toString(), null)
+                        else if (count >= 200) done(null, HumanPort.Failure("too_large", "附件太大，读不完"))
+                        else piece(next, count + 1)
+                    }
+                }
+            }
+        }
+        piece(0, 0)
     }
 
     companion object { const val MAIN = "body:main" }

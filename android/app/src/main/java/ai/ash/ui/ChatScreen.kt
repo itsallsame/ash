@@ -179,7 +179,8 @@ class ChatScreen(
         if (flushing || !port.open) return
         val next = outbox.next() ?: return
         flushing = true
-        port.send(next) { r ->
+        // The queue's own bookkeeping (`status`, the ledger `id`) is not part of the request the kernel accepts.
+        port.send(JSONObject(next.toString()).apply { remove("status"); remove("id") }) { r ->
             flushing = false
             if (r.optBoolean("ok")) { outbox.sent(next, r.optJSONObject("message")?.optString("id")); refresh(); flush() }
             else {

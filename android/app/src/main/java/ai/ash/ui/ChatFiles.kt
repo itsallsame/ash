@@ -97,7 +97,7 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
                     addView(View(activity).apply { background = AshPage.icon(activity, choice.icon).apply { setTint(c.text) } },
                         FrameLayout.LayoutParams(AshUi.dp(activity, 26), AshUi.dp(activity, 26), Gravity.CENTER))
                 }, LinearLayout.LayoutParams(AshUi.dp(activity, 60), AshUi.dp(activity, 60)))
-                addView(AshUi.text(activity, choice.label, AshType(13f, 18f, 400, Role.TEXT)))
+                addView(AshUi.text(activity, choice.label, AshType(13f, 18f, 400, Role.TEXT)).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
                 setOnClickListener { onChoice(choice) }
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
