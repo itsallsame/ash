@@ -1,7 +1,7 @@
-package ai.ash.caps.hostshell
+package ai.ash.kernel.host
 
-import ai.ash.caps.hostshell.adb.AdbKey
-import ai.ash.caps.hostshell.adb.AdbWire
+import ai.ash.kernel.host.adb.AdbKey
+import ai.ash.kernel.host.adb.AdbWire
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

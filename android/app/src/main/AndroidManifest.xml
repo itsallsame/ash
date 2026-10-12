@@ -169,21 +169,14 @@
             </intent-filter>
         </activity>
 
-        <!-- 「后台也能动手」 (caps/hostshell): the phone's debug identity, which the owner grants by pairing in wireless debugging.
-             The service it starts hands Ash its binder here; only the shell user and the system hold this permission. -->
+        <!-- 「后台也能动手」: the kernel's host layer (in the kernel package) runs it and hands this app its binder here;
+             only the shell user and the system hold this permission. The app holds no debug identity of its own. -->
         <provider
             android:name=".caps.hostshell.HostShellDoor"
             android:authorities="${applicationId}.hostshell"
             android:multiprocess="false"
             android:exported="true"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
-        <!-- The minutes of a pairing or reconnection, while the owner is in the system's settings. -->
-        <service android:name=".caps.hostshell.GuideService" android:exported="false" android:foregroundServiceType="shortService" />
-        <activity android:name=".caps.hostshell.GuideActivity" android:exported="false" android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
-        <receiver android:name=".caps.hostshell.HostShellBootReceiver" android:exported="false">
-            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
-        </receiver>
 
         <!-- camera.capture: the system camera, opened for the owner to press the shutter; see-through, outside Ash's task. -->
         <activity android:name=".ui.CameraActivity" android:exported="false"

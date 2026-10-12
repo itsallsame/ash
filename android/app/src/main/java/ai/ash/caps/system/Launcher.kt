@@ -114,11 +114,8 @@ object Launcher {
         return try { ai.ash.caps.screen.A11yService.instance?.foregroundPackage()?.ifEmpty { null } } catch (e: Throwable) { null }
     }
 
-    fun hostShellStatus(ctx: Context): HostShellStatus = when (HostShell.state(ctx)) {
-        HostShell.State.READY -> HostShellStatus.READY
-        HostShell.State.ABSENT -> HostShellStatus.ABSENT
-        HostShell.State.NOT_PAIRED -> HostShellStatus.NOT_PAIRED
-    }
+    fun hostShellStatus(@Suppress("UNUSED_PARAMETER") ctx: Context): HostShellStatus =
+        if (HostShell.ready()) HostShellStatus.READY else HostShellStatus.ABSENT
 
     /** Ash can start an activity itself (in front, or exempt), without the debug identity. */
     fun canStartDirectly(ctx: Context): Boolean =

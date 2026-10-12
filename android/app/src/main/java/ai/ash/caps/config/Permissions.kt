@@ -19,7 +19,6 @@ import android.widget.Toast
 import ai.ash.caps.senses.SenseSync
 import ai.ash.caps.senses.SetupActivity
 import ai.ash.caps.hostshell.HostShell
-import ai.ash.caps.hostshell.HostShellGuide
 import ai.ash.host.Notifications
 
 /**
@@ -195,11 +194,11 @@ object Permissions {
             ))
             // Wireless debugging is Android 11+, and Ash pairs with it only through the public API of Android 12+.
             if (Build.VERSION.SDK_INT >= 31) add(Permission(
-                HostShell.ITEM, "后台也能动手", "配对一次，Ash 在后台也能替你开应用、按键、用虚拟屏（在后台操作应用，不打扰你）",
+                HostShell.ITEM, "后台也能动手", "在「Ash 内核」里和手机配对一次，Ash 在后台也能替你开应用、按键、用虚拟屏；也让大脑不被系统清理",
                 { HostShell.ready() },
-                { a -> HostShellGuide.open(a) },
+                // The kernel package owns pairing now: open its 「Ash 内核」 screen (guarded by the shared signature permission).
+                { a -> runCatching { a.startActivity(Intent().setClassName(KeepAliveSwitches.KERNEL_PACKAGE, "ai.ash.kernel.host.GuideActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } },
                 { c -> HostShell.detail(c) },
-                revoke = { a -> HostShellGuide.revoke(a) },
             ))
         }
     }

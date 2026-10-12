@@ -1,6 +1,6 @@
 // The pipe hand-over follows RemoteProcessHolder of Shizuku-API (https://github.com/RikkaApps/Shizuku-API), MIT License,
 // Copyright (c) 2021 RikkaW (see THIRD_PARTY_NOTICES.md). Changes: pipes made up front, owner-only calls, no waitFor.
-package ai.ash.caps.hostshell;
+package ai.ash.kernel.host;
 
 import android.os.Binder;
 import android.os.IBinder;
@@ -16,7 +16,7 @@ import java.io.OutputStream;
  * A program the service started for Ash, inside the service: its three streams are copied to pipes whose other ends Ash
  * holds, and the program is ended when Ash's [owner] binder dies (Ash's process went away).
  */
-final class ServerProcess extends IHostProcess.Stub {
+final class ServerProcess extends ai.ash.caps.hostshell.IHostProcess.Stub {
 
     private final Process process;
     private final int callerUid;

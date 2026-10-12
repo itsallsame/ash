@@ -74,6 +74,10 @@ object ShellHost {
         val server = KernelHostServer(api) { Log.w(TAG, it) }
         server.start()
 
+        // The phone-action whitelist (a virtual screen, a key, starting an app, the app in front) the hand app no longer
+        // holds: the kernel host runs them and hands the binder to the hand app's door, so device:phone keeps working.
+        pushPhoneActions(ctx, userId)
+
         val version = runCatching { ctx.packageManager.getPackageInfo(pkg, 0).versionName }.getOrNull() ?: "0"
         supervisor = KernelSupervisor(
             clock = clock,
@@ -96,6 +100,20 @@ object ShellHost {
 
         Thread({ supervisor.run() }, "ash-kernel-host").start()
         Log.i(TAG, "started for $pkg (uid $kernelUid)")
+    }
+
+    private const val HAND_PACKAGE = "ai.ash.agent"
+
+    private fun pushPhoneActions(ctx: android.content.Context, userId: Int) {
+        try {
+            val info = ctx.packageManager.getApplicationInfo(HAND_PACKAGE, 0)
+            val build = ctx.packageManager.getPackageInfo(HAND_PACKAGE, 0).lastUpdateTime
+            val extras = android.os.Bundle().apply { putBinder("actions", PhoneActions(info.uid, info.sourceDir, build)) }
+            val ok = ProviderClient.call("$HAND_PACKAGE.hostshell", userId, "actions", extras)
+            Log.i(TAG, "pushed phone actions to $HAND_PACKAGE: ${if (ok != null) "ok" else "no door"}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "cannot push phone actions", t)
+        }
     }
 }
 

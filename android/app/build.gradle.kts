@@ -27,8 +27,8 @@ android {
         minSdk = 26
         // 35, as SPEC-05 asks. What cannot run from files/ at 35 (the payload's executables) lives in the kernel package, which stays on 28.
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.4.6"
+        versionCode = 19
+        versionName = "0.4.7"
         buildConfigField("boolean", "ISOLATED_PROBE", "false")
         buildConfigField("long", "SENSE_RESCAN_MS", "21600000L")
         // Where the guide downloads the kernel package from when it is not installed (https; empty = no download offered). Set with -PashKernelApkUrl=...
@@ -90,9 +90,7 @@ android {
     }
 
     sourceSets["main"].assets.srcDir(linkSchemaAssets)
-    buildFeatures { buildConfig = true; aidl = true; prefab = true }
-    // libashadb: the SPAKE2 step of pairing with the phone's wireless debugging (caps/hostshell/adb), on BoringSSL.
-    externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
+    buildFeatures { buildConfig = true; aidl = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -120,10 +118,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // The WebSocket under ash-link/1.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // The self-made certificate Ash shows wireless debugging (caps/hostshell/adb/AdbKey).
-    implementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
-    // BoringSSL's SPAKE2, for pairing with wireless debugging (prefab, linked statically into libashadb).
-    implementation("io.github.vvb2060.ndk:boringssl:20251124")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
