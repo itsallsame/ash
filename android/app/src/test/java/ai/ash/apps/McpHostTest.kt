@@ -175,12 +175,13 @@ class McpHostTest {
         req(50, "ui/open-link", JSONObject().put("url", "ash://keys"))
         req(51, "ui/open-link", JSONObject().put("url", "ash://device/device:abc-1"))
         req(52, "ui/open-link", JSONObject().put("url", "ash://device/abc-2"))
-        assertEquals(listOf<Pair<String, String?>>("keys" to null, "device" to "d/device:abc-1", "device" to "d/device:abc-2"), ui.homes)
+        req(53, "ui/open-link", JSONObject().put("url", "ash://device/%E5%B7%A5%E4%BD%9C%E7%94%B5%E8%84%91"))
+        assertEquals(listOf<Pair<String, String?>>("keys" to null, "device" to "d/device:abc-1", "device" to "d/abc-2", "device" to "d/工作电脑"), ui.homes)
         assertTrue(ui.asked.isEmpty())
     }
 
     @Test fun otherAshLinksAndUnknownPartsAreRefused() {
-        for (url in listOf("ash://checkup/nonsense", "ash://console", "ash://checkup/notify/x", "ash://checkup?x=1", "ash://widget-action/1/x", "ash://keys/x", "ash://device/", "ash://device/a b")) {
+        for (url in listOf("ash://checkup/nonsense", "ash://console", "ash://checkup/notify/x", "ash://checkup?x=1", "ash://widget-action/1/x", "ash://keys/x", "ash://device/", "ash://device/a b", "ash://device/%00")) {
             req(40, "ui/open-link", JSONObject().put("url", url))
             assertTrue(url, last().has("error"))
         }

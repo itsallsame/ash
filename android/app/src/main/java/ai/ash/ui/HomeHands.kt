@@ -156,13 +156,15 @@ class HmDevice(env: HomeEnv, arg: String?) : HomePage(env, arg) {
             statusNote()?.let { addView(it) }
             return@redraw
         }
-        val device = devices?.firstOrNull { it.str("device") == deviceId }
+        // an app may point at a device by its id (`device:<hand>`, with or without the prefix) or by its name
+        val device = devices?.let { all -> all.firstOrNull { it.str("device") == deviceId } ?: all.firstOrNull { it.str("device") == "device:$deviceId" } ?: all.firstOrNull { it.str("name") == deviceId } }
         if (device == null) { addView(Hk.list(ctx, listOf(Hk.row(ctx, "alert", "没有找到这台设备")))); return@redraw }
+        val real = device.str("device") ?: return@redraw   // what the hub is told: the device's own id, however the page was pointed at it
         val line = HomeModel.deviceLine(device)
         val head = AshUi.card(ctx).apply { addView(AshUi.text(ctx, device.str("name") ?: "", AshType(20f, 28f, 700, Role.INK))); addView(AshUi.text(ctx, line.text, AshTokens.Type.sub, if (line.ok) c.ok else null)) }
         if (device.num("revoked_at") != null) {
             addView(head)
-            addView(AshUi.button(ctx, "恢复", Kind.SECONDARY, block = true) { act("restore", JSONObject().put("device", deviceId), "恢复未确认，请重试。") })
+            addView(AshUi.button(ctx, "恢复", Kind.SECONDARY, block = true) { act("restore", JSONObject().put("device", real), "恢复未确认，请重试。") })
             statusNote()?.let { addView(it) }
             return@redraw
         }
@@ -174,14 +176,14 @@ class HmDevice(env: HomeEnv, arg: String?) : HomePage(env, arg) {
             addView(name, LinearLayout.LayoutParams(0, -2, 1f))
             addView(AshUi.button(ctx, "保存名称", Kind.NEUTRAL, AshUi.BtnSize.SM) {
                 val next = name.text.toString().trim()
-                if (next.isEmpty()) { status = "名称不能是空的。"; draw() } else act("rename", JSONObject().put("device", deviceId).put("name", next), "名称未保存。")
+                if (next.isEmpty()) { status = "名称不能是空的。"; draw() } else act("rename", JSONObject().put("device", real).put("name", next), "名称未保存。")
             })
         }), iconInset = false))
         addView(p.root)
-        addView(AshUi.button(ctx, "保存权限", Kind.PRIMARY, block = true) { act("access_set", p.read().put("device", deviceId), "权限未确认，请刷新状态后检查。") })
+        addView(AshUi.button(ctx, "保存权限", Kind.PRIMARY, block = true) { act("access_set", p.read().put("device", real), "权限未确认，请刷新状态后检查。") })
         addView(AshUi.button(ctx, "诊断", Kind.NEUTRAL, block = true) { diagnose(device) })
         info?.let { addView(Hk.pre(ctx, it)) }
-        addView(Hk.twoTap(ctx, "移除这台设备", "确定移除？", "移除后 ${device.str("name")} 需要重新配对才能连上。", { warn = it; draw() }) { act("revoke", JSONObject().put("device", deviceId), "移除未确认，请重试。") { env.nav.pop() } })
+        addView(Hk.twoTap(ctx, "移除这台设备", "确定移除？", "移除后 ${device.str("name")} 需要重新配对才能连上。", { warn = it; draw() }) { act("revoke", JSONObject().put("device", real), "移除未确认，请重试。") { env.nav.pop() } })
         if (warn.isNotEmpty()) addView(Hk.note(ctx, warn, "err"))
         statusNote()?.let { addView(it) }
     }

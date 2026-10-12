@@ -165,14 +165,16 @@ class McpHost(
         fun checkupLink(url: String): Boolean = url.length <= 64 && CHECKUP.matches(url) && (checkupPart(url)?.let { ai.ash.ui.Checkup.part(it) != null } ?: true)
         fun checkupPart(url: String): String? = CHECKUP.find(url)?.groupValues?.get(1)?.ifEmpty { null }
 
-        private val DEVICE = Regex("^ash://device/([A-Za-z0-9:_.-]{1,128})$")
+        private val DEVICE = Regex("^ash://device/([A-Za-z0-9%:_.~-]{1,300})$")
 
-        /** `ash://device/<device id>` and `ash://keys`: pages of her home that an app (her status) points the owner to; nothing else of `ash://` opens. */
+        /** `ash://device/<device id or name>` and `ash://keys`: pages of her home that an app (her status) points the owner to; nothing else of `ash://` opens. */
         fun homeLink(url: String?): Pair<String, String?>? {
             if (url == null || url.length > 160) return null
             if (url == "ash://keys") return "keys" to null
-            val d = DEVICE.find(url)?.groupValues?.get(1) ?: return null
-            return "device" to "d/" + (if (d.startsWith("device:")) d else "device:$d")
+            val raw = DEVICE.find(url)?.groupValues?.get(1) ?: return null
+            // the device's id (`device:<hand>`) or its name (percent-encoded when it has anything but letters and digits); the page finds it by either
+            val d = runCatching { java.net.URLDecoder.decode(raw.replace("+", "%2B"), "UTF-8") }.getOrNull()?.takeIf { it.isNotEmpty() && it.length <= 128 && it.none { c -> c.isISOControl() } } ?: return null
+            return "device" to "d/$d"
         }
 
         /** Only http(s), with a host, no credentials in it. */
