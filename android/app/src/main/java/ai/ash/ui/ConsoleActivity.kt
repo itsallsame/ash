@@ -5,7 +5,6 @@ import ai.ash.caps.Capabilities
 import ai.ash.caps.config.ConfigStatus
 import ai.ash.caps.config.OwnerWord
 import ai.ash.caps.config.Permissions
-import ai.ash.caps.config.ScreenRecovery
 import ai.ash.caps.senses.NotificationSenseSettings
 import ai.ash.host.KernelLauncher
 import ai.ash.ui.design.AshPage
@@ -137,7 +136,7 @@ class ConsoleActivity : Activity() {
         val list = items
         val p = part
         val c = AshUi.p(this)
-        val sig = "${p?.id}|$night|" + (list?.joinToString(",") { "${it.id}:${it.state}:${it.note}:${it.canSay}:${it.canRecheck}" } ?: "-") + "|$kernelLine" + switchSig()
+        val sig = "${p?.id}|$night|" + (list?.joinToString(",") { "${it.id}:${it.state}:${it.note}:${it.canSay}:${it.canRecheck}:${it.revocable}" } ?: "-") + "|$kernelLine" + switchSig()
         if (sig == shown) return
         shown = sig
         val y = scroll?.scrollY ?: 0
@@ -157,7 +156,7 @@ class ConsoleActivity : Activity() {
         window.decorView.setBackgroundColor(c.bg)
     }
 
-    private fun switchSig() = "|${ScreenRecovery.enabled(this)}|${TaskCapsule.residentKept(this)}|${NotificationSenseSettings.enabled(this)}|${NotificationSenseSettings.granted(this)}"
+    private fun switchSig() = "|${TaskCapsule.residentKept(this)}|${NotificationSenseSettings.enabled(this)}|${NotificationSenseSettings.granted(this)}"
 
     private fun partIcon(p: OnboardingPlan.Part) = when (p.id) {
         "brain" -> R.drawable.ash_ic_cpu
@@ -211,9 +210,6 @@ class ConsoleActivity : Activity() {
         blocks += AshUi.group(this, "其他", rows = listOf(
             AshUi.row(this, "再走一遍引导", "一项一项看哪些还没开", AshPage.icon(this, R.drawable.ash_ic_list), trailing = chevron()) { startActivity(Intent(this, OnboardingActivity::class.java)) },
             AshUi.row(this, "显示虚拟屏预览", "Ash 在后台操作应用时，小窗里看她的屏幕", AshPage.icon(this, R.drawable.ash_ic_eye), trailing = chevron()) { showPreview() },
-            switchRow("无障碍自动恢复", recoveryLine(), ScreenRecovery.enabled(this), ScreenRecovery.granted(this)) {
-                ScreenRecovery.setEnabled(this, it); render()
-            },
             switchRow("灵动岛常驻入口", residentLine(), TaskCapsule.residentKept(this), true) { TaskCapsule.setResidentKept(this, it); render() },
             switchRow("读取通知（可选）", notificationLine(), NotificationSenseSettings.enabled(this), true) { setNotificationSense(it) },
             AshUi.row(this, "系统的通知读取权限", null, AshPage.icon(this, R.drawable.ash_ic_bell), trailing = chevron()) { openNotificationAccess() },
@@ -290,7 +286,7 @@ class ConsoleActivity : Activity() {
                 addView(AshUi.text(this@ConsoleActivity, item.title, AshTokens.Type.listTitle))
                 addView(AshUi.text(this@ConsoleActivity, item.why, AshTokens.Type.listSub))
                 if (note != null) addView(AshUi.text(this@ConsoleActivity, note, AshTokens.Type.listSub, if (warn) c.warn else c.text2))
-                if (!on || item.testable) addView(AshUi.hstack(this@ConsoleActivity, 8).apply {
+                if (!on || item.testable || item.revocable) addView(AshUi.hstack(this@ConsoleActivity, 8).apply {
                     if (fixable) addView(AshPage.smallButton(this@ConsoleActivity, "去开启", AshUi.Kind.SECONDARY) { fix(item) })
                     // the owner opened it and Ash still does not see it on: look again, or take their word for it
                     if (item.canRecheck && !on) addView(AshPage.smallButton(this@ConsoleActivity, OnboardingContent.Words.RECHECK, AshUi.Kind.NEUTRAL) { recheck.start() })
@@ -299,6 +295,10 @@ class ConsoleActivity : Activity() {
                     })
                     if (item.testable) addView(AshPage.smallButton(this@ConsoleActivity, "测试", AshUi.Kind.NEUTRAL) {
                         Permissions.all.firstOrNull { p -> p.key == item.id }?.test?.invoke(this@ConsoleActivity)
+                    })
+                    if (item.revocable) addView(AshPage.smallButton(this@ConsoleActivity, "撤销", AshUi.Kind.NEUTRAL) {
+                        Permissions.all.firstOrNull { p -> p.key == (ConfigStatus.PERMISSION_KEY[item.id] ?: item.id) }?.revoke?.invoke(this@ConsoleActivity)
+                        shown = ""; refresh()
                     })
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = d(AshTokens.Space.xs) })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -314,12 +314,7 @@ class ConsoleActivity : Activity() {
         when (item.id) {
             Checkup.KERNEL_PACKAGE -> startActivity(Intent(this, OnboardingActivity::class.java)) // the guide starts with installing it
             Checkup.KERNEL_LINK -> startKernel(KernelLauncher.ACTION_START)
-            in ConfigStatus.NAMES -> Thread({
-                // With the grant for secure settings Ash switches the accessibility service on itself; without it, or if that fails, the owner is taken to its page.
-                val enabled = item.id == "accessibility" && ScreenRecovery.granted(this) &&
-                    Capabilities.call(this, "config.accessibility.enable", JSONObject()).toJson().optBoolean("ok")
-                if (!enabled) Capabilities.call(this, "config.permission.request", JSONObject().put("name", item.id))
-            }, "ash-checkup-fix").start()
+            in ConfigStatus.NAMES -> Thread({ Capabilities.call(this, "config.permission.request", JSONObject().put("name", item.id)) }, "ash-checkup-fix").start()
             else -> Permissions.all.firstOrNull { it.key == item.id }?.open(this)
         }
     }
@@ -327,16 +322,6 @@ class ConsoleActivity : Activity() {
     private fun startKernel(action: String) {
         if (KernelLauncher.installedVersion(this) == null) { Toast.makeText(this, "大脑还没装", Toast.LENGTH_SHORT).show(); return }
         if (!KernelLauncher.start(this, action)) Toast.makeText(this, "没能叫动大脑", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun recoveryLine(): String {
-        val r = ScreenRecovery
-        val times = r.history(this).takeLast(3).reversed().joinToString("、") { java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.CHINA).format(java.util.Date(it)) }
-        return buildString {
-            append(if (!r.granted(this@ConsoleActivity)) "还没授权（见上面「眼睛和手」）。" else if (r.enabled(this@ConsoleActivity)) "开着。" else "关着。")
-            append("只做一件事：无障碍开关开着、却被系统停掉时，把它重新拉起来；你关掉的不会去开。")
-            append(if (times.isEmpty()) "还没恢复过。" else "最近恢复：$times。")
-        }
     }
 
     private fun residentLine() =

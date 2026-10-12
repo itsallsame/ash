@@ -25,7 +25,6 @@ import ai.ash.caps.config.OwnerWord
 import ai.ash.caps.config.Standing
 import ai.ash.caps.config.Permission
 import ai.ash.caps.config.Permissions
-import ai.ash.caps.config.ScreenRecovery
 import ai.ash.host.KernelGate
 import ai.ash.host.KernelInstaller
 import ai.ash.host.KernelLauncher
@@ -153,12 +152,11 @@ class OnboardingActivity : Activity() {
         ui.postDelayed(tick, 1000)
     }
 
-    /** `config.status`, the keep-alive switches the phone keeps, and whether Ash may bring its accessibility back by itself. */
+    /** `config.status` and the keep-alive switches the phone keeps. */
     private fun items(): List<ConfigStatus.Item> {
         val keepAlive = if (KeepAliveStatus.supported()) KeepAliveStatus.items(this).filter { it.item !in ConfigStatus.NAMES } else emptyList()
-        val recovery = ConfigStatus.Item("screen_recovery", if (ScreenRecovery.granted(this)) ConfigStatus.GRANTED else ConfigStatus.MISSING)
         val word = OwnerWord.of(this)
-        return (ConfigStatus.all(this) + keepAlive + recovery).map { row ->
+        return (ConfigStatus.all(this) + keepAlive).map { row ->
             // what the owner said counts until the system shows it on (and then the word is dropped); a switch the phone keeps from Ash is the word alone, already in its state
             if (row.state == ConfigStatus.UNSUPPORTED || unreadable(row.item)) row
             else if (word.settle(row.item, row.state == ConfigStatus.GRANTED, unreadable = false) == Standing.SAID) ConfigStatus.Item(row.item, OnboardingPlan.SAID, row.detail)
@@ -464,10 +462,9 @@ class OnboardingActivity : Activity() {
         reload()
     }
 
-    /** 「先不用」: the screen is not asked again; skipping accessibility passes on its auto-recovery too. */
+    /** 「先不用」: the screen is not asked again. */
     private fun skip(item: String) {
         skipped += item
-        if (item == "accessibility") skipped += "screen_recovery"
         if (cursor < history.lastIndex) forward() else render()
     }
 
@@ -531,12 +528,7 @@ class OnboardingActivity : Activity() {
     /** The button of a screen does what the capability of the same name does; the keep-alive switches are the owner's tap on their entry. */
     private fun act(item: String) {
         if (item !in ConfigStatus.NAMES) return run { permissionOf(item)?.open(this) }
-        Thread({
-            // With the grant for secure settings Ash switches the accessibility service on itself; without it, or if that fails, the owner is taken to its page.
-            val enabled = item == "accessibility" && ScreenRecovery.granted(this) &&
-                Capabilities.call(this, "config.accessibility.enable", JSONObject()).toJson().optBoolean("ok")
-            if (!enabled) Capabilities.call(this, "config.permission.request", JSONObject().put("name", item))
-        }, "ash-onboarding-act").start()
+        Thread({ Capabilities.call(this, "config.permission.request", JSONObject().put("name", item)) }, "ash-onboarding-act").start()
     }
 
     private fun installKernel() {
@@ -577,8 +569,8 @@ class OnboardingActivity : Activity() {
         private const val SEEN = "onboarding_seen"
         private const val START_GAP_MS = 20_000L
 
-        /** The entries of [Permissions] that stand for items outside `config.status` (the keep-alive switches, the recovery grant). */
-        private val EXTRA_KEYS = mapOf("autostart" to "autostart", "kernel_autostart" to "kernel_autostart", "recents_lock" to "lock", "screen_recovery" to "screen_recovery")
+        /** The entries of [Permissions] that stand for items outside `config.status` (the keep-alive switches). */
+        private val EXTRA_KEYS = mapOf("autostart" to "autostart", "kernel_autostart" to "kernel_autostart", "recents_lock" to "lock")
 
         private fun permissionOf(item: String): Permission? {
             val key = ConfigStatus.PERMISSION_KEY[item] ?: EXTRA_KEYS[item] ?: return null

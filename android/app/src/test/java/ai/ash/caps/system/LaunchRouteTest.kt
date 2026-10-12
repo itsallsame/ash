@@ -10,59 +10,44 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** How a start of a screen is routed: in front, exempt, Shizuku, ask for Shizuku, or a plain failure that says what to turn on. */
+/** How a start of a screen is routed: in front, exempt, the phone's debug identity, or a plain failure that says what to turn on. */
 class LaunchRouteTest {
     private fun choose(
         sdk: Int = 31, foreground: Boolean = false, accessibility: Boolean = false, overlay: Boolean = false,
-        shizuku: ShizukuStatus = ShizukuStatus.NOT_RUNNING,
-    ) = LaunchRoute.choose(sdk, foreground, accessibility, overlay) { shizuku }
+        hostShell: HostShellStatus = HostShellStatus.ABSENT,
+    ) = LaunchRoute.choose(sdk, foreground, accessibility, overlay, hostShell)
 
     @Test fun inFrontItStartsDirectlyWhateverElseHolds() {
         assertEquals(Way.FOREGROUND, choose(foreground = true))
-        assertEquals(Way.FOREGROUND, choose(foreground = true, accessibility = true, shizuku = ShizukuStatus.READY))
+        assertEquals(Way.FOREGROUND, choose(foreground = true, accessibility = true, hostShell = HostShellStatus.READY))
     }
 
     @Test fun inTheBackgroundAnExemptionStartsDirectlyAsBefore() {
         assertEquals(Way.EXEMPT, choose(accessibility = true))
         assertEquals(Way.EXEMPT, choose(overlay = true))
-        assertEquals(Way.EXEMPT, choose(accessibility = true, shizuku = ShizukuStatus.READY))
+        assertEquals(Way.EXEMPT, choose(accessibility = true, hostShell = HostShellStatus.READY))
     }
 
     @Test fun theOverlayExemptionEndsWithAndroid15ButAccessibilityStays() {
         assertEquals(Way.EXEMPT, choose(sdk = 34, overlay = true))
         assertEquals(Way.BLOCKED, choose(sdk = 35, overlay = true))
-        assertEquals(Way.SHIZUKU, choose(sdk = 35, overlay = true, shizuku = ShizukuStatus.READY))
+        assertEquals(Way.HOST_SHELL, choose(sdk = 35, overlay = true, hostShell = HostShellStatus.READY))
         assertEquals(Way.EXEMPT, choose(sdk = 35, accessibility = true))
     }
 
-    @Test fun withoutAnExemptionAReadyShizukuStartsIt() {
-        assertEquals(Way.SHIZUKU, choose(shizuku = ShizukuStatus.READY))
-    }
-
-    @Test fun shizukuRunningButNotAuthorizedAsksTheOwner() {
-        assertEquals(Way.ASK_SHIZUKU, choose(shizuku = ShizukuStatus.NEEDS_AUTH))
+    @Test fun withoutAnExemptionAConnectedDebugIdentityStartsIt() {
+        assertEquals(Way.HOST_SHELL, choose(hostShell = HostShellStatus.READY))
     }
 
     @Test fun otherwiseItIsBlockedAndNeverCalledASuccess() {
-        for (s in listOf(ShizukuStatus.NOT_RUNNING, ShizukuStatus.NOT_INSTALLED, ShizukuStatus.TOO_OLD)) assertEquals(Way.BLOCKED, choose(shizuku = s))
+        for (s in listOf(HostShellStatus.ABSENT, HostShellStatus.NOT_PAIRED)) assertEquals(Way.BLOCKED, choose(hostShell = s))
     }
 
     @Test fun beforeAndroid10NothingRestrictsIt() {
         assertEquals(Way.FOREGROUND, choose(sdk = 28))
     }
 
-    @Test fun shizukuIsNotLookedAtWhenAStartCanGoDirectly() {
-        var asked = 0
-        fun probe(): ShizukuStatus { asked++; return ShizukuStatus.READY }
-        LaunchRoute.choose(31, true, false, false, ::probe)
-        LaunchRoute.choose(31, false, true, false, ::probe)
-        LaunchRoute.choose(28, false, false, false, ::probe)
-        assertEquals(0, asked)
-        LaunchRoute.choose(31, false, false, false, ::probe)
-        assertEquals(1, asked)
-    }
-
-    @Test fun canStartDirectlyIgnoresShizuku() {
+    @Test fun canStartDirectlyIgnoresTheDebugIdentity() {
         assertTrue(LaunchRoute.direct(31, true, false, false))
         assertTrue(LaunchRoute.direct(31, false, true, false))
         assertFalse(LaunchRoute.direct(31, false, false, false))
@@ -70,13 +55,11 @@ class LaunchRouteTest {
     }
 
     @Test fun theHintNamesWhatTheOwnerCanTurnOn() {
-        val hint = LaunchRoute.hint(ShizukuStatus.NOT_INSTALLED)
+        val hint = LaunchRoute.hint(HostShellStatus.NOT_PAIRED)
         assertTrue(hint.contains("accessibility"))
         assertTrue(hint.contains("overlay"))
-        assertTrue(hint.contains("install Shizuku"))
-        assertTrue(LaunchRoute.hint(ShizukuStatus.NOT_RUNNING).contains("start the Shizuku service"))
-        assertTrue(LaunchRoute.hint(ShizukuStatus.NEEDS_AUTH, asked = true).contains("Authorized apps"))
-        assertTrue(LaunchRoute.hint(ShizukuStatus.TOO_OLD).contains("update Shizuku"))
+        assertTrue(hint.contains("pair"))
+        assertTrue(LaunchRoute.hint(HostShellStatus.ABSENT).contains("Wireless debugging"))
     }
 
     @Test fun theFrontPackageComesFromTheResumedActivityFirst() {
@@ -107,14 +90,14 @@ class LaunchRouteTest {
     }
 
     @Test fun anUnconfirmedStartIsNotReportedAsOpened() {
-        assertTrue(Launch("shizuku", "com.a", "com.a", true).opened)
+        assertTrue(Launch("host_shell", "com.a", "com.a", true).opened)
         assertTrue(Launch("direct", "com.a", null, null).opened)
-        assertFalse(Launch("shizuku", "com.a", "com.miui.home", false).opened)
-        assertTrue(Launch("shizuku", "com.a", "com.miui.home", false).summary().contains("com.miui.home"))
+        assertFalse(Launch("host_shell", "com.a", "com.miui.home", false).opened)
+        assertTrue(Launch("host_shell", "com.a", "com.miui.home", false).summary().contains("com.miui.home"))
     }
 
     @Test fun aBlockedStartCarriesItsHintOverTheLink() {
-        val e = LaunchFailure("unavailable", "cannot open the screen", LaunchRoute.hint(ShizukuStatus.NOT_RUNNING))
+        val e = LaunchFailure("unavailable", "cannot open the screen", LaunchRoute.hint(HostShellStatus.ABSENT))
         val out = DeviceCalls.outcomeOf(CapResult.error(e.code, e.message!!, e.hint)) as CallOutcome.Err
         assertEquals("unavailable", out.code)
         assertEquals(e.hint, out.recoveryHint)

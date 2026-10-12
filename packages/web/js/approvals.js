@@ -8,7 +8,7 @@ const choices = new Set(["once", "always", "deny"]);
 export const actionLabel = (item) => item?.word === "calendar.create" ? "创建日历事件" :
   item?.word === "message.send" ? "发送消息" :
   item?.word === "browser.click" ? "在网页上点击" : item?.word === "browser.type" ? "在网页上输入" :
-  item?.word === "shell.run" ? "执行命令" :
+  item?.word === "workspace.bash" ? "执行命令" :
   item?.word === "rules.set" || item?.word === "rules.revoke" ? "修改审批规则" : item?.word === "mode.set" ? "修改审批档位" :
   item?.risk === "outward" ? "对外操作" : item?.risk === "structure" ? "修改资料" : "受保护操作";
 export function approvalSections(view, now = Date.now()) {

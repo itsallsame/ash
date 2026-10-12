@@ -13,7 +13,7 @@ object KeepAliveRecheck {
         NONE,
         /** Ash's battery exemption is off: the system's own one-tap question comes first (the switches need it). */
         BATTERY,
-        /** The maker's switches may be off: the one-tap fix, which reads each one and turns on only what is off. */
+        /** The maker's switches may be off: Ash asks the owner to look at them (their page opens on the owner's tap). */
         SWITCHES,
     }
 
@@ -25,13 +25,13 @@ object KeepAliveRecheck {
     /**
      * [previous]: the install seen last time (null on the very first start, which the first-launch guide covers).
      * [batteryExempt]: what Android says of Ash's battery exemption. [makerSwitches]: the phone keeps switches of its
-     * own. [oneTap]: the accessibility service can run the one-tap fix now.
+     * own.
      */
-    fun plan(previous: Install?, now: Install, batteryExempt: Boolean, makerSwitches: Boolean, oneTap: Boolean): Plan {
+    fun plan(previous: Install?, now: Install, batteryExempt: Boolean, makerSwitches: Boolean): Plan {
         if (previous == null || previous == now) return Plan(false, Offer.NONE)
         val offer = when {
             !batteryExempt -> Offer.BATTERY
-            makerSwitches && oneTap -> Offer.SWITCHES
+            makerSwitches -> Offer.SWITCHES
             else -> Offer.NONE
         }
         return Plan(forgetWords = makerSwitches, offer = offer)

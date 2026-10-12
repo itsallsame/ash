@@ -18,7 +18,7 @@ import ai.ash.ui.TaskCapsule
 import org.json.JSONObject
 import java.util.UUID
 
-/** Authenticated host projection, independent of virtual displays and Shizuku. */
+/** Authenticated host projection, independent of virtual displays and the phone's debug identity. */
 object TaskStatus {
     private val main = Handler(Looper.getMainLooper())
     private val model = TaskStatusModel()

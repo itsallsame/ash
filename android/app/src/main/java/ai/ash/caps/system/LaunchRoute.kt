@@ -1,7 +1,7 @@
 package ai.ash.caps.system
 
-/** How Shizuku stands for this app right now. */
-enum class ShizukuStatus { READY, NEEDS_AUTH, TOO_OLD, NOT_RUNNING, NOT_INSTALLED }
+/** How the phone's debug identity (「后台也能动手」, a host service the owner connects) stands for this app right now. */
+enum class HostShellStatus { READY, ABSENT, NOT_PAIRED }
 
 /**
  * The pure rules for putting an activity on the real screen from the hand app's process (no Android calls here, so
@@ -9,44 +9,35 @@ enum class ShizukuStatus { READY, NEEDS_AUTH, TOO_OLD, NOT_RUNNING, NOT_INSTALLE
  *  1. the app is in front: start it directly;
  *  2. the app is in the background but exempt (accessibility service running, or, before Android 15, the overlay
  *     permission): start it directly, as before;
- *  3. Shizuku is ready: start it through the Shizuku shell (the shell is always allowed);
- *  4. Shizuku runs but Ash is not authorized yet: ask the owner for the authorization, then try 3;
- *  5. otherwise fail and say what the owner can turn on.
+ *  3. the debug identity is connected: start it through it (`am start` as the shell user is always allowed);
+ *  4. otherwise fail and say what the owner can turn on.
  */
 object LaunchRoute {
-    enum class Way { FOREGROUND, EXEMPT, SHIZUKU, ASK_SHIZUKU, BLOCKED }
+    enum class Way { FOREGROUND, EXEMPT, HOST_SHELL, BLOCKED }
 
-    /** An exemption that lets a background app start an activity itself (not counting Shizuku). */
+    /** An exemption that lets a background app start an activity itself (not counting the debug identity). */
     fun exempt(sdk: Int, accessibility: Boolean, overlay: Boolean): Boolean = accessibility || (sdk < 35 && overlay)
 
-    /** Whether the app can start an activity on its own, without Shizuku. */
+    /** Whether the app can start an activity on its own, without the debug identity. */
     fun direct(sdk: Int, foreground: Boolean, accessibility: Boolean, overlay: Boolean): Boolean =
         sdk < 29 || foreground || exempt(sdk, accessibility, overlay)
 
-    /** [shizuku] is only asked when no direct way exists (reading it can wait for the Shizuku binder). */
-    fun choose(sdk: Int, foreground: Boolean, accessibility: Boolean, overlay: Boolean, shizuku: () -> ShizukuStatus): Way = when {
+    fun choose(sdk: Int, foreground: Boolean, accessibility: Boolean, overlay: Boolean, hostShell: HostShellStatus): Way = when {
         sdk < 29 || foreground -> Way.FOREGROUND
         exempt(sdk, accessibility, overlay) -> Way.EXEMPT
-        else -> when (shizuku()) {
-            ShizukuStatus.READY -> Way.SHIZUKU
-            ShizukuStatus.NEEDS_AUTH -> Way.ASK_SHIZUKU
-            else -> Way.BLOCKED
-        }
+        hostShell == HostShellStatus.READY -> Way.HOST_SHELL
+        else -> Way.BLOCKED
     }
 
     /** What the owner can turn on so that the phone can open apps while Ash is in the background, for the recovery hint. */
-    fun hint(shizuku: ShizukuStatus, asked: Boolean = false): String {
-        val shizukuStep = when (shizuku) {
-            ShizukuStatus.READY -> "Shizuku is ready"
-            ShizukuStatus.NEEDS_AUTH ->
-                if (asked) "authorize Ash in the Shizuku app (Authorized apps -> Ash); the permission dialog got no answer or was refused"
-                else "authorize Ash in Shizuku"
-            ShizukuStatus.TOO_OLD -> "update Shizuku (v11 or newer is needed)"
-            ShizukuStatus.NOT_RUNNING -> "start the Shizuku service (open the Shizuku app)"
-            ShizukuStatus.NOT_INSTALLED -> "install Shizuku and start it"
+    fun hint(hostShell: HostShellStatus): String {
+        val step = when (hostShell) {
+            HostShellStatus.READY -> "「后台也能动手」 is connected"
+            HostShellStatus.ABSENT -> "connect 「后台也能动手」 again (the owner turns Wireless debugging on when Ash asks, then off)"
+            HostShellStatus.NOT_PAIRED -> "pair 「后台也能动手」 once in Ash's checkup"
         }
         return "Ask the owner to enable any one of: Ash's accessibility service, the overlay permission (display over other apps) " +
-            "for Ash, or Shizuku (to $shizukuStep) in Ash's permission list; or to bring Ash to the front. Then call again."
+            "for Ash, or the phone's debug identity ($step); or to bring Ash to the front. Then call again."
     }
 
     /**
@@ -69,8 +60,4 @@ object LaunchRoute {
     /** True when [front] is the package asked for, false when it is another, null when there is nothing to compare. */
     fun confirmed(expected: String?, front: String?): Boolean? =
         if (expected.isNullOrEmpty() || front.isNullOrEmpty()) null else expected == front
-
-    /** The shell command whose output [parseFront] reads. */
-    const val FRONT_COMMAND =
-        "dumpsys activity activities | grep -E 'ResumedActivity' | head -6; dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -4"
 }

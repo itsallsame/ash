@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "6ac12fa4544f17df09e5058c2ed8ecb2112e0455cddf4f4445489f4cbac463f9",
+ "hash": "5ff1c57e73df057156ede8acf5a90a9b62d08f1842bf1136624d80a15a557545",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -14400,7 +14400,7 @@
            "usage",
            "write_settings",
            "overlay",
-           "shizuku"
+           "host_shell"
           ]
          },
          "why": {
@@ -16246,7 +16246,7 @@
    "word": "input.key",
    "kind": "request",
    "direction": "in",
-   "description": "Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need Shizuku.",
+   "description": "Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need the phone's debug identity (「后台也能动手」), which the owner connects.",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16288,7 +16288,7 @@
    "word": "vscreen.create",
    "kind": "request",
    "direction": "in",
-   "description": "Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it. Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16356,7 +16356,7 @@
    "word": "vscreen.close",
    "kind": "request",
    "direction": "in",
-   "description": "Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16432,7 +16432,7 @@
    "word": "vscreen.see",
    "kind": "request",
    "direction": "in",
-   "description": "Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16461,7 +16461,7 @@
    "word": "vscreen.launch",
    "kind": "request",
    "direction": "in",
-   "description": "Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16505,7 +16505,7 @@
    "word": "vscreen.tap",
    "kind": "request",
    "direction": "in",
-   "description": "Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16546,7 +16546,7 @@
    "word": "vscreen.swipe",
    "kind": "request",
    "direction": "in",
-   "description": "Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16603,7 +16603,7 @@
    "word": "vscreen.key",
    "kind": "request",
    "direction": "in",
-   "description": "Send a key press to the virtual screen: a name (back, home, enter, menu, app_switch, tab, escape, delete ...) or an Android keycode number. Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Send a key press to the virtual screen: a name (back, home, enter, menu, app_switch, tab, escape, delete ...) or an Android keycode number. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16644,7 +16644,7 @@
    "word": "vscreen.type",
    "kind": "request",
    "direction": "in",
-   "description": "Type text into the focused field of the virtual screen (tap the field first). Text with non-ASCII characters is pasted through the clipboard, replacing the owner's clipboard content. Needs Shizuku running with the app authorized (Android 10+).",
+   "description": "Type text into the focused field of the virtual screen (tap the field first). Text with non-ASCII characters is pasted through the clipboard, replacing the owner's clipboard content. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -16941,12 +16941,13 @@
    "word": "settings.get",
    "kind": "request",
    "direction": "in",
-   "description": "Read an Android system setting from system, secure or global (e.g. screen_brightness, screen_off_timeout, airplane_mode_on). Without key, lists the namespace (needs Shizuku).",
+   "description": "Read an Android system setting from system, secure or global (e.g. screen_brightness, screen_off_timeout, airplane_mode_on). A few protected keys cannot be read by an app.",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
     "required": [
-     "namespace"
+     "namespace",
+     "key"
     ],
     "properties": {
      "namespace": {
@@ -16960,7 +16961,8 @@
      },
      "key": {
       "type": "string",
-      "description": "Setting key; leave out to list the namespace."
+      "minLength": 1,
+      "description": "Setting key."
      }
     }
    },
@@ -16997,7 +16999,7 @@
    "word": "settings.put",
    "kind": "request",
    "direction": "in",
-   "description": "Change an Android system setting. System keys need the Modify system settings permission (or Shizuku); secure and global keys need Shizuku. volume_music, volume_ring and the other volume_* keys set that volume. Returns the previous and the new value.",
+   "description": "Change an Android system setting in the system namespace (brightness, screen timeout, rotation, font scale ...); needs the owner's Modify system settings grant. Secure and global settings are the owner's to change in Settings. volume_music, volume_ring and the other volume_* keys set that volume. Returns the previous and the new value.",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -17010,11 +17012,9 @@
      "namespace": {
       "type": "string",
       "enum": [
-       "system",
-       "secure",
-       "global"
+       "system"
       ],
-      "description": "system, secure or global."
+      "description": "Always system."
      },
      "key": {
       "type": "string",
@@ -17261,117 +17261,6 @@
    ],
    "label": {
     "doing": "在看手机状态"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "shell.run",
-   "kind": "request",
-   "direction": "in",
-   "description": "Run one shell command (sh -c) on the phone as the adb shell user through Shizuku: pm, am, cmd, dumpsys, settings, input, screencap to a file. Returns exit code, stdout and stderr. Needs Shizuku running with the app authorized (see shell.status).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "command"
-    ],
-    "properties": {
-     "command": {
-      "type": "string",
-      "minLength": 1,
-      "description": "The command line, run by /system/bin/sh -c."
-     },
-     "timeout_ms": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 120000,
-      "description": "Kill the command after this many ms (default 30000, at most 120000)."
-     },
-     "stdin": {
-      "type": "string",
-      "description": "Text written to the command's standard input, then closed."
-     },
-     "cwd": {
-      "type": "string",
-      "description": "Absolute working directory."
-     },
-     "max_output": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 200000,
-      "description": "Bytes kept per stream (default 16000, at most 200000)."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {
-     "exit_code": {
-      "type": "integer"
-     },
-     "stdout": {
-      "type": "string"
-     },
-     "stderr": {
-      "type": "string"
-     }
-    }
-   },
-   "effect": "execute",
-   "risk": "structure",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在手机上执行命令"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "shell.status",
-   "kind": "request",
-   "direction": "in",
-   "description": "Report whether the privileged shell (Shizuku) is usable: installed, running, this app authorized, and the server's version and uid. With request_permission it asks the owner to authorize and waits up to 30 s.",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [],
-    "properties": {
-     "request_permission": {
-      "type": "boolean",
-      "description": "Ask the owner to authorize the app in Shizuku if it is not yet."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {
-     "installed": {
-      "type": "boolean"
-     },
-     "running": {
-      "type": "boolean"
-     },
-     "authorized": {
-      "type": "boolean"
-     }
-    }
-   },
-   "effect": "read",
-   "risk": "none",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在看命令权限"
    }
   },
   {
@@ -19714,7 +19603,7 @@
    "word": "config.status",
    "kind": "request",
    "direction": "in",
-   "description": "The state of every permission and switch the hand app needs: accessibility, notification listener, notifications, exact alarms, battery optimization (app and kernel), location, activity recognition, health, overlay, modify system settings, Shizuku, usage access, storage.",
+   "description": "The state of every permission and switch the hand app needs: accessibility, notification listener, notifications, exact alarms, battery optimization (app and kernel), location, activity recognition, health, overlay, modify system settings, the phone's debug identity (host_shell, 「后台也能动手」), usage access, storage. These are host services the owner grants; the app reads them and never switches one itself.",
    "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -19799,7 +19688,7 @@
        "all_files",
        "overlay",
        "write_settings",
-       "shizuku",
+       "host_shell",
        "usage_access"
       ],
       "description": "Which permission or switch."
@@ -19888,87 +19777,6 @@
    ],
    "label": {
     "doing": "在看保活状态"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "config.keepalive.fix",
-   "kind": "request",
-   "direction": "in",
-   "description": "Turn on the background-running switches of Ash's own apps in the vendor's settings by driving them through accessibility (only on vendors it knows). Takes over the screen while it runs.",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [],
-    "properties": {
-     "packages": {
-      "type": "array",
-      "items": {
-       "type": "string",
-       "minLength": 1
-      },
-      "description": "Which apps (default all of Ash's)."
-     }
-    }
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [],
-    "properties": {
-     "outcome": {
-      "type": "string"
-     },
-     "summary": {
-      "type": "string"
-     }
-    }
-   },
-   "effect": "act",
-   "risk": "structure",
-   "foreground": true,
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在打开保活开关"
-   }
-  },
-  {
-   "member": "device:*",
-   "word": "config.accessibility.enable",
-   "kind": "request",
-   "direction": "in",
-   "description": "Turn the app's accessibility service back on, when the app holds the secure-settings permission (the system switches it off after an upgrade).",
-   "input_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [],
-    "properties": {}
-   },
-   "result_schema": {
-    "type": "object",
-    "additionalProperties": true,
-    "required": [
-     "enabled"
-    ],
-    "properties": {
-     "enabled": {
-      "type": "boolean"
-     }
-    }
-   },
-   "effect": "write",
-   "risk": "structure",
-   "callers": [
-    "owner",
-    "agent",
-    "app"
-   ],
-   "label": {
-    "doing": "在重新打开无障碍服务"
    }
   },
   {

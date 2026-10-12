@@ -225,7 +225,7 @@ test("the phone's own permission report: item -> state", () => {
   const items = configItems(json("config-status.json"));
   assert.equal(items.get("calendar").state, "granted");
   assert.equal(items.get("photos").state, "missing");
-  assert.equal(items.get("shizuku").state, "unsupported");
+  assert.equal(items.get("host_shell").state, "unsupported");
   assert.equal(items.get("nothing"), undefined);
 });
 
@@ -270,7 +270,7 @@ test("arguments: defaults, values, a bad number, an unknown option", () => {
 
 // --- the catalog ------------------------------------------------------------------------------------------------------------
 
-const KNOWN_NEEDS = new Set(["phone", "llm", "kill", "network", "notification-sense", "calendar", "location", "photos", "notifications", "notification_listener", "accessibility", "shizuku"]);
+const KNOWN_NEEDS = new Set(["phone", "llm", "kill", "network", "notification-sense", "calendar", "location", "photos", "notifications", "notification_listener", "accessibility", "host_shell"]);
 
 test("the catalog: unique ids, old numbers named, nothing claims another scenario's number, every need has a remedy", () => {
   const ids = SCENARIOS.map((s) => s.id);
@@ -372,8 +372,8 @@ test("runner: a missing permission is a SKIP that says what to switch on; grante
   assert.match(missing.detail, /"calendar" is not granted\. adb -s SER shell pm grant ai\.ash\.agent android\.permission\.READ_CALENDAR/);
   const granted = await runOne(fakeCtx({ calls: calls([{ item: "calendar", state: "granted" }]) }), { id: "T8", name: "n", needs: ["phone", "calendar"], run });
   assert.equal(granted.status, "PASS");
-  const unsupported = await runOne(fakeCtx({ calls: calls([{ item: "shizuku", state: "unsupported", detail: "not installed" }]) }), { id: "T9", name: "n", needs: ["shizuku"], run });
-  assert.match(unsupported.detail, /not supported on this phone \(not installed\)/);
+  const unsupported = await runOne(fakeCtx({ calls: calls([{ item: "host_shell", state: "unsupported", detail: "Android 12 or later" }]) }), { id: "T9", name: "n", needs: ["host_shell"], run });
+  assert.match(unsupported.detail, /not supported on this phone \(Android 12 or later\)/);
   const offline = await runOne(fakeCtx({ calls: { "service:admin/status": () => ({ ok: false, code: "offline", message: "down" }) } }), { id: "T10", name: "n", needs: [], run });
   assert.equal(offline.status, "SKIP");
   const noPhone = await runOne(fakeCtx({ calls: { ...hubOk, "service:devices/list": () => ({ ok: true, data: { devices: [] } }) } }), { id: "T11", name: "n", needs: ["phone"], run });

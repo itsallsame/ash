@@ -63,10 +63,12 @@ class DeviceCallsTest {
     @Test fun assessGivesTheDeclaredRiskAndTheRiskiestForAnUnknownCapability() {
         assertEquals("outward", HandHandlersProbe.assess("screen.tap").risk)
         assertEquals("none", HandHandlersProbe.assess("screen.read").risk)
-        assertEquals("structure", HandHandlersProbe.assess("shell.run").risk)
+        assertEquals("structure", HandHandlersProbe.assess("settings.put").risk)
         assertEquals("structure", HandHandlersProbe.assess("nope.nothing").risk)
         assertEquals("none", HandHandlersProbe.assess("decision.surface").risk)
-        assertEquals("structure", HandHandlersProbe.assess("config.keepalive.fix").risk)
+        assertEquals("structure", HandHandlersProbe.assess("vscreen.create").risk)
+        // A removed capability is no longer one: the riskiest is assumed.
+        assertEquals("structure", HandHandlersProbe.assess("shell.run").risk)
         // The old name of a renamed capability is no longer one.
         assertEquals("structure", HandHandlersProbe.assess("intent.view").risk)
     }

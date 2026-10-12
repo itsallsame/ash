@@ -169,7 +169,7 @@ Rows are numbered in the order of the file (§1 = R1–R15, §2 = R16–R27, §3
 | R65 | notification, island, reminders (S075, 设备 23) | surfaces: S075; timers: S082 |
 | R66 | reply on a notification, pause (设备 24, 25) | conversation: S016 (reply words), agents: S164 |
 | R67 | native chat page, app shell (设备 31, 32) | ✗ Android/web (T8, T11b); conversation tests are the human-channel half |
-| R68 | Shizuku (设备 33) | ✗ real phone |
+| R68 | 后台也能动手：调试身份上的虚拟屏 (设备 33) | ✗ real phone |
 | R69 | keep-alive switches | ✗ real phone (`config.*`) |
 | R70 | install, grant, start/stop apps (S119–S134) | ✗ app fixture (gap 9) |
 | R71 | app calls Ash; health fallback (设备 37) | ✗ app fixture; `registry.findByWord` is a T4 unit test |

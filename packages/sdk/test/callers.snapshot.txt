@@ -234,8 +234,6 @@
   device:*/clipboard.get  owner,agent,app
   device:*/clipboard.set  owner,agent,app
   device:*/device.status  owner,agent,app
-  device:*/shell.run  owner,agent,app
-  device:*/shell.status  owner,agent,app
   body:*/workspace.ls  owner,agent,app
   body:*/workspace.read  owner,agent,app
   body:*/workspace.find  owner,agent,app
@@ -280,8 +278,6 @@
   device:*/config.status  owner,agent,app
   device:*/config.permission.request  owner,agent,app
   device:*/config.keepalive.status  owner,agent,app
-  device:*/config.keepalive.fix  owner,agent,app
-  device:*/config.accessibility.enable  owner,agent,app
 * device:*/decision.surface  kernel
 * device:*/decision.screen  kernel
 * device:*/decision.return  kernel

@@ -46,7 +46,7 @@ class CheckupTest {
             "exact_alarm" to "alarm",
             "notifications" to "notify", "alerts" to "notify",
             "battery_optimization" to "awake", "autostart" to "awake", "lock" to "awake",
-            "accessibility" to "eyes", "notification_listener" to "eyes", "screen_recovery" to "eyes", "overlay" to "eyes", "shizuku" to "eyes",
+            "accessibility" to "eyes", "notification_listener" to "eyes", "overlay" to "eyes", "host_shell" to "eyes",
             "photos" to "files", "all_files" to "files", "write_settings" to "files", "usage_access" to "files",
             "location" to "location", "location_background" to "location", "activity_recognition" to "location", "health" to "location", "calendar" to "location",
         )

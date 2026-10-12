@@ -411,7 +411,9 @@ export const REMEDY = {
   exact_alarm: "adb -s {ser} shell appops set {pkg} SCHEDULE_EXACT_ALARM allow",
   battery_optimization: "adb -s {ser} shell dumpsys deviceidle whitelist +{pkg}",
   kernel_battery_optimization: "adb -s {ser} shell dumpsys deviceidle whitelist +{kpkg}",
-  shizuku: "start Shizuku (adb -s {ser} shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh) and authorize Ash in the Shizuku app",
+  host_shell: "pair 「后台也能动手」 in Ash's checkup (wireless debugging), or on a test phone start the service over USB: " +
+    "adb -s {ser} shell 'P={pkg}; U=$(cmd package list packages -U $P | sed -n \"s/.*package:$P uid://p\"); CLASSPATH=$(pm path $P | sed s/package://) " +
+    "setsid app_process /system/bin --nice-name=ash_hostshell ai.ash.caps.hostshell.Server $P $U </dev/null >/dev/null 2>&1 & sleep 1'",
   "notification-sense": "turn on 通知读取 in the Ash app (the opt-in is a switch in the app, not a system permission) and grant the listener: adb -s {ser} shell cmd notification allow_listener {pkg}/ai.ash.caps.senses.NotificationSense",
   kill: "the hub process can be killed from adb only on a debuggable kernel build where SELinux allows run-as to signal it (emulators), or with root (su) on the phone",
   "network": "give the phone internet access",
@@ -1204,13 +1206,25 @@ defineScenario({
 });
 
 defineScenario({
-  id: "S094c", category: "phone", codes: ["设备33"], name: "手机能力：Shizuku shell（跑命令、权限是 shell 用户）", needs: ["phone", "shizuku"],
+  id: "S094c", category: "phone", codes: ["设备33"], name: "手机能力：后台也能动手（调试身份上的虚拟屏；没有任意命令）", needs: ["phone", "host_shell"],
   async run(ctx) {
-    const r = await ctx.devMust("shell.run", { command: "echo $((6*7)); id -u", timeout_ms: 20_000 });
-    const lines = String(r.stdout ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
-    check(r.exit_code === 0 && lines[0] === "42", `shell.run gave exit ${r.exit_code}, output '${String(r.stdout).slice(0, 60)}'`);
-    check(lines[1] === "2000" || lines[1] === "0", `the command ran as uid ${lines[1]}, not the shell user`);
-    return `shell.run answered 42 as uid ${lines[1]}`;
+    const gone = await ctx.dev("shell.run", { command: "id" });
+    check(!gone.ok, "shell.run still answers: the debug identity must offer no command line");
+    await ctx.devMust("vscreen.create", {});
+    try {
+      await ctx.devMust("vscreen.launch", { app: "com.android.settings" });
+      // An app takes a moment to draw its first frame on the new display.
+      let seen = null;
+      for (let i = 0; i < 10 && !seen; i++) {
+        await sleep(1000);
+        const r = await ctx.dev("vscreen.see", {});
+        if (r.ok) seen = r;
+      }
+      check(seen, "the virtual screen showed no frame of Settings within 10 s");
+    } finally {
+      await ctx.dev("vscreen.close", {});
+    }
+    return "Settings opened on a virtual screen, showed a frame, and the screen closed, all through the debug identity; shell.run is gone";
   },
 });
 

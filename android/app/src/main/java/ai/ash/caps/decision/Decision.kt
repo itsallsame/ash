@@ -3,7 +3,7 @@ package ai.ash.caps.decision
 import ai.ash.caps.CapResult
 import ai.ash.caps.Capabilities
 import ai.ash.caps.screen.Screen
-import ai.ash.caps.shell.ShizukuState
+import ai.ash.caps.hostshell.HostShell
 import ai.ash.caps.vscreen.VScreenClient
 import ai.ash.host.AppState
 import ai.ash.ui.HomeActivity
@@ -30,7 +30,7 @@ object Decision {
         state.beginTurn(turn)
         return JSONObject().put("home_visible", AppState.homeVisible).put("page_live", AppState.homePageLive)
             .put("visibility_epoch", AppState.visibilityEpoch.get())
-            .put("virtual_available", Build.VERSION.SDK_INT >= 29 && ShizukuState.ready())
+            .put("virtual_available", Build.VERSION.SDK_INT >= 29 && HostShell.ready())
     }
 
     /** Screen changes, as the accessibility service counts them, with Ash's own turns and visibility. */

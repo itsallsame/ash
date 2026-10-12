@@ -1,49 +1,31 @@
 package ai.ash.caps.config
 
-import android.Manifest
+import ai.ash.caps.screen.Screen
+import ai.ash.host.Notifications
+import android.app.PendingIntent
 import android.content.Context
-import android.content.pm.PackageManager
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.util.Log
-import org.json.JSONArray
-import org.json.JSONObject
-import ai.ash.caps.screen.Screen
 
 /**
- * Brings Ash's accessibility service back after the system stopped the service (a maker's background
- * cleaning does): the switch stays on in settings, but Android does not start the service again by itself.
+ * Notices when the system stopped Ash's accessibility service (a maker's background cleaning does): the switch stays on in
+ * settings, but Android does not start the service again by itself.
  *
- * It needs WRITE_SECURE_SETTINGS, which Android grants whole (any secure or global setting) and only over USB or
- * Shizuku. Ash keeps it to this one use: in this file, the only place Ash writes a secure setting itself, it takes Ash's
- * own accessibility entry out of the enabled services and puts it back, and only while that entry is still there (the owner
- * left the switch on). The agent has no way to reach it; settings.put writes secure settings only through Shizuku,
- * with the owner's approval each time. Every recovery is recorded; the owner can turn it off.
+ * The accessibility service is a host service: the owner turns it on and off. Ash only tells them, in one notice whose tap
+ * opens the accessibility list, where switching 「Ash」 off and on again brings it back. Ash writes no setting for it.
  */
 object ScreenRecovery {
-    private const val TAG = "ash.screen"
-    private const val PREFS = "ash.screen.recovery"
+    private const val NOTICE = "screen-down"
     private const val CHECK_MS = 15_000L
-    /** A reconnecting service is not a stopped one: wait this long before acting. */
+    /** A reconnecting service is not a stopped one: wait this long before telling the owner. */
     private const val DOWN_MS = 20_000L
-    /** At most once per this long, so a service that keeps failing is not toggled in a loop. */
-    private const val GAP_MS = 120_000L
     private val main = Handler(Looper.getMainLooper())
     private var app: Context? = null
     private var downSince = 0L
+    private var told = false
     private var started = false
-
-    fun granted(ctx: Context) = ctx.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
-    fun enabled(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", true)
-    fun setEnabled(ctx: Context, on: Boolean) { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("enabled", on).apply() }
-    /** When Ash brought the service back, newest last (at most 20). */
-    fun history(ctx: Context): List<Long> = runCatching {
-        val a = JSONArray(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("history", "[]")); (0 until a.length()).map { a.getLong(it) }
-    }.getOrDefault(emptyList())
-
-    /** The adb command that grants it, for a phone without Shizuku. */
-    fun grantCommand(ctx: Context) = "adb shell pm grant ${ctx.packageName} ${Manifest.permission.WRITE_SECURE_SETTINGS}"
 
     fun start(ctx: Context) {
         if (started) return
@@ -57,71 +39,21 @@ object ScreenRecovery {
         UpgradeRecovery.observe(ctx, Screen.accessibility(), Screen.switchedOn(ctx))
         val down = Screen.switchedOn(ctx) && !Screen.accessibility()
         val now = System.currentTimeMillis()
-        if (!down) { downSince = 0; return }
-        if (downSince == 0L) { downSince = now; return }
-        if (now - downSince < DOWN_MS || !enabled(ctx) || !granted(ctx)) return
-        if (now - (history(ctx).lastOrNull() ?: 0L) < GAP_MS) return
-        Thread({ recover(ctx) }, "ash-screen-recovery").start()
-    }
-
-    enum class Enable { ALREADY_ON, ENABLED, NOT_PERMITTED }
-
-    /**
-     * Turns the service on when asked to (`config.accessibility.enable`; the kernel's gate asks the owner first). Unlike
-     * [recover] it also puts Ash's entry in the enabled list when it is not there, which is what an upgrade does to it.
-     * Only Ash's own entry is added or toggled, as everywhere in this file.
-     */
-    fun enable(ctx: Context): Enable {
-        if (Screen.accessibility()) return Enable.ALREADY_ON
-        if (!granted(ctx)) return Enable.NOT_PERMITTED
-        val resolver = ctx.contentResolver
-        val key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        val services = Settings.Secure.getString(resolver, key).orEmpty()
-        if (Services.helpers(services, ctx.packageName).isNotEmpty()) {
-            recover(ctx)
-        } else {
-            val own = android.content.ComponentName(ctx, ai.ash.caps.screen.A11yService::class.java).flattenToString()
-            try {
-                Settings.Secure.putString(resolver, key, Services.withHelperAdded(services, own))
-                Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
-            } catch (e: SecurityException) { Log.w(TAG, "accessibility enable not permitted", e); return Enable.NOT_PERMITTED }
+        if (!down) {
+            downSince = 0
+            if (told) { told = false; Notifications.cancelNotice(ctx, NOTICE) }
+            return
         }
-        return Enable.ENABLED
+        if (downSince == 0L) { downSince = now; return }
+        if (now - downSince < DOWN_MS || told) return
+        told = true
+        askOwner(ctx, "看屏幕的能力掉了", "系统停掉了 Ash 的无障碍。点这里，在列表里把「Ash」关掉再打开，就能接上")
     }
 
-    private fun recover(ctx: Context) {
-        val resolver = ctx.contentResolver
-        val key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        val services = Settings.Secure.getString(resolver, key).orEmpty()
-        // The owner turned the switch off since the check: leave it off.
-        if (Services.helpers(services, ctx.packageName).isEmpty()) return
-        try {
-            Settings.Secure.putString(resolver, key, Services.withoutHelper(services, ctx.packageName))
-            Thread.sleep(800)
-            Settings.Secure.putString(resolver, key, Services.withHelperBack(Settings.Secure.getString(resolver, key).orEmpty(), services, ctx.packageName))
-            Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
-        } catch (e: SecurityException) { Log.w(TAG, "accessibility recovery not permitted", e); return }
-        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val list = (history(ctx) + System.currentTimeMillis()).takeLast(20)
-        prefs.edit().putString("history", JSONArray(list).toString()).apply()
-        Log.i(TAG, "brought Ash's accessibility service back")
-        downSince = 0
+    /** One notice that opens the accessibility list on a tap. */
+    internal fun askOwner(ctx: Context, title: String, text: String, tag: String = NOTICE) {
+        val tap = PendingIntent.getActivity(ctx, 3, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        Notifications.notice(ctx, tag, title, text, tap)
     }
-
-    /**
-     * The enabled-services list (`pkg/service:pkg/service`) as recovery may change it: only Ash's own
-     * entries are taken out and put back; every other app's entry stays exactly as it was.
-     */
-    internal object Services {
-        private fun entries(list: String) = list.split(':').filter { it.isNotBlank() }
-        fun helpers(list: String, pkg: String) = entries(list).filter { it.startsWith("$pkg/") }
-        fun withoutHelper(list: String, pkg: String) = (entries(list) - helpers(list, pkg).toSet()).joinToString(":")
-        /** [now] with Ash's entries from [before] back at its end; nothing is added unless it was there before. */
-        /** [list] with Ash's entry [own] at its end (nothing else changes). */
-        fun withHelperAdded(list: String, own: String) = (entries(list) + own).distinct().joinToString(":")
-        fun withHelperBack(now: String, before: String, pkg: String) = (entries(now) + helpers(before, pkg)).distinct().joinToString(":")
-    }
-
-    /** For the diagnostics page. */
-    fun summary(ctx: Context): JSONObject = JSONObject().put("granted", granted(ctx)).put("enabled", enabled(ctx)).put("history", JSONArray(history(ctx)))
 }

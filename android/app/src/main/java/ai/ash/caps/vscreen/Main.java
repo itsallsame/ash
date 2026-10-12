@@ -1,5 +1,7 @@
 package ai.ash.caps.vscreen;
 
+import ai.ash.caps.hostshell.FakeContext;
+
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
@@ -32,8 +34,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Privileged virtual-screen server (runs as the shell uid via Shizuku, started by the ash app with
- * {@code CLASSPATH=<ash apk> app_process /system/bin ai.ash.caps.vscreen.Main}).
+ * Privileged virtual-screen server (runs as the shell uid: the host shell service starts it for the ash app with
+ * {@code CLASSPATH=<ash apk> app_process /system/bin ai.ash.caps.vscreen.Main}, see HostShell.openVscreen).
  *
  * Why a privileged process: a virtual display created by an ordinary app can neither host other apps
  * (startActivity with a launchDisplayId is refused by SafeActivityOptions.checkPermissions) nor render

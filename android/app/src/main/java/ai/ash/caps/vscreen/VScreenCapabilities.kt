@@ -3,7 +3,7 @@ package ai.ash.caps.vscreen
 import ai.ash.caps.result
 import ai.ash.caps.Risk
 import ai.ash.caps.Effect
-import ai.ash.caps.shell.ShizukuState
+import ai.ash.caps.hostshell.HostShell
 import ai.ash.caps.system.Apps
 import ai.ash.caps.system.Clip
 import ai.ash.ui.VScreenPreview
@@ -24,9 +24,9 @@ import ai.ash.caps.schema
  */
 object VScreenCapabilities {
 
-    private fun ready(ctx: Context) = Build.VERSION.SDK_INT >= 29 && ShizukuState.ready()
+    private fun ready(@Suppress("UNUSED_PARAMETER") ctx: Context) = Build.VERSION.SDK_INT >= 29 && HostShell.ready()
 
-    private const val NEEDS = "Requires Shizuku running with ash authorized (Android 10+)."
+    private const val NEEDS = "Requires the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+)."
 
     private fun vcap(
         name: String, description: String, schema: JSONObject = schema(), effect: String, risk: String, label: String,

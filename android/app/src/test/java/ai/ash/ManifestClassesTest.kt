@@ -21,7 +21,7 @@ class ManifestClassesTest {
             val simple = n.substringAfterLast('.')
             path !in sources && sources.none { it.startsWith(path.substringBeforeLast('/') + "/") && File("src/main/java/$it.kt").readText().contains("class $simple") }
         }
-        // The aliases name a class of their own app too; the Shizuku provider and the alias are the only ones that are not.
+        // The aliases name a class of their own app too; the alias is the only one that is not.
         assertEquals(emptyList<String>(), missing.filter { it != ".ViewPermissionUsageActivity" })
     }
 }

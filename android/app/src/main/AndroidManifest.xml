@@ -20,8 +20,6 @@
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-    <!-- Granted once over USB or Shizuku; used only to bring Ash's accessibility service back (ScreenRecovery). -->
-    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -38,7 +36,6 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Installs the kernel package. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
     <!-- Senses. Location: a fix now, and a track while the owner has recording on (background needs 「始终允许」). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -67,8 +64,6 @@
     <queries>
         <!-- The kernel package: this app finds out whether it is installed and starts its service. -->
         <package android:name="ai.ash.kernel" />
-        <!-- Shizuku's manager: without this Android 11+ hides it, and "is Shizuku installed" is always no. -->
-        <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.google.android.apps.healthdata" />
         <package android:name="nodomain.freeyourgadget.gadgetbridge" />
         <!-- Who can open the battery-exemption pages: some ROMs have two handlers, and BatteryExemption picks one rather than let the system ask. -->
@@ -84,8 +79,6 @@
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
         android:requestLegacyExternalStorage="true">
-
-        <meta-data android:name="moe.shizuku.client.V3_SUPPORT" android:value="true" />
 
         <!-- The ash UI: the chat (drawn natively) and the 「应用」 tab (the owner's apps; each opens in AppActivity's own task). The only launcher icon. fullUser: follow the system rotation lock. -->
         <activity
@@ -176,17 +169,21 @@
             </intent-filter>
         </activity>
 
-        <!-- Brings Ash's task back as it was left (after the keep-alive switches), or opens Ash if it had no task. -->
-        <activity android:name=".ui.ReturnActivity" android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
-
+        <!-- 「后台也能动手」 (caps/hostshell): the phone's debug identity, which the owner grants by pairing in wireless debugging.
+             The service it starts hands Ash its binder here; only the shell user and the system hold this permission. -->
         <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
+            android:name=".caps.hostshell.HostShellDoor"
+            android:authorities="${applicationId}.hostshell"
             android:multiprocess="false"
-            android:enabled="true"
             android:exported="true"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <!-- The minutes of a pairing or reconnection, while the owner is in the system's settings. -->
+        <service android:name=".caps.hostshell.GuideService" android:exported="false" android:foregroundServiceType="shortService" />
+        <activity android:name=".caps.hostshell.GuideActivity" android:exported="false" android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
+        <receiver android:name=".caps.hostshell.HostShellBootReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
+        </receiver>
 
         <!-- camera.capture: the system camera, opened for the owner to press the shutter; see-through, outside Ash's task. -->
         <activity android:name=".ui.CameraActivity" android:exported="false"

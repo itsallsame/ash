@@ -379,9 +379,9 @@ as general model tools. The Android host performs compare-and-act atomically
 where possible. `return_to_ash` launches the existing Ash activity; it does not
 simulate Back, because Back has app-specific and stack-specific consequences.
 
-`surface.get` reads Android lifecycle state without requiring Shizuku
-or the accessibility service. It now also reports a cheap Shizuku readiness
-boolean (`virtual_available`), but does not start Shizuku or create a display.
+`surface.get` reads Android lifecycle state without requiring the phone's debug
+identity or the accessibility service. It now also reports a cheap readiness
+boolean for the debug identity (`virtual_available`), but does not create a display.
 `screen.get` is only needed after the
 turn and for the final freshness check; it is not on the normal task-start
 critical path.

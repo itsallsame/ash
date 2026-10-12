@@ -303,7 +303,7 @@ add("service:bodies", "unbind", "request", obj({ body: bodyRef }, ["body"]), obj
 const TO_OWNER: CallerKind[] = ["agent", "app"];
 const cardOption = obj({ id: nonempty, text: nonempty }, ["id", "text"]);
 /** The Android settings a permission card can send the owner to. */
-export const PHONE_PERMISSIONS = ["calendar", "notifications", "battery", "accessibility", "photos", "all_files", "usage", "write_settings", "overlay", "shizuku"] as const;
+export const PHONE_PERMISSIONS = ["calendar", "notifications", "battery", "accessibility", "photos", "all_files", "usage", "write_settings", "overlay", "host_shell"] as const;
 /** What `person:owner/show` presents. */
 export const CARD_SCHEMA: JsonSchema = { oneOf: [
   obj({ type: { const: "options" }, prompt: str, options: { type: "array", items: cardOption, minItems: 1 }, allow_custom: bool }, ["type", "options"]),

@@ -16,7 +16,7 @@ class OnboardingPlanTest {
 
     /** Every item the guide lists, all granted unless [missing] names it. */
     private fun rows(vararg missing: String, unsupported: Set<String> = emptySet()): List<Row> =
-        (ConfigStatus.NAMES + listOf("autostart", "recents_lock", "screen_recovery")).map {
+        (ConfigStatus.NAMES + listOf("autostart", "recents_lock")).map {
             Row(it, when (it) { in unsupported -> "unsupported"; in missing -> "missing"; else -> "granted" })
         }
 
@@ -35,16 +35,17 @@ class OnboardingPlanTest {
         assertEquals(DONE, step())
     }
 
-    @Test fun keepAliveSwitchesAreStepTwoAndRecoveryGrantIsShownInStepThreeButDoesNotHoldIt() {
+    @Test fun keepAliveSwitchesAreStepTwoAndTheDebugIdentityIsAskedThereButDoesNotHoldIt() {
         assertEquals(PERMISSIONS, step(rows = rows("autostart")))
         assertEquals(PERMISSIONS, step(rows = rows("recents_lock")))
-        assertEquals(DONE, step(rows = rows("screen_recovery")))
-        assertEquals(SCREEN_ACCESS, step(rows = rows("screen_recovery", "accessibility")))
+        assertEquals(DONE, step(rows = rows("host_shell")))
+        assertEquals(PERMISSIONS, step(rows = rows("host_shell", "overlay")))
+        assertEquals(listOf("host_shell"), OnboardingPlan.pending(bound, rows("host_shell"), emptySet()))
     }
 
     @Test fun whatThePhoneCannotHaveDoesNotHoldTheGuide() {
-        assertEquals(PERMISSIONS, step(rows = rows("shizuku", "health", "overlay", unsupported = setOf("shizuku", "health"))))
-        assertEquals(DONE, step(rows = rows("shizuku", "health", unsupported = setOf("shizuku", "health"))))
+        assertEquals(PERMISSIONS, step(rows = rows("host_shell", "health", "overlay", unsupported = setOf("host_shell", "health"))))
+        assertEquals(DONE, step(rows = rows("host_shell", "health", unsupported = setOf("host_shell", "health"))))
     }
 
     @Test fun aSkippedStepIsNotShownAgain() {
@@ -131,7 +132,7 @@ class OnboardingPlanTest {
     }
 
     @Test fun everyItemTheGuideCanReadHasAPlaceInTheOrderAndACopy() {
-        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock", "screen_recovery")
+        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock")
         for (item in items) {
             assertTrue("$item is not in the order", item in OnboardingPlan.ASK_ORDER)
             assertTrue("$item has no copy", item in OnboardingContent.pages)
@@ -147,7 +148,7 @@ class OnboardingPlanTest {
     }
 
     @Test fun whatThePhoneCannotHaveIsNeverAsked() {
-        val r = rows("health", "shizuku", "overlay", unsupported = setOf("health", "shizuku"))
+        val r = rows("health", "host_shell", "overlay", unsupported = setOf("health", "host_shell"))
         assertEquals(listOf("overlay"), OnboardingPlan.pending(bound, r, emptySet()))
         assertFalse("health" in OnboardingPlan.asked(bound, r))
     }
@@ -156,16 +157,6 @@ class OnboardingPlanTest {
         val r = rows("kernel_battery_optimization") + Row("kernel_autostart", "missing")
         assertEquals(emptyList<String>(), OnboardingPlan.pending(KernelState.NOT_INSTALLED, r, emptySet()))
         assertEquals(listOf("kernel_battery_optimization", "kernel_autostart"), OnboardingPlan.pending(KernelState.NOT_RUNNING, r, emptySet()))
-    }
-
-    @Test fun theRecoveryGrantIsAskedOnlyWhileAccessIsOpenAndNotAfterAccessibilityWasPassedOn() {
-        // as in the old step: it never holds the guide, and is shown only next to the accesses that are still open
-        assertEquals(emptyList<String>(), OnboardingPlan.pending(bound, rows("screen_recovery"), emptySet()))
-        assertEquals(listOf("screen_recovery", "notification_listener").sorted(), OnboardingPlan.pending(bound, rows("screen_recovery", "notification_listener"), emptySet()).sorted())
-        assertEquals(listOf("accessibility", "screen_recovery").sorted(), OnboardingPlan.pending(bound, rows("screen_recovery", "accessibility"), emptySet()).sorted())
-        assertEquals(listOf("accessibility"), OnboardingPlan.pending(bound, rows("screen_recovery", "accessibility"), setOf("screen_recovery")))
-        // passing on accessibility passes on its recovery too, even if the recovery was not marked
-        assertEquals(listOf("notification_listener"), OnboardingPlan.pending(bound, rows("screen_recovery", "accessibility", "notification_listener"), setOf("accessibility")))
     }
 
     @Test fun theDotsAreTheItemsShownOrStillToCome() {
@@ -201,7 +192,7 @@ class OnboardingPlanTest {
     }
 
     @Test fun everyItemIsInOnePartAndTheOnesTheHandoffListsAreWhereItPutsThem() {
-        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock", "screen_recovery")
+        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock")
         for (item in items) assertEquals(item, 1, OnboardingPlan.PARTS.count { item in it.items })
         assertEquals("brain", OnboardingPlan.partOf("kernel_battery_optimization").id)
         assertEquals("alarm", OnboardingPlan.partOf("exact_alarm").id)
@@ -254,10 +245,5 @@ class OnboardingPlanTest {
         val some = OnboardingPlan.summary(bound, said("overlay").map { if (it.item == "location") Row("location", "missing") else it })
         assertEquals(listOf("location"), some.off)
         assertEquals("their word counts as on", some.total - 1, some.on)
-    }
-
-    @Test fun aSaidAccessibilityStopsAskingForItsAutoRecoveryToo() {
-        val r = rows("screen_recovery").map { if (it.item == "accessibility") Row("accessibility", OnboardingPlan.SAID) else it }
-        assertEquals(emptyList<String>(), OnboardingPlan.pending(bound, r, emptySet()))
     }
 }

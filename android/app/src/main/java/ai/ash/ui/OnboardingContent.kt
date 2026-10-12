@@ -82,17 +82,12 @@ internal object OnboardingContent {
             "读通知", "你收到的通知我也想**读**到，比如快递和验证码。这一项也要你亲手打开：", R.drawable.ash_ic_msg,
             "系统设置 › 通知使用权", "点下面的按钮，会跳到系统的「通知使用权」",
         ),
-        "screen_recovery" to ask(
-            "无障碍自动恢复", "系统有时会把我的**无障碍**关掉。给我授权一次，我几秒内就能自己重新打开。", "去授权", R.drawable.ash_ic_refresh,
-            ping("刚刚", "无障碍被系统关掉了，我已经重新打开。", "开了之后，你不用再去手动开关"),
-            expression = "focused",
-        ),
         "overlay" to hand(
             "悬浮窗", "我做事的时候，想在别的应用上方给你看**进度**。这一项要你在系统里打开：", R.drawable.ash_ic_widget,
             "系统设置 › 悬浮窗", "点下面的按钮，会跳到系统的「悬浮窗」",
         ),
-        "shizuku" to ask(
-            "Shizuku", "有 **Shizuku** 的话，我在后台也能替你打开应用、跑命令，不打扰你。没有的话先不用。", "去开启", R.drawable.ash_ic_box,
+        "host_shell" to ask(
+            "后台也能动手", "和手机**配对**一次（大约 1 分钟，要打开开发者选项），我在后台也能替你打开应用、按键、用虚拟屏，不打扰你。不想弄的话先不用。", "去配对", R.drawable.ash_ic_box,
             ping("刚刚", "我在后台把那份表格发出去了。", "开了之后，我做事不用占着你的屏幕"),
             expression = "focused",
         ),

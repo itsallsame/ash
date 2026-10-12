@@ -318,12 +318,12 @@ const SCREEN_ACTIONS: readonly StandardAction[] = [
 // ---- input, vscreen -------------------------------------------------------------------------------------------------
 
 const INPUT_ACTIONS: readonly StandardAction[] = [
-  action("input.key", "在按手机按键", "Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need Shizuku.",
+  action("input.key", "在按手机按键", "Press a key on the phone: media keys (play_pause, next, previous ...), volume keys, and other keys (back, home, recents, power ... or an Android keycode number). Keys other than media and volume need the phone's debug identity (「后台也能动手」), which the owner connects.",
     object({ key: text1("Key name, or a numeric KeyEvent keycode."), long_press: bool("Long-press (injected keys only).") }, ["key"]),
     anyResult(), "act", "outward", { foreground: true, errors: ["unavailable"] }),
 ];
 
-const VSCREEN_NEEDS = " Needs Shizuku running with the app authorized (Android 10+).";
+const VSCREEN_NEEDS = " Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).";
 const vscreenXY = (): Record<string, SchemaObject> => ({ x: num("X in virtual-screen pixels."), y: num("Y in virtual-screen pixels.") });
 const VSCREEN_ACTIONS: readonly StandardAction[] = [
   action("vscreen.create", "在创建虚拟屏", `Create (or reuse) the virtual screen: a separate phone-shaped display, invisible to the owner, where apps can be launched, seen and operated without disturbing the real screen. Only one exists; calling again with another size recreates it.${VSCREEN_NEEDS}`,
@@ -349,7 +349,7 @@ const VSCREEN_ACTIONS: readonly StandardAction[] = [
     object({ text: { type: "string", description: "Text to type." } }, ["text"]), anyResult(), "act", "outward", { errors: ["unavailable"] }),
 ];
 
-// ---- apps, settings, clipboard, device, shell ------------------------------------------------------------------------
+// ---- apps, settings, clipboard, device ------------------------------------------------------------------------------
 
 const SETTINGS_PAGES = ["settings", "wifi", "bluetooth", "mobile_network", "data_usage", "airplane_mode", "vpn", "nfc", "display", "sound",
   "battery_saver", "battery_usage", "location", "security", "storage", "date_time", "language", "keyboard", "accessibility", "developer", "device_info",
@@ -376,11 +376,11 @@ const APPS_ACTIONS: readonly StandardAction[] = [
 ];
 
 const SETTINGS_ACTIONS: readonly StandardAction[] = [
-  action("settings.get", "在读系统设置", "Read an Android system setting from system, secure or global (e.g. screen_brightness, screen_off_timeout, airplane_mode_on). Without key, lists the namespace (needs Shizuku).",
-    object({ namespace: choice(SETTINGS_NAMESPACES, "system, secure or global."), key: str("Setting key; leave out to list the namespace.") }, ["namespace"]),
+  action("settings.get", "在读系统设置", "Read an Android system setting from system, secure or global (e.g. screen_brightness, screen_off_timeout, airplane_mode_on). A few protected keys cannot be read by an app.",
+    object({ namespace: choice(SETTINGS_NAMESPACES, "system, secure or global."), key: text1("Setting key.") }, ["namespace", "key"]),
     loose({ value: nullable(str()) }), "read", "none", { errors: ["forbidden", "unavailable"] }),
-  action("settings.put", "在改系统设置", "Change an Android system setting. System keys need the Modify system settings permission (or Shizuku); secure and global keys need Shizuku. volume_music, volume_ring and the other volume_* keys set that volume. Returns the previous and the new value.",
-    object({ namespace: choice(SETTINGS_NAMESPACES, "system, secure or global."), key: text1("Setting key."), value: { type: "string", description: "New value, as a string." } }, ["namespace", "key", "value"]),
+  action("settings.put", "在改系统设置", "Change an Android system setting in the system namespace (brightness, screen timeout, rotation, font scale ...); needs the owner's Modify system settings grant. Secure and global settings are the owner's to change in Settings. volume_music, volume_ring and the other volume_* keys set that volume. Returns the previous and the new value.",
+    object({ namespace: choice(["system"], "Always system."), key: text1("Setting key."), value: { type: "string", description: "New value, as a string." } }, ["namespace", "key", "value"]),
     loose({ previous: nullable(str()), value: nullable(str()) }), "write", "structure", { errors: ["forbidden", "unavailable"] }),
   action("settings.open", "在打开设置页", "Open a system settings page on the phone's screen for the owner: a named page, an app's details or notification settings (give package), or any raw android.settings.* action.",
     object({ page: choice(SETTINGS_PAGES, "Named page."), action: str("A raw settings intent action instead of page."), package: str("Package for app pages (default: this app).") }),
@@ -397,18 +397,6 @@ const CLIPBOARD_ACTIONS: readonly StandardAction[] = [
 const DEVICE_ACTIONS: readonly StandardAction[] = [
   action("device.status", "在看手机状态", "The device's current status: battery and charging, network (type, online, metered), free storage, memory, screen on or locked, ringer mode and volumes, time, time zone, locale, model and OS version.",
     object({}), loose({ battery: loose({ percent: int(), charging: bool() }), time: str() }), "read", "none"),
-];
-
-const SHELL_ACTIONS: readonly StandardAction[] = [
-  action("shell.run", "在手机上执行命令", "Run one shell command (sh -c) on the phone as the adb shell user through Shizuku: pm, am, cmd, dumpsys, settings, input, screencap to a file. Returns exit code, stdout and stderr. Needs Shizuku running with the app authorized (see shell.status).",
-    object({
-      command: text1("The command line, run by /system/bin/sh -c."), timeout_ms: int("Kill the command after this many ms (default 30000, at most 120000).", 1, 120000),
-      stdin: str("Text written to the command's standard input, then closed."), cwd: str("Absolute working directory."), max_output: int("Bytes kept per stream (default 16000, at most 200000).", 1, 200000),
-    }, ["command"]),
-    loose({ exit_code: int(), stdout: str(), stderr: str() }), "execute", "structure", { errors: ["unavailable", "timeout"] }),
-  action("shell.status", "在看命令权限", "Report whether the privileged shell (Shizuku) is usable: installed, running, this app authorized, and the server's version and uid. With request_permission it asks the owner to authorize and waits up to 30 s.",
-    object({ request_permission: bool("Ask the owner to authorize the app in Shizuku if it is not yet.") }),
-    loose({ installed: bool(), running: bool(), authorized: bool() }), "read", "none"),
 ];
 
 // ---- workspace, body: the body contract (SPEC-09), registered under body:<id> ------------------------------------------
@@ -584,22 +572,17 @@ const SENSE_ACTIONS: readonly StandardAction[] = [
 // ---- config: the hand app's own settings (SPEC-05 §5) ----------------------------------------------------------------
 
 export const CONFIG_PERMISSIONS = ["accessibility", "notification_listener", "notifications", "exact_alarm", "battery_optimization", "kernel_battery_optimization",
-  "location", "location_background", "activity_recognition", "health", "calendar", "photos", "all_files", "overlay", "write_settings", "shizuku", "usage_access"] as const;
+  "location", "location_background", "activity_recognition", "health", "calendar", "photos", "all_files", "overlay", "write_settings", "host_shell", "usage_access"] as const;
 const configItem = (): SchemaObject => loose({ item: str(), state: choice(["granted", "missing", "unsupported"]), detail: str() }, ["item", "state"]);
 
 const CONFIG_ACTIONS: readonly StandardAction[] = [
-  action("config.status", "在看手机App的权限和开关", "The state of every permission and switch the hand app needs: accessibility, notification listener, notifications, exact alarms, battery optimization (app and kernel), location, activity recognition, health, overlay, modify system settings, Shizuku, usage access, storage.",
+  action("config.status", "在看手机App的权限和开关", "The state of every permission and switch the hand app needs: accessibility, notification listener, notifications, exact alarms, battery optimization (app and kernel), location, activity recognition, health, overlay, modify system settings, the phone's debug identity (host_shell, 「后台也能动手」), usage access, storage. These are host services the owner grants; the app reads them and never switches one itself.",
     object({}), loose({ items: list(configItem()) }, ["items"]), "read", "none"),
   action("config.permission.request", "在请求权限", "Show the system permission prompt, or open the matching settings page, for one permission or switch the owner has to grant by hand.",
     object({ name: choice(CONFIG_PERMISSIONS, "Which permission or switch.") }, ["name"]),
     loose({ requested: bool() }), "act", "none", { foreground: true, errors: ["bad_request"] }),
   action("config.keepalive.status", "在看保活状态", "The vendor's auto-start and background-limit switches for Ash's apps, and whether each is on.",
     object({}), loose({ supported: bool(), items: list(configItem()) }, ["items"]), "read", "none"),
-  action("config.keepalive.fix", "在打开保活开关", "Turn on the background-running switches of Ash's own apps in the vendor's settings by driving them through accessibility (only on vendors it knows). Takes over the screen while it runs.",
-    object({ packages: list(text1(), "Which apps (default all of Ash's).") }),
-    loose({ outcome: str(), summary: str() }), "act", "structure", { foreground: true, errors: ["unavailable"] }),
-  action("config.accessibility.enable", "在重新打开无障碍服务", "Turn the app's accessibility service back on, when the app holds the secure-settings permission (the system switches it off after an upgrade).",
-    object({}), loose({ enabled: bool() }, ["enabled"]), "write", "structure", { errors: ["forbidden", "unavailable"] }),
 ];
 
 // ---- decision: the hub's reflex asks the hand; never for agents (callers: kernel) -----------------------------------------
@@ -625,7 +608,7 @@ const DECISION_ACTIONS: readonly StandardAction[] = [
 /** Every standard namespace and its actions, in the order SPEC-02 §4.3 lists them. */
 export const STANDARD_NAMESPACES: Readonly<Record<string, readonly StandardAction[]>> = Object.freeze({
   screen: SCREEN_ACTIONS, input: INPUT_ACTIONS, vscreen: VSCREEN_ACTIONS, apps: APPS_ACTIONS, settings: SETTINGS_ACTIONS,
-  clipboard: CLIPBOARD_ACTIONS, device: DEVICE_ACTIONS, shell: SHELL_ACTIONS, workspace: WORKSPACE_ACTIONS, body: BODY_ACTIONS,
+  clipboard: CLIPBOARD_ACTIONS, device: DEVICE_ACTIONS, workspace: WORKSPACE_ACTIONS, body: BODY_ACTIONS,
   browser: BROWSER_ACTIONS, calendar: CALENDAR_ACTIONS, media: MEDIA_ACTIONS, camera: CAMERA_ACTIONS, location: LOCATION_ACTIONS,
   activity: ACTIVITY_ACTIONS, health: HEALTH_ACTIONS, sensors: SENSORS_ACTIONS, sense: SENSE_ACTIONS, config: CONFIG_ACTIONS, decision: DECISION_ACTIONS,
 });

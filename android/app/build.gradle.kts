@@ -20,6 +20,7 @@ android {
     namespace = "ai.ash"
     compileSdk = 35
     buildToolsVersion = "35.0.1"
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "ai.ash.agent"
@@ -89,7 +90,9 @@ android {
     }
 
     sourceSets["main"].assets.srcDir(linkSchemaAssets)
-    buildFeatures { buildConfig = true; aidl = true }
+    buildFeatures { buildConfig = true; aidl = true; prefab = true }
+    // libashadb: the SPAKE2 step of pairing with the phone's wireless debugging (caps/hostshell/adb), on BoringSSL.
+    externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -106,7 +109,6 @@ tasks.named("preBuild") { dependsOn(copyLinkSchema) }
 tasks.withType<Test>().configureEach { inputs.file(rootProject.file("../packages/core/test/fixtures/widget-cards.json")).withPropertyName("widgetCards") }
 
 dependencies {
-    implementation(files("libs/shizuku-api.aar", "libs/shizuku-provider.aar", "libs/shizuku-aidl.aar"))
     implementation("androidx.webkit:webkit:1.17.1")
     // WindowInsetsCompat, for the one insets helper every screen uses (ai.ash.apps.Ui). Already pulled in by webkit at this version.
     implementation("androidx.core:core:1.12.0")
@@ -118,6 +120,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // The WebSocket under ash-link/1.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // The self-made certificate Ash shows wireless debugging (caps/hostshell/adb/AdbKey).
+    implementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
+    // BoringSSL's SPAKE2, for pairing with wireless debugging (prefab, linked statically into libashadb).
+    implementation("io.github.vvb2060.ndk:boringssl:20251124")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

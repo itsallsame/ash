@@ -17,7 +17,8 @@ import ai.ash.caps.screen.Screen
 import android.widget.Toast
 import ai.ash.caps.senses.SenseSync
 import ai.ash.caps.senses.SetupActivity
-import ai.ash.caps.shell.ShizukuState
+import ai.ash.caps.hostshell.HostShell
+import ai.ash.caps.hostshell.HostShellGuide
 import ai.ash.host.Notifications
 
 /**
@@ -31,7 +32,7 @@ class Permission(
     val why: String,
     private val check: (Context) -> Boolean,
     private val go: (Activity) -> Unit,
-    /** Extra state when not granted (e.g. "Shizuku 未安装"), or null. */
+    /** Extra state when not granted (e.g. "手机重启过"), or null. */
     private val detail: (Context) -> String? = { null },
     /**
      * The phone keeps this switch where Ash cannot read it (a maker's own notification or background settings): the
@@ -40,6 +41,8 @@ class Permission(
     val confirmable: (Context) -> Boolean = { false },
     /** Lets the owner feel it work (a test reminder), or null. */
     val test: ((Activity) -> Unit)? = null,
+    /** Takes back what Ash was given here (「撤销」), for the few that Ash can give back itself; null for the rest. */
+    val revoke: ((Activity) -> Unit)? = null,
 ) {
     fun granted(ctx: Context): Boolean = ready(ctx) && (!confirmable(ctx) || Permissions.confirmed(ctx, key))
     /** What Ash can read of it holds; a [confirmable] one then waits for the owner's word. */
@@ -63,8 +66,6 @@ class Permission(
 
 /** The single list of permissions shown by the first-launch guide and the diagnostics page. */
 object Permissions {
-    private const val SHIZUKU_SITE = "https://shizuku.rikka.app/"
-    private const val SHIZUKU_REQUEST = 42
     private const val PREFS = "ash.permissions"
 
     fun confirmed(ctx: Context, key: String) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("confirmed:$key", false)
@@ -109,11 +110,8 @@ object Permissions {
             add(Permission(
                 "autostart", "Ash 自启动与后台运行", "被系统清理或手机重启后，Ash 自己回来；不开的话，被清理后要等你再打开它",
                 { it.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(it.packageName) },
-                { a ->
-                    val own = { PhoneMaker.current.openKeepAlive(a, a.packageName, "Ash") }
-                    // The accessibility service can turn the switches on for the owner; the written steps are the way back.
-                    if (a.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(a.packageName)) KeepAliveFlow.offer(a, guidance = own) else own()
-                },
+                // The maker's page opens and the owner turns the switches on there (Ash does not drive that page).
+                { a -> PhoneMaker.current.openKeepAlive(a, a.packageName, "Ash") },
                 { c ->
                     if (!c.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(c.packageName)) "先完成上一项「不受电池优化限制」"
                     else PhoneMaker.current.keepAliveFor("Ash")
@@ -158,12 +156,6 @@ object Permissions {
                 },
             ))
             add(Permission(
-                "screen_recovery", "无障碍自动恢复", "系统关掉 Ash 的无障碍后，Ash 几秒内把它重新拉起来，不用你去手动开关",
-                { ScreenRecovery.granted(it) },
-                { a -> ScreenSetup.grantRecovery(a) },
-                { c -> if (ShizukuState.ready()) "点「去开启」，经 Shizuku 授权一次" else "需要授权一次：用 Shizuku，或在电脑上运行 ${ScreenRecovery.grantCommand(c)}" },
-            ))
-            add(Permission(
                 "senses", "位置、运动与健康", "位置、运动、步数和健康数据：Ash 觉得有用时自己开启记录并告诉你，你说停就停；数据只存在手机上",
                 { c -> SenseSync.status(c).optJSONObject("permissions")?.optBoolean("location") == true },
                 { a -> a.startActivity(Intent(a, SetupActivity::class.java)) },
@@ -199,17 +191,13 @@ object Permissions {
                 { Settings.canDrawOverlays(it) },
                 { a -> a.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri(a))) },
             ))
-            add(Permission(
-                "shizuku", "Shizuku", "解锁高级能力：Ash 在后台时也能替你打开应用、执行 shell 命令、虚拟屏（在后台操作应用，不打扰你）",
-                { ShizukuState.ready() },
-                ::openShizuku,
-                { ctx ->
-                    when {
-                        !ShizukuState.installed(ctx) -> "需要先安装 Shizuku（点「去开启」打开下载页）"
-                        !ShizukuState.running() -> "Shizuku 已安装但没有启动：打开 Shizuku 启动服务"
-                        else -> "Shizuku 已启动，等待授权给 Ash"
-                    }
-                },
+            // Wireless debugging is Android 11+, and Ash pairs with it only through the public API of Android 12+.
+            if (Build.VERSION.SDK_INT >= 31) add(Permission(
+                HostShell.ITEM, "后台也能动手", "配对一次，Ash 在后台也能替你开应用、按键、用虚拟屏（在后台操作应用，不打扰你）",
+                { HostShell.ready() },
+                { a -> HostShellGuide.open(a) },
+                { c -> HostShell.detail(c) },
+                revoke = { a -> HostShellGuide.revoke(a) },
             ))
         }
     }
@@ -249,8 +237,8 @@ object Permissions {
 
     /**
      * Once per install change (an upgrade or reinstall), on Ash's first screen: the keep-alive switches are looked at
-     * again (see [KeepAliveRecheck]) and, if one may be off, the usual fix is offered once — a question of Ash's own
-     * for the battery exemption (the system page opens only on its 「去开启」), or the one-tap fix (waits for 「确定」).
+     * again (see [KeepAliveRecheck]) and, if one may be off, Ash asks once — the system or maker page opens only on the
+     * owner's 「去开启」/「去看看」.
      */
     fun recheckAfterUpgrade(a: Activity, firstStart: Boolean) {
         val prefs = a.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -262,7 +250,7 @@ object Permissions {
         if (previous == now) return
         prefs.edit().putLong("install:version", now.versionCode).putLong("install:updated", now.updatedAt).apply()
         val battery = a.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(a.packageName)
-        val plan = KeepAliveRecheck.plan(previous, now, battery, PhoneMaker.current.ownSwitches, KeepAliveFlow.available(a))
+        val plan = KeepAliveRecheck.plan(previous, now, battery, PhoneMaker.current.ownSwitches)
         if (plan.forgetWords) prefs.edit().apply { for (k in KeepAliveRecheck.WORD_KEYS) remove("confirmed:$k") }.apply()
         when (plan.offer) {
             // Ash only asks; the system's page opens on the owner's tap, never on its own.
@@ -270,25 +258,12 @@ object Permissions {
                 .setMessage("Ash 刚更新过，系统可能把它的电池优化放行取消了。现在去重新放行，让 Ash 在后台常驻？")
                 .setPositiveButton("去开启") { _, _ -> all.first { it.key == "battery" }.open(a) }
                 .setNegativeButton("以后再说", null).show()
-            KeepAliveRecheck.Offer.SWITCHES -> KeepAliveFlow.offer(a, "Ash 刚更新过，系统可能把它的自启动关掉了。") {}
+            KeepAliveRecheck.Offer.SWITCHES -> AlertDialog.Builder(a).setTitle("Ash 自启动与后台运行")
+                .setMessage("Ash 刚更新过，系统可能把它的自启动关掉了。去看一眼，没开的打开？")
+                .setPositiveButton("去看看") { _, _ -> all.first { it.key == "autostart" }.open(a) }
+                .setNegativeButton("以后再说", null).show()
             KeepAliveRecheck.Offer.NONE -> {}
         }
-    }
-
-    /** Not installed → download page; installed but not running → the Shizuku app (to start it); running → its permission dialog. */
-    private fun openShizuku(a: Activity) {
-        val site = Intent(Intent.ACTION_VIEW, Uri.parse(SHIZUKU_SITE))
-        if (!ShizukuState.installed(a)) return a.startActivity(site)
-        if (ShizukuState.running()) {
-            try {
-                if (rikka.shizuku.Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) rikka.shizuku.Shizuku.requestPermission(SHIZUKU_REQUEST)
-                return
-            } catch (e: Throwable) {
-                // Pre-v11 servers throw here: the Shizuku app is where the owner can fix that.
-            }
-        }
-        val launch = a.packageManager.getLaunchIntentForPackage(ShizukuState.MANAGER_PACKAGE)
-        a.startActivity(launch ?: site)
     }
 }
 

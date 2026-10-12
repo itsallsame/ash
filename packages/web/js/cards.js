@@ -13,7 +13,7 @@ export function fileRef(ref) {
 /** The phone permissions a card can ask for, in the words the owner knows them by. */
 const PERMISSION_NAME = Object.freeze({
   calendar: "日历", notifications: "通知", battery: "后台运行", accessibility: "无障碍", photos: "照片和文件",
-  all_files: "所有文件", usage: "使用情况", write_settings: "系统设置", overlay: "悬浮窗", shizuku: "Shizuku",
+  all_files: "所有文件", usage: "使用情况", write_settings: "系统设置", overlay: "悬浮窗", host_shell: "后台也能动手",
 });
 
 /** `tone` is her / warn / err / you: the colour of the head line and of the little tile in front of it. */

@@ -19,7 +19,7 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 | `foreground_task` | 要在真实屏幕办事，或需要主人自己登录、收验证码 | 用 `screen.*` 操作真实屏幕；需要他动手时把那一页留着并说明，最后一屏也留着 |
 | `no_preference` | 不需要屏幕 | 别无谓地开屏；以后要给主人打开应用仍然用真实屏幕 |
 
-在前台模式下用 `vscreen.*`（除了 `status`、`see`、`close`）会被拒绝，一个操作也不会执行。虚拟屏需要 Shizuku 运行并授权 Ash（Android 10 以上），`vscreen.status` 或 `shell.status` 可以先看；用不了就按前台办，并告诉主人原因。
+在前台模式下用 `vscreen.*`（除了 `status`、`see`、`close`）会被拒绝，一个操作也不会执行。虚拟屏需要主人接上「后台也能动手」（手机的调试身份，Android 10 以上），`vscreen.status` 或 `config.status`（`host_shell` 一项）可以先看；用不了就按前台办，并告诉主人原因。手机重启后要主人自己重新接一下，Ash 不能替他开关无线调试。
 
 ## 先看，再点，再看
 
@@ -35,8 +35,8 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 - 被弹窗、键盘、广告挡住：`screen.global_action {action: "back"}` 关键盘或返回；`home`、`recents` 回桌面和切应用。同一个办法最多试 3 次，换思路。
 - 页面没反应：等一下再读；仍然不对，退回上一步重来，不要连点。
 - 密码、支付页面是安全屏，截图会失败：不是故障，请主人自己来。
-- 无障碍断了、`screen.*` 不可用：先 `config.status` 看是哪一项没开。升级后被系统关掉的无障碍，可以 `config.accessibility.enable` 重新打开（结构性改动，会问主人）；开不了就 `config.permission.request {name: "accessibility"}` 打开系统设置页，请主人亲手打开，不要假装做了。
-- 其他权限（位置、通知、悬浮窗、Shizuku、使用情况访问……）同样：`config.status` 看，缺哪项就 `config.permission.request {name}`，授权由主人本人完成。应用总被系统杀掉，用 `config.keepalive.status` 看厂商的自启动和后台限制；`config.keepalive.fix` 会接管屏幕去点厂商设置，先告诉主人再用。
+- 无障碍断了、`screen.*` 不可用：先 `config.status` 看是哪一项没开，再 `config.permission.request {name: "accessibility"}` 打开系统设置页，请主人亲手打开（无障碍是主人在系统里开关的，Ash 不能替他开），不要假装做了。
+- 其他权限（位置、通知、悬浮窗、后台也能动手、使用情况访问……）同样：`config.status` 看，缺哪项就 `config.permission.request {name}`，授权由主人本人完成。应用总被系统杀掉，用 `config.keepalive.status` 看厂商的自启动和后台限制，请主人在打开的设置页里自己打开。
 - 还是做不成：停下，如实说停在了哪一步、屏幕上现在是什么，让主人决定。
 
 ## 登录、验证码、付款：边界

@@ -9,7 +9,6 @@ import ai.ash.caps.screen.Screen
 import ai.ash.caps.screen.ScreenCapabilities
 import ai.ash.caps.senses.SenseCapabilities
 import ai.ash.caps.senses.SenseError
-import ai.ash.caps.shell.ShellCapabilities
 import ai.ash.caps.system.SystemCapabilities
 import ai.ash.screen.island.OwnerTypingException
 import ai.ash.caps.vscreen.VScreenCapabilities
@@ -27,7 +26,7 @@ object Capabilities {
 
     /** Every module contributes its list here. */
     val all: List<Capability> by lazy {
-        val list = SystemCapabilities.list + ShellCapabilities.list + VScreenCapabilities.list + CalendarCapabilities.list + BrowserCapabilities.list +
+        val list = SystemCapabilities.list + VScreenCapabilities.list + CalendarCapabilities.list + BrowserCapabilities.list +
             MediaCapabilities.list + ScreenCapabilities.list + SenseCapabilities.list + ConfigCapabilities.list + DecisionCapabilities.list
         val names = list.map { it.name }
         require(names.size == names.toSet().size) { "a capability is declared twice: ${names.groupBy { it }.filterValues { it.size > 1 }.keys}" }

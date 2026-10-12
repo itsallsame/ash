@@ -36,16 +36,16 @@ object OnboardingPlan {
     /** Step 3: the system's two special accesses. */
     private val SCREEN_ACCESS = listOf("accessibility", "notification_listener")
     /**
-     * The grant that lets Ash bring the accessibility service back after an upgrade. It is shown in step 3 but never holds
-     * the step: an ordinary owner cannot give it (it takes a computer or Shizuku).
+     * The phone's debug identity (「后台也能动手」) is asked in its step but never holds it: pairing needs the developer options,
+     * which not every owner wants.
      */
-    private const val RECOVERY_GRANT = "screen_recovery"
+    private const val NEVER_HOLDS = "host_shell"
     /** Step 4 (optional by nature: Ash works without the senses). */
     private val SENSES = listOf("location", "location_background", "activity_recognition", "health")
 
     /** The step an item belongs to; everything else the owner sets is step 2. */
     fun stepOf(item: String): OnboardingStep = when (item) {
-        in SCREEN_ACCESS, RECOVERY_GRANT -> OnboardingStep.SCREEN_ACCESS
+        in SCREEN_ACCESS -> OnboardingStep.SCREEN_ACCESS
         in SENSES -> OnboardingStep.SENSES
         else -> OnboardingStep.PERMISSIONS
     }
@@ -59,7 +59,7 @@ object OnboardingPlan {
     fun complete(step: OnboardingStep, kernel: KernelState, rows: List<Row>): Boolean = when (step) {
         OnboardingStep.KERNEL -> kernel == KernelState.BOUND
         OnboardingStep.DONE -> false
-        else -> rows(step, kernel, rows).all { done(it) || it.item == RECOVERY_GRANT }
+        else -> rows(step, kernel, rows).all { done(it) || it.item == NEVER_HOLDS }
     }
 
     /** The first step that is not over and not skipped; [OnboardingStep.DONE] when none is left. */
@@ -80,7 +80,7 @@ object OnboardingPlan {
     /**
      * One part of her body, as the checkup groups them (HANDOFF §3; the ids are the ones of [ConsoleActivity.EXTRA_PART]).
      * The guide's dots are one per part, and its closing screen names the parts that stayed off.
-     * [items] are the ids of `config.status` (plus the keep-alive switches and the recovery grant, see [rows]); the brain's
+     * [items] are the ids of `config.status` (plus the keep-alive switches, see [rows]); the brain's
      * own package and connection are not rows, the guide's brain screen is theirs.
      */
     class Part(val id: String, val title: String, val items: List<String>)
@@ -96,7 +96,7 @@ object OnboardingPlan {
         Part("alarm", "闹钟", listOf("exact_alarm")),
         Part("notify", "叫你", listOf("notifications", "alerts")),
         Part("awake", "在后台醒着", listOf("battery_optimization", "autostart", "recents_lock")),
-        Part("eyes", "眼睛和手", listOf("accessibility", "notification_listener", "screen_recovery", "overlay", "shizuku")),
+        Part("eyes", "眼睛和手", listOf("accessibility", "notification_listener", "overlay", "host_shell")),
         Part("files", "照片和文件", listOf("photos", "all_files", "write_settings", "usage_access")),
         Part("location", "位置和健康", listOf("location", "location_background", "activity_recognition", "health", "calendar")),
     )
@@ -125,17 +125,10 @@ object OnboardingPlan {
         return ASK_ORDER.filter { it in present } + present.filter { it !in ASK_ORDER }
     }
 
-    /**
-     * The items still to ask: not granted and not skipped. The recovery grant is only asked while the system's two special
-     * accesses are not both given (as before, it never holds the guide), and not at all once the owner passed on accessibility.
-     */
+    /** The items still to ask: not granted and not skipped. */
     fun pending(kernel: KernelState, rows: List<Row>, skipped: Set<String>): List<String> {
         val state = rows.associate { it.item to it.state }
-        val accessOpen = SCREEN_ACCESS.any { state[it]?.let { s -> s != GRANTED && s != UNSUPPORTED && s != SAID } == true }
-        return asked(kernel, rows).filter { item ->
-            state[item] != GRANTED && state[item] != SAID && item !in skipped &&
-                (item != RECOVERY_GRANT || (accessOpen && "accessibility" !in skipped))
-        }
+        return asked(kernel, rows).filter { item -> state[item] != GRANTED && state[item] != SAID && item !in skipped }
     }
 
     /** The screen the guide is on: the kernel while it is not up (and not passed on), then the first item left, then the closing screen. Welcome is the activity's own, before all of these. */

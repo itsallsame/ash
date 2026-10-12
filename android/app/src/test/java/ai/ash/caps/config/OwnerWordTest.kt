@@ -66,8 +66,8 @@ class OwnerWordTest {
         assertEquals("not settable yet: the word does not count", Standing.OFF, word.settle("autostart", read = false, unreadable = true))
     }
 
-    @Test fun theRecoveryGrantIsNotSomethingTheOwnerCanSayIsOn() {
-        assertFalse("it takes a computer or Shizuku", OwnerWord.mayBeSaid("screen_recovery"))
+    @Test fun theDebugIdentityIsNotSomethingTheOwnerCanSayIsOn() {
+        assertFalse("it is there only once Ash holds it", OwnerWord.mayBeSaid("host_shell"))
         assertTrue(OwnerWord.mayBeSaid("accessibility")); assertTrue(OwnerWord.mayBeSaid("notifications"))
     }
 }

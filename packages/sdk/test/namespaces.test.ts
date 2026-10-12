@@ -86,7 +86,6 @@ test("the namespaces of SPEC-02 §4.3 are all there with the actions the phone a
     settings: ["get", "put", "open"],
     clipboard: ["get", "set"],
     device: ["status"],
-    shell: ["run", "status"],
     workspace: ["ls", "read", "find", "grep", "write", "edit", "bash", "poll", "signal"],
     body: ["info"],
     browser: ["open", "read", "click", "type", "scroll", "back", "screenshot", "evaluate", "close", "spaces"],
@@ -98,7 +97,7 @@ test("the namespaces of SPEC-02 §4.3 are all there with the actions the phone a
     health: ["sources", "read", "summary", "sync"],
     sensors: ["steps"],
     sense: ["status", "configure", "delete"],
-    config: ["status", "permission.request", "keepalive.status", "keepalive.fix", "accessibility.enable"],
+    config: ["status", "permission.request", "keepalive.status"],
     decision: ["surface", "screen", "return", "virtual_close"],
   };
   assert.deepEqual(Object.keys(STANDARD_NAMESPACES), Object.keys(expected));
@@ -139,7 +138,6 @@ test("effect and risk follow the phone's CapabilityPolicy and the computer's wor
     "screen.read": ["read", "none"], "screen.see": ["read", "none"], "screen.screenshot": ["read", "none"], "screen.touch_status": ["read", "none"],
     "screen.tap": ["act", "outward"], "screen.type": ["act", "outward"], "screen.scroll": ["act", "outward"], "screen.swipe": ["act", "outward"],
     "screen.hold": ["act", "outward"], "screen.touch": ["act", "outward"], "screen.gesture": ["act", "outward"], "screen.global_action": ["act", "outward"],
-    "shell.run": ["execute", "structure"], "shell.status": ["read", "none"],
     "vscreen.create": ["act", "structure"], "vscreen.status": ["read", "none"], "vscreen.launch": ["act", "outward"], "vscreen.see": ["read", "none"],
     "vscreen.tap": ["act", "outward"], "vscreen.swipe": ["act", "outward"], "vscreen.key": ["act", "outward"], "vscreen.type": ["act", "outward"], "vscreen.close": ["act", "structure"],
     "calendar.search": ["read", "none"], "calendar.list": ["read", "none"], "calendar.create": ["write", "outward"],
@@ -152,7 +150,6 @@ test("effect and risk follow the phone's CapabilityPolicy and the computer's wor
     "workspace.write": ["write", "structure"], "workspace.edit": ["write", "structure"], "workspace.bash": ["execute", "structure"],
     "workspace.poll": ["read", "none"], "workspace.signal": ["act", "structure"], "body.info": ["read", "none"],
     "config.status": ["read", "none"], "config.permission.request": ["act", "none"], "config.keepalive.status": ["read", "none"],
-    "config.keepalive.fix": ["act", "structure"], "config.accessibility.enable": ["write", "structure"],
   };
   for (const [name, [effect, risk]] of Object.entries(table)) {
     const item = standardAction(name);
@@ -166,7 +163,7 @@ test("effect and risk follow the phone's CapabilityPolicy and the computer's wor
 test("foreground, per-call risk and kernel-only marks", () => {
   const foreground = STANDARD_ACTIONS.filter((item) => item.foreground).map((item) => item.name).sort();
   assert.deepEqual(foreground, [
-    "apps.open", "apps.open_url", "config.keepalive.fix", "config.permission.request", "input.key",
+    "apps.open", "apps.open_url", "config.permission.request", "input.key",
     "screen.gesture", "screen.global_action", "screen.hold", "screen.scroll", "screen.swipe", "screen.tap", "screen.touch", "screen.type", "settings.open",
   ]);
   assert.deepEqual(STANDARD_ACTIONS.filter((item) => item.per_call_risk).map((item) => item.name), ["workspace.write", "workspace.edit"]);

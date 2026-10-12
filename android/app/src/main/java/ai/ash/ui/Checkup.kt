@@ -5,7 +5,6 @@ import ai.ash.caps.config.KernelAutostart
 import ai.ash.caps.config.OwnerWord
 import ai.ash.caps.config.Standing
 import ai.ash.caps.config.Permissions
-import ai.ash.caps.config.ScreenRecovery
 import ai.ash.host.KernelLauncher
 import ai.ash.host.KernelState
 import android.content.Context
@@ -48,13 +47,16 @@ object Checkup {
 
     /**
      * One item of the check. [id] is a name of `config.status` ([ConfigStatus.NAMES]), a key of [Permissions] (the keep-alive switches,
-     * the alert sound, the accessibility recovery) or one of the kernel's two own ([KERNEL_PACKAGE], [KERNEL_LINK]).
+     * the alert sound) or one of the kernel's two own ([KERNEL_PACKAGE], [KERNEL_LINK]).
      * [title] and [why] are the owner's words (「大脑」, never 「内核」); [note] is what the phone says about it when it is off.
      */
     class Item(val id: String, val part: OnboardingPlan.Part, val title: String, val why: String, val state: State, val note: String? = null,
                /** The owner may say it is on (「我已经打开了」). */ val canSay: Boolean = false,
                /** Reading it again can tell something new (it is a switch Ash can read). */ val canRecheck: Boolean = false,
-               /** Has a 「测试」 button. */ val testable: Boolean = false)
+               /** Has a 「测试」 button. */ val testable: Boolean = false,
+               /** Has a 「撤销」 button: it is on, and Ash can give it back itself ([ai.ash.caps.config.Permission.revoke]). */ val revocable: Boolean = false) {
+        internal fun withRevoke(can: Boolean) = Item(id, part, title, why, state, note, canSay, canRecheck, testable, can && state == State.ON)
+    }
 
     /** What the items of a part, and of all the parts but the optional one, add up to. */
     class Summary(val parts: Map<String, Int>) {
@@ -88,8 +90,7 @@ object Checkup {
         Spec("notification_listener", "通知使用权", "系统会一直连着 Ash；被清理后，手机来通知时系统会把它叫回来"),
         Spec("accessibility", "看懂屏幕", "让 Ash 看懂屏幕内容，替你点击、输入、滚动，也让灵动岛显示在别的应用上方"),
         Spec("overlay", "悬浮窗", "跨应用显示 Ash 做事的进度，也能小窗看她在后台操作的画面"),
-        Spec("shizuku", "后台也能动手", "装了 Shizuku，Ash 在后台也能替你打开应用、执行命令，不打扰你"),
-        Spec("screen_recovery", "看屏幕的能力掉了自己接上", "系统关掉 Ash 的无障碍后，几秒内自己拉起来，不用你去手动开关"),
+        Spec("host_shell", "后台也能动手", "和手机配对一次，Ash 在后台也能替你开应用、按键、用虚拟屏，不打扰你；手机重启后要你再接一下"),
         Spec("photos", "照片、视频和文件", "让 Ash 看你的照片和视频、找手机里的文件、把图片存进相册"),
         Spec("all_files", "所有文件", "让 Ash 读写手机存储里的所有文件，包括别的应用放在共享存储里的下载和文档"),
         Spec("write_settings", "改系统设置", "让 Ash 帮你调亮度、屏幕超时这类设置"),
@@ -109,7 +110,7 @@ object Checkup {
 
     /** Keys of [Permissions] for the items that are not names of `config.status` (the phone maker's own switches and the like). */
     private val PERMISSION_KEYS = mapOf("kernel_autostart" to "kernel_autostart", "alerts" to "alerts", "autostart" to "autostart",
-        "lock" to "lock", "screen_recovery" to "screen_recovery")
+        "lock" to "lock")
 
     /**
      * Reads the phone: which items there are and whether each is on. Blocking (Health Connect may take a moment): not on the main thread.
@@ -140,8 +141,7 @@ object Checkup {
                     val key = PERMISSION_KEYS[spec.id]
                     if (key != null) {
                         val p = Permissions.all.firstOrNull { it.key == key } ?: return@mapNotNull null
-                        if (spec.id == "screen_recovery") said(ScreenRecovery.granted(ctx), false, p.status(ctx))
-                        else said(p.ready(ctx), p.confirmable(ctx), p.status(ctx))
+                        said(p.ready(ctx), p.confirmable(ctx), p.status(ctx))
                     } else {
                         val r = ConfigStatus.item(ctx, spec.id)
                         when (r.state) {
@@ -151,7 +151,7 @@ object Checkup {
                     }
                 }
             }
-        }
+        }.map { item -> item.withRevoke(Permissions.all.firstOrNull { it.key == (ConfigStatus.PERMISSION_KEY[item.id] ?: item.id) }?.revoke != null) }
     }
 
     /** What 「你说已开」 says under the item: that the system disagrees, if it can tell and does. */

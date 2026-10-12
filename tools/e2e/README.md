@@ -205,7 +205,7 @@ Each is named by the old number it replaces (`R` is `tools/regress.sh`, `S` is R
 | `S093` | 打开网址，前台换成了浏览器 | | auto |
 | `S094` | 浏览器任务（开页、读页、截图、关） | | auto |
 | `S094b` | 屏幕读取和操作（无障碍） | S095 | auto |
-| `S094c` | Shizuku shell（跑命令、权限是 shell 用户） | 设备33 | auto |
+| `S094c` | 后台也能动手（调试身份上的虚拟屏；没有任意命令） | 设备33 | auto |
 | **Apps** | | | |
 | `S119` | 脚手架生成、校验通过 | | auto |
 | `S120` | agent 要装 → 出审批卡（不提供“以后都可以”），批了才装上 | | auto |
@@ -253,7 +253,7 @@ below. Replace `$S` by the serial and `ai.ash.agent` by `--package` if you chang
 | `write_settings` | settings words | `adb -s $S shell appops set ai.ash.agent WRITE_SETTINGS allow` |
 | `exact_alarm` | exact reminders | `adb -s $S shell appops set ai.ash.agent SCHEDULE_EXACT_ALARM allow` |
 | `battery_optimization` | staying alive | `adb -s $S shell dumpsys deviceidle whitelist +ai.ash.agent` (and `+ai.ash.kernel`) |
-| `shizuku` | S094c | start Shizuku (`adb -s $S shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh`) and authorize Ash in its app |
+| `host_shell` | S094c | pair 「后台也能动手」 in Ash's checkup; on a test phone the service can be started over USB with the line in `REMEDY.host_shell` (`tools/e2e/scenarios.mjs`) |
 
 Other needs: a **paired phone** (`phone`: the device is online in `service:devices/list`), a **model key** (`llm`:
 `owner.mjs set-key DEEPSEEK_API_KEY < key.txt`), **internet on the phone** (`network`: S093, S094), the **process** can be

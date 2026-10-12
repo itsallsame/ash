@@ -50,8 +50,8 @@ class OwnerWord(private val store: Store) {
         private const val PREFS = "ash.permissions"
         private const val PREFIX = "confirmed:"
 
-        /** Items the owner cannot give by hand: the recovery grant takes a computer or Shizuku, so their word for it is not asked. */
-        fun mayBeSaid(item: String): Boolean = item != "screen_recovery"
+        /** Items the owner's word cannot stand for: the debug identity is there only once Ash holds it, so their word for it is not asked. */
+        fun mayBeSaid(item: String): Boolean = item != ai.ash.caps.hostshell.HostShell.ITEM
 
         fun of(ctx: Context): OwnerWord = OwnerWord(Prefs(ctx.applicationContext))
 

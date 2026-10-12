@@ -30,14 +30,14 @@ object ConfigStatus {
     val NAMES = listOf(
         "accessibility", "notification_listener", "notifications", "exact_alarm", "battery_optimization", "kernel_battery_optimization",
         "location", "location_background", "activity_recognition", "health", "calendar", "photos", "all_files", "overlay", "write_settings",
-        "shizuku", "usage_access",
+        "host_shell", "usage_access",
     )
 
     /** The entry of [Permissions] (the owner-facing list) each name is, for the names that have one. */
     internal val PERMISSION_KEY = mapOf(
         "accessibility" to "accessibility", "notification_listener" to "notification_access", "notifications" to "notifications",
         "battery_optimization" to "battery", "calendar" to "calendar", "photos" to "photos", "all_files" to "all_files",
-        "overlay" to "overlay", "write_settings" to "write_settings", "shizuku" to "shizuku", "usage_access" to "usage",
+        "overlay" to "overlay", "write_settings" to "write_settings", "host_shell" to "host_shell", "usage_access" to "usage",
     )
 
     fun all(ctx: Context): List<Item> = NAMES.map { item(ctx, it) }

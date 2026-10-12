@@ -9,29 +9,26 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import ai.ash.caps.shell.PrivProcess
-import ai.ash.caps.shell.PrivShell
-import ai.ash.caps.shell.ShizukuState
+import ai.ash.caps.hostshell.HostProcess
+import ai.ash.caps.hostshell.HostShell
 
 /**
  * Client of the privileged virtual-screen server (ai.ash.caps.vscreen.Main).
  *
- * The server is this APK's own code run by the shell uid: through Shizuku,
- * `CLASSPATH=<this apk> exec app_process /system/bin ai.ash.caps.vscreen.Main` (the APK's classes.dex
- * holds the class; no separate jar, nothing copied to /data/local/tmp). Requests and replies are
+ * The server is this APK's own code run by the shell uid: the host shell service starts it
+ * (`HostShell.openVscreen`, `app_process` with this APK as its class path; nothing copied to /data/local/tmp). Requests and replies are
  * JSON lines over the process's stdin/stdout, so there is no port another app could reach, no old
  * server version can survive an app update, and the server tears the display down and exits as soon
  * as this process (its pipe) goes away. stderr is drained and its tail kept for error messages.
  */
 object VScreenClient {
     private const val TAG = "ash.vscreen"
-    private const val MAIN = "ai.ash.caps.vscreen.Main"
     private const val PREFIX = "@@ash-vscreen "
     private const val START_TIMEOUT_MS = 12_000L
 
     private val lock = Any()
     private val writeLock = Any()
-    @Volatile private var proc: PrivProcess? = null
+    @Volatile private var proc: HostProcess? = null
     @Volatile private var stdin: OutputStream? = null
     @Volatile private var dead = true
     private val pending = ConcurrentHashMap<Int, LinkedBlockingQueue<JSONObject>>()
@@ -43,7 +40,7 @@ object VScreenClient {
 
     /**
      * Sends one request and waits for its reply. Starts the server first when needed
-     * (requires Shizuku ready). Never throws for server-side errors: they come back as {ok:false,error}.
+     * (requires the host shell). Never throws for server-side errors: they come back as {ok:false,error}.
      */
     fun call(ctx: Context, op: String, args: JSONObject = JSONObject(), timeoutMs: Long = 10_000, start: Boolean = true): JSONObject {
         if (dead) {
@@ -86,14 +83,9 @@ object VScreenClient {
     private fun ensureStarted(ctx: Context) {
         synchronized(lock) {
             if (!dead && proc != null) return
-            if (!ShizukuState.awaitReady(ctx)) {
-                throw IllegalStateException("virtual screens need Shizuku: ${ShizukuState.whyNot(ctx)}")
-            }
-            val apk = ctx.applicationInfo.sourceDir
-            val cmd = "CLASSPATH=${PrivShell.quote(apk)} exec /system/bin/app_process /system/bin --nice-name=ash_vscreen $MAIN"
             proc?.destroy()
             synchronized(errTail) { errTail.setLength(0) }
-            val p = PrivShell.spawn("shizuku", cmd)
+            val p = HostShell.openVscreen()
             val ready = CountDownLatch(1)
             proc = p
             stdin = p.stdin
@@ -106,11 +98,11 @@ object VScreenClient {
                 p.destroy()
                 throw IllegalStateException("the virtual screen server did not start$why")
             }
-            Log.i(TAG, "server started (apk=$apk)")
+            Log.i(TAG, "server started")
         }
     }
 
-    private fun readReplies(p: PrivProcess, ready: CountDownLatch) {
+    private fun readReplies(p: HostProcess, ready: CountDownLatch) {
         try {
             val r = p.stdout.bufferedReader(Charsets.UTF_8)
             while (true) {
@@ -128,7 +120,7 @@ object VScreenClient {
         ready.countDown()
     }
 
-    private fun drainErr(p: PrivProcess) {
+    private fun drainErr(p: HostProcess) {
         try {
             val r = p.stderr.bufferedReader(Charsets.UTF_8)
             while (true) appendErr(r.readLine() ?: break)

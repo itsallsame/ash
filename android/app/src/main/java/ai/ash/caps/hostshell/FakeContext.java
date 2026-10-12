@@ -1,5 +1,6 @@
-// Licensed under LGPL-3.0; source: https://github.com/AAswordman/Operit (shower shell)
-package ai.ash.caps.vscreen;
+// Adapted from scrcpy (https://github.com/Genymobile/scrcpy), server/.../FakeContext.java, Apache License 2.0
+// (see THIRD_PARTY_NOTICES.md). Changes: no content resolver override; package and comments for Ash.
+package ai.ash.caps.hostshell;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
@@ -10,10 +11,13 @@ import android.os.Process;
 
 import java.lang.reflect.Field;
 
+/**
+ * A Context for code that runs as the shell user through {@code app_process} (the host shell service and the virtual-screen
+ * program), which has no application of its own: the system context, presented as the shell package.
+ */
 public final class FakeContext extends ContextWrapper {
 
     public static final String PACKAGE_NAME = "com.android.shell";
-    public static final int ROOT_UID = 0;
 
     private static final FakeContext INSTANCE = new FakeContext();
 
@@ -43,6 +47,8 @@ public final class FakeContext extends ContextWrapper {
         return builder.build();
     }
 
+    // Overrides Context.getDeviceId() from Android 14 on (not in this SDK yet).
+    @SuppressWarnings("unused")
     public int getDeviceId() {
         return 0;
     }
@@ -57,6 +63,7 @@ public final class FakeContext extends ContextWrapper {
         return this;
     }
 
+    /** The clipboard and activity managers keep the Context they were made with: give them this one, so they speak as the shell package. */
     @SuppressLint("SoonBlockedPrivateApi")
     @Override
     public Object getSystemService(String name) {
@@ -64,7 +71,8 @@ public final class FakeContext extends ContextWrapper {
         if (service == null) {
             return null;
         }
-        if (Context.CLIPBOARD_SERVICE.equals(name) || "semclipboard".equals(name)) {
+        // "semclipboard" is a Samsung-internal service.
+        if (Context.CLIPBOARD_SERVICE.equals(name) || "semclipboard".equals(name) || Context.ACTIVITY_SERVICE.equals(name)) {
             try {
                 Field field = service.getClass().getDeclaredField("mContext");
                 field.setAccessible(true);
