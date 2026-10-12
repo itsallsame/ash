@@ -16,7 +16,7 @@ class OnboardingPlanTest {
 
     /** Every item the guide lists, all granted unless [missing] names it. */
     private fun rows(vararg missing: String, unsupported: Set<String> = emptySet()): List<Row> =
-        (ConfigStatus.NAMES + listOf("autostart", "recents_lock")).map {
+        (ConfigStatus.NAMES + listOf("autostart", "kernel_lock")).map {
             Row(it, when (it) { in unsupported -> "unsupported"; in missing -> "missing"; else -> "granted" })
         }
 
@@ -37,7 +37,7 @@ class OnboardingPlanTest {
 
     @Test fun keepAliveSwitchesAreStepTwoAndTheDebugIdentityIsAskedThereButDoesNotHoldIt() {
         assertEquals(PERMISSIONS, step(rows = rows("autostart")))
-        assertEquals(PERMISSIONS, step(rows = rows("recents_lock")))
+        assertEquals(PERMISSIONS, step(rows = rows("kernel_lock")))
         assertEquals(DONE, step(rows = rows("host_shell")))
         assertEquals(PERMISSIONS, step(rows = rows("host_shell", "overlay")))
         assertEquals(listOf("host_shell"), OnboardingPlan.pending(bound, rows("host_shell"), emptySet()))
@@ -132,7 +132,7 @@ class OnboardingPlanTest {
     }
 
     @Test fun everyItemTheGuideCanReadHasAPlaceInTheOrderAndACopy() {
-        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock")
+        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "kernel_lock")
         for (item in items) {
             assertTrue("$item is not in the order", item in OnboardingPlan.ASK_ORDER)
             assertTrue("$item has no copy", item in OnboardingContent.pages)
@@ -192,14 +192,14 @@ class OnboardingPlanTest {
     }
 
     @Test fun everyItemIsInOnePartAndTheOnesTheHandoffListsAreWhereItPutsThem() {
-        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "recents_lock")
+        val items = ConfigStatus.NAMES + listOf("autostart", "kernel_autostart", "kernel_lock")
         for (item in items) assertEquals(item, 1, OnboardingPlan.PARTS.count { item in it.items })
         assertEquals("brain", OnboardingPlan.partOf("kernel_battery_optimization").id)
         assertEquals("alarm", OnboardingPlan.partOf("exact_alarm").id)
         assertEquals("location", OnboardingPlan.partOf("calendar").id) // optional: reading the calendar is no part of an alarm being on time
         assertEquals("notify", OnboardingPlan.partOf("notifications").id)
         assertEquals("notify", OnboardingPlan.partOf("alerts").id) // not a row of config.status: the checkup lists it, under 叫你 (HANDOFF §3)
-        assertEquals("awake", OnboardingPlan.partOf("recents_lock").id)
+        assertEquals("brain", OnboardingPlan.partOf("kernel_lock").id) // the brain's card is the one to lock, not the app's
         assertEquals("eyes", OnboardingPlan.partOf("accessibility").id)
         assertEquals("eyes", OnboardingPlan.partOf("notification_listener").id)
         assertEquals("files", OnboardingPlan.partOf("usage_access").id)
@@ -222,7 +222,7 @@ class OnboardingPlanTest {
     @Test fun theClosingScreenNamesPartsNotItems() {
         val s = OnboardingPlan.summary(bound, rows("accessibility", "overlay", "location", "health"))
         assertEquals(listOf("眼睛和手", "位置和健康"), s.offParts.map { it.title })
-        val all = OnboardingPlan.summary(KernelState.NOT_INSTALLED, rows(*ConfigStatus.NAMES.toTypedArray(), "autostart", "recents_lock"))
+        val all = OnboardingPlan.summary(KernelState.NOT_INSTALLED, rows(*ConfigStatus.NAMES.toTypedArray(), "autostart", "kernel_lock"))
         assertTrue(all.offParts.size <= 7)
         assertEquals("brain", all.offParts.first().id)
         assertEquals(emptyList<OnboardingPlan.Part>(), OnboardingPlan.summary(bound, rows()).offParts)

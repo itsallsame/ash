@@ -81,12 +81,12 @@ object Checkup {
         Spec(KERNEL_LINK, "大脑在运行", "连上了才能听你说话、替你办事"),
         Spec("kernel_battery_optimization", "大脑不被系统限制", "系统在后台停掉大脑，Ash 就失联了"),
         Spec("kernel_autostart", "大脑自己回来", "手机重启或被系统清理后，大脑自己回来；不开的话，要等你再打开 Ash"),
+        Spec("kernel_lock", "锁住大脑", "在最近任务里锁住「Ash 内核」，系统清理后台时会留下她的大脑"),
         Spec("exact_alarm", "准时的闹钟", "让提醒准时响起；不开的话，提醒可能晚几分钟"),
         Spec("notifications", "通知", "提醒、需要你确认的卡片，都靠通知送到你手上"),
         Spec("alerts", "铃声和振动", "做完了、要你点头、到点提醒时，手机响铃、振动、弹横幅叫你", testable = true),
         Spec("battery_optimization", "不被电池优化限制", "让 Ash 在后台常驻，定时提醒才会准时"),
         Spec("autostart", "自己回来", "被系统清理或重启之后，Ash 自己回来；不开的话，要等你再打开它"),
-        Spec("lock", "在最近任务里锁定", "锁定后，系统清理后台时会尽量留下 Ash"),
         Spec("notification_listener", "通知使用权", "系统会一直连着 Ash；被清理后，手机来通知时系统会把它叫回来"),
         Spec("accessibility", "看懂屏幕", "让 Ash 看懂屏幕内容，替你点击、输入、滚动，也让灵动岛显示在别的应用上方"),
         Spec("overlay", "悬浮窗", "跨应用显示 Ash 做事的进度，也能小窗看她在后台操作的画面"),
@@ -102,15 +102,13 @@ object Checkup {
         Spec("calendar", "日历", "读接下来一天的日程，提前提醒你"),
     )
 
-    /** The id [OnboardingPlan.PARTS] knows an item by, where the checkup's differs (the keep-alive switch 「锁定」). */
-    private fun planId(id: String) = if (id == "lock") "recents_lock" else id
 
     /** The part an item is in: [OnboardingPlan.partOf] says (the kernel's own two are the brain's, which no row of the guide is). */
-    internal fun partFor(id: String): OnboardingPlan.Part = if (id == KERNEL_PACKAGE || id == KERNEL_LINK) part("brain")!! else OnboardingPlan.partOf(planId(id))
+    internal fun partFor(id: String): OnboardingPlan.Part = if (id == KERNEL_PACKAGE || id == KERNEL_LINK) part("brain")!! else OnboardingPlan.partOf(id)
 
     /** Keys of [Permissions] for the items that are not names of `config.status` (the phone maker's own switches and the like). */
     private val PERMISSION_KEYS = mapOf("kernel_autostart" to "kernel_autostart", "alerts" to "alerts", "autostart" to "autostart",
-        "lock" to "lock")
+        "kernel_lock" to "kernel_lock")
 
     /**
      * Reads the phone: which items there are and whether each is on. Blocking (Health Connect may take a moment): not on the main thread.
@@ -138,6 +136,8 @@ object Checkup {
                     else said(ConfigStatus.item(ctx, spec.id).state == ConfigStatus.GRANTED, false, null)
                 }
                 else -> {
+                    // The brain's lock needs the brain's card: nothing to lock before the kernel is installed.
+                    if (spec.id == "kernel_lock" && kernel == KernelState.NOT_INSTALLED) return@mapNotNull null
                     val key = PERMISSION_KEYS[spec.id]
                     if (key != null) {
                         val p = Permissions.all.firstOrNull { it.key == key } ?: return@mapNotNull null

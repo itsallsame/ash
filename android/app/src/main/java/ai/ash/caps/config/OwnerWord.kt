@@ -56,6 +56,6 @@ class OwnerWord(private val store: Store) {
         fun of(ctx: Context): OwnerWord = OwnerWord(Prefs(ctx.applicationContext))
 
         /** The key of an item's mark: the entry of [Permissions] it is when it has one (so the checkup's and the guide's ids meet), else the item's own id. */
-        fun keyOf(item: String): String = ConfigStatus.PERMISSION_KEY[item] ?: if (item == "recents_lock") "lock" else item
+        fun keyOf(item: String): String = ConfigStatus.PERMISSION_KEY[item] ?: item
     }
 }

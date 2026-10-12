@@ -62,9 +62,9 @@ internal object OnboardingContent {
             "自启动", "手机重启、或者被系统清理之后，我想**自己回来**。这要在手机自带的设置里开一下。", "去打开", R.drawable.ash_ic_refresh,
             ping("刚刚", "我回来了，刚才没做完的事接着做。", "开了之后，被清理了我也会自己回来"),
         ),
-        "recents_lock" to ask(
-            "最近任务里锁定", "在最近任务里把我**锁住**，系统清理后台的时候，就会尽量留下我。", "去锁定", R.drawable.ash_ic_lock,
-            ping("刚刚", "清理了一圈，我还在。", "锁定之后，一键清理也会留着我"),
+        "kernel_lock" to ask(
+            "锁住大脑", "我的**大脑**在最近任务里有自己的一张卡片。把它锁住，系统清理后台的时候，就会留下它。", "去锁定", R.drawable.ash_ic_lock,
+            ping("刚刚", "清理了一圈，我的大脑还在。", "锁住之后，一键清理也会留着它"),
         ),
         "kernel_battery_optimization" to ask(
             "大脑常驻", "我的**大脑**也要在后台醒着，不然我会突然失联。", "好，让大脑醒着", R.drawable.ash_ic_cpu,

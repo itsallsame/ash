@@ -26,7 +26,7 @@ object OnboardingPlan {
     fun rowText(mark: String, name: String, why: String) = if (why.isEmpty()) "$mark $name" else "$mark $name\n$why"
 
     /** The switches of the kernel package itself. */
-    private val KERNEL_SWITCHES = setOf("kernel_battery_optimization", "kernel_autostart")
+    private val KERNEL_SWITCHES = setOf("kernel_battery_optimization", "kernel_autostart", "kernel_lock")
 
     private const val GRANTED = "granted"
     private const val UNSUPPORTED = "unsupported"
@@ -92,10 +92,10 @@ object OnboardingPlan {
      * An item no part lists belongs to the last part ([partOf]).
      */
     val PARTS = listOf(
-        Part("brain", "大脑", listOf("kernel_battery_optimization", "kernel_autostart")),
+        Part("brain", "大脑", listOf("kernel_battery_optimization", "kernel_autostart", "kernel_lock")),
         Part("alarm", "闹钟", listOf("exact_alarm")),
         Part("notify", "叫你", listOf("notifications", "alerts")),
-        Part("awake", "在后台醒着", listOf("battery_optimization", "autostart", "recents_lock")),
+        Part("awake", "在后台醒着", listOf("battery_optimization", "autostart")),
         Part("eyes", "眼睛和手", listOf("accessibility", "notification_listener", "overlay", "host_shell")),
         Part("files", "照片和文件", listOf("photos", "all_files", "write_settings", "usage_access")),
         Part("location", "位置和健康", listOf("location", "location_background", "activity_recognition", "health", "calendar")),

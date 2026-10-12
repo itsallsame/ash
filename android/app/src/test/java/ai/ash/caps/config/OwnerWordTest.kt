@@ -29,13 +29,12 @@ class OwnerWordTest {
     @Test fun anItemIsMarkedUnderTheKeyOfItsPermissionSoTheGuideAndTheCheckupMeet() {
         assertEquals("battery", OwnerWord.keyOf("battery_optimization"))
         assertEquals("notification_access", OwnerWord.keyOf("notification_listener"))
-        assertEquals("lock", OwnerWord.keyOf("recents_lock"))
-        assertEquals("lock", OwnerWord.keyOf("lock"))
+        assertEquals("kernel_lock", OwnerWord.keyOf("kernel_lock"))
         assertEquals("autostart", OwnerWord.keyOf("autostart"))
         assertEquals("exact_alarm", OwnerWord.keyOf("exact_alarm"))
-        word.say("recents_lock")
-        assertTrue("the checkup's id for it reads the same mark", word.said("lock"))
-        assertEquals(setOf("lock"), memory.marks)
+        word.say("kernel_lock")
+        assertTrue("the checkup's id for it reads the same mark", word.said("kernel_lock"))
+        assertEquals(setOf("kernel_lock"), memory.marks)
     }
 
     @Test fun anItemThatReadsOffStandsOnTheOwnersWordAndSaysThatTheSystemDisagrees() {

@@ -570,7 +570,7 @@ class OnboardingActivity : Activity() {
         private const val START_GAP_MS = 20_000L
 
         /** The entries of [Permissions] that stand for items outside `config.status` (the keep-alive switches). */
-        private val EXTRA_KEYS = mapOf("autostart" to "autostart", "kernel_autostart" to "kernel_autostart", "recents_lock" to "lock")
+        private val EXTRA_KEYS = mapOf("autostart" to "autostart", "kernel_autostart" to "kernel_autostart", "kernel_lock" to "kernel_lock")
 
         private fun permissionOf(item: String): Permission? {
             val key = ConfigStatus.PERMISSION_KEY[item] ?: EXTRA_KEYS[item] ?: return null

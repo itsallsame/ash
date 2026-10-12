@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
+import ai.ash.caps.screen.KeepAliveSwitches
 import ai.ash.caps.screen.Screen
 import android.widget.Toast
 import ai.ash.caps.senses.SenseSync
@@ -126,14 +127,15 @@ object Permissions {
                 { c -> KernelAutostart.rom(Build.MANUFACTURER)?.let { KernelAutostart.guidance(it) } },
                 confirmable = { KernelAutostart.state(it) == null },
             ))
+            // The brain is what the maker's cleaning must leave alone; the kernel's own screen gives it a card to lock.
             add(Permission(
-                "lock", "在最近任务里锁定 Ash", "锁定后，系统清理后台时会尽量留下 Ash",
+                "kernel_lock", "在最近任务里锁住大脑", "锁住「Ash 内核」后，系统清理后台时会留下她的大脑",
                 { true },
                 { a ->
-                    Toast.makeText(a, PhoneMaker.current.lock.replace("它", "Ash "), Toast.LENGTH_LONG).show()
-                    a.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    Toast.makeText(a, PhoneMaker.current.lock.replace("它", "「Ash 内核」"), Toast.LENGTH_LONG).show()
+                    a.startActivity(Intent().setClassName(KeepAliveSwitches.KERNEL_PACKAGE, "ai.ash.kernel.StatusActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 },
-                { PhoneMaker.current.lock.replace("它", "Ash ") },
+                { PhoneMaker.current.lock.replace("它", "「Ash 内核」") },
                 confirmable = { PhoneMaker.current.ownSwitches },
             ))
             add(Permission(

@@ -114,6 +114,7 @@ class KernelService : Service() {
     private fun show(text: String) {
         if (text == lastShown) return
         lastShown = text
+        status = text
         Notifications.update(this, text)
     }
 
@@ -158,6 +159,10 @@ class KernelService : Service() {
         const val ACTION_RESTART = "ai.ash.kernel.RESTART"
         const val ACTION_WAKE = "ai.ash.kernel.WAKE"
         const val EXTRA_AT = "at"
+
+        /** The line the notification shows now (null before the service ran in this process); [StatusActivity] shows it too. */
+        @Volatile var status: String? = null
+            private set
 
         fun start(ctx: Context, action: String? = null, at: Long = 0L) {
             val i = Intent(ctx, KernelService::class.java).setAction(action)

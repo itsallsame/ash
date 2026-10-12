@@ -42,10 +42,10 @@ class CheckupTest {
     /** HANDOFF §3's table, item by item: each item the checkup lists is in the part the table puts it in (the table itself is the guide's, [OnboardingPlan.PARTS]). */
     @Test fun everyItemIsInThePartTheHandoffPutsIt() {
         val expected = mapOf(
-            "kernel_package" to "brain", "kernel_link" to "brain", "kernel_battery_optimization" to "brain", "kernel_autostart" to "brain",
+            "kernel_package" to "brain", "kernel_link" to "brain", "kernel_battery_optimization" to "brain", "kernel_autostart" to "brain", "kernel_lock" to "brain",
             "exact_alarm" to "alarm",
             "notifications" to "notify", "alerts" to "notify",
-            "battery_optimization" to "awake", "autostart" to "awake", "lock" to "awake",
+            "battery_optimization" to "awake", "autostart" to "awake",
             "accessibility" to "eyes", "notification_listener" to "eyes", "overlay" to "eyes", "host_shell" to "eyes",
             "photos" to "files", "all_files" to "files", "write_settings" to "files", "usage_access" to "files",
             "location" to "location", "location_background" to "location", "activity_recognition" to "location", "health" to "location", "calendar" to "location",
