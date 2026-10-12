@@ -48,7 +48,7 @@ export function stableMax(state, next, now) {
  *   cost7: 近 7 天每天的钱（元），旧 → 新；now: {cpu, mem, load, cost: '¥3.42'}
  *   scale: {cpu, load} 纵轴上限（stableMax 算好的；内存固定从 0 到 max(400, 最大值×1.25)）
  *   today: {turns, calls, errors, reconnects}
- *   alert: null | {tone: 'warn'|'err', short, long}（short 给 2×2，long 给 4×2 / 4×4）
+ *   alert: null | {tone: 'warn'|'err', long}（只有 4×4 画告警那一行；2×2、4×2 没有）
  *   marks: {cpu?, load?, mem?: {from, to?, tone}}  越界（to 省略 = 到现在）或一小时内已过去（有 to）的那段
  *   limits: {cpu?, load?}  只在出事时给：正常上限虚线
  * }
@@ -83,12 +83,12 @@ export function vitalsCard(s) {
     mem: { series: [{ type: 'line', values: s.mem, color: tok('her-fill'), fill: true, max: memMax, ...hi(s.marks?.mem) }] },
     cost: { series: [{ type: 'bars', values: s.cost7, color: tok('surface-3'), lastColor: tok('you-mark') }], gap: 3 },
   });
-  const alertBox = (p, text, short) => add({ id: `${p}alert`, component: 'Column', style: { background: tok(s.alert.tone === 'warn' ? 'warn-soft' : 'err-soft'), cornerRadius: short ? 11 : 14, padding: short ? [5, 9, 5, 9] : [7, 11, 7, 11] }, children: [
-    ...(short ? [] : [txt(`${p}alertk`, W.alert_k, 11, s.alert.tone === 'warn' ? 'warn' : 'err')]),
-    txt(`${p}alertv`, text, short ? 12.5 : 13.5, s.alert.tone === 'warn' ? 'warn' : 'err', { fontWeight: 600 }),
+  const alertBox = (p, text) => add({ id: `${p}alert`, component: 'Column', style: { background: tok(s.alert.tone === 'warn' ? 'warn-soft' : 'err-soft'), cornerRadius: 14, padding: [7, 11, 7, 11] }, children: [
+    txt(`${p}alertk`, W.alert_k, 11, s.alert.tone === 'warn' ? 'warn' : 'err'),
+    txt(`${p}alertv`, text, 13.5, s.alert.tone === 'warn' ? 'warn' : 'err', { fontWeight: 600 }),
   ] });
-  const root = (id, children) => add({ id, component: 'Column', children, action: { openApp: { app: 'vitals' } },
-    style: { background: tok('surface'), padding: [14, 14, 14, 14], cornerRadius: 22 } });
+  const root = (id, children, padding = [14, 14, 14, 14]) => add({ id, component: 'Column', children, action: { openApp: { app: 'vitals' } },
+    style: { background: tok('surface'), padding, cornerRadius: 22 } });
   const head = (p, size) => add({ id: `${p}hd`, component: 'Row', align: 'center', children: [
     lamp(p), txt(`${p}say`, s.say, size, 'ink', { fontWeight: 650, margin: [0, 0, 0, 7] }), add({ id: `${p}gap`, component: 'Spacer', weight: 1 }),
     txt(`${p}at`, s.at, 11.5, 'text-3', { margin: [0, 0, 0, 8] }),
@@ -110,11 +110,10 @@ export function vitalsCard(s) {
       txt(`${p2}at`, s.at, 11.5, 'text-3'),
     ] }),
     add({ id: `${p2}fill`, component: 'Spacer', weight: 1 }),
-    ...(s.alert ? [alertBox(p2, s.alert.short, true), add({ id: `${p2}sp`, component: 'Spacer', size: 8 })] : []),
     row2('cpu', W.cpu, String(s.now.cpu), W.cpu_unit, charts(1).cpu),
     add({ id: `${p2}sp2`, component: 'Spacer', size: 8 }),
     row2('cost', W.cost, s.now.cost, '', charts(1).cost),
-  ]);
+  ], [14, 14, 9, 14]); // 2×2 has no alert line (the redlines have none): the lamp and the CPU chart carry it; the content ends 9 above the edge
 
   // ---- 4×2：一句话 / 四格
   const p4 = 's4.', c3 = charts(3);
@@ -160,14 +159,14 @@ export function vitalsCard(s) {
     head(p8, 16),
     txt(`${p8}sub`, W.sub.replace('{n}', s.online).replace('{idle_or_busy}', s.busy ? copy.chips.busy.replace('{what}', s.busy) : copy.chips.idle), 12, 'text-3', { margin: [2, 0, 0, 23] }),
     legend,
-    add({ id: `${p8}big`, component: 'Chart', ...big, style: { width: 'fill', height: 84, margin: [6, 0, 0, 0] } }),
+    add({ id: `${p8}big`, component: 'Chart', ...big, style: { width: 'fill', height: s.alert ? 77 : 84, margin: [6, 0, 0, 0] } }), // with the alert line the chart gives up 7 so that all of it fits in 330
     add({ id: `${p8}tiles`, component: 'Row', style: { margin: [10, 0, 0, 0] }, children: [
       tile('mem', W.mem, String(s.now.mem), W.mem_unit, c1.mem),
       add({ id: `${p8}tgap`, component: 'Spacer', size: 8 }),
       tile('cost', W.cost_7d, s.now.cost, '', c1.cost),
     ] }),
     add({ id: `${p8}fill`, component: 'Spacer', weight: 1 }),
-    s.alert ? alertBox(p8, s.alert.long, false) : todayRow(),
+    s.alert ? alertBox(p8, s.alert.long) : todayRow(),
   ]);
 
   void l22; void l42; void l44;

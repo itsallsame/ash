@@ -103,46 +103,6 @@
    "weight": 1
   },
   {
-   "id": "s2.alertv",
-   "component": "Text",
-   "text": "13:40 · 大脑很忙",
-   "style": {
-    "fontSize": 12.5,
-    "color": {
-     "light": "#A35F00",
-     "dark": "#FFD08A"
-    },
-    "maxLines": 1,
-    "ellipsize": "end",
-    "fontWeight": 600
-   }
-  },
-  {
-   "id": "s2.alert",
-   "component": "Column",
-   "style": {
-    "background": {
-     "light": "#F5A62326",
-     "dark": "#F5A62326"
-    },
-    "cornerRadius": 11,
-    "padding": [
-     5,
-     9,
-     5,
-     9
-    ]
-   },
-   "children": [
-    "s2.alertv"
-   ]
-  },
-  {
-   "id": "s2.sp",
-   "component": "Spacer",
-   "size": 8
-  },
-  {
    "id": "s2.cpuk",
    "component": "Text",
    "text": "CPU",
@@ -415,8 +375,6 @@
    "children": [
     "s2.hd",
     "s2.fill",
-    "s2.alert",
-    "s2.sp",
     "s2.cpu",
     "s2.sp2",
     "s2.cost"
@@ -434,7 +392,7 @@
     "padding": [
      14,
      14,
-     14,
+     9,
      14
     ],
     "cornerRadius": 22
@@ -1510,7 +1468,7 @@
    "gap": 1.2,
    "style": {
     "width": "fill",
-    "height": 84,
+    "height": 77,
     "margin": [
      6,
      0,

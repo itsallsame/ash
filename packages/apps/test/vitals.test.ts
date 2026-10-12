@@ -172,7 +172,6 @@ test("the card is what the card checker accepts, in every state, with the texts 
   const live = validateCard((await (await make(worlds[1]![1])).card()).a2ui);
   const texts = live.components.map((c) => c.text).filter((t): t is string => typeof t === "string");
   assert.ok(texts.includes("我在空转，可能很费电"), "the lamp's sentence, from the table");
-  assert.ok(texts.includes("13:56 起 · 6 分钟"), "the short alert of the 2x2");
   assert.ok(texts.some((t) => /^13:56 起 · 闲着时消息不停来回，已经 6 分钟$/.test(t)), "the long alert");
   assert.ok(texts.includes("2"), "CPU now");
 });
