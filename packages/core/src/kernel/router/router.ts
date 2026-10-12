@@ -13,7 +13,7 @@ import { CALLER_VIAS, errorBody, WordError, type ErrorBody, type Outgoing, type 
 import { compileSchema, WORD_NAME_PATTERN, type Member, type WordContract } from "../../../../sdk/src/word";
 import { DEFAULT_TTL_MINUTES, type GateStore, type PendingRecord } from "../gate";
 import type { Ledger } from "../ledger";
-import type { Caller, Gate, Message, Redact, Registry, Router, SendOptions, SendReply } from "../types";
+import type { Caller, Gate, Message, Redact, Registry, Router, SendOptions, SendReply, Traffic } from "../types";
 import { authorize, type AuthDeps } from "./authorize";
 import { shouldRecord } from "./record";
 
@@ -28,6 +28,8 @@ export interface RouterDeps extends AuthDeps {
   onParked(pending: PendingRecord): void;
   /** Something went wrong that the sender is not told about (a failed notification, an event nobody could take). */
   onError?(where: string, error: unknown): void;
+  /** Sees every message once on the way in and once on the way out, recorded or not (health counts here). Must be quick. */
+  tap?(traffic: Traffic): void;
   now?: () => number;
 }
 
@@ -161,9 +163,12 @@ export class HubRouter implements Router {
       ...(caller.origin ? { origin: caller.origin } : {}),
     };
     this.inflight.add(id);
+    const seen = { kind: stamped.kind, from: stamped.from, to: stamped.to, word: stamped.word, via: caller.via };
+    this.tap({ ...seen, phase: "in" });
     try {
       const reply: SendReply = await this.proceed(stamped, raw, caller, opts, resume);
       reply.id = stamped.id;
+      this.tap({ ...seen, phase: "out", ...(reply.ok ? {} : { error: reply.error.code }) });
       return reply;
     } finally { this.inflight.delete(id); }
   }
@@ -301,6 +306,10 @@ export class HubRouter implements Router {
       Promise.resolve().then(() => m.handle(recorded, { signal: controller.signal, caller, raw: stamped.body })).catch((e) => this.deps.onError?.(`event ${stamped.word} to ${m.id}`, e));
     }
     return { ok: true };
+  }
+
+  private tap(traffic: Traffic): void {
+    try { this.deps.tap?.(traffic); } catch (error) { this.deps.onError?.("tap", error); }
   }
 
   private publish(m: Message): void {

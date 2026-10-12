@@ -349,3 +349,19 @@ test("recover: a request this process is handling now is not one the last proces
   assert.equal(w.ledger.request(mine.id)?.state, "done");
 });
 void BODY;
+
+test("the tap sees every message once in and once out, recorded or not, and why an answer failed; a tap that throws does not stop the message", async () => {
+  const seen: any[] = [];
+  const w = world({ tap: (t) => { seen.push(t); if (t.word === "boom") throw new Error("tap"); } });
+  w.registry.add(fake("service:t", [word("service:t", "w"), word("service:t", "boom")]));
+  assert.ok((await call(w, "service:t", "w", {}, owner)).ok);
+  assert.equal(failure(await call(w, "service:t", "nope", {}, owner)).code, "not_found");
+  assert.equal(failure(await call(w, "service:gone", "w", {}, owner)).code, "offline");
+  assert.ok((await call(w, "service:t", "boom", {}, owner)).ok);
+  assert.deepEqual(seen.slice(0, 2), [
+    { phase: "in", kind: "request", from: "person:owner", to: "service:t", word: "w", via: "human" },
+    { phase: "out", kind: "request", from: "person:owner", to: "service:t", word: "w", via: "human" },
+  ]);
+  assert.deepEqual(seen.filter((t) => t.phase === "out").map((t) => t.error), [undefined, "not_found", "offline", undefined]);
+  assert.ok(w.errors.some((e) => e.where === "tap"));
+});

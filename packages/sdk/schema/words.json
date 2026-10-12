@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "6e1328f12ff856102ffd39f1e0fe0d27422c4ae9c49b8d6db85c5ef677c20acb",
+ "hash": "6ac12fa4544f17df09e5058c2ed8ecb2112e0455cddf4f4445489f4cbac463f9",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -382,7 +382,7 @@
    "word": "logs",
    "kind": "request",
    "direction": "in",
-   "description": "The hub's recent log lines (default 200, newest last). Only the owner, from a channel on this machine: logs can hold things nobody else should see.",
+   "description": "The tail of the hub's log file (default 200 lines, newest last; the lines carry no level or time yet, so level and since do not narrow them). Only the owner, from a channel on this machine: logs can hold things nobody else should see.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -467,6 +467,420 @@
    "record": true,
    "label": {
     "doing": "在记下设置改动"
+   }
+  },
+  {
+   "member": "service:health",
+   "word": "status",
+   "kind": "request",
+   "direction": "in",
+   "description": "How the hub is doing right now: message and ledger rates, the busiest words, process CPU and memory, event loop delay, and which behaviour budgets (idle traffic, ledger growth, reconnect storms, errors) are kept or broken. Use it when asked why Ash is slow, busy or heating the phone. It counts words and callers, never contents.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "window_s": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 3600
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "now": {
+      "type": "integer"
+     },
+     "uptime_s": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "idle": {
+      "type": "boolean"
+     },
+     "window_s": {
+      "type": "integer"
+     },
+     "rates": {
+      "type": "object",
+      "properties": {
+       "msg_per_min": {
+        "type": "number"
+       },
+       "ledger_rows_per_min": {
+        "type": "number"
+       },
+       "link_opens": {
+        "type": "number"
+       },
+       "errors_per_min": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "msg_per_min",
+       "ledger_rows_per_min",
+       "link_opens",
+       "errors_per_min"
+      ],
+      "additionalProperties": false
+     },
+     "top": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "key": {
+         "type": "string",
+         "minLength": 1
+        },
+        "per_min": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "key",
+        "per_min"
+       ],
+       "additionalProperties": false
+      }
+     },
+     "proc": {
+      "type": "object",
+      "properties": {
+       "cpu_pct": {
+        "type": "number"
+       },
+       "rss_mb": {
+        "type": "number"
+       },
+       "heap_mb": {
+        "type": "number"
+       },
+       "lag_p99_ms": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "cpu_pct",
+       "rss_mb",
+       "heap_mb",
+       "lag_p99_ms"
+      ],
+      "additionalProperties": false
+     },
+     "invariants": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string",
+         "minLength": 1
+        },
+        "ok": {
+         "type": "boolean"
+        },
+        "value": {
+         "anyOf": [
+          {
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "budget": {
+         "type": "number"
+        },
+        "since": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        }
+       },
+       "required": [
+        "id",
+        "ok",
+        "value",
+        "budget"
+       ],
+       "additionalProperties": false
+      }
+     },
+     "last_events": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "type": {
+         "type": "string",
+         "enum": [
+          "breach",
+          "start"
+         ]
+        },
+        "id": {
+         "type": "string",
+         "minLength": 1
+        },
+        "value": {
+         "type": "number"
+        },
+        "budget": {
+         "type": "number"
+        },
+        "window_s": {
+         "type": "integer"
+        },
+        "idle": {
+         "type": "boolean"
+        },
+        "top": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "key": {
+            "type": "string",
+            "minLength": 1
+           },
+           "n": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "key",
+           "n"
+          ],
+          "additionalProperties": false
+         }
+        },
+        "note": {
+         "type": "string"
+        },
+        "last_seen": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        }
+       },
+       "required": [
+        "at",
+        "type",
+        "id"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "now",
+     "uptime_s",
+     "idle",
+     "window_s",
+     "rates",
+     "top",
+     "proc",
+     "invariants",
+     "last_events"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在看自己的运行状况"
+   }
+  },
+  {
+   "member": "service:health",
+   "word": "recent",
+   "kind": "request",
+   "direction": "in",
+   "description": "The health history: budget breaches and starts (kind event, default) or one summary per minute for up to seven days (kind minute), newest first. Use it to find out when something started misbehaving and which word did it.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "since": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "event",
+       "minute"
+      ]
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "events": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "type": {
+         "type": "string",
+         "enum": [
+          "breach",
+          "start"
+         ]
+        },
+        "id": {
+         "type": "string",
+         "minLength": 1
+        },
+        "value": {
+         "type": "number"
+        },
+        "budget": {
+         "type": "number"
+        },
+        "window_s": {
+         "type": "integer"
+        },
+        "idle": {
+         "type": "boolean"
+        },
+        "top": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "key": {
+            "type": "string",
+            "minLength": 1
+           },
+           "n": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "key",
+           "n"
+          ],
+          "additionalProperties": false
+         }
+        },
+        "note": {
+         "type": "string"
+        },
+        "last_seen": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        }
+       },
+       "required": [
+        "at",
+        "type",
+        "id"
+       ],
+       "additionalProperties": false
+      }
+     },
+     "minutes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "idle": {
+         "type": "boolean"
+        },
+        "msg": {
+         "type": "number"
+        },
+        "ledger": {
+         "type": "number"
+        },
+        "err": {
+         "type": "number"
+        },
+        "cpu_pct": {
+         "type": "number"
+        },
+        "rss_mb": {
+         "type": "number"
+        },
+        "lag_p99_ms": {
+         "type": "number"
+        },
+        "top": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "key": {
+            "type": "string",
+            "minLength": 1
+           },
+           "per_min": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "key",
+           "per_min"
+          ],
+          "additionalProperties": false
+         }
+        }
+       },
+       "required": [
+        "at"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在翻运行记录"
    }
   },
   {

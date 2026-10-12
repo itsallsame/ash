@@ -74,6 +74,7 @@ T17 (agents + a driver). The "also needs" column lists only what a test needs on
 | | SPEC-00 §6.9, S159 vault secret not in the ledger | T6 `service:vault`, T4 redact |
 | | S011–S014 long text → summary + attachment, read back | T3 blobs, T6 `service:blobs` |
 | | S020–S023 `service:history/turn` | T6 `service:history` |
+| health | the busy loop of reading one word without end becomes an event naming the word (fake clock); an idle hub polled now and then does not | `service:health`, `HubOptions.healthTickMs` |
 | agents | S046–S051 declare / start / ask a sub-agent | T17 |
 | | SPEC-08 §5.7 delegation only narrows (forbidden, no card) | T17 + T4 authorization |
 | | SPEC-08 §5.7 spawn: temporary agent, gone afterwards | T17 |

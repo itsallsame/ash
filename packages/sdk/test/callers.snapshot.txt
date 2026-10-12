@@ -11,6 +11,8 @@
   service:admin/status  owner,agent,app
 * service:admin/logs  owner  local_only
 * service:admin/settings.changed  kernel  event-out
+  service:health/status  owner,agent,app
+  service:health/recent  owner,agent,app
   service:gate/rules.list  owner,agent,app
 * service:gate/rules.set  owner,agent
 * service:gate/rules.revoke  owner,agent

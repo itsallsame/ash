@@ -7,6 +7,7 @@ import { createGate, GateStore } from "../../../src/kernel/gate";
 import { createRedact } from "../../../src/kernel/redact";
 import { createRegistry } from "../../../src/kernel/registry";
 import { createRouter } from "../../../src/kernel/router";
+import type { Traffic } from "../../../src/kernel/types";
 import { createGateService } from "../../../src/services/gate";
 import { createNameOf } from "../../../src/services/gate/names";
 import type { Caller, GateDeps } from "../../../src/kernel/types";
@@ -76,6 +77,7 @@ export interface WorldOptions {
   appGranted?: (appId: string, to: string, word: string) => boolean;
   mayTalkToOwner?: (caller: Caller, word: string) => boolean;
   mayAnswer?: (caller: Caller, body: unknown) => boolean;
+  tap?: (traffic: Traffic) => void;
 }
 
 export function world(options: WorldOptions = {}) {
@@ -104,6 +106,7 @@ export function world(options: WorldOptions = {}) {
     ...(options.appGranted ? { appGranted: options.appGranted } : {}),
     ...(options.mayTalkToOwner ? { mayTalkToOwner: options.mayTalkToOwner } : {}),
     ...(options.mayAnswer ? { mayAnswer: options.mayAnswer } : {}),
+    ...(options.tap ? { tap: options.tap } : {}),
     onParked: (p) => svc.issueCard(p),
     onError: (where, error) => errors.push({ where, error }),
   });

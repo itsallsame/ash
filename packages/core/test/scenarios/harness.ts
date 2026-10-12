@@ -735,7 +735,8 @@ export class Scenario {
       dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
       // Without a fake model server of its own a scenario still never reaches a real provider (a saved key is checked at once): a closed local port.
       llm: this.options.llm ?? { baseUrl: "http://127.0.0.1:9" },
-      ...(this.options.fakeNow ? { now: this.clock.now } : {}),
+      // The health meter ticks in real milliseconds but counts the hub's time: with the moved clock a tick closes the time `advance()` gave it.
+      ...(this.options.fakeNow ? { now: this.clock.now, healthTickMs: 20 } : {}),
     });
     starting.catch(() => {});
     // The host is told the port as soon as the link is open, before the agents are up (`startHub` returns after that).
