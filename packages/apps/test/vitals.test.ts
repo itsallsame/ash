@@ -10,6 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { checkManifest } from "../../core/src/edges/apps/check";
 import { validateCard } from "../../core/src/services/widgets/card";
+import { INVARIANTS as HUB_INVARIANTS } from "../../core/src/services/health/budgets";
 import { bundleApp } from "../bundle.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -217,5 +218,13 @@ test("the chart geometry the page draws is the one in chart/vectors.json (the ph
   for (const v of vectors) {
     near(JSON.parse(JSON.stringify(layout(v.chart, v.w, v.h))), v.expect, v.name);
     assert.match(chartSvg(v.chart, v.w, v.h), /^<svg /, v.name);
+  }
+});
+
+test("every budget the hub keeps has its words in the copy table, its place in the rules and in the priority", () => {
+  for (const { id } of HUB_INVARIANTS) {
+    assert.ok(copy.invariants[id], `${id} has no entry in copy.invariants`);
+    assert.ok(copy.rules.some((rule: { ids: string[] }) => rule.ids.includes(id)), `${id} is in no rule group`);
+    assert.ok(copy.priority.includes(id), `${id} is not in the priority`);
   }
 });
