@@ -27,15 +27,15 @@ class AndroidProvisioner(private val ctx: Context, private val paths: Paths) : P
 }
 
 /**
- * Starts the core: a fresh host token, host.json, the seal key (unwrapped by the Keystore for this start only), the
- * three environment variables, and the process. The token goes to [api] (so its calls are accepted) and to the core.
+ * Starts the core: host.json, the process, and the seal key (unwrapped by the Keystore for this start only) as the first
+ * line on its private pipe ([HostPipe]); nothing secret is in its environment or on disk.
  */
 class AndroidNodeLauncher(
     private val ctx: Context,
     private val paths: Paths,
     private val sys: SystemEnv,
     private val api: HostApi,
-    private val server: KernelHostServer,
+    private val pipe: HostPipe,
     private val log: RotatingLog,
     private val hostVersion: String,
 ) : NodeLauncher {
@@ -44,28 +44,12 @@ class AndroidNodeLauncher(
         for (d in listOf(paths.ash, paths.state, paths.logs, paths.tmp, paths.home)) d.mkdirs()
         val proxy = sys.proxy()
         HostSpecWriter.write(
-            HostSpecInput(paths, hostVersion, sys.platform(), proxy, sys.dnsServers(), server.endpoint, api.capabilities),
+            HostSpecInput(paths, hostVersion, sys.platform(), proxy, sys.dnsServers(), api.capabilities),
         )
-        val token = Codec.randomToken()
+        val env = NodeEnv.build(paths, paths.hostSpec.path, proxy, System.getenv("ANDROID_DATA") ?: "/data", System.getenv("ANDROID_ROOT") ?: "/system")
         val raw = Keys.vaultSealKey(paths.vaultKey)
-        val env = try {
-            NodeEnv.build(
-                paths, paths.hostSpec.path, Codec.b64u(raw), token, proxy,
-                System.getenv("ANDROID_DATA") ?: "/data", System.getenv("ANDROID_ROOT") ?: "/system",
-            )
-        } finally {
-            raw.fill(0)
-        }
-        // The token is valid from the moment the process exists: it may call the host interface before this returns.
-        api.token = token
-        val node = try {
-            NodeProcess.start(NodeEnv.command(paths), env, paths.ash, log, paths.nodePid)
-        } catch (e: Throwable) {
-            api.token = null
-            throw e
-        } finally {
-            env.clear()
-        }
+        val boot = try { HostPipe.bootLine(Codec.b64u(raw)) } finally { raw.fill(0) }
+        val node = NodeProcess.start(NodeEnv.command(paths), env, paths.ash, log, paths.nodePid, boot, pipe::take)
         log.note("ash core started (pid ${node.pid})")
         return node
     }

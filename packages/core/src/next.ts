@@ -8,7 +8,8 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
+import { HOST_EXIT_CONFIG } from "../../sdk/src/host";
 import { fileURLToPath } from "node:url";
 import type { AgentDriverFactory } from "../../sdk/src/driver";
 import { MAIN_BODY_ID } from "../../sdk/src/ids";
@@ -19,7 +20,7 @@ import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
 import { createRemoteDrivers } from "./edges/agents/remote";
 import { createApps, installBuiltinOrgans, installContractDoc, newBuiltinReport } from "./edges/apps";
 import { createLocalBody, mainBodyKind } from "./edges/body/local";
-import { createHostService, createVirtualScreen, HostClient, loadHostBoot } from "./edges/host";
+import { createHostPipe, createHostService, createVirtualScreen, HostClient, loadHostBoot } from "./edges/host";
 import { createLlm } from "./edges/llm";
 import { createReviewer } from "./edges/llm/review";
 import { createLlmService } from "./edges/llm/service";
@@ -66,13 +67,14 @@ export interface HubOptions {
   dataDir?: string;
   /** The one port the hub opens on 127.0.0.1. 0 or absent: any free port. */
   port?: number;
-  /** The environment the host started the hub with (SPEC-07: `ASH_HOST_SPEC`, `ASH_VAULT_SEAL_KEY`, `ASH_HOST_TOKEN`). Absent: `process.env`. The hub reads host.json itself. */
+  /** The environment the host started the hub with (SPEC-07: `ASH_HOST_SPEC`, no secrets). Absent: `process.env`. The hub reads host.json itself. */
   env?: NodeJS.ProcessEnv;
   /**
-   * Where the host's events arrive, one JSON line each (`wake.fired`, `env.changed`, `lifecycle.stop`). Absent: `process.stdin`.
-   * One stream per start; after `stop()` the hub no longer reads it.
+   * The hub's end of the private pipe to its host (SPEC-07): `stdin` brings the secrets first, then answers and host events;
+   * `stdout` carries the hub's calls. Absent: `process.stdin` / `process.stdout`. One pair per start.
    */
   stdin?: Readable;
+  stdout?: Writable;
   /** Where the hub's small model lives; overrides the providers' own addresses (BUILD-PROGRESS §7, decision 1). Absent: the real ones. */
   llm?: { baseUrl: string };
   /** Drivers by runtime kind (`dsh`, `codex`, ...). Absent: the real ones. */
@@ -122,11 +124,17 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
 
-  // 1. host boot (the seal key and the token leave the environment here)
+  // 1. host boot: host.json, then the secrets on the first line of the pipe
   const booted = loadHostBoot({ env: opts.env ?? process.env });
   if (!booted.ok) throw Object.assign(new Error(`cannot start: ${booted.reason}`), { exitCode: booted.exitCode });
-  const { spec, secrets } = booted.boot;
-  const host = new HostClient({ endpoint: spec.endpoint, token: secrets.token, capabilities: spec.capabilities });
+  const { spec } = booted.boot;
+  const pipe = createHostPipe(opts.stdin ?? process.stdin, opts.stdout ?? process.stdout, (line) => log(line));
+  let secrets: { sealKey: Buffer };
+  try { secrets = await pipe.boot(); } catch (error) {
+    pipe.close();
+    throw Object.assign(new Error(`cannot start: ${(error as Error).message}`), { exitCode: HOST_EXIT_CONFIG });
+  }
+  const host = new HostClient({ pipe, capabilities: spec.capabilities });
   const virtual = createVirtualScreen(host);
 
   // 2. ledger  3. vault (the host boot has already refused a start without the seal key: nothing is stored unsealed)
@@ -295,6 +303,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     tools.close();
     await body.close();
     ledger.close();
+    pipe.close();
   })().finally(closed);
 
   try {
@@ -316,7 +325,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     await stop().catch(() => {});
     throw error;
   }
-  const reader = events = hostService.listen(opts.stdin ?? process.stdin);
+  const reader = events = hostService.listen(pipe);
   // The host's end of the pipe closed: the host is gone, and a kernel nobody supervises stops the way it would on lifecycle.stop.
   void reader.done.then(() => { if (!stopping) { log("the host closed standard input: stopping"); return stop(); } }).catch((error) => log("stop failed", error));
 

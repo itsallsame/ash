@@ -1,5 +1,3 @@
-import { createInterface } from "node:readline";
-import type { Readable } from "node:stream";
 import type { HostEvent, HostNetwork } from "../../../../sdk/src/host";
 
 export type HostEventParse = { ok: true; event: HostEvent } | { ok: false; reason: string };
@@ -50,32 +48,4 @@ export function parseHostEvent(line: string): HostEventParse {
     default:
       return { ok: false, reason: `unknown event: ${value.event}` };
   }
-}
-
-export interface HostEventReader {
-  /** Resolves when the input ends (the host closed the pipe) or after close(). */
-  done: Promise<void>;
-  close(): void;
-}
-
-/**
- * Reads JSON-line host events from `input` (the kernel's stdin) and hands each good one to `onEvent`. A bad line is
- * logged and skipped; a throwing callback is logged and does not stop the reading.
- */
-export function readHostEvents(
-  input: Readable,
-  onEvent: (event: HostEvent) => void | Promise<void>,
-  log: (line: string) => void = (line) => console.error(line),
-): HostEventReader {
-  const lines = createInterface({ input, crlfDelay: Infinity });
-  const done = new Promise<void>((resolve) => lines.on("close", resolve));
-  lines.on("line", (line) => {
-    if (!line.trim()) return;
-    const parsed = parseHostEvent(line);
-    if (!parsed.ok) { log(`[host] skipped event line (${parsed.reason}): ${line.slice(0, 200)}`); return; }
-    Promise.resolve()
-      .then(() => onEvent(parsed.event))
-      .catch((error: unknown) => log(`[host] event handler failed for ${parsed.event.event}: ${(error as Error).message}`));
-  });
-  return { done, close: () => lines.close() };
 }

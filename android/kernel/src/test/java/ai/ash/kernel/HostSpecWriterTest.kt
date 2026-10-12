@@ -17,7 +17,7 @@ class HostSpecWriterTest {
     @After fun cleanup() { dir.deleteRecursively() }
 
     private fun input(proxy: Proxy? = null, capabilities: List<String> = HostApi.CAPABILITIES) =
-        HostSpecInput(paths, "0.4.0", platform, proxy, listOf("223.5.5.5", "119.29.29.29"), "http://127.0.0.1:43127", capabilities)
+        HostSpecInput(paths, "0.4.0", platform, proxy, listOf("223.5.5.5", "119.29.29.29"), capabilities)
 
     private fun problems(spec: JSONObject) = MiniSchema.validate(MiniSchema.load(), spec)
 
@@ -31,11 +31,9 @@ class HostSpecWriterTest {
         val good = HostSpecWriter.build(input()).toString()
         fun broken(edit: (JSONObject) -> Unit) = problems(JSONObject(good).also(edit))
         assertTrue(broken { it.put("contract", "ash-host/2") }.isNotEmpty())
-        assertTrue(broken { it.remove("endpoint") }.isNotEmpty())
         assertTrue(broken { it.put("network", JSONObject()) }.isNotEmpty())
         assertTrue(broken { it.put("secure_storage", "plaintext") }.isNotEmpty())
         assertTrue(broken { it.getJSONObject("isolation").remove("proot") }.isNotEmpty())
-        assertTrue(broken { it.put("endpoint", "127.0.0.1:1") }.isNotEmpty())
     }
 
     @Test fun fieldsAreWhatTheSpecSays() {
@@ -45,7 +43,7 @@ class HostSpecWriterTest {
         assertEquals("0.4.0", s.getJSONObject("host").getString("version"))
         assertEquals("keystore", s.getString("secure_storage"))
         assertFalse(s.getJSONObject("dev").getBoolean("owner_token"))
-        assertEquals("http://127.0.0.1:43127", s.getString("endpoint"))
+        assertFalse("no address: the host and the core talk over a pipe", s.has("endpoint"))
         val dirs = s.getJSONObject("dirs")
         assertEquals("${dir}/files/ash/state", dirs.getString("state"))
         assertEquals("${dir}/files/payload", dirs.getString("runtime"))
@@ -84,7 +82,7 @@ class HostSpecWriterTest {
 
     @Test fun noSecretsInTheFile() {
         val text = HostSpecWriter.build(input()).toString()
-        // The seal key and the host token travel in the environment, never in the file.
+        // The seal key travels over the core's private pipe, never in the file.
         assertFalse(text.contains("seal", ignoreCase = true))
         assertFalse(text.contains("Bearer"))
     }

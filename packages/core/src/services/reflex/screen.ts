@@ -11,7 +11,6 @@
 import { WordError, type Caller, type Reply, type WordResult } from "../../../../sdk/src/message";
 import type { Ledger, LedgerMessage } from "../../kernel/ledger";
 import type { Registry, Router } from "../../kernel/types";
-import type { VirtualScreen } from "../../edges/host/virtual";
 import { choiceAnswer, type Jev } from "./jev";
 
 export const SCREEN_MODES = ["none", "foreground_handoff", "foreground_task", "virtual_task"] as const;
@@ -62,13 +61,20 @@ const isScreen = (v: unknown): v is Screen => {
 const clip = (value: unknown, n: number): string => (typeof value === "string" ? value : "").slice(0, n);
 const textOf = (m: LedgerMessage | null | undefined): string => clip((m?.body as { text?: unknown } | null | undefined)?.text, 4000);
 
+/** What the screen decision needs of the virtual screen's bookkeeping (the host edge keeps it). */
+export interface VirtualScreenView {
+  available(): boolean;
+  state(): { open: boolean; generation: number; owner: string };
+  close(generation: number, owner: string, decisionId: string): Promise<boolean>;
+}
+
 export interface ScreenDeciderOptions {
   ledger: Pick<Ledger, "get" | "page" | "db">;
   router: Pick<Router, "send">;
   /** Finds the phone's hand by what it can do. */
   registry: Pick<Registry, "findByWord">;
   /** The virtual screen (kept by the host): whether one can be made, who owns it, and closing it. */
-  virtual?: Pick<VirtualScreen, "available" | "state" | "close">;
+  virtual?: VirtualScreenView;
   jev?: Pick<Jev, "evaluate">;
   threshold: number;
   self: Caller;

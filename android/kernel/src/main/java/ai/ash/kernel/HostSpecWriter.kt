@@ -14,8 +14,6 @@ data class HostSpecInput(
     val platform: Platform,
     val proxy: Proxy?,
     val dns: List<String>,
-    /** The host interface address, e.g. `http://127.0.0.1:43127`. */
-    val endpoint: String,
     val capabilities: List<String>,
     val storageBinds: List<String> = listOf("/sdcard:/sdcard", "/storage/emulated/0:/storage/emulated/0"),
 )
@@ -49,7 +47,6 @@ object HostSpecWriter {
                 ),
             )
             .put("network", networkJson(i.proxy))
-            .put("endpoint", i.endpoint)
             .put("capabilities", JSONArray(i.capabilities))
             .put("secure_storage", "keystore")
             .put("dev", JSONObject().put("owner_token", false))

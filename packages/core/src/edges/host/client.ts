@@ -2,6 +2,7 @@ import {
   HOST_HEARTBEAT_MS, HOST_METHOD_CAPABILITY, HOST_POWER_HOLD_MAX_MS,
   type HostCapability, type HostErrorCode, type HostMethod, type HostMethods, type HostResponse, type HostStatusState,
 } from "../../../../sdk/src/host";
+import type { HostPipe } from "./pipe";
 
 /** A call that the host answered with an error, or that did not get an answer. */
 const KNOWN_CODES: Record<HostErrorCode, true> = {
@@ -12,7 +13,7 @@ const KNOWN_CODES: Record<HostErrorCode, true> = {
 const knownCode = (code: unknown): HostErrorCode => (typeof code === "string" && Object.hasOwn(KNOWN_CODES, code) ? (code as HostErrorCode) : "failed");
 
 export class HostCallError extends Error {
-  constructor(readonly code: HostErrorCode, message: string, readonly method: HostMethod, readonly status?: number) {
+  constructor(readonly code: HostErrorCode, message: string, readonly method: HostMethod) {
     super(`host ${method}: ${code}: ${message}`);
     this.name = "HostCallError";
   }
@@ -30,10 +31,8 @@ const realInterval: HostIntervalTimer = (fn, ms) => {
 };
 
 export interface HostClientOptions {
-  /** From host.json. */
-  endpoint: string;
-  /** From the environment, held in memory only. */
-  token: string;
+  /** The private pipe to the host (the kernel's standard input and output). */
+  pipe: Pick<HostPipe, "request">;
   /** From host.json; names this client does not know are ignored. */
   capabilities: readonly string[];
   /** Per call; a call that times out ends as `result_unknown`. Default 15 s. */
@@ -49,13 +48,11 @@ export class HostClient {
   private readonly capabilities: ReadonlySet<string>;
   private readonly timeoutMs: number;
   private readonly interval: HostIntervalTimer;
-  private readonly base: string;
 
   constructor(private readonly options: HostClientOptions) {
     this.capabilities = new Set(options.capabilities);
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.interval = options.setInterval ?? realInterval;
-    this.base = options.endpoint.replace(/\/+$/, "");
   }
 
   has(capability: HostCapability): boolean { return this.capabilities.has(capability); }
@@ -96,23 +93,15 @@ export class HostClient {
   }
 
   private async call<M extends HostMethod>(method: M, req: HostMethods[M]["req"]): Promise<HostMethods[M]["res"]> {
-    let response: Response;
+    let response: HostResponse<HostMethods[M]["res"]>;
     try {
-      response = await fetch(`${this.base}/v1/${method}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${this.options.token}` },
-        body: JSON.stringify(req),
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
+      response = (await this.options.pipe.request(method, req, this.timeoutMs)) as HostResponse<HostMethods[M]["res"]>;
     } catch (error) {
-      const timedOut = (error as Error).name === "TimeoutError" || (error as Error).name === "AbortError";
+      const timedOut = (error as Error).name === "TimeoutError";
       throw new HostCallError(timedOut ? "result_unknown" : "unavailable", (error as Error).message, method);
     }
-    let body: HostResponse<HostMethods[M]["res"]> | undefined;
-    try { body = (await response.json()) as typeof body; } catch { /* handled below */ }
-    if (body && body.ok === true) return body.result;
-    if (body && body.ok === false && body.error) throw new HostCallError(knownCode(body.error.code), body.error.message, method, response.status);
-    if (response.status === 401) throw new HostCallError("unauthorized", "host refused the token", method, 401);
-    throw new HostCallError("failed", `unreadable answer (HTTP ${response.status})`, method, response.status);
+    if (response && response.ok === true) return response.result;
+    if (response && response.ok === false && response.error) throw new HostCallError(knownCode(response.error.code), response.error.message, method);
+    throw new HostCallError("failed", "unreadable answer", method);
   }
 }

@@ -15,12 +15,11 @@ const full: HostSpec = {
   dirs: { state: "/s", home: "/h", tmp: "/t", runtime: "/r", logs: "/l" },
   isolation: { kind: "proot", proot: { root: "/c", rootfs: "/c/u", bin: "/b", loader: "/l", lib: "/lib", storage_binds: ["/a:/a"], dns: ["1.1.1.1"] } },
   network: { proxy: { http: "h", https: "s", no_proxy: "n" } },
-  endpoint: "http://127.0.0.1:43127",
   capabilities: ["identity", "lifecycle", "status", "wake", "power", "hands", "update", "future"],
   secure_storage: "keychain",
   dev: { owner_token: false },
 };
-const keys: Record<keyof HostSpec, true> = { contract: true, host: true, platform: true, dirs: true, isolation: true, network: true, endpoint: true, capabilities: true, secure_storage: true, dev: true };
+const keys: Record<keyof HostSpec, true> = { contract: true, host: true, platform: true, dirs: true, isolation: true, network: true, capabilities: true, secure_storage: true, dev: true };
 
 describe("host.json schema", () => {
   it("is the checked-in packages/sdk/schema/host.json (regenerate with npm run gen:host-schema)", () => {
@@ -37,7 +36,7 @@ describe("host.json schema", () => {
     const minimal: HostSpec = {
       contract: HOST_CONTRACT, host: { kind: "k", version: "1" }, platform: { os: "linux", arch: "x64" },
       dirs: full.dirs, isolation: { kind: "native", native: { workspace: "/w", dsh_bin: "/d", dsh_home: "/dh" } },
-      endpoint: "http://127.0.0.1:1", capabilities: ["identity", "lifecycle", "status"], secure_storage: "none",
+      capabilities: ["identity", "lifecycle", "status"], secure_storage: "none",
     };
     assert.ok(validate(minimal), JSON.stringify(validate.errors));
     assert.ok(validate({ ...minimal, isolation: { kind: "container", container: { engine: "docker", image: "i" } }, network: { proxy: null } }));
@@ -53,7 +52,6 @@ describe("host.json schema", () => {
     for (const key of HOST_SPEC_SCHEMA.properties.dirs.required) assert.equal(validate({ ...full, dirs: { ...full.dirs, [key]: undefined } }), false, `dirs.${key}`);
     assert.equal(validate({ ...full, contract: "ash-host/2" }), false);
     assert.equal(validate({ ...full, secure_storage: "cloud" }), false);
-    assert.equal(validate({ ...full, endpoint: "127.0.0.1:1" }), false);
     assert.equal(validate({ ...full, isolation: { kind: "proot" } }), false);
     assert.equal(validate({ ...full, isolation: { kind: "proot", proot: { root: "/c" } } }), false);
     assert.equal(validate({ ...full, isolation: { kind: "vm", vm: {} } }), false);

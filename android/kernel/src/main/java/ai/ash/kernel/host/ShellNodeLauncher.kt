@@ -1,10 +1,9 @@
 package ai.ash.kernel.host
 
-import ai.ash.kernel.Codec
 import ai.ash.kernel.HostApi
+import ai.ash.kernel.HostPipe
 import ai.ash.kernel.HostSpecInput
 import ai.ash.kernel.HostSpecWriter
-import ai.ash.kernel.KernelHostServer
 import ai.ash.kernel.NodeEnv
 import ai.ash.kernel.NodeHandle
 import ai.ash.kernel.NodeLauncher
@@ -29,7 +28,7 @@ class ShellNodeLauncher(
     private val paths: Paths,
     private val sys: SystemEnv,
     private val api: HostApi,
-    private val server: KernelHostServer,
+    private val pipe: HostPipe,
     private val runDir: File,
     private val hostVersion: String,
 ) : NodeLauncher {
@@ -38,25 +37,13 @@ class ShellNodeLauncher(
     override fun launch(): NodeHandle {
         val proxy = sys.proxy()
         val spec = HostSpecWriter.build(
-            HostSpecInput(paths, hostVersion, sys.platform(), proxy, sys.dnsServers(), server.endpoint, api.capabilities),
+            HostSpecInput(paths, hostVersion, sys.platform(), proxy, sys.dnsServers(), api.capabilities),
         )
         bridge.writeHostSpec(spec.toString(2))
-        val token = Codec.randomToken()
-        val sealKey = bridge.sealKey()
-        val env = NodeEnv.build(
-            paths, paths.hostSpec.path, sealKey, token, proxy,
-            System.getenv("ANDROID_DATA") ?: "/data", System.getenv("ANDROID_ROOT") ?: "/system",
-        )
+        val env = NodeEnv.build(paths, paths.hostSpec.path, proxy, System.getenv("ANDROID_DATA") ?: "/data", System.getenv("ANDROID_ROOT") ?: "/system")
         // run-as enters the package's data as its uid; the core binary and data are the same ones the service would use.
-        api.token = token
-        return try {
-            NodeProcess.start(runAs(NodeEnv.command(paths)), env, runDir, log, File(runDir, "node.pid"))
-        } catch (e: Throwable) {
-            api.token = null
-            throw e
-        } finally {
-            env.clear()
-        }
+        // run-as hands the core this process's pipes: the private pipe between this host and the core.
+        return NodeProcess.start(runAs(NodeEnv.command(paths)), env, runDir, log, File(runDir, "node.pid"), HostPipe.bootLine(bridge.sealKey()), pipe::take)
     }
 
     private fun runAs(nodeCommand: List<String>): List<String> {

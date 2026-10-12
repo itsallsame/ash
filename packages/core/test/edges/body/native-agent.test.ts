@@ -9,7 +9,6 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { PassThrough } from "node:stream";
 import { startHub } from "../../../src/next";
 import { FakeHost } from "../../fixtures/host";
 import { eventually } from "../../fixtures/wait";
@@ -31,10 +30,9 @@ test("native isolation: agent:main starts from the shipped main.json, and its AG
   const workspace = join(dir, "home");
   const launch = host.writeLaunch({ isolation: { kind: "native", native: { workspace, dsh_bin: dsh, dsh_home: join(dir, "dsh-home") } } });
 
-  const stdin = new PassThrough();
-  host.stdin.pipe(stdin);
+  const pipe = host.connect();
   // No drivers given: the real DSH driver, through the real body.
-  const hub = await startHub({ dataDir: join(dir, "state"), relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin });
+  const hub = await startHub({ dataDir: join(dir, "state"), relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: pipe.stdin, stdout: pipe.stdout });
   t.after(() => hub.stop());
 
   const baseline = join(workspace, "root", "work", "AGENTS.md");

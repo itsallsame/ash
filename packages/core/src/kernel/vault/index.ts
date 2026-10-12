@@ -21,10 +21,10 @@ export class VaultUnavailableError extends Error {
   constructor(message: string) { super(message); this.name = "VaultUnavailableError"; }
 }
 
-/** The host's `ASH_VAULT_SEAL_KEY`: 32 bytes, base64url. The caller deletes the environment variable after reading it. */
+/** The host's seal key (the boot line on the core's private pipe, SPEC-07): 32 bytes. */
 export function parseSealKey(text: string | undefined): Buffer {
   const key = text ? Buffer.from(text.trim(), "base64url") : Buffer.alloc(0);
-  if (key.length !== SEAL_KEY_BYTES) throw new VaultUnavailableError("the vault needs a 32-byte seal key from the host (ASH_VAULT_SEAL_KEY)");
+  if (key.length !== SEAL_KEY_BYTES) throw new VaultUnavailableError("the vault needs a 32-byte seal key from the host");
   return key;
 }
 

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import type { HostEvent } from "../../../../sdk/src/host";
-import { parseHostEvent, readHostEvents } from "../../../src/edges/host";
+import { createHostPipe, parseHostEvent } from "../../../src/edges/host";
+import { PassThrough } from "node:stream";
 import { FakeHost } from "../../fixtures/host";
 
 let host: FakeHost | undefined;
@@ -35,15 +36,18 @@ describe("host events", () => {
     }
   });
 
-  it("delivers good lines from the pipe in order, skips and logs bad ones, survives a throwing handler", async () => {
+  it("delivers good event lines from the pipe in order, skips and logs bad ones, survives a throwing handler", async () => {
     host = new FakeHost();
     const got: HostEvent[] = [];
     const logs: string[] = [];
     let throwOnce = true;
-    const reader = readHostEvents(host.stdin, (event) => {
+    const conn = host.connect();
+    const pipe = createHostPipe(conn.stdin, new PassThrough(), (line) => logs.push(line));
+    await pipe.boot();
+    const reader = pipe.events((event) => {
       if (event.event === "wake.fired" && throwOnce) { throwOnce = false; throw new Error("handler broke"); }
       got.push(event);
-    }, (line) => logs.push(line));
+    });
     host.sendEvent({ event: "wake.fired", at: 1 });
     host.sendRaw("this is not json");
     host.sendRaw("");
@@ -51,12 +55,13 @@ describe("host events", () => {
     host.sendEvent({ event: "wake.fired", at: 2 });
     host.sendEvent({ event: "env.changed", what: "power", saver: false });
     host.sendEvent({ event: "lifecycle.stop", deadline: 9, reason: "r" });
-    host.stdin.end();
+    await new Promise((resolve) => setImmediate(resolve));
+    conn.close();
     await reader.done;
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(got.map((event) => event.event), ["wake.fired", "env.changed", "lifecycle.stop"]);
     assert.equal((got[0] as { at: number }).at, 2);
-    assert.equal(logs.filter((line) => /skipped event line/.test(line)).length, 2);
+    assert.equal(logs.filter((line) => /skipped/.test(line)).length, 2);
     assert.equal(logs.filter((line) => /handler failed for wake\.fired/.test(line)).length, 1);
   });
 });

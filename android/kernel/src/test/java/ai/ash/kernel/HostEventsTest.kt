@@ -51,31 +51,30 @@ class HostEventsTest {
         assertEquals("system_shutdown", e.getString("reason"))
     }
 
-    // ---- the pipe: events become lines on the child's standard input, its output lands in the log
+    // ---- the pipe: the secrets and events become lines on the child's standard input, its output lines come back to the
+    // host, its standard error lands in the log
 
     private val dir = tempDir("kernel-node")
 
     @After fun cleanup() { dir.deleteRecursively() }
 
-    @Test fun eventsReachTheChildAsJsonLinesAndItsOutputIsLogged() {
+    @Test fun theSecretsComeFirstThenEventsAndTheChildsOutputComesBackLineByLine() {
         val log = RotatingLog(dir)
-        // `cat` stands in for the core: whatever arrives on stdin comes back on stdout, which goes to the log.
-        val node = NodeProcess.start(listOf("cat"), mapOf("PATH" to System.getenv("PATH")!!), dir, log, File(dir, "node.pid"), NoSignals)
+        val back = java.util.Collections.synchronizedList(ArrayList<String>())
+        // `cat` stands in for the core: whatever arrives on stdin comes back on stdout, which is handed back line by line.
+        val node = NodeProcess.start(listOf("cat"), mapOf("PATH" to System.getenv("PATH")!!), dir, log, File(dir, "node.pid"),
+            HostPipe.bootLine("k3y"), { _, line -> back += line }, NoSignals)
         assertTrue(node.isRunning())
         assertTrue(node.writeEvent(HostEvents.wakeFired(5)))
         assertTrue(node.writeEvent(HostEvents.networkChanged(null, true)))
         assertTrue(node.writeEvent(HostEvents.powerChanged(false)))
         assertTrue(node.writeEvent(HostEvents.lifecycleStop(9, "restart")))
-        val file = File(dir, "core.log")
-        var text = ""
-        for (i in 0 until 100) {
-            text = if (file.exists()) file.readText() else ""
-            if (text.lines().count { it.isNotBlank() } >= 4) break
-            Thread.sleep(50)
-        }
-        val lines = text.lines().filter { it.isNotBlank() }.map { JSONObject(it) }
-        assertEquals(listOf("wake.fired", "env.changed", "env.changed", "lifecycle.stop"), lines.map { it.getString("event") })
-        assertEquals(listOf("", "network", "power", ""), lines.map { it.optString("what") })
+        for (i in 0 until 100) { if (back.size >= 5) break; Thread.sleep(50) }
+        val lines = back.map { JSONObject(it) }
+        assertEquals("k3y", lines[0].getJSONObject("boot").getString("seal_key"))
+        assertEquals(listOf("wake.fired", "env.changed", "env.changed", "lifecycle.stop"), lines.drop(1).map { it.getString("event") })
+        assertEquals(listOf("", "network", "power", ""), lines.drop(1).map { it.optString("what") })
+        assertFalse("standard output is not the log", File(dir, "core.log").let { it.exists() && it.readText().contains("k3y") })
         node.stop(null, 0)
         // A closed stdin ends cat; a stopped child no longer takes events.
         for (i in 0 until 100) { if (!node.isRunning()) break; Thread.sleep(50) }
@@ -83,8 +82,10 @@ class HostEventsTest {
 
     @Test fun stopWritesTheStopLineAndWaitsForACleanExit() {
         val log = RotatingLog(dir)
-        // sh reads one line and exits 0 when it sees it: a core that shuts down on lifecycle.stop.
-        val node = NodeProcess.start(listOf("sh", "-c", "read line; echo \"got \$line\""), mapOf("PATH" to System.getenv("PATH")!!), dir, log, null, NoSignals)
+        // sh reads the secrets, then one line, and exits 0 when it sees it: a core that shuts down on lifecycle.stop. It
+        // writes on standard error, the core's log.
+        val node = NodeProcess.start(listOf("sh", "-c", "read boot; read line; echo \"got \$line\" >&2"), mapOf("PATH" to System.getenv("PATH")!!), dir, log, null,
+            HostPipe.bootLine("k"), { _, _ -> }, NoSignals)
         val line = HostEvents.lifecycleStop(System.currentTimeMillis() + 5000, "restart")
         node.stop(line, 5_000)
         assertFalse(node.isRunning())

@@ -189,9 +189,10 @@ Decisions of the coordinator (BUILD-PROGRESS §7, "T20 发现的规格缺口和�
 
 1. **Small model: decided (1).** `HubOptions.llm?: { baseUrl }` overrides the providers' addresses so a scenario can run a fake model.
    The scenarios that need one (R3 steer, R18, R22 bash review, R29, R47, R64, R77) wait for a fake model server in the harness.
-2. **Seal key: decided (2).** `ASH_VAULT_SEAL_KEY` comes with the host's environment (SPEC-07). The harness passes `env` (a copy of
-   what `FakeHost.writeLaunch()` gives) and `stdin` (`FakeHost.stdin`, where `FakeHost.sendEvent()` plays `wake.fired`); the hub reads
-   host.json itself. No field for the key.
+2. **Seal key: decided (2).** The seal key comes as the first line on the hub's private pipe to its host (SPEC-07), never in the
+   environment. The harness passes `env` (what `FakeHost.writeLaunch()` gives: the spec path only) and the pipe of one run
+   (`FakeHost.connect()`: `stdin` brings the boot line, answers and the events `FakeHost.sendEvent()` plays; `stdout` takes the calls);
+   the hub reads host.json itself. No field for the key.
 3. **Approval answer: decided (3).** Card options are exactly `once`, `always` (only when offered) and `deny`; the answer is the response
    to the `person:owner/ask` request, `{ok:true, result:{data:{choice}}}`; expiry is a deny. The harness answers by option id and asserts the ids.
 4. **Background message: decided (4).** The initiator (only when it is an agent) gets `agent:<x>/tell` on its back lane, one sentence naming

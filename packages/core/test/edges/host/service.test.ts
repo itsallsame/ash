@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { lintWords } from "../../../../sdk/src/word";
 import type { Message, Outgoing, Reply, WordResult } from "../../../../sdk/src/message";
-import { createHostService, createVirtualScreen } from "../../../src/edges/host";
+import { createHostPipe, createHostService, createVirtualScreen } from "../../../src/edges/host";
 
 const capOfMethod = (m: string) => (m.startsWith("vscreen.") ? "vscreen" : m === "input.key" ? "input" : "apps");
 const PHONE_RESULTS: Record<string, unknown> = {
@@ -82,7 +82,7 @@ test("service:host: a phone word is listed only while the host has its group, an
 test("host events become words sent as service:host; a missing service:link is not an error; lifecycle.stop reaches onStop", async () => {
   const s = setup(["service:link"]);
   const input = new PassThrough();
-  const reader = s.service.listen(input);
+  const reader = s.service.listen(createHostPipe(input, new PassThrough(), (line) => s.logs.push(line)));
   input.write('{"event":"wake.fired","at":1791234567000}\n');
   input.write('{"event":"env.changed","what":"power","saver":true}\n');
   input.write('{"event":"lifecycle.stop","deadline":1791234597000,"reason":"system_shutdown"}\n');
@@ -102,7 +102,7 @@ test("env.changed/network also reaches onNetwork, with the proxy as the host gav
   const seen: unknown[][] = [];
   const s = setup([], (network, online) => seen.push([network, online]));
   const input = new PassThrough();
-  const reader = s.service.listen(input);
+  const reader = s.service.listen(createHostPipe(input, new PassThrough(), (line) => s.logs.push(line)));
   input.write('{"event":"env.changed","what":"network","network":{"proxy":{"http":"http://10.0.2.2:7890","no_proxy":"a.b"}},"online":true}\n');
   input.write('{"event":"env.changed","what":"power","saver":true}\n');
   input.write('{"event":"env.changed","what":"network","network":{"proxy":null},"online":false}\n');

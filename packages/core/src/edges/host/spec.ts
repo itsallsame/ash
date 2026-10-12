@@ -5,13 +5,11 @@ import {
   type HostSpec,
 } from "../../../../sdk/src/host";
 
-/** What the kernel needs to run on this host: the launch description plus the two secrets that were in the environment. */
+/** What the kernel needs to know about this host: the launch description. The secrets come over the pipe (pipe.ts). */
 export interface HostBoot {
   spec: HostSpec;
   /** Absolute path of host.json. */
   specPath: string;
-  /** Hidden from enumeration (JSON, spread, logging of the whole object) so a stray log line cannot leak them. */
-  readonly secrets: { readonly sealKey: Buffer; readonly token: string };
 }
 
 /** The kernel cannot run with what the host gave it: exit with `exitCode` (78) after logging `reason`. */
@@ -19,7 +17,7 @@ export interface HostBootFailure { ok: false; exitCode: typeof HOST_EXIT_CONFIG;
 export type HostBootResult = { ok: true; boot: HostBoot } | HostBootFailure;
 
 export interface LoadHostBootOptions {
-  /** Defaults to process.env. The seal key and the token are deleted from whatever object is given. */
+  /** Defaults to process.env. */
   env?: NodeJS.ProcessEnv;
   readFile?: (path: string) => string;
 }
@@ -35,17 +33,12 @@ function validate(value: unknown): string[] {
 
 /**
  * Reads the launch description named by ASH_HOST_SPEC and checks the contract version, the required capabilities and
- * secure storage. The seal key and the token are taken out of the environment first of all (even when the rest fails),
- * so they only live in the returned object. Never exits: the caller exits with `exitCode` (main.ts).
+ * secure storage. Never exits: the caller exits with `exitCode` (main.ts).
  */
 export function loadHostBoot(options: LoadHostBootOptions = {}): HostBootResult {
   const env = options.env ?? process.env;
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, "utf8"));
   const specPath = env[HOST_ENV.spec];
-  const sealText = env[HOST_ENV.sealKey];
-  const token = env[HOST_ENV.token];
-  delete env[HOST_ENV.sealKey];
-  delete env[HOST_ENV.token];
 
   if (!specPath) return fail(`${HOST_ENV.spec} is not set`);
   let raw: unknown;
@@ -61,13 +54,5 @@ export function loadHostBoot(options: LoadHostBootOptions = {}): HostBootResult 
   const missing = HOST_REQUIRED_CAPABILITIES.filter((name) => !spec.capabilities.includes(name));
   if (missing.length) return fail(`host lacks required capabilities: ${missing.join(", ")}`);
   if (spec.secure_storage === "none" && spec.dev?.owner_token !== true) return fail("host has no secure storage and this is not a development run");
-
-  if (!sealText) return fail(`${HOST_ENV.sealKey} is not set`);
-  const sealKey = /^[A-Za-z0-9_-]+$/.test(sealText) ? Buffer.from(sealText, "base64url") : Buffer.alloc(0);
-  if (sealKey.length !== 32) return fail(`${HOST_ENV.sealKey} is not 32 bytes of base64url`);
-  if (!token) return fail(`${HOST_ENV.token} is not set`);
-
-  const boot = { spec, specPath } as HostBoot;
-  Object.defineProperty(boot, "secrets", { value: Object.freeze({ sealKey, token }), enumerable: false });
-  return { ok: true, boot };
+  return { ok: true, boot: { spec, specPath } };
 }

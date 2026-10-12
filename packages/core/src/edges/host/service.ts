@@ -8,7 +8,6 @@
  *
  * What the host does not offer is skipped, not imitated: its words answer `unavailable`.
  */
-import type { Readable } from "node:stream";
 import { WordError, type Caller, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import type { HostCapability, HostEvent, HostMethod, HostNetwork } from "../../../../sdk/src/host";
 import type { ContentPart } from "../../../../sdk/src/link";
@@ -16,7 +15,7 @@ import { namespaceOf, standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Router } from "../../kernel/types";
-import { readHostEvents, type HostEventReader } from "./events";
+import type { HostEventReader, HostPipe } from "./pipe";
 import { HostCallError, type HostClient, type HostOptional } from "./client";
 import type { VirtualScreen } from "./virtual";
 
@@ -43,8 +42,8 @@ export interface HostServiceDeps {
 export interface HostService {
   /** `service:host`: add it to the registry. */
   member: Member;
-  /** Reads the host's events from the kernel's standard input; `close()` stops reading. */
-  listen(input: Readable): HostEventReader;
+  /** Takes the host's events from the pipe; `close()` stops reading. */
+  listen(pipe: Pick<HostPipe, "events">): HostEventReader;
 }
 
 export function createHostService(deps: HostServiceDeps): HostService {
@@ -110,7 +109,7 @@ export function createHostService(deps: HostServiceDeps): HostService {
 
   return {
     member,
-    listen: (input) => readHostEvents(input, async (event: HostEvent) => {
+    listen: (pipe) => pipe.events(async (event: HostEvent) => {
       switch (event.event) {
         case "wake.fired": await pass("service:clock", "wake.fired", { at: event.at }); return;
         case "env.changed": {
@@ -121,6 +120,6 @@ export function createHostService(deps: HostServiceDeps): HostService {
         }
         case "lifecycle.stop": await deps.onStop(event.deadline, event.reason); return;
       }
-    }, (line) => log(line)),
+    }),
   };
 }

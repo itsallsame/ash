@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { HOST_OPTIONAL_CAPABILITIES, HOST_POWER_HOLD_MAX_MS } from "../../../../sdk/src/host";
-import { HostCallError, HostClient, loadHostBoot } from "../../../src/edges/host";
-import { FAKE_TOKEN, FakeClock, FakeHost } from "../../fixtures/host";
+import { createHostPipe, HostCallError, HostClient, loadHostBoot } from "../../../src/edges/host";
+import { FakeClock, FakeHost, type FakeHostConnection } from "../../fixtures/host";
 
 let current: FakeHost | undefined;
 afterEach(async () => { await current?.stop(); current = undefined; });
@@ -11,15 +11,18 @@ async function setup(options: ConstructorParameters<typeof FakeHost>[0] = {}, cl
   const host = current = await new FakeHost(options).start();
   const boot = loadHostBoot({ env: host.writeLaunch().env });
   assert.ok(boot.ok);
+  const conn: FakeHostConnection = host.connect();
+  const pipe = createHostPipe(conn.stdin, conn.stdout, () => {});
+  await pipe.boot();
   const client = new HostClient({
-    endpoint: boot.boot.spec.endpoint, token: boot.boot.secrets.token, capabilities: boot.boot.spec.capabilities, timeoutMs,
+    pipe, capabilities: boot.boot.spec.capabilities, timeoutMs,
     setInterval: clock?.setInterval, onHeartbeatError: (error) => heartbeatErrors?.push(error),
   });
-  return { host, client };
+  return { host, client, conn };
 }
 
 describe("host client", () => {
-  it("sends every method to /v1/<method> with the token and returns the result", async () => {
+  it("sends every method over the pipe and returns the result", async () => {
     const { host, client } = await setup();
     assert.deepEqual(await client.identityKey(), { id: "fakeid0123456789abcdef", public_key: "fake-public-key" });
     assert.deepEqual(await client.identitySign("aGk"), { sig: "sig:aGk" });
@@ -46,20 +49,12 @@ describe("host client", () => {
       ["hands.handoff", { port: 43001, token: "link-token" }],
       ["update.install", { version: "2.0.0", url: "https://example.test/k.pkg", sha256: "ab".repeat(32) }],
     ]);
-    assert.ok(host.calls.every((call) => call.authorization === `Bearer ${FAKE_TOKEN}`));
   });
 
   it("caps a power hold at the contract maximum", async () => {
     const { host, client } = await setup();
     await client.powerHold(HOST_POWER_HOLD_MAX_MS * 5, "long");
     assert.equal((host.callsOf("power.hold")[0].body as { ms: number }).ms, HOST_POWER_HOLD_MAX_MS);
-  });
-
-  it("reports a wrong token as an unauthorized error", async () => {
-    const { host, client } = await setup();
-    const wrong = new HostClient({ endpoint: host.endpoint, token: "not-the-token", capabilities: host.capabilities });
-    await assert.rejects(wrong.identityKey(), (error: unknown) => error instanceof HostCallError && error.code === "unauthorized" && error.method === "identity.key" && error.status === 401);
-    void client;
   });
 
   it("passes the host's error code through", async () => {
@@ -81,11 +76,11 @@ describe("host client", () => {
     assert.equal(host.callsOf("wake.at").length, 1, "it was sent");
   });
 
-  it("reports an unreachable host as unavailable", async () => {
-    const { host, client } = await setup();
-    await host.stop();
+  it("reports a host that closed the pipe as unavailable", async () => {
+    const { client, conn } = await setup();
+    conn.close();
+    await new Promise((resolve) => setImmediate(resolve));
     await assert.rejects(client.statusSet("x", "running"), (error: unknown) => error instanceof HostCallError && error.code === "unavailable");
-    current = undefined;
   });
 
   for (const capability of HOST_OPTIONAL_CAPABILITIES) {

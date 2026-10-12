@@ -1,6 +1,11 @@
 /**
- * Host contract `ash-host/1` (SPEC-07): what the kernel host tells the kernel at start (host.json + three environment
- * variables), what the kernel may ask of the host (HTTP interface) and what the host pushes to the kernel (stdin events).
+ * Host contract `ash-host/1` (SPEC-07): what the kernel host tells the kernel at start (host.json, named by one environment
+ * variable, and the secrets as the first line on the kernel's standard input), what the kernel may ask of the host and what
+ * the host pushes to the kernel. The host and the kernel it started talk over the kernel's own standard input and output
+ * only: a private pipe, no port, no token. JSON lines both ways:
+ *   host -> kernel (stdin):  {"boot":{"seal_key":…}} first, then {"reply":id,…} answers and host events {"event":…}
+ *   kernel -> host (stdout): {"call":id,"method":…,"params":{…}}
+ * The kernel writes its log to standard error only.
  * Types and the JSON Schema of host.json live here and nowhere else; `schema/host.json` is generated from
  * HOST_SPEC_SCHEMA (tools/gen-host-schema.mjs) and a test keeps the two in step.
  */
@@ -10,14 +15,10 @@ import type { ErrorCode } from "./message";
 
 export { HOST_CONTRACT };
 
-/** The three variables the host sets when it starts the kernel. */
+/** The one variable the host sets when it starts the kernel. Secrets are never in the environment. */
 export const HOST_ENV = {
-  /** Absolute path of host.json. Kept. */
+  /** Absolute path of host.json. */
   spec: "ASH_HOST_SPEC",
-  /** 32-byte vault seal key, base64url. Removed from process.env once read. */
-  sealKey: "ASH_VAULT_SEAL_KEY",
-  /** Bearer token for the host interface. Removed from process.env once read. */
-  token: "ASH_HOST_TOKEN",
 } as const;
 
 /** Exit code of a kernel that cannot run on the host it was given (BSD EX_CONFIG). */
@@ -79,13 +80,20 @@ export interface HostSpec {
   dirs: HostDirs;
   isolation: HostIsolation;
   network?: HostNetwork;
-  /** Host interface address, loopback. */
-  endpoint: string;
   /** Capability groups the host has. Names this kernel does not know are ignored (new optional ones keep `ash-host/1`). */
   capabilities: string[];
   secure_storage: HostSecureStorage;
   dev?: { owner_token?: boolean };
 }
+
+// ---- the pipe ------------------------------------------------------------------------------------------------------
+
+/** The first line on the kernel's standard input: the secrets. `seal_key` is the vault's 32-byte key, base64url. */
+export interface HostBootLine { boot: { seal_key: string } }
+/** A call of the kernel to the host, one line on the kernel's standard output. */
+export interface HostCallLine { call: number; method: string; params: unknown }
+/** The host's answer to call `reply`, one line on the kernel's standard input. */
+export type HostReplyLine = { reply: number } & HostResponse<unknown>;
 
 // ---- host interface (kernel -> host) -------------------------------------------------------------------------------
 
@@ -177,7 +185,7 @@ export const HOST_SPEC_SCHEMA = {
   $id: "ash-host/1/host.json",
   title: "ash-host/1 launch description (host.json)",
   type: "object",
-  required: ["contract", "host", "platform", "dirs", "isolation", "endpoint", "capabilities", "secure_storage"],
+  required: ["contract", "host", "platform", "dirs", "isolation", "capabilities", "secure_storage"],
   properties: {
     contract: { const: HOST_CONTRACT },
     host: { type: "object", required: ["kind", "version"], properties: { kind: str, version: str } },
@@ -226,7 +234,6 @@ export const HOST_SPEC_SCHEMA = {
       ],
     },
     network: { type: "object", required: ["proxy"], properties: { proxy: { oneOf: [{ type: "null" }, proxy] } } },
-    endpoint: { type: "string", pattern: "^https?://" },
     capabilities: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
     secure_storage: { enum: [...HOST_SECURE_STORAGE] },
     dev: { type: "object", properties: { owner_token: { type: "boolean" } } },

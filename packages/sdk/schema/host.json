@@ -9,7 +9,6 @@
     "platform",
     "dirs",
     "isolation",
-    "endpoint",
     "capabilities",
     "secure_storage"
   ],
@@ -250,10 +249,6 @@
           ]
         }
       }
-    },
-    "endpoint": {
-      "type": "string",
-      "pattern": "^https?://"
     },
     "capabilities": {
       "type": "array",

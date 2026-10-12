@@ -15,13 +15,11 @@ class KernelPartsTest {
 
     // ---- the core's environment
 
-    @Test fun environmentIsExactlyTheThreeVariablesAndWhatRunningNeeds() {
-        val env = NodeEnv.build(paths, "/spec/host.json", "SEAL", "TOKEN", Proxy.of("1.2.3.4:80"), "/data", "/system")
+    @Test fun environmentIsTheSpecPathAndWhatRunningNeedsNoSecret() {
+        val env = NodeEnv.build(paths, "/spec/host.json", Proxy.of("1.2.3.4:80"), "/data", "/system")
         assertEquals("/spec/host.json", env["ASH_HOST_SPEC"])
-        assertEquals("SEAL", env["ASH_VAULT_SEAL_KEY"])
-        assertEquals("TOKEN", env["ASH_HOST_TOKEN"])
         val allowed = setOf(
-            "ASH_HOST_SPEC", "ASH_VAULT_SEAL_KEY", "ASH_HOST_TOKEN",
+            "ASH_HOST_SPEC",
             "HOME", "PATH", "TMPDIR", "TMP", "LANG", "NODE_USE_ENV_PROXY", "ANDROID_DATA", "ANDROID_ROOT",
             "OPENSSL_CONF", "SSL_CERT_FILE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS",
             "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR", "GIT_CONFIG_NOSYSTEM", "GIT_PAGER", "PAGER",
@@ -33,12 +31,12 @@ class KernelPartsTest {
         assertEquals("${dir}/cache/tmp", env["TMPDIR"])
         assertEquals("C.UTF-8", env["LANG"])
         assertTrue(env["SSL_CERT_FILE"]!!.startsWith("${dir}/files/payload/"))
-        // Nothing of the old protocol: no config file, no ports, no model keys.
-        assertFalse(env.keys.any { it.startsWith("ASH_") && it !in setOf("ASH_HOST_SPEC", "ASH_VAULT_SEAL_KEY", "ASH_HOST_TOKEN") })
+        // No secret (they go over the pipe), no config file, no ports, no model keys.
+        assertFalse(env.keys.any { it.startsWith("ASH_") && it != "ASH_HOST_SPEC" })
     }
 
     @Test fun noProxyMeansNoProxyVariables() {
-        val env = NodeEnv.build(paths, "/s", "k", "t", null, "/data", "/system")
+        val env = NodeEnv.build(paths, "/s", null, "/data", "/system")
         assertFalse(env.keys.any { it.contains("proxy", ignoreCase = true) && it != "NODE_USE_ENV_PROXY" })
     }
 

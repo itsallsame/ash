@@ -1,11 +1,6 @@
 package ai.ash.kernel
 
-import org.json.JSONException
 import org.json.JSONObject
-import java.security.MessageDigest
-
-/** Answer to one host-interface request. */
-data class Reply(val status: Int, val body: JSONObject)
 
 /** What the supervisor hears from the core through the host interface. */
 interface HostCallbacks {
@@ -23,8 +18,9 @@ interface HandsPort {
 }
 
 /**
- * The host interface of `ash-host/1` (SPEC-07 section 3), independent of the transport: `POST /v1/<method>` with
- * `Authorization: Bearer <host token>` and a JSON body. Methods of capabilities that are not declared do not exist.
+ * The host interface of `ash-host/1` (SPEC-07 section 3): one call of the core, by method name with its parameters, and
+ * the answer. It arrives over the core's private pipe ([HostPipe]), which only the host that started the core holds, so
+ * there is no token. Methods of capabilities that are not declared do not exist.
  */
 class HostApi(
     /** Capability groups this host declares (host.json `capabilities`). */
@@ -38,43 +34,28 @@ class HostApi(
     /** The phone actions (vscreen / input / apps). Non-null when any of those groups is declared. */
     private val phone: PhonePort? = null,
 ) {
-    /** The token of the current core run; null while none runs (every call is refused). */
-    @Volatile var token: String? = null
-
-    fun handle(httpMethod: String, path: String, authorization: String?, body: ByteArray): Reply {
-        val expected = token
-        val given = authorization?.takeIf { it.startsWith("Bearer ") }?.substring(7)?.trim()
-        if (expected == null || given == null || !MessageDigest.isEqual(given.toByteArray(), expected.toByteArray())) {
-            return error(401, "unauthorized", "bad token")
-        }
+    /** One call; the answer is `{"ok":true,"result":…}` or `{"ok":false,"error":{"code","message"}}`. */
+    fun call(method: String, params: JSONObject): JSONObject {
         callbacks.onActivity()
-        val method = path.substringBefore('?').removePrefix("/v1/").takeIf { path.startsWith("/v1/") }
-        val group = method?.let { METHOD_CAPABILITY[it] }
-        if (httpMethod != "POST" || method == null || group == null || group !in capabilities) {
-            return error(404, "not_found", "no ${method ?: path}")
-        }
-        val json = try {
-            if (body.isEmpty()) JSONObject() else JSONObject(String(body, Charsets.UTF_8))
-        } catch (_: JSONException) {
-            return error(400, "bad_request", "bad json")
-        }
+        val group = METHOD_CAPABILITY[method]
+        if (group == null || group !in capabilities) return error("not_found", "no $method")
         return try {
-            ok(call(method, json))
+            ok(dispatch(method, params))
         } catch (e: BadRequest) {
-            error(400, "bad_request", e.message ?: "bad request")
+            error("bad_request", e.message ?: "bad request")
         } catch (e: PhoneBadRequest) {
-            error(400, "bad_request", e.message ?: "bad request")
+            error("bad_request", e.message ?: "bad request")
         } catch (e: PhoneUnavailable) {
-            error(503, "unavailable", e.message ?: "not available")
+            error("unavailable", e.message ?: "not available")
         } catch (e: PhoneFailed) {
-            error(500, "failed", e.message ?: "failed")
+            error("failed", e.message ?: "failed")
         } catch (e: Exception) {
             log("host call $method failed: ${e.javaClass.simpleName}")
-            error(500, "failed", e.javaClass.simpleName)
+            error("failed", e.javaClass.simpleName)
         }
     }
 
-    private fun call(method: String, b: JSONObject): JSONObject = when (method) {
+    private fun dispatch(method: String, b: JSONObject): JSONObject = when (method) {
         "identity.key" -> {
             val spki = identity.publicKey()
             JSONObject().put("id", Codec.keyId(spki)).put("public_key", Codec.b64u(spki))
@@ -146,10 +127,10 @@ class HostApi(
         return v.toInt()
     }
 
-    private fun ok(result: JSONObject) = Reply(200, JSONObject().put("ok", true).put("result", result))
+    private fun ok(result: JSONObject) = JSONObject().put("ok", true).put("result", result)
 
-    private fun error(status: Int, code: String, message: String) =
-        Reply(status, JSONObject().put("ok", false).put("error", JSONObject().put("code", code).put("message", message)))
+    private fun error(code: String, message: String) =
+        JSONObject().put("ok", false).put("error", JSONObject().put("code", code).put("message", message))
 
     companion object {
         /** What this host declares: update.install is not implemented yet, so `update` is not listed. */

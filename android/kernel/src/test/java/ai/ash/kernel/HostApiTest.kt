@@ -1,21 +1,20 @@
 package ai.ash.kernel
 
 import org.json.JSONObject
-import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
-/** The host interface over a real loopback socket, with the Keystore, alarm clock and hand binding replaced. */
+/** The host interface, and its end of the core's private pipe, with the Keystore, alarm clock and hand binding replaced. */
 class HostApiTest {
     private val identity = SoftIdentity()
     private val alarms = FakeAlarms()
@@ -23,81 +22,81 @@ class HostApiTest {
     private val hands = FakeHands()
     private val callbacks = FakeCallbacks()
     private lateinit var api: HostApi
-    private lateinit var server: KernelHostServer
 
     private fun start(capabilities: List<String> = HostApi.CAPABILITIES) {
         api = HostApi(capabilities, identity, WakeManager(alarms), power, hands, callbacks)
-        api.token = TOKEN
-        server = KernelHostServer(api)
-        server.start()
     }
 
     @Before fun setUp() = start()
-    @After fun tearDown() = server.stop()
 
-    private fun post(method: String, body: String = "{}", token: String? = TOKEN, verb: String = "POST", path: String = "/v1/$method"): Pair<Int, JSONObject> {
-        val c = URL(server.endpoint + path).openConnection() as HttpURLConnection
-        c.requestMethod = verb
-        if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
-        if (verb == "POST") { c.doOutput = true; c.outputStream.use { it.write(body.toByteArray()) } }
-        val code = c.responseCode
-        val text = (if (code < 400) c.inputStream else c.errorStream).use { it.readBytes().toString(Charsets.UTF_8) }
-        return code to JSONObject(text)
-    }
+    private fun post(method: String, body: String = "{}"): JSONObject = api.call(method, JSONObject(body))
 
     private fun ok(method: String, body: String = "{}"): JSONObject {
-        val (code, json) = post(method, body)
-        assertEquals("$method: $json", 200, code)
-        assertTrue(json.getBoolean("ok"))
+        val json = post(method, body)
+        assertTrue("$method: $json", json.getBoolean("ok"))
         return json.getJSONObject("result")
     }
 
-    private fun errorOf(r: Pair<Int, JSONObject>, status: Int, code: String) {
-        assertEquals(status, r.first)
-        assertFalse(r.second.getBoolean("ok"))
-        assertEquals(code, r.second.getJSONObject("error").getString("code"))
+    private fun errorOf(r: JSONObject, code: String) {
+        assertFalse(r.getBoolean("ok"))
+        assertEquals(code, r.getJSONObject("error").getString("code"))
     }
 
-    // ---- authentication
+    // ---- the pipe
 
-    @Test fun wrongTokenIs401() {
-        errorOf(post("identity.key", token = "nope"), 401, "unauthorized")
-        errorOf(post("identity.key", token = null), 401, "unauthorized")
-        errorOf(post("identity.key", token = TOKEN + "x"), 401, "unauthorized")
+    /** A core whose standard input is a list of lines. */
+    private class Lines : NodeHandle {
+        val written = java.util.Collections.synchronizedList(ArrayList<String>())
+        var latch = CountDownLatch(1)
+        override fun isRunning() = true
+        override fun writeEvent(line: String): Boolean { written += line; latch.countDown(); return true }
+        override fun stop(stopLine: String?, graceMs: Long) {}
     }
 
-    @Test fun noRunningCoreMeansNoToken() {
-        api.token = null
-        errorOf(post("status.set", """{"text":"x","state":"running"}"""), 401, "unauthorized")
-        assertEquals(0, callbacks.statuses.size)
+    @Test fun aCallLineIsAnsweredOnTheCoresInputWithItsId() {
+        val logs = ArrayList<String>()
+        val pipe = HostPipe(api) { logs += it }
+        val core = Lines()
+        pipe.take(core, """{"call":7,"method":"status.set","params":{"text":"x","state":"running"}}""")
+        assertTrue(core.latch.await(5, TimeUnit.SECONDS))
+        val reply = JSONObject(core.written.single())
+        assertEquals(7, reply.getInt("reply"))
+        assertTrue(reply.getBoolean("ok"))
+        assertEquals(listOf("x" to "running"), callbacks.statuses)
     }
 
-    @Test fun refusedCallsAreNotHeartbeats() {
-        post("status.set", """{"text":"x","state":"running"}""", token = "nope")
-        assertEquals(0, callbacks.activity)
+    @Test fun whatIsNotACallIsOnlyLoggedNeverObeyed() {
+        val logs = ArrayList<String>()
+        val pipe = HostPipe(api) { logs += it }
+        val core = Lines()
+        for (line in listOf("{not json", """{"method":"wake.at","params":{"at":5}}""", """{"call":"1","method":"wake.at"}""", "plain log text")) pipe.take(core, line)
+        Thread.sleep(100)
+        assertTrue(core.written.isEmpty())
+        assertTrue(alarms.sets.isEmpty())
+        assertEquals(4, logs.size)
+    }
+
+    @Test fun theBootLineCarriesTheSealKeyAndNothingElse() {
+        assertEquals("""{"boot":{"seal_key":"abc"}}""", HostPipe.bootLine("abc"))
+    }
+
+    @Test fun everyCallCountsAsActivity() {
         ok("status.set", """{"text":"x","state":"running"}""")
         assertEquals(1, callbacks.activity)
     }
 
-    @Test fun unknownThingsAre404() {
-        errorOf(post("nope"), 404, "not_found")
-        errorOf(post("identity.key", verb = "GET"), 404, "not_found")
-        errorOf(post("identity.key", path = "/identity.key"), 404, "not_found")
+    @Test fun unknownThingsAreNotFound() {
+        errorOf(post("nope"), "not_found")
         // update.install is a known method of a capability this host does not declare.
-        errorOf(post("update.install", """{"version":"1","url":"u","sha256":"s"}"""), 404, "not_found")
+        errorOf(post("update.install", """{"version":"1","url":"u","sha256":"s"}"""), "not_found")
     }
 
     @Test fun methodsOfUndeclaredCapabilitiesAreNotFound() {
-        server.stop()
         start(listOf("identity", "lifecycle", "status"))
-        errorOf(post("wake.at", """{"at":5}"""), 404, "not_found")
-        errorOf(post("power.hold", """{"ms":5,"reason":"x"}"""), 404, "not_found")
-        errorOf(post("hands.handoff", """{"port":5,"token":"x"}"""), 404, "not_found")
+        errorOf(post("wake.at", """{"at":5}"""), "not_found")
+        errorOf(post("power.hold", """{"ms":5,"reason":"x"}"""), "not_found")
+        errorOf(post("hands.handoff", """{"port":5,"token":"x"}"""), "not_found")
         ok("identity.key")
-    }
-
-    @Test fun badJsonIs400() {
-        errorOf(post("status.set", "{not json"), 400, "bad_request")
     }
 
     // ---- identity
@@ -119,9 +118,9 @@ class HostApiTest {
     }
 
     @Test fun signRejectsWhatIsNotBase64url() {
-        errorOf(post("identity.sign", """{"data":"not base64 !!"}"""), 400, "bad_request")
-        errorOf(post("identity.sign", "{}"), 400, "bad_request")
-        errorOf(post("identity.sign", """{"data":5}"""), 400, "bad_request")
+        errorOf(post("identity.sign", """{"data":"not base64 !!"}"""), "bad_request")
+        errorOf(post("identity.sign", "{}"), "bad_request")
+        errorOf(post("identity.sign", """{"data":5}"""), "bad_request")
     }
 
     // ---- lifecycle and status
@@ -133,8 +132,8 @@ class HostApiTest {
         assertEquals(listOf("plugin change"), callbacks.restarts)
         ok("status.set", """{"text":"运行中","state":"running"}""")
         assertEquals(listOf("运行中" to "running"), callbacks.statuses)
-        errorOf(post("status.set", """{"text":"x","state":"flying"}"""), 400, "bad_request")
-        errorOf(post("lifecycle.ready", """{"version":"1","link_port":0}"""), 400, "bad_request")
+        errorOf(post("status.set", """{"text":"x","state":"flying"}"""), "bad_request")
+        errorOf(post("lifecycle.ready", """{"version":"1","link_port":0}"""), "bad_request")
     }
 
     // ---- wake and power
@@ -149,8 +148,8 @@ class HostApiTest {
         assertEquals(1, alarms.cancels)
         ok("wake.at", """{"at":9000000}""")
         assertEquals(9_000_000L, alarms.sets.last())
-        errorOf(post("wake.at", """{"at":"soon"}"""), 400, "bad_request")
-        errorOf(post("wake.at", "{}"), 400, "bad_request")
+        errorOf(post("wake.at", """{"at":"soon"}"""), "bad_request")
+        errorOf(post("wake.at", "{}"), "bad_request")
     }
 
     @Test fun powerHoldIsCappedAndReleaseReleases() {
@@ -159,7 +158,7 @@ class HostApiTest {
         assertEquals(listOf(30_000L to "turn", 600_000L to "too long"), power.holds)
         ok("power.release")
         assertEquals(1, power.releases)
-        errorOf(post("power.hold", """{"ms":0,"reason":"x"}"""), 400, "bad_request")
+        errorOf(post("power.hold", """{"ms":0,"reason":"x"}"""), "bad_request")
     }
 
     // ---- hands
@@ -170,13 +169,11 @@ class HostApiTest {
         assertEquals("ai.ash.agent", r.getJSONArray("delivered").getString(0))
         hands.delivered = emptyList()
         assertEquals(0, ok("hands.handoff", """{"port":43555,"token":"link-token"}""").getJSONArray("delivered").length())
-        errorOf(post("hands.handoff", """{"port":70000,"token":"t"}"""), 400, "bad_request")
-        errorOf(post("hands.handoff", """{"port":5}"""), 400, "bad_request")
+        errorOf(post("hands.handoff", """{"port":70000,"token":"t"}"""), "bad_request")
+        errorOf(post("hands.handoff", """{"port":5}"""), "bad_request")
     }
 
     @Test fun capabilitiesDoNotListUpdate() {
         assertFalse("update" in HostApi.CAPABILITIES)
     }
-
-    private companion object { const val TOKEN = "t0ken-for-tests" }
 }

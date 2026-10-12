@@ -27,7 +27,7 @@ object OsSignals : ProcessSignals {
 interface NodeHandle {
     fun isRunning(): Boolean
 
-    /** One host event line on the core's standard input. False when the pipe is gone. */
+    /** One line on the core's standard input (the secrets, an answer, a host event). False when the pipe is gone. */
     fun writeEvent(line: String): Boolean
 
     /** [stopLine] (lifecycle.stop) first and wait up to [graceMs] for a clean exit; then SIGTERM, then SIGKILL. */
@@ -37,10 +37,10 @@ interface NodeHandle {
 /** The environment of the core process, and the command that starts it. */
 object NodeEnv {
     /**
-     * Cleared environment plus exactly: the three variables of the host contract, and what running needs (HOME, PATH,
-     * TMPDIR, LANG, certificate paths, the proxy, and the payload's git/openssl locations).
+     * Cleared environment plus exactly: the host contract's one variable (no secret: those go over the pipe), and what
+     * running needs (HOME, PATH, TMPDIR, LANG, certificate paths, the proxy, and the payload's git/openssl locations).
      */
-    fun build(p: Paths, specPath: String, sealKey: String, hostToken: String, proxy: Proxy?, androidData: String, androidRoot: String): MutableMap<String, String> {
+    fun build(p: Paths, specPath: String, proxy: Proxy?, androidData: String, androidRoot: String): MutableMap<String, String> {
         val pl = p.payload.path
         val cert = "$pl/runtime/etc/tls/cert.pem"
         val env = LinkedHashMap<String, String>()
@@ -48,8 +48,6 @@ object NodeEnv {
         env.putAll(
             mapOf(
                 "ASH_HOST_SPEC" to specPath,
-                "ASH_VAULT_SEAL_KEY" to sealKey,
-                "ASH_HOST_TOKEN" to hostToken,
                 // Core's own fetch honours HTTP(S)_PROXY with this.
                 "NODE_USE_ENV_PROXY" to "1",
                 "HOME" to p.files.path,
@@ -86,14 +84,15 @@ object NodeEnv {
 }
 
 /**
- * ash core as a child process. The host is its parent: standard input carries host events (one JSON object per line),
- * standard output and error go to the rotating log.
+ * ash core as a child process. The host is its parent, and its standard input and output are the private pipe between
+ * them ([HostPipe]): each line the core writes goes to [onLine]. Standard error is the core's log.
  */
 class NodeProcess private constructor(
     private val proc: Process,
     val pid: Int,
     private val signals: ProcessSignals,
     private val log: RotatingLog,
+    onLine: (NodeProcess, String) -> Unit,
 ) : NodeHandle {
     private val stdin = proc.outputStream
 
@@ -101,7 +100,7 @@ class NodeProcess private constructor(
         Thread({
             val buf = ByteArray(16 * 1024)
             try {
-                val input = proc.inputStream
+                val input = proc.errorStream
                 while (true) {
                     val n = input.read(buf)
                     if (n < 0) break
@@ -110,6 +109,12 @@ class NodeProcess private constructor(
             } catch (_: IOException) {
             }
         }, "ash-node-log").apply { isDaemon = true; start() }
+        Thread({
+            try {
+                proc.inputStream.bufferedReader(Charsets.UTF_8).forEachLine { onLine(this, it) }
+            } catch (_: IOException) {
+            }
+        }, "ash-node-pipe").apply { isDaemon = true; start() }
     }
 
     override fun isRunning(): Boolean = proc.isAlive
@@ -138,20 +143,21 @@ class NodeProcess private constructor(
     companion object {
         private const val TERM_WAIT_MS = 3_000L
 
+        /** Starts the core and writes [firstLine] (the secrets) before anything else can reach its standard input. */
         fun start(
             command: List<String>, env: Map<String, String>, workDir: File, log: RotatingLog, pidFile: File?,
-            signals: ProcessSignals = OsSignals,
+            firstLine: String, onLine: (NodeProcess, String) -> Unit, signals: ProcessSignals = OsSignals,
         ): NodeProcess {
             val pb = ProcessBuilder(command).directory(workDir)
             pb.environment().clear()
             pb.environment().putAll(env)
-            pb.redirectErrorStream(true)
             val proc = pb.start()
-            // The child has its copy; nothing of ours keeps the secrets.
             pb.environment().clear()
             val pid = pidOf(proc)
             try { pidFile?.writeText("$pid\n") } catch (_: IOException) {}
-            return NodeProcess(proc, pid, signals, log)
+            val node = NodeProcess(proc, pid, signals, log, onLine)
+            if (!node.writeEvent(firstLine)) { node.stop(null, 0); throw IOException("the core's standard input closed at once") }
+            return node
         }
 
         private fun pidOf(proc: Process): Int = try {

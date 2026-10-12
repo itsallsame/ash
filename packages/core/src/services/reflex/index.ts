@@ -22,8 +22,7 @@ import type { Ledger, LedgerMessage } from "../../kernel/ledger";
 import type { Registry, Router } from "../../kernel/types";
 import { choiceAnswer, conversationQuestions, readConversation, taskOutcomeQuestions, TASK_OUTCOMES, type ConversationState, type Jev } from "./jev";
 import { judgeStopKeyword } from "./keywords";
-import { createScreenDecider } from "./screen";
-import type { VirtualScreen } from "../../edges/host/virtual";
+import { createScreenDecider, type VirtualScreenView } from "./screen";
 
 export { createJev, type Jev, type JevOptions, type JevPost, TASK_OUTCOMES, type TaskOutcome } from "./jev";
 export { judgeStopKeyword } from "./keywords";
@@ -43,7 +42,7 @@ export interface ReflexOptions {
   /** Where the phone's hand is found (screen.plan, screen.reconcile). Without it both do nothing. */
   registry?: Pick<Registry, "findByWord">;
   /** The virtual screen the host keeps (for the screen decision). */
-  virtual?: Pick<VirtualScreen, "available" | "state" | "close">;
+  virtual?: VirtualScreenView;
   /** The JEV judge. Without it only the keywords judge and everything unclear is followup. */
   jev?: Pick<Jev, "evaluate">;
   threshold?: number;

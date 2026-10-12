@@ -16,7 +16,7 @@ import java.util.concurrent.Executors
 /**
  * The resident part of the kernel package: a foreground service that is the Android kernel host of `ash-host/1`.
  *   - runs [KernelSupervisor] (install, start the core, restart it with backoff, heartbeat),
- *   - serves the host interface ([KernelHostServer]),
+ *   - serves the host interface over the core's private pipe ([HostPipe]),
  *   - keeps the hand app bound and hands it the local link ([HandConnector]),
  *   - tells the core what changes around it: alarms, network, power saver, shutdown (host events on its standard input).
  */
@@ -24,7 +24,6 @@ class KernelService : Service() {
     private lateinit var secrets: Secrets
     private lateinit var log: RotatingLog
     private lateinit var supervisor: KernelSupervisor
-    private lateinit var server: KernelHostServer
     private lateinit var connector: HandConnector
     private lateinit var wake: WakeManager
     private lateinit var sys: SystemEnv
@@ -59,20 +58,19 @@ class KernelService : Service() {
         }
         // On its own identity the kernel can only press media and volume keys; the rest of the phone actions need the shell host.
         val api = HostApi(HostApi.CAPABILITIES + "input", Keys, wake, AndroidPower.get(this), connector, callbacks, { Log.w(TAG, it) }, ai.ash.kernel.host.AppPhone(this))
-        server = KernelHostServer(api) { Log.w(TAG, it) }
-        server.start()
+        val pipe = HostPipe(api) { log.note(it) }
 
         supervisor = KernelSupervisor(
             clock = SystemClock(),
             provisioner = AndroidProvisioner(this, paths),
-            launcher = AndroidNodeLauncher(this, paths, sys, api, server, log, version),
+            launcher = AndroidNodeLauncher(this, paths, sys, api, pipe, log, version),
             env = sys,
             // The shell host (the kernel's own high-privilege layer, launched through wireless debugging) runs the core
             // when it is present; the service then yields so there is only ever one core.
             stopped = { secrets.stopped || ai.ash.kernel.host.HostPresence.yielded },
             show = ::show,
             note = { Log.i(TAG, it); log.note(it) },
-            onNodeGone = { api.token = null; connector.forget() },
+            onNodeGone = { connector.forget() },
             powerSaver = { getSystemService(PowerManager::class.java).isPowerSaveMode },
         )
 
@@ -110,7 +108,6 @@ class KernelService : Service() {
         unwatchEnvironment()
         connector.stop()
         scheduler.shutdown()
-        server.stop()
         // The core gets its lifecycle.stop and a few seconds; this must not hold up the main thread.
         Thread({ supervisor.shutdown("service_destroyed", 5_000) }, "ash-shutdown").start()
         super.onDestroy()

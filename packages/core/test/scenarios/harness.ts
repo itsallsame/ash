@@ -16,7 +16,6 @@ import { generateKeyPairSync, sign as signBytes } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
 import type { TestContext } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -28,7 +27,7 @@ import { standardAction } from "../../../sdk/src/namespaces";
 import type { AgentDriver, AgentDriverFactory, AgentEvent, AgentStartSpec, DriverMessage } from "../../../sdk/src/driver";
 import { startHub, type Hub } from "../../src/next";
 import { FakeGateway } from "../../../link/test/fixtures/fake-gateway";
-import { FakeHost } from "../fixtures/host";
+import { FakeHost, type FakeHostConnection } from "../fixtures/host";
 import { hubKey } from "../edges/link-server/control-harness";
 import { eventually } from "../fixtures/wait";
 
@@ -696,7 +695,7 @@ export class Scenario {
   private current: { port: number; token: string } | undefined;
   private booted = false;
   /** This boot's standard input: a fresh stream per start, like a new process gets a new pipe. */
-  private stdin: PassThrough | undefined;
+  private pipe: FakeHostConnection | undefined;
 
   constructor(private readonly options: ScenarioOptions = {}) {
     this.driver = scriptedDriver(["dsh", ...(options.runtimes ?? [])]);
@@ -721,18 +720,16 @@ export class Scenario {
   }
 
   async boot(whileStarting?: () => Promise<void>): Promise<void> {
-    if (!this.host.endpoint) await this.host.start();
-    // The hub boots the way a host starts it (SPEC-07): the environment names host.json, carries the seal key and the host
-    // token (a copy: the hub takes them out of what it is given); the host's events arrive on its standard input.
+    // The hub boots the way a host starts it (SPEC-07): the environment names host.json; the secrets, the answers to its
+    // calls and the host's events come over its private pipe (standard input and output), a new one for each start.
     const launch = this.host.writeLaunch();
-    this.stdin = new PassThrough();
-    this.host.stdin.pipe(this.stdin);
+    this.pipe = this.host.connect();
     // The packaged relay program, as a stand-in: a setup is refused without one.
     const relayBundle = join(this.dataDir, "ash-gateway.mjs");
     writeFileSync(relayBundle, "export default {};\n");
     writeFileSync(join(this.dataDir, "ash-gateway.metadata.json"), JSON.stringify({ main_module: "ash-gateway.mjs" }));
     const starting = startHub({
-      dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.stdin, drivers: this.driver.drivers,
+      dataDir: this.dataDir, relayBundle, relaySetupPort: 0, port: 0, env: { ...launch.env }, stdin: this.pipe.stdin, stdout: this.pipe.stdout, drivers: this.driver.drivers,
       // Without a fake model server of its own a scenario still never reaches a real provider (a saved key is checked at once): a closed local port.
       llm: this.options.llm ?? { baseUrl: "http://127.0.0.1:9" },
       // The health meter ticks in real milliseconds but counts the hub's time: with the moved clock a tick closes the time `advance()` gave it.
@@ -770,7 +767,7 @@ export class Scenario {
     }
     this.hubValue = undefined;
     // Events the host sends while the hub is down wait in the host's stream for the next boot's pipe.
-    if (this.stdin) { this.host.stdin.unpipe(this.stdin); this.stdin.end(); }
+    this.pipe?.close();
     const returning = [...this.clients].filter((client) => client.state !== "stopped");
     await eventually(() => returning.every((client) => client.state !== "ready"), "the connections noticing that the hub is gone");
     await this.boot(whileStarting);

@@ -7,7 +7,7 @@ import ai.ash.kernel.HostApi
 import ai.ash.kernel.HostCallbacks
 import ai.ash.kernel.HostEvents
 import ai.ash.kernel.Identity
-import ai.ash.kernel.KernelHostServer
+import ai.ash.kernel.HostPipe
 import ai.ash.kernel.KernelSupervisor
 import ai.ash.kernel.Paths
 import ai.ash.kernel.PowerPort
@@ -23,7 +23,7 @@ import java.io.File
 /**
  * The kernel's host layer, run as the shell user (uid 2000) by `app_process` from the kernel APK, started through
  * wireless debugging. It supervises the core (install, start it with [ShellNodeLauncher] through run-as, restart it with
- * backoff, heartbeat) and serves the core's host interface. What its identity cannot do — the Keystore, the alarm clock,
+ * backoff, heartbeat) and serves the core's host interface over its private pipe. What its identity cannot do — the Keystore, the alarm clock,
  * writing the package storage — it asks the kernel package through [IKernelBridge]. Because the core's parent is this
  * process (outside the package's cgroup, at adbd's oom_score_adj -1000), the maker's background cleaning does not kill it.
  *
@@ -74,20 +74,19 @@ object ShellHost {
         // The phone actions (a virtual screen, keys, launching an app) are served to the core right here, as service:host.
         val phone = ShellPhone(ctx, ShellPhone.kernelApk(ctx, pkg)) { Log.i(TAG, it) }
         val api = HostApi(HostApi.CAPABILITIES + PHONE_CAPABILITIES, BridgeIdentity(bridge), WakeManager(BridgeAlarm(bridge)), power, hands, callbacks, { Log.w(TAG, it) }, phone)
-        val server = KernelHostServer(api) { Log.w(TAG, it) }
-        server.start()
+        val pipe = HostPipe(api) { Log.i(TAG, it) }
 
         val version = runCatching { ctx.packageManager.getPackageInfo(pkg, 0).versionName }.getOrNull() ?: "0"
         supervisor = KernelSupervisor(
             clock = clock,
             provisioner = NoProvision,
-            launcher = ShellNodeLauncher(bridge, pkg, paths, sys, api, server, runDir, version),
+            launcher = ShellNodeLauncher(bridge, pkg, paths, sys, api, pipe, runDir, version),
             env = sys,
             stopped = { false },
             show = { Log.i(TAG, "status: $it") },
             note = { Log.i(TAG, it) },
             // A new core knows of no virtual screen: do not leave the old one behind.
-            onNodeGone = { api.token = null; runCatching { phone.close() } },
+            onNodeGone = { runCatching { phone.close() } },
             powerSaver = { false },
         )
 
