@@ -9,6 +9,8 @@ import ai.ash.host.Notifications
 class AshApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Remote debugging of the pages (chrome://inspect) is a debug-build tool; it is per process, so it is set here, before any process makes a WebView.
+        WebView.setWebContentsDebuggingEnabled(WebDebugging.enabled(BuildConfig.DEBUG, BuildConfig.ISOLATED_PROBE))
         // The app pages (ai.ash.apps.AppActivity) run in the ":app" process, whose WebView keeps its data in a
         // directory of its own; nothing else of Ash starts there.
         if (Build.VERSION.SDK_INT >= 28 && getProcessName().endsWith(":app")) {

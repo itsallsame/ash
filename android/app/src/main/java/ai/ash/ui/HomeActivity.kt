@@ -99,7 +99,6 @@ class HomeActivity : Activity() {
         ai.ash.apps.Ui.systemBars(this)
         // The page holds no session of its own: everything it says goes over the app's connection.
         CookieManager.getInstance().setAcceptCookie(false)
-        if (BuildConfig.ISOLATED_PROBE) WebView.setWebContentsDebuggingEnabled(true)
         web = WebView(this)
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             val sorry = AshUi.text(this, "这台手机的网页组件太旧，聊天页打不开。请在应用商店里把「Android System WebView」更新到新版，再回来打开 Ash。", ai.ash.ui.design.AshTokens.Type.body)
