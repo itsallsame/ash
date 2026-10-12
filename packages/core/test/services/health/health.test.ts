@@ -21,12 +21,18 @@ function setup(sample: Sample = { cpu_pct: 1, rss: 50 * MB, heap: 10 * MB, lag_p
   });
   service.start();
   let seq = 0;
-  const feed = (to: string | null, word: string, o: Partial<Message> = {}) =>
-    cb({ seq: 0, id: `m_${++seq}`, ts: t, from: "person:owner", to, kind: "request", word, body: {}, ...o });
+  /** A message at the router's door, and as published when the ledger took it (`seq`) or when it is an event. */
+  const feed = (to: string | null, word: string, o: Partial<Message> = {}) => {
+    const m: Message = { seq: 0, id: `m_${++seq}`, ts: t, from: "person:owner", to, kind: "request", word, body: {}, ...o };
+    service.tap({ phase: "in", kind: m.kind, from: m.from, to: m.to, word: m.word, via: "human" });
+    if (m.seq > 0 || m.kind === "event") cb(m);
+  };
+  /** An answer that left the router with an error. */
+  const fail = (to: string, word: string, code: string) => service.tap({ phase: "out", kind: "request", from: "person:owner", to, word, via: "human", error: code });
   /** Moves the clock by `seconds` in ticks of ten, `each` before every tick. */
   const run = (seconds: number, each: () => void = () => {}) => { for (let i = 0; i < seconds / 10; i++) { each(); t += 10_000; service.tick(); } };
   const events = async () => (await call(service, owner, "recent", {})).events as any[];
-  return { service, ledger, logs, feed, run, events, status: () => call(service, owner, "status", {}), clock: () => t };
+  return { service, ledger, logs, feed, fail, run, events, status: () => call(service, owner, "status", {}), clock: () => t };
 }
 
 const spin = (s: ReturnType<typeof setup>) => () => { for (let i = 0; i < 440; i++) s.feed("service:history", "current"); };
@@ -84,20 +90,26 @@ test("while a turn runs, or the owner has just asked for something, the hub is n
   assert.equal((await s.status()).idle, true);
 });
 
-test("the meter's own words are not counted, and a read of them neither shows in the rates nor wakes the hub", async () => {
+test("a reader that polls the health every second shows: the meter counts its own words like any other", async () => {
   const s = setup();
   s.run(60);
-  s.run(60, () => { for (let i = 0; i < 100; i++) s.feed("service:health", "status"); });
-  const status = await s.status();
-  assert.equal(status.rates.msg_per_min, 0);
-  assert.equal(status.idle, true);
+  s.run(40, () => { for (let i = 0; i < 100; i++) s.feed("service:health", "status"); });
+  assert.ok((await s.events()).some((e) => e.id === "idle.msg_key_rate" && e.top[0].key === "service:health/status:person"));
+});
+
+test("a plain read that the ledger does not take is seen all the same", async () => {
+  const s = setup();
+  s.run(60);
+  s.run(10, () => { for (let i = 0; i < 50; i++) s.feed("service:history", "current"); });
+  assert.equal((await s.status()).rates.ledger_rows_per_min, 0);
+  assert.ok((await s.status()).rates.msg_per_min > 30);
 });
 
 test("a hand that connects again and again is a reconnect storm; errors that a caller caused are not counted", async () => {
   const s = setup();
   s.run(60, () => { for (let i = 0; i < 2; i++) s.service.noteLink("open", "device:phone"); });
   assert.ok((await s.events()).some((e) => e.id === "link.reconnect_storm" && e.top[0].key === "open:device:phone"));
-  const errors = (code: string) => s.feed(null, "x", { kind: "response", from: "service:x", to: "person:owner", body: { ok: false, error: { code } } });
+  const errors = (code: string) => s.fail("service:x", "x", code);
   s.run(60, () => { for (let i = 0; i < 100; i++) errors("not_found"); });
   assert.ok(!(await s.events()).some((e) => e.id === "errors.rate"));
   s.run(60, () => { for (let i = 0; i < 100; i++) errors("timeout"); });

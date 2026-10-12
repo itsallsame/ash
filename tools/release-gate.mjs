@@ -151,8 +151,9 @@ export async function runGate(opts, log = (m) => process.stderr.write(`${m}\n`))
     const elapsed = (after.up ?? 0) - (before.up ?? 0);
     const sum = (ids) => round(ids.reduce((n, id) => n + (cpu[id]?.cpu_pct ?? 0), 0));
     const health = (await owner.call("service:health", "status", { window_s: Math.min(3600, Math.max(60, seconds)) })).data;
-    const events = (await owner.call("service:health", "recent", { since: started, limit: 100 })).data?.events ?? [];
-    const breaches = events.filter((e) => e.type === "breach");
+    // The hub's clock, not this machine's. A budget that stays broken is written once per ten minutes, so one still broken at the end counts too.
+    const events = (await owner.call("service:health", "recent", { since: health0?.now ?? 0, limit: 100 })).data?.events ?? [];
+    const breaches = [...new Set([...events.filter((e) => e.type === "breach").map((e) => e.id), ...(health?.invariants ?? []).filter((i) => !i.ok).map((i) => i.id)])];
     metrics[phase] = {
       app_cpu_pct: pids.app && cpu[pids.app] ? cpu[pids.app].cpu_pct : null,
       render_cpu_pct: pids.renderers.length ? sum(pids.renderers) : null,

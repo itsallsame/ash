@@ -50,6 +50,21 @@ export interface SendOptions {
 /** A reply, the id of the request, and the id of the response message when the ledger recorded it. */
 export type SendReply = Reply & { id?: string; ref?: string };
 
+/**
+ * What the router lets an observer see of one message at its door: who, to whom, which word, how it came, and for the way out
+ * whether it failed and why. Never the body. `in`: the message was stamped; `out`: the answer is leaving, whatever stopped it.
+ */
+export interface Traffic {
+  phase: "in" | "out";
+  kind: Message["kind"];
+  from: string;
+  to: string | null;
+  word: string;
+  via: Caller["via"];
+  /** `out` only: the error code of a refused or failed answer. */
+  error?: string;
+}
+
 export interface Router {
   /**
    * `id` is the request's message id (the router always sets it once the message is stamped, recorded or not; fakes may leave it out); `ref` is the id

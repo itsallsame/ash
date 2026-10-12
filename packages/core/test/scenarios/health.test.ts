@@ -22,7 +22,7 @@ function pacer(s: Scenario, owner: Owner) {
 }
 const events = async (owner: Owner): Promise<any[]> => dataOf(await owner.call("service:health", "recent", {})).events;
 
-test("the busy loop is caught: the event names the word; the meter does not count itself", async (t) => {
+test("the busy loop is caught: the event names the word, though the owner's reads are not in the ledger", async (t) => {
   const s = await startScenario(t, { fakeNow: true });
   const owner = await s.human();
   const step = pacer(s, owner);
@@ -42,7 +42,6 @@ test("the busy loop is caught: the event names the word; the meter does not coun
   assert.equal(breach.top[0].key, "service:history/current:person");
   const status = dataOf(await owner.call("service:health", "status"));
   assert.equal(status.invariants.find((i: any) => i.id === "idle.msg_key_rate").ok, false);
-  assert.ok(!status.top.some((k: any) => k.key.includes("service:health")), "the meter does not count itself");
 });
 
 test("an idle hub that is polled now and then writes no event", async (t) => {

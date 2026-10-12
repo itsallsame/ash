@@ -8,8 +8,10 @@
  *   status {window_s?}              rates, the busiest words, process, which budgets are kept
  *   recent {since?, limit?, kind?}  the events (default) or the minutes, newest first
  *
- * The meter's own words are left out of every count: reading the health must not make the health worse. While it is
- * broken the host heartbeat says `degraded` (see `heartbeat`).
+ * Counting happens at two places: the router's door (`tap`: every request and event in, every answer out, recorded or not) and
+ * what the router publishes (rows the ledger took, turns starting and ending). The meter sends no messages, so counting its own
+ * words cannot feed back, and a reader that polls it every second shows. While a budget is broken the host heartbeat says
+ * `degraded` (see `heartbeat`).
  */
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { OWNER_ID } from "../../../../sdk/src/ids";
@@ -17,7 +19,7 @@ import { WordError, type HandleContext, type Message, type WordResult } from "..
 import type { Member, WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
 import type { Ledger } from "../../kernel/ledger";
-import type { Registry, Router } from "../../kernel/types";
+import type { Registry, Router, Traffic } from "../../kernel/types";
 import { INVARIANTS, read, topOf, total, type Counts, type Invariant, type Window } from "./budgets";
 
 export const HEALTH_ID = "service:health";
@@ -151,22 +153,24 @@ export class HealthService implements Member {
   }
 
   // ---- counting ----
-  private observe(m: Message): void {
-    if (m.from === HEALTH_ID || m.to === HEALTH_ID) return;
-    const t = this.now();
-    if (m.seq > 0) bump(this.open.ledger, m.word);
-    if (m.kind === "response") {
-      const error = (m.body as { ok?: boolean; error?: { code?: string } } | undefined);
-      if (error?.ok === false) bump(this.open.err, `${m.from}/${m.word}:${error.error?.code ?? "?"}`);
+  /** The router's door (`tap`): every request and event once in, every answer once out, recorded or not. Counts only, O(1). */
+  tap(t: Traffic): void {
+    const now = this.now();
+    if (t.phase === "out") {
+      if (t.error) bump(this.open.err, `${t.to ?? t.from}/${t.word}:${t.error}`);
       return;
     }
-    bump(this.open.msg, m.kind === "event" ? `${m.from}/${m.word}:event` : `${m.to}/${m.word}:${m.from.slice(0, m.from.indexOf(":"))}`);
+    bump(this.open.msg, t.kind === "event" ? `${t.from}/${t.word}:event` : `${t.to}/${t.word}:${t.from.slice(0, t.from.indexOf(":"))}`);
+    if (t.kind === "request" && t.from === OWNER_ID && t.to && this.options.registry.find(t.to, t.word)?.contract.effect !== "read") this.lastActive = now;
+  }
+
+  /** What the router published: the rows the ledger took (they have a seq), and the turns that start and end. */
+  private observe(m: Message): void {
+    if (m.seq > 0) bump(this.open.ledger, m.word);
     if (m.kind === "event" && m.from.startsWith("agent:") && (m.word === "turn.started" || m.word === "turn.ended")) {
       const turn = String((m.body as { turn?: unknown } | undefined)?.turn ?? m.from);
-      if (m.word === "turn.started") this.turns.set(turn, t); else this.turns.delete(turn);
-      this.lastActive = t;
-    } else if (m.kind === "request" && m.from === OWNER_ID && m.to && this.options.registry.find(m.to, m.word)?.contract.effect !== "read") {
-      this.lastActive = t;
+      if (m.word === "turn.started") this.turns.set(turn, this.now()); else this.turns.delete(turn);
+      this.lastActive = this.now();
     }
   }
 
