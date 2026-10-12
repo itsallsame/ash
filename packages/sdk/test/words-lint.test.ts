@@ -34,10 +34,10 @@ test("no contract names an agent or the old fixed members", () => {
 });
 
 test("the services of SPEC-02 §4.1 are all there, and the removed ones are not", () => {
-  for (const service of ["admin", "gate", "vault", "devices", "link", "agents", "apps", "clock", "llm", "persona", "widgets", "pulse", "cost", "reflex", "senses", "directory", "history", "blobs", "host", "bodies"]) {
+  for (const service of ["admin", "gate", "vault", "devices", "link", "agents", "apps", "clock", "llm", "persona", "widgets", "pulse", "cost", "reflex", "senses", "directory", "history", "blobs", "host", "bodies", "health"]) {
     assert.ok(SERVICE_NAMES.includes(`service:${service}`), service);
   }
-  assert.equal(SERVICE_NAMES.length, 20);
+  assert.equal(SERVICE_NAMES.length, 21);
   const has = (member: string, ...words: string[]) => words.forEach((word) => assert.ok(wordContract(member, word), `${member}/${word}`));
   has("service:gate", "rules.list", "rules.set", "rules.revoke", "mode.set", "audit", "history", "pending.list", "pending.get", "pending.redeem", "pending.skip", "pending.withdraw");
   has("service:vault", "list", "describe", "set", "delete");
@@ -50,6 +50,7 @@ test("the services of SPEC-02 §4.1 are all there, and the removed ones are not"
   has("service:blobs", "read", "get");
   has("service:host", "wake.at", "wake.clear", "power.hold", "power.release", "hands.handoff", "update.install");
   has("service:cost", "usage.get", "balance.get", "quota.check");
+  has("service:health", "status", "recent");
   has("service:persona", "get", "propose");
   has("service:directory", "list", "describe");
   has("service:apps", "apps.surface", "apps.icon", "apps.install", "apps.validate");

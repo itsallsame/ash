@@ -42,7 +42,8 @@ import { createRegistry } from "./kernel/registry";
 import { createRouter } from "./kernel/router";
 import { openVault } from "./kernel/vault";
 import type { Vault } from "./kernel/types";
-import { createAdminService } from "./services/admin";
+import { createAdminService, tailFile } from "./services/admin";
+import { createHealthService } from "./services/health";
 import { createBlobsService } from "./services/blobs";
 import { createClockService } from "./services/clock";
 import { createCostService } from "./services/cost";
@@ -85,6 +86,8 @@ export interface HubOptions {
   relaySetupPort?: number;
   /** The clock of everything that waits for a time (timers, approval expiry, pulse). Absent: the system clock. */
   now?: () => number;
+  /** The time between the health meter's ticks in ms (default 10 000; scenarios shorten it). */
+  healthTickMs?: number;
 }
 
 export interface Hub {
@@ -133,7 +136,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   try { vault = openVault({ file: join(dataDir, "vault.json"), sealKey: secrets.sealKey, now }); } catch (error) { ledger.close(); throw error; }
 
   // 4. kernel. The gate needs the hands and the main body, the router needs the agents and the apps: they come later.
-  const late: { hands?: HandRegistry; body?: ReturnType<typeof createLocalBody>; gateService?: ReturnType<typeof createGateService>; apps?: ReturnType<typeof createApps>; agents?: ReturnType<typeof createAgents>; human?: ReturnType<typeof createHuman> } = {};
+  const late: { hands?: HandRegistry; body?: ReturnType<typeof createLocalBody>; gateService?: ReturnType<typeof createGateService>; apps?: ReturnType<typeof createApps>; health?: ReturnType<typeof createHealthService>; agents?: ReturnType<typeof createAgents>; human?: ReturnType<typeof createHuman> } = {};
   const registry = createRegistry();
   const redact = createRedact();
   const store = new GateStore(ledger, now);
@@ -153,7 +156,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const router = createRouter({
     ledger, registry, gate, redact, store, now,
     onParked: (pending) => late.gateService!.issueCard(pending),
-    onError: (where, error) => log(where, error),
+    onError: (where, error) => { late.health?.noteError(where); log(where, error); },
     agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords,
     mayTalkToOwner: (caller, word) => late.agents?.mayTalkToOwner(caller, word) ?? true,
     mayAnswer: (caller, body) => late.agents?.mayAnswer(caller, body) ?? true,
@@ -175,7 +178,11 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const cost = createCostService({ ledger, now });
   const reflex = createReflexService({ ledger, router, registry, jev: createJev({ post: (req) => llm.post("service:reflex", req) }) });
   const history = createHistoryService({ ledger, now });
-  const admin = createAdminService({ ledger, router, registry, version: hubVersion(), now, startedAt });
+  const admin = createAdminService({
+    ledger, router, registry, version: hubVersion(), now, startedAt,
+    readLogs: ({ lines }) => tailFile(join(spec.dirs.logs, "core.log"), lines),
+  });
+  const health = late.health = createHealthService({ ledger, router, registry, now, log: (message) => log(`health: ${message}`), ...(opts.healthTickMs ? { tickMs: opts.healthTickMs } : {}) });
   const widgets = createWidgetsService({ ledger, router, now });
   const directory = createDirectoryService({ registry, agentPolicy: (id) => late.agents?.policyOf(id) ?? null, toolWords, appGranted: (app, member, word) => late.apps!.runtime.granted(app, member, word) });
   const vaultService = createVaultService({ vault, ledger, router });
@@ -200,6 +207,10 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     },
   });
   const link = createLinkServer({ hands, hostClient: host, ...(opts.port ? { port: opts.port } : {}), log });
+  link.observe((event) => {
+    if (event.type === "connected") health.noteLink("open", event.conn.hand);
+    else health.noteLink(event.type, event.code);
+  });
   const relayBundle = relayBundleFile(opts.relayBundle ?? fileURLToPath(new URL(RELAY_BUNDLE_FILE, import.meta.url)));
   const linkControl = createLinkControl({
     db: ledger.db(), router, link, hands, vault, now, log, bundle: relayBundle.read, bundleMissing: relayBundle.missing,
@@ -254,7 +265,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
 
   // 7. everybody into the registry
   for (const member of [
-    blobs, gateService, clock, senses, cost, reflex, history, admin, widgets, directory, vaultService, ...semantic.members,
+    blobs, gateService, clock, senses, cost, reflex, history, admin, health, widgets, directory, vaultService, ...semantic.members,
     body, devices, bodies, linkControl.member, human.member, agents.service, apps.service, createLlmService(llm), hostService.member,
   ]) registry.add(member);
 
@@ -269,6 +280,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const stop = (deadline = now() + 5000): Promise<void> => stopping ??= (async () => {
     events?.close();
     stopHeartbeat();
+    health.stop();
     await link.stop();
     semantic.stop();
     linkControl.stop();
@@ -283,6 +295,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   })().finally(closed);
 
   try {
+    health.start();
     const { port } = await link.start();
     url = `http://127.0.0.1:${port}`;
     await agents.startAll(); // does not wait for the agents: they come up on their own time and take messages meanwhile
@@ -295,7 +308,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     await semantic.start();
     await apps.start();
     await host.lifecycleReady(hubVersion(), port);
-    stopHeartbeat = host.startHeartbeat(() => ({ text: "running", state: "running" }));
+    stopHeartbeat = host.startHeartbeat(() => health.heartbeat());
   } catch (error) {
     await stop().catch(() => {});
     throw error;

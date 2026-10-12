@@ -162,3 +162,5 @@ export class AdminService implements Member {
 }
 
 export function createAdminService(options: AdminOptions): AdminService { return new AdminService(options); }
+
+export { tailFile } from "./tail";
