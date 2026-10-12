@@ -1,8 +1,7 @@
 import { addIcon, text } from "./chat-ui.js";
 
 /**
- * The "+" sheet: what each choice asks the browser for. A phone browser opens the camera for `capture`; in the Ash app
- * the same attributes reach the native picker, which opens the system camera, the photo picker or the file picker.
+ * The "+" sheet: what each choice asks the browser for. A phone browser opens the camera for `capture`.
  */
 export const ATTACH_CHOICES = Object.freeze([
   Object.freeze({ id: "photo", label: "拍照", glyph: "camera", accept: "image/*", capture: "environment", multiple: false }),

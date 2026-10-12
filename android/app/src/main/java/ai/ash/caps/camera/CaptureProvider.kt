@@ -15,7 +15,7 @@ import java.io.FileNotFoundException
 /**
  * Where the system camera writes a photo or video Ash asked for (targetSdk 28 forbids file:// URIs and this app has
  * no AndroidX FileProvider). Not exported: the camera app reaches a single file only through the grant on its intent.
- * Flat names under cache/capture/; the chat's web view reads the same URI back as the chosen file.
+ * Flat names under cache/capture/; the chat reads the same URI back as the chosen file.
  */
 class CaptureProvider : ContentProvider() {
     override fun onCreate() = true

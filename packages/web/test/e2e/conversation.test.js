@@ -147,17 +147,14 @@ test(...withBrowser("the top bar has her and the apps: tapping her opens her hom
   assert.deepEqual(await page.evaluate(() => window.opened), [{ page: "home" }]);
   await page.keyboard.press("Escape");
   await page.locator("#home").waitFor({ state: "hidden" });
-  // The apps page: in a browser it is the home's apps page; in the app it is native and no event is announced.
+  // The apps page is the home's apps page.
   await page.locator("#apps").click();
   await page.locator('#home .hm-screen[data-page="apps"]').waitFor();
   assert.deepEqual((await page.evaluate(() => window.opened)).at(-1), { page: "apps" });
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await page.locator("#home").waitFor({ state: "hidden" });
-  await page.evaluate(() => { window.opened = []; window.nativePages = []; globalThis.__ashOpenNative = (name) => window.nativePages.push(name); });
-  await page.locator("#apps").click();
-  assert.deepEqual(await page.evaluate(() => window.nativePages), ["apps"]);
-  assert.deepEqual(await page.evaluate(() => window.opened), []);
+  await page.evaluate(() => { window.opened = []; });
   // Talking to a helper: her home is the helper's.
   await page.locator("#f .to").click();
   await page.locator(".layer .li", { hasText: "小研" }).click();

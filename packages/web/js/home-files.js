@@ -7,7 +7,7 @@ import { isSystemEntry } from "./home-text.js";
 
 let reader = null;
 /** The one file reader of the page (a dialog); the conversation's links use their own instance of the same class. */
-const readerFor = (net) => { if (!reader || reader.net !== net) reader = new Files(net, { save: net.embedded ? (file) => globalThis.__ashFileSave(file) : null }); return reader; };
+const readerFor = (net) => { if (!reader || reader.net !== net) reader = new Files(net); return reader; };
 
 const sizeText = (bytes) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 

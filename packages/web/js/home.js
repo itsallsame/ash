@@ -169,10 +169,3 @@ globalThis.addEventListener?.("ash:open", (event) => {
   event.preventDefault();
   shellFor(net).open({ agent, section: page === "apps" ? "apps" : section, arg });
 });
-
-/** For the app's back key: closes the top page of 她的主页 (or the whole of it); false when it is not open, so the app goes on with its own. */
-globalThis.__ashHomeBack = () => {
-  if (!shell?.isOpen()) return false;
-  shell.back();
-  return true;
-};

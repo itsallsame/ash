@@ -64,7 +64,7 @@ export function render(view, outbox = [], openInline, presenceBar, cardActions, 
   presenceBar?.render(loading ? { state: "unknown" } : view.presence);
 }
 
-export function boot({ bridge } = {}) {
+export function boot() {
   performance.mark("shell.boot");
   const form = document.querySelector("#f");
   const input = document.querySelector("#t");
@@ -225,10 +225,6 @@ export function boot({ bridge } = {}) {
     },
     optionPending,
     askIntents,
-    onPermission: /\bAshApp\//.test(navigator.userAgent) ? (permission) => {
-      if (!/^[a-z][a-z0-9_]{0,47}$/.test(permission)) return;
-      location.href = `ash://permission/${permission}`;
-    } : undefined,
     onSelect: async (item, option) => {
       if (item.locked || optionPending.has(item.id)) return;
       optionPending.add(item.id);
@@ -275,7 +271,6 @@ export function boot({ bridge } = {}) {
     return attachment ? openInlineBlob(attachment) : null;
   };
   const net = new Net({
-    bridge,
     label: sessionStorage.getItem("ash.web.label")?.trim().slice(0, 80) || (/Android|iPhone|iPad/i.test(navigator.userAgent) ? "手机浏览器" : "电脑浏览器"),
     onMessage: (message) => { timeline.add(message); },
     onHistory: (page) => { timeline.acceptPage(page); performance.mark("shell.history-rendered"); },
@@ -314,7 +309,7 @@ export function boot({ bridge } = {}) {
     },
   });
   connectHome(net, homeFeed);
-  files = new Files(net, { save: net.embedded ? (file) => globalThis.__ashFileSave(file) : null });
+  files = new Files(net);
   // Visible-item pages cannot be drowned by background ledger events; fill a short viewport from finite older pages.
   let filling = false;
   const fillScreen = async () => {
@@ -473,11 +468,7 @@ export function boot({ bridge } = {}) {
     fileInput.value = "";
     showPicked();
   });
-  // The apps page is native in the app; in a browser the home page's apps are the stand-in.
-  appsButton.addEventListener("click", () => {
-    if (typeof globalThis.__ashOpenNative === "function") globalThis.__ashOpenNative("apps");
-    else openHome({ page: "apps" });
-  });
+  appsButton.addEventListener("click", () => openHome({ page: "apps" }));
   window.addEventListener("pagehide", () => { timeline.clearCurrentRefresh(); clearInterval(progressTimer); clearInterval(typingTimer); restorer.dispose(); navigationObserver.disconnect(); views.get(log)?.dispose(); net.stop(); });
   window.addEventListener("online", () => net.reconnect());
   window.addEventListener("pageshow", (event) => {
@@ -504,9 +495,5 @@ async function answerAsk(net, ask, choice, clientId, { answerText } = {}) {
     ? "回答有没有送到还不知道，请再点一次同一个选项。" : "回答没被接受，这个问题可能已经过期。");
 }
 
-// In the app the page waits for the native bridge; in a browser it opens its own connection.
-if (typeof document !== "undefined") {
-  if (globalThis.location?.origin === "https://appassets.androidplatform.net") globalThis.__ashNativeBoot = (bridge) => boot({ bridge });
-  // Module initialization (including Markdown grammar) must finish before DOM/connection setup starts its own task.
-  else setTimeout(() => boot(), 0);
-}
+// Module initialization (including Markdown grammar) must finish before DOM/connection setup starts its own task.
+if (typeof document !== "undefined") setTimeout(() => boot(), 0);

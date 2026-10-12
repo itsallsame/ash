@@ -11,9 +11,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
 /**
- * The chat page's end of the human channel (SPEC-05 §4.1). The page (a WebView) has no connection of its own: it hands the
- * frames it would send over a WebSocket to the native layer, which puts them on the app's one connection unchanged, and what
- * comes back on the human channel for the page is handed to it unchanged. The page's `AshNative` messages are:
+ * The chat screen's end of the human channel (SPEC-05 §4.1). The screen ([ai.ash.ui.HumanPort], the "page" below) has no connection
+ * of its own: it hands the frames it would send over a WebSocket to this bridge, which puts them on the app's one connection
+ * unchanged, and what comes back on the human channel for the screen is handed to it unchanged. The messages between them are:
  *
  *  - page to native `{type:"frame", frame}`: a `send`, `sync`, `sync.close`, `presence` or `stream` frame of the human channel,
  *    or the `present.result` of a `chat` present it was given. A frame the link cannot send (no connection, or one that breaks
@@ -21,8 +21,7 @@ import java.util.concurrent.TimeoutException
  *  - native to page `{type:"frame", frame}`: `send.result`, `sync.page`, `sync.msg`, `stream`, and the `chat` presents.
  *  - native to page `{type:"link", open, client?, local?}`: the human channel opened or closed. Its syncs end with it, so the
  *    page opens them again when it opens; the same message is sent when a page attaches, and again whenever the page asks
- *    ([resendLink], its `{type:"link_state"}`): the bridge keeps the last state, so a page that came late, or missed it,
- *    only has to ask.
+ *    ([resendLink]): the bridge keeps the last state, so a page that came late, or missed it, only has to ask.
  *
  * Nothing in a frame is looked at, except to find the `chat` presents and to end the page's syncs when the page goes.
  */
@@ -44,13 +43,13 @@ class ChatBridge(
         override fun send(frame: JSONObject) = client().sendHumanFrame(frame)
     }
 
-    /** What the chat page needs from the screen. */
+    /** What the chat needs from the app's screen. */
     interface ChatUi {
-        /** Brings the chat page to the front (starts it if need be). False when it cannot be started now. */
+        /** Brings the chat screen to the front (starts it if need be). False when it cannot be started now. */
         fun bringToFront(): Boolean
     }
 
-    /** Where messages for the page go (posted to the WebView); one while a page is attached. */
+    /** Where messages for the chat screen go; one while a page is attached. */
     fun interface Page { fun post(message: String) }
 
     private val lock = Any()
@@ -83,7 +82,7 @@ class ChatBridge(
         queued.forEach { toPage(it) }
     }
 
-    /** The page asks for the state of the link again (it came late, or doubts what it has): it is told the last one. False when no page is attached. */
+    /** The chat screen asks for the state of the link again (it came late, or doubts what it has): it is told the last one. False when no page is attached. */
     fun resendLink(): Boolean {
         val sink: Page?
         val message: String
@@ -94,7 +93,7 @@ class ChatBridge(
     }
 
     /**
-     * The page is gone (it reloaded, or the screen closed): its syncs end, and the presents it never answered fail. With [only],
+     * The page is gone (the screen closed): its syncs end, and the presents it never answered fail. With [only],
      * nothing happens unless that is the page attached now: a screen that is closing must not drop the page of the one that
      * replaced it.
      */
@@ -109,7 +108,7 @@ class ChatBridge(
             waiting.clear()
         }
         for (sid in open) link.send(JSONObject().put("t", "sync.close").put("sid", sid))
-        asked.values.forEach { it.complete(PresentOutcome(false, null, "unavailable", "the chat page went away")) }
+        asked.values.forEach { it.complete(PresentOutcome(false, null, "unavailable", "the chat screen went away")) }
     }
 
     /** A frame from the page. */
@@ -124,7 +123,7 @@ class ChatBridge(
         val refused = link.send(frame)
         if (refused != null) {
             val reason = refused.message.take(200).ifEmpty { "not sent" }
-            log("a $type frame from the chat page was not sent: $reason")
+            log("a $type frame from the chat screen was not sent: $reason")
             val error = JSONObject().put("t", "error").put("code", refused.code).put("message", reason)
             (frame.opt("id") ?: frame.opt("sid")).let { if (it is String && it.isNotEmpty() && it.length <= 128) error.put("id", it) }
             toPage(error)
@@ -172,7 +171,7 @@ class ChatBridge(
             if (sink != null) toPage(frame)
             return answer.get(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (_: TimeoutException) {
-            return PresentOutcome(false, null, "timeout", "the chat page did not answer")
+            return PresentOutcome(false, null, "timeout", "the chat screen did not answer")
         } finally {
             asked.remove(id)
             synchronized(lock) { waiting.remove(frame) }

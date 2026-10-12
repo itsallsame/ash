@@ -12,7 +12,6 @@ import { BODY_MAIN } from "./body.js";
 import { letterClasses, letterOf } from "./chat-ui.js";
 import { HELPER, isSystemEntry, KEYS, appsSummary, providerName } from "./home-text.js";
 
-const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars";
 const FACE = { idle: "default", resting: "resting", listening: "listening", thinking: "thinking", working: "focused", done: "success", waiting_you: "listening" };
 const STATE_TEXT = { idle: "在线", resting: "休息中", listening: "在听", thinking: "在想", working: "在忙", done: "", waiting_you: "等你一句话" };
 
@@ -63,7 +62,7 @@ export function homePage(ctx, screen) {
     const live = st.state === "working" ? " av-live" : st.state === "thinking" ? " av-breath" : st.state === "waiting_you" ? " av-wait" : "";
     // A quiet dot when she is simply here (green) or away (grey); a ring only while she is doing something, thinking or asking.
     const dot = st.state === "idle" ? h("span", { class: "dot" }) : st.state === "resting" ? h("span", { class: "dot off" }) : null;
-    const face = isHer ? h("span", { class: `av hm-avatar${live}${online() ? "" : " off"}` }, h("img", { src: `${AVATAR_ROOT}/${st.face}.webp`, alt: "" }), dot) : letterAvatar(name, `hm-avatar${live}`);
+    const face = isHer ? h("span", { class: `av hm-avatar${live}${online() ? "" : " off"}` }, h("img", { src: `/avatars/${st.face}.webp`, alt: "" }), dot) : letterAvatar(name, `hm-avatar${live}`);
     const since = st.since ? ` · ${duration(Math.max(0, Date.now() - st.since))}` : "";
     const pill = h("span", { class: `tag tag-${st.tone} hm-state`, id: "homeState" }, st.state === "working" || st.state === "thinking" ? h("span", { class: "spinner hm-spin" }) : null, `${st.text}${since}`);
     fill(heroStat, 
@@ -135,24 +134,18 @@ export function homePage(ctx, screen) {
 
   // ---- 她的手和眼
   const handsBox = h("div");
-  const native = () => typeof globalThis.__ashOpenNative === "function";
   const drawHands = () => {
-    const checkup = globalThis.__ashCheckup?.() ?? null;
-    const todo = Number.isFinite(checkup?.todo) ? checkup.todo : 0;
     const devices = state.devices?.devices?.filter((device) => !device.revoked_at && device.kind !== "browser") ?? [];
     const online = devices.filter((device) => device.online);
     const waiting = state.devices?.pairs?.filter((pair) => pair.state === "requested").length ?? 0;
-    const android = globalThis.location?.origin === "https://appassets.androidplatform.net";
     const cell = (icon, title, sub, { tone = "", subTone = "", onClick, id }) => h("button", { type: "button", class: "hm-cell", id, onclick: onClick },
       h("span", { class: `lic hm-cell-ic${tone ? ` lic-${tone}` : ""}` }, ico(icon, "i-s")), h("span", { class: "hm-cell-t" }, h("span", { class: "hm-cell-name" }, title), h("span", { class: `tx-caption${subTone ? ` c-${subTone}` : ""}` }, sub)));
     const cells = [];
-    if (native()) cells.push(cell("phone", "这台手机", todo ? `${todo} 项要处理` : "状态良好", { tone: todo ? "warn" : "", subTone: todo ? "warn" : "ok", onClick: () => globalThis.__ashOpenNative("checkup"), id: "homeCellPhone" }));
     cells.push(cell("laptop", devices.length ? (devices.length === 1 ? devices[0].name : "电脑") : "电脑",
       waiting ? `${waiting} 台等你批准` : devices.length ? (online.length ? `${online.length} 台在线` : "都不在线") : "还没有连接",
       { subTone: waiting ? "warn" : online.length ? "ok" : "", tone: waiting ? "warn" : "", onClick: () => ctx.go("hands"), id: "homeCellComputers" }));
-    if (android && typeof globalThis.__ashBrowserLogins === "function") cells.push(cell("globe", "她的浏览器", "登录过的网站", { onClick: () => ctx.go("browser"), id: "homeCellBrowser" }));
-    cells.push(cell("grid", "应用", state.apps ? appsSummary(state.apps).replace(/^\d+ 个应用 · /, "") : "—", { onClick: () => native() ? globalThis.__ashOpenNative("apps") : ctx.go("apps"), id: "homeCellApps" }));
-    fill(handsBox, section("她的手和眼", { right: todo ? tag(`${todo} 项要处理`, "warn") : waiting ? tag(`${waiting} 个等你批准`, "warn") : null }, h("div", { class: "hm-cells" }, ...cells)));
+    cells.push(cell("grid", "应用", state.apps ? appsSummary(state.apps).replace(/^\d+ 个应用 · /, "") : "—", { onClick: () => ctx.go("apps"), id: "homeCellApps" }));
+    fill(handsBox, section("她的手和眼", { right: waiting ? tag(`${waiting} 个等你批准`, "warn") : null }, h("div", { class: "hm-cells" }, ...cells)));
   };
 
   // ---- 她是谁
@@ -221,7 +214,6 @@ export function homePage(ctx, screen) {
   screen.every(() => { if (stateOf(view(), agentId, online()).since) drawHero(); }, 1000);
   screen.onName(drawHero);
   screen.every(() => { void refresh(); }, 15_000);
-  screen.listen(globalThis, "ash:checkup", drawHands);
 
   async function refresh() {
     const loads = [
