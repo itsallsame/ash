@@ -119,7 +119,7 @@
 * service:llm/keys.check  owner,agent
   service:persona/get  owner,agent,app
 * service:persona/propose  owner,agent
-* service:cost/usage.get  owner
+* service:cost/usage.get  owner,app
 * service:cost/balance.get  owner
 * service:cost/quota.check  kernel
 * service:cost/usage.recorded  kernel  event-in
@@ -150,6 +150,7 @@
 * service:history/window  owner
 * service:history/current  owner
 * service:history/activity.page  owner
+* service:history/activity.count  owner,app
 * service:history/confirm  owner
   service:blobs/read  owner,agent,app
   service:blobs/get  owner,agent,app

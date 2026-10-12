@@ -34,7 +34,7 @@ export const CARD_LIMITS = {
 } as const;
 
 export const CARD_COMPONENTS = ["Text", "Image", "Icon", "Row", "Column", "List", "Card", "Tabs", "Divider", "Button", "CheckBox",
-  "ChoicePicker", "Switch", "Stack", "Grid", "Spacer", "ProgressBar", "Badge", "Clock", "Timer"] as const;
+  "ChoicePicker", "Switch", "Stack", "Grid", "Spacer", "ProgressBar", "Badge", "Clock", "Timer", "Chart"] as const;
 
 /** What a widget cannot hold, and what to use instead. */
 const IMPOSSIBLE: Record<string, string> = {
@@ -52,7 +52,6 @@ const IMPOSSIBLE: Record<string, string> = {
   Animation: "home-screen widgets cannot animate; send the frame you want shown",
   Lottie: "home-screen widgets cannot animate; send the frame you want shown",
   Map: "a live map cannot be drawn in a widget; send a map Image and an action that opens it",
-  Chart: "there is no chart view in widgets; send the chart as an Image, or build bars from ProgressBar/Row",
 };
 
 /** Built-in icons: A2UI v0.9 icon names and Ash's older names. The phone maps each one to a glyph. */
@@ -94,6 +93,7 @@ const FIELDS: Record<string, readonly string[]> = {
   Badge: ["text"],
   Clock: ["format", "timeZone"],
   Timer: ["since", "until"],
+  Chart: ["series", "gap"],
 };
 const CONTAINERS = new Set(["Row", "Column", "List", "Stack", "Grid"]);
 
@@ -145,6 +145,14 @@ export interface WidgetComponent {
   tabs?: { title: string; child: string }[]; selected?: number; axis?: string; checked?: boolean; label?: string;
   options?: { label: string; value: string; checked: boolean }[]; multiple?: boolean; chips?: boolean;
   value?: number; max?: number; size?: number; format?: string; timeZone?: string; since?: number; until?: number;
+  /** Chart: the phone draws these as a bitmap of the size the card gives it. */
+  series?: ChartSeries[]; gap?: number;
+}
+
+/** One line or one set of bars of a Chart (the geometry is the same on the phone and in the app page). `colors` is keyed by the index of the bar. */
+export interface ChartSeries {
+  type: "line" | "bars"; values: number[]; color: CardColor; fill?: boolean; width?: number; dot?: boolean; max?: number; floor?: number;
+  highlight?: { from: number; to?: number; color: CardColor }; colors?: Record<string, CardColor>; lastColor?: CardColor; limit?: number; limitColor?: CardColor;
 }
 export interface CardSize { width: number; height: number; root: string }
 export interface WidgetRender { root: string; components: WidgetComponent[]; sizes?: CardSize[]; theme?: { accent?: CardColor } }
@@ -405,6 +413,51 @@ function color(value: unknown, where: string): CardColor {
   if (h.length <= 4) h = [...h].map((c) => c + c).join("");
   if (h.length === 6) h += "FF";
   return `#${h}`;
+}
+
+/** A Chart's series: one to four, at most 600 values together; every colour, limit and index checked. */
+function chartSeries(value: unknown, where: string): ChartSeries[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 4) bad(`${where} series must be a list of 1 to 4 series`);
+  let all = 0;
+  return (value as unknown[]).map((raw, i) => {
+    const at = `${where} series[${i}]`;
+    if (!plain(raw)) return bad(`${at} must be an object`);
+    const s = raw as Record<string, unknown>;
+    for (const key of Object.keys(s)) if (!["type", "values", "color", "fill", "width", "dot", "max", "floor", "highlight", "colors", "lastColor", "limit", "limitColor"].includes(key)) bad(`${at} has unknown field "${key}"`);
+    if (s.type !== "line" && s.type !== "bars") bad(`${at} type must be "line" or "bars"`);
+    if (!Array.isArray(s.values) || s.values.length < 1 || s.values.length > 240 || s.values.some((v) => typeof v !== "number" || !Number.isFinite(v))) bad(`${at} values must be 1 to 240 finite numbers`);
+    const values = (s.values as number[]).map((v) => Math.max(0, v));
+    all += values.length;
+    if (all > 600) bad(`${where} has more than 600 values in all its series`);
+    const out: ChartSeries = { type: s.type as "line" | "bars", values, color: color(s.color, `${at} color`) };
+    const num = (key: string, lo: number, hi: number): number | undefined => {
+      if (s[key] === undefined) return undefined;
+      if (typeof s[key] !== "number" || !Number.isFinite(s[key]) || (s[key] as number) < lo || (s[key] as number) > hi) bad(`${at} ${key} must be a number from ${lo} to ${hi}`);
+      return s[key] as number;
+    };
+    for (const key of ["fill", "dot"] as const) if (s[key] !== undefined) { if (typeof s[key] !== "boolean") bad(`${at} ${key} must be true or false`); out[key] = s[key] as boolean; }
+    const width = num("width", 0.5, 4), max = num("max", 0, 1e9), floor = num("floor", 0, 1e9), limit = num("limit", 0, 1e9);
+    if (width !== undefined) out.width = width;
+    if (max !== undefined) out.max = max;
+    if (floor !== undefined) out.floor = floor;
+    if (limit !== undefined) out.limit = limit;
+    if (s.limitColor !== undefined) out.limitColor = color(s.limitColor, `${at} limitColor`);
+    if (s.lastColor !== undefined) out.lastColor = color(s.lastColor, `${at} lastColor`);
+    if (s.highlight !== undefined) {
+      const h = s.highlight as Record<string, unknown>;
+      const from = h?.from, to = h?.to;
+      if (!plain(h) || typeof from !== "number" || !Number.isInteger(from) || from < 0 || (to !== undefined && (typeof to !== "number" || !Number.isInteger(to) || to < from))) bad(`${at} highlight must be {from, to?, color} with whole indexes, to not before from`);
+      out.highlight = { from: from as number, ...(to !== undefined ? { to: to as number } : {}), color: color(h.color, `${at} highlight.color`) };
+    }
+    if (s.colors !== undefined) {
+      if (!plain(s.colors)) bad(`${at} colors must be an object {"<bar index>": colour}`);
+      out.colors = Object.fromEntries(Object.entries(s.colors as Record<string, unknown>).map(([k, v]) => {
+        if (!/^\d+$/.test(k) || Number(k) >= values.length) bad(`${at} colors has "${k}", which is not the index of a value`);
+        return [k, color(v, `${at} colors.${k}`)];
+      }));
+    }
+    return out;
+  });
 }
 
 function dimension(value: unknown, where: string, max = 2000): number {
@@ -845,6 +898,12 @@ export function validateCard(raw: unknown, options: { checkLevels?: boolean } = 
       if (v < 0 || v > node.max) bad(`${where} value must be from 0 to ${node.max}`);
       node.value = v;
       if (c.label !== undefined) node.label = r.text(c.label, `${where} label`, scope);
+      break;
+    }
+    case "Chart": {
+      if (typeof node.style?.height !== "number") bad(`${where} needs style.height in dp (a chart is drawn at the size the card gives it)`);
+      node.series = chartSeries(c.series, where);
+      if (c.gap !== undefined) node.gap = dimension(c.gap, `${where} gap`, 20);
       break;
     }
     case "Badge": node.text = r.text(c.text, `${where} text`, scope); break;

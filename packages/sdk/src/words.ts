@@ -50,6 +50,8 @@ const ENV_CHANGED: JsonSchema = { type: "object", oneOf: [
 // ---- how a word is written --------------------------------------------------------------------------------------------
 const OWNER: CallerKind[] = ["owner"];
 const OWNER_AGENT: CallerKind[] = ["owner", "agent"];
+/** For the readings only the owner and an app the owner installed may see (the app is granted them in its needs). */
+const OWNER_APP: CallerKind[] = ["owner", "app"];
 const KERNEL: CallerKind[] = ["kernel"];
 
 interface Options {
@@ -139,7 +141,7 @@ add("service:health", "status", "request", obj({ window_s: { type: "integer", mi
     last_events: array(healthEvent),
   }, ["now", "uptime_s", "idle", "window_s", "rates", "top", "proc", "invariants", "last_events"]),
   { label: "在看自己的运行状况", description: "How the hub is doing right now: message and ledger rates, the busiest words, process CPU and memory, event loop delay, and which behaviour budgets (idle traffic, ledger growth, reconnect storms, errors) are kept or broken. Use it when asked why Ash is slow, busy or heating the phone. It counts words and callers, never contents." });
-add("service:health", "recent", "request", obj({ since: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 500 }, kind: choice("event", "minute") }),
+add("service:health", "recent", "request", obj({ since: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 1440 }, kind: choice("event", "minute") }),
   obj({ events: array(healthEvent), minutes: array(obj({ at: nonnegativeSafe, idle: bool, msg: num, ledger: num, err: num, link_opens: num, cpu_pct: num, rss_mb: num, lag_p99_ms: num, top: array(healthKey) }, ["at"])) }),
   { label: "在翻运行记录", description: "The health history: budget breaches and starts (kind event, default) or one summary per minute for up to seven days (kind minute), newest first. Use it to find out when something started misbehaving and which word did it." });
 
@@ -480,7 +482,7 @@ add("service:persona", "propose", "request", obj({ file: personaFile, content: {
 // service:cost: usage and quota
 // ===================================================================================================================
 add("service:cost", "usage.get", "request", obj({ days: { type: "integer", minimum: 1, maximum: 90 } }), free,
-  { callers: OWNER, label: "在看用量", description: "What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls." });
+  { callers: OWNER_APP, label: "在看用量", description: "What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls." });
 add("service:cost", "balance.get", "request", empty, free,
   { callers: OWNER, label: "在看余额", description: "The provider account balance for the configured API key; fails rather than reporting zero when it cannot be read." });
 add("service:cost", "quota.check", "request", obj({ agent: agentRef }, ["agent"]), obj({ allowed: bool, reason: str, used: num, limit: num }, ["allowed"]),
@@ -577,6 +579,8 @@ add("service:history", "current", "request", obj({ ...historyPageInput, agent: i
   { callers: OWNER, label: "在看现在的事", description: "Authoritative current presence and bounded progress, with independently paginated pending questions and complete total count. Optional agent scopes turns and question publishers; gate approvals remain in the unfiltered owner view. Read without snapshot_seq for current state; old conversation windows do not determine current presence." });
 add("service:history", "activity.page", "request", obj({ ...historyPageInput, turn: nonempty, since_ts: nonnegativeSafe, until_ts: nonnegativeSafe, agent: id }), obj({ ...historyPageResult, total_count: nonnegativeSafe }, [...historyPageRequired, "total_count"]),
   { callers: OWNER, label: "在看她做过的事", description: "Bidirectional bounded turn summaries with an authoritative total count, optionally filtered by inclusive since_ts, exclusive until_ts and agent. With turn, read its safe display steps and complete step count instead; time/agent filters then do not apply. Step details remain on demand through history.activity." });
+add("service:history", "activity.count", "request", obj({ since_ts: nonnegativeSafe, until_ts: nonnegativeSafe, agent: id }), obj({ total_count: nonnegativeSafe }, ["total_count"]),
+  { callers: OWNER_APP, label: "在数她做过的事", description: "How many things she did (turns) in a time range, optionally for one agent: the same count as the total of activity.page, without any of the turns. since_ts inclusive, until_ts exclusive. For a status page that only needs the number." });
 add("service:history", "confirm", "request", obj({ ids: { type: "array", items: nonempty, maxItems: 24, uniqueItems: true }, snapshot_seq: nonnegativeSafe }, ["ids"]),
   obj({ dataset_id: nonempty, snapshot_seq: nonnegativeSafe, ids: strings }, ["dataset_id", "snapshot_seq", "ids"]),
   { callers: OWNER, label: "在确认消息已送达", description: "Confirm at most 24 owner's outgoing message ids against the authoritative ledger, independently of retained history pages. Does not send or execute anything." });
@@ -643,7 +647,8 @@ export const WIDGET_A2UI_GUIDE = "a2ui is A2UI v0.9 (basic catalog) as a flat co
   "Image {url, fit: contain|cover|fill|none|scaleDown, variant: icon|avatar|smallFeature|mediumFeature|largeFeature|header} with url https://… or data:image/png|jpeg|webp|gif;base64,… (the phone fetches, downsizes and caches; no SVG), 'avatar' / 'avatar:<face>' (Ash), 'icon:<name>'; " +
   "Icon {name: an A2UI icon name (check, close, star, favorite, home, settings, refresh, add, delete, edit, mail, phone, person, search, share, warning, info, …) or Ash's sun, cloud, rain, snow, wind, moon, heart, steps, weight, sleep, water, fire, calendar, clock, alert, bell, car, money, chart; or {svgPath}}; " +
   "Button {child: any component id, variant: default|primary|borderless, action}; CheckBox / Switch {label, value: bool or {path}}; ChoicePicker {options:[{label, value}], value:[...] or {path}, variant: mutuallyExclusive|multipleSelection, displayStyle: checkbox|chips}; " +
-  "ProgressBar {value, max?: 100, label?}; Badge {text}; Clock {format?, timeZone?} (live); Timer {since | until: epoch ms} (live count up/down). " +
+  "ProgressBar {value, max?: 100, label?}; Badge {text}; Clock {format?, timeZone?} (live); Timer {since | until: epoch ms} (live count up/down); " +
+  "Chart {series:[1-4 of {type: line|bars, values: 1-240 numbers, color, fill?, width?, dot?, max?, floor?, highlight?: {from, to?, color}, colors?: {\"<bar index>\": colour}, lastColor?, limit?, limitColor?}], gap?} (at most 600 values; style.height in dp is required; the phone draws it as a bitmap of the size it is given, in the colours of the phone's mode). " +
   "Not drawable in a widget (refused): Video, AudioPlayer, TextField, DateTimeInput, Slider, Modal, web pages, scripts, animation. " +
   "Every component may have: weight (share of the free space in a Row/Column), visible (bool or {path}), accessibility {label}, action, and style {background, color (text/icon/tint; inherited by children), cornerRadius, padding, margin, width, height (dp | 'fill' | 'wrap'), fontSize (sp), fontWeight (normal|medium|bold|100-900), italic, underline, strikethrough, textAlign, maxLines, ellipsize (end|start|middle|none), lineHeight, letterSpacing, opacity}. " +
   "Colours: '#RRGGBB', '#RRGGBBAA' (alpha last, e.g. '#000000B3' translucent dark), theme names text, textSecondary, accent, onAccent, background, surface, surfaceVariant, line, transparent, translucentDark, translucentLight, white, black, red, orange, yellow, green, teal, blue, purple, pink, gray (these follow the phone's dark mode), or {light, dark}. " +

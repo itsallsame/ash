@@ -94,6 +94,7 @@
       "actions": [["先不用管，我会自己恢复", "dismiss"]]
     }
   },
+  "unknown_device": "一台设备",
   "unknown": {
     "say": "我有一项检查越界了", "title": "我有一项检查越界了", "lead": "实际是 {v}，正常是 {budget} 以内。",
     "row": "实际 {v}，{budget} 以内算正常", "widget": "有一项检查越界了",
