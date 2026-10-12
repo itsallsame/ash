@@ -19,6 +19,7 @@ class AshApp : Application() {
         if (appProcess) return
         Notifications.createChannels(this)
         ConfigWatch.install(this)
+        ai.ash.caps.config.CheckupWatch.install(this)
         ai.ash.host.BackgroundLaunch.install(this)
         ai.ash.host.HandRuntime.start(this)
     }

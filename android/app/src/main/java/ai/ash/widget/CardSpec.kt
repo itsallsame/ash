@@ -56,6 +56,8 @@ data class CNode(
     val checked: Boolean = false, val label: String? = null, val options: List<COption> = emptyList(), val multiple: Boolean = false,
     val chips: Boolean = false, val value: Double = 0.0, val max: Double = 100.0, val size: Float? = null, val format: String? = null,
     val timeZone: String? = null, val since: Long? = null, val until: Long? = null,
+    /** A Chart's series (Ash's extension of A2UI, see [AshChart]). */
+    val chart: AshChart.Chart? = null,
 ) {
     /** The id the creator wrote (without the copy suffix a template or a per-size layout adds). */
     val defId: String get() = id.substringBefore('@').substringBefore('#')
@@ -168,7 +170,7 @@ object CardSpec {
     }
 
     val kinds = setOf("Text", "Image", "Icon", "Row", "Column", "List", "Card", "Tabs", "Divider", "Button", "CheckBox", "ChoicePicker", "Switch",
-        "Stack", "Grid", "Spacer", "ProgressBar", "Badge", "Clock", "Timer")
+        "Stack", "Grid", "Spacer", "ProgressBar", "Badge", "Clock", "Timer", "Chart")
 
     /** The core's resolved components (an "a2ui" in the pushed state) as a tree, with Android's nesting budget checked. */
     fun parse(a2ui: JSONObject): CardRender {
@@ -199,7 +201,8 @@ object CardSpec {
                 multiple = c.optBoolean("multiple"), chips = c.optBoolean("chips"), value = c.optDouble("value", 0.0), max = c.optDouble("max", 100.0),
                 size = if (c.has("size")) c.optDouble("size").toFloat() else null, format = c.optString("format").ifEmpty { null },
                 timeZone = c.optString("timeZone").ifEmpty { null }, since = if (c.has("since")) c.optLong("since") else null,
-                until = if (c.has("until")) c.optLong("until") else null)
+                until = if (c.has("until")) c.optLong("until") else null,
+                chart = if (kind == "Chart") AshChart.parse(c) else null)
             built[id] = n
             return n
         }

@@ -81,6 +81,11 @@ object Events {
             "One of the app's own permissions or switches changed: {item, state}; the items are those of config.status.",
             """{"type":"object","properties":{"item":{"type":"string","minLength":1},"state":{"type":"string","minLength":1}},"required":["item","state"],"additionalProperties":false}""",
         ),
+        EventDecl(
+            "checkup.changed",
+            "The phone's checkup in counts: {todo, groups:[{id, title, todo, optional?, text?}]}, one group per part of the phone; sent when it changes and when the phone connects.",
+            """{"type":"object","properties":{"todo":{"type":"integer","minimum":0,"maximum":9007199254740991},"groups":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"title":{"type":"string","minLength":1,"maxLength":40},"todo":{"type":"integer","minimum":0,"maximum":9007199254740991},"optional":{"type":"boolean"},"text":{"type":"string","maxLength":40}},"required":["id","title","todo"],"additionalProperties":false},"maxItems":16}},"required":["todo","groups"],"additionalProperties":false}""",
+        ),
     )
 
     val byWord: Map<String, EventDecl> = all.associateBy { it.word }

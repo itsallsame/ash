@@ -247,6 +247,14 @@ object AshPage {
         minimumHeight = AshUi.dp(ctx, AshTokens.Size.touch)
     }
 
+    /** 状态小点：和红色角标一样大（24dp = 20 + 2 圈页面色的边），没有字；[fill] 是灯的颜色（留意 / 有问题 / 暂停）。 */
+    fun statusDot(ctx: Context, fill: Int): View = View(ctx).apply {
+        val c = AshUi.p(ctx)
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(fill); setStroke(AshUi.dp(ctx, 2), c.bg) }
+        elevation = AshUi.dpF(ctx, 4f); outlineProvider = null
+        layoutParams = FrameLayout.LayoutParams(AshUi.dp(ctx, 24), AshUi.dp(ctx, 24))
+    }
+
     /** 红色角标：「!」，24dp（20 + 2 圈页面色的边）。 */
     fun errorBadge(ctx: Context): TextView = AshUi.text(ctx, "!", AshType(12f, 16f, 700, null), Color.WHITE).apply {
         val c = AshUi.p(ctx)

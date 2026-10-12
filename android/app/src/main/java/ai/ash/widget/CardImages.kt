@@ -54,6 +54,7 @@ object CardImages {
         return when (img) {
             is Img.Avatar -> WidgetHost.face(ctx, img.name)
             is Img.Path -> path(img.d, w, h)
+            is Img.Chart -> null   // a chart is drawn by AshChart, not fetched
             is Img.Url -> {
                 val url = img.url
                 val memKey = "$url|$w|$h"
