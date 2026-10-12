@@ -22,10 +22,12 @@ class McpHostTest {
         val asked = mutableListOf<String>()
         val opened = mutableListOf<String>()
         val checkups = mutableListOf<String?>()
+        val homes = mutableListOf<Pair<String, String?>>()
         var size: Pair<Int?, Int?>? = null
         override fun confirmLink(url: String, answer: (Boolean) -> Unit) { asked += url; answer(allow) }
         override fun openLink(url: String) { opened += url }
         override fun openCheckup(part: String?) { checkups += part }
+        override fun openHome(section: String, arg: String?) { homes += section to arg }
         override fun sizeChanged(width: Int?, height: Int?) { size = width to height }
     }
 
@@ -168,8 +170,17 @@ class McpHostTest {
         assertTrue(last().has("result"))
     }
 
+    @Test fun anAppCanPointTheOwnerToADeviceOrTheKeys() {
+        ui.allow = false
+        req(50, "ui/open-link", JSONObject().put("url", "ash://keys"))
+        req(51, "ui/open-link", JSONObject().put("url", "ash://device/device:abc-1"))
+        req(52, "ui/open-link", JSONObject().put("url", "ash://device/abc-2"))
+        assertEquals(listOf<Pair<String, String?>>("keys" to null, "device" to "d/device:abc-1", "device" to "d/device:abc-2"), ui.homes)
+        assertTrue(ui.asked.isEmpty())
+    }
+
     @Test fun otherAshLinksAndUnknownPartsAreRefused() {
-        for (url in listOf("ash://checkup/nonsense", "ash://console", "ash://checkup/notify/x", "ash://checkup?x=1", "ash://widget-action/1/x")) {
+        for (url in listOf("ash://checkup/nonsense", "ash://console", "ash://checkup/notify/x", "ash://checkup?x=1", "ash://widget-action/1/x", "ash://keys/x", "ash://device/", "ash://device/a b")) {
             req(40, "ui/open-link", JSONObject().put("url", url))
             assertTrue(url, last().has("error"))
         }

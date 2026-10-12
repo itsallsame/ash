@@ -22,6 +22,8 @@ interface HostUi {
     fun openLink(url: String)
     /** The app asked for Ash's own checkup page (`ash://checkup`, `ash://checkup/<part>`): [part] is a part of [ai.ash.ui.Checkup], or null for the whole page. */
     fun openCheckup(part: String?) {}
+    /** The app asked for a page of her home (`ash://device/<id>`, `ash://keys`): [section] and [arg] are what the home pages take. */
+    fun openHome(section: String, arg: String?) {}
     fun sizeChanged(width: Int?, height: Int?) {}
     fun log(level: String, data: String) {}
 }
@@ -128,6 +130,7 @@ class McpHost(
         val url = params.opt("url") as? String
         // Ash's own checkup page opens at once: it is a page of Ash that changes nothing, so there is nothing to confirm.
         if (url != null && checkupLink(url)) { ui.openCheckup(checkupPart(url)); return result(id, JSONObject()) }
+        homeLink(url)?.let { (section, arg) -> ui.openHome(section, arg); return result(id, JSONObject()) }
         if (url == null || !webLink(url)) return error(id, SERVER_ERROR, "Invalid URL")
         if (asking) return error(id, SERVER_ERROR, "Link opening denied by user")
         asking = true
@@ -161,6 +164,16 @@ class McpHost(
         /** `ash://checkup` or `ash://checkup/<part>` with a part the checkup has (HANDOFF §9: 「去修」 goes straight to the part). */
         fun checkupLink(url: String): Boolean = url.length <= 64 && CHECKUP.matches(url) && (checkupPart(url)?.let { ai.ash.ui.Checkup.part(it) != null } ?: true)
         fun checkupPart(url: String): String? = CHECKUP.find(url)?.groupValues?.get(1)?.ifEmpty { null }
+
+        private val DEVICE = Regex("^ash://device/([A-Za-z0-9:_.-]{1,128})$")
+
+        /** `ash://device/<device id>` and `ash://keys`: pages of her home that an app (her status) points the owner to; nothing else of `ash://` opens. */
+        fun homeLink(url: String?): Pair<String, String?>? {
+            if (url == null || url.length > 160) return null
+            if (url == "ash://keys") return "keys" to null
+            val d = DEVICE.find(url)?.groupValues?.get(1) ?: return null
+            return "device" to "d/" + (if (d.startsWith("device:")) d else "device:$d")
+        }
 
         /** Only http(s), with a host, no credentials in it. */
         fun webLink(url: String): Boolean {

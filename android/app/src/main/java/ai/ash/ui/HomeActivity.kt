@@ -63,6 +63,7 @@ class HomeActivity : Activity() {
         port.start()
         ai.ash.host.AppState.homePageLive = true
         if (focus) ui.postDelayed({ chatScreen.focusInput() }, 300)
+        openHomePageFrom(intent)
         val firstStart = OnboardingActivity.showOnce(this)
         // After an upgrade the phone may have put Ash's auto-start back off: look again once the link to the kernel is up.
         ui.postDelayed({ if (!isFinishing && !isDestroyed) Permissions.recheckAfterUpgrade(this, firstStart) }, 5_000)
@@ -75,6 +76,14 @@ class HomeActivity : Activity() {
         if (!::content.isInitialized) return
         showTab(HomeRoute.tabFor(intent.getStringExtra(HomeRoute.EXTRA_TAB), focus, fromLauncher(intent), tab))
         if (focus) chatScreen.focusInput()
+        openHomePageFrom(intent)
+    }
+
+    /** An app (her status) pointed the owner to a page of her home. */
+    private fun openHomePageFrom(i: Intent?) {
+        val page = i?.getStringExtra(EXTRA_HOME_PAGE) ?: return
+        i.removeExtra(EXTRA_HOME_PAGE)
+        home.openPage(page, null, i.getStringExtra(EXTRA_HOME_ARG))
     }
 
     private fun fromLauncher(i: Intent?) = HomeRoute.isLauncher(i?.action, i?.categories)
@@ -161,6 +170,9 @@ class HomeActivity : Activity() {
     companion object {
         /** Open with the message box focused (the home-screen widget's "跟 Ash 说"). */
         const val EXTRA_FOCUS_INPUT = "ai.ash.extra.FOCUS_INPUT"
+        /** Open her home on a page ([HomePages.openPage]: `keys`, `device` with `d/<device>`). */
+        const val EXTRA_HOME_PAGE = "ai.ash.extra.HOME_PAGE"
+        const val EXTRA_HOME_ARG = "ai.ash.extra.HOME_ARG"
         private const val STATE_TAB = "ai.ash.state.TAB"
     }
 }

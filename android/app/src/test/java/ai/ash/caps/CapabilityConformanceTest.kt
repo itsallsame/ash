@@ -176,7 +176,7 @@ class CapabilityConformanceTest {
 
     @Test fun theHandSendsTheStandardSenseWidgetAndConfigEvents() {
         val expected = setOf("sense.location", "sense.activity", "sense.health", "sense.geofence", "sense.source", "sense.calendar", "sense.battery",
-            "sense.screen", "sense.notification", "widget.placed", "widget.bind", "config.changed")
+            "sense.screen", "sense.notification", "widget.placed", "widget.bind", "config.changed", "checkup.changed")
         assertEquals(expected, Events.all.map { it.word }.toSet())
     }
 

@@ -358,6 +358,10 @@ class AppActivity : Activity() {
         override fun openCheckup(part: String?) {
             main.post { startActivity(Intent(this@AppActivity, ai.ash.ui.ConsoleActivity::class.java).also { i -> part?.let { i.putExtra(ai.ash.ui.ConsoleActivity.EXTRA_PART, it) } }) }
         }
+        override fun openHome(section: String, arg: String?) {
+            main.post { startActivity(Intent(this@AppActivity, ai.ash.ui.HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(ai.ash.ui.HomeActivity.EXTRA_HOME_PAGE, section).also { i -> arg?.let { i.putExtra(ai.ash.ui.HomeActivity.EXTRA_HOME_ARG, it) } }) }
+        }
         override fun log(level: String, data: String) { Log.i(TAG, "$appId [$level] ${data.take(500)}") }
     }
 
