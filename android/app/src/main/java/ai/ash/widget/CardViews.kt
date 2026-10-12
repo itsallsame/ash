@@ -241,7 +241,8 @@ class CardViews(private val ctx: Context, private val widgetId: Int, private val
         if (api31 && v.children.isNotEmpty()) rv.removeAllViews(id)
         // What is inside a box has the room the box has less its padding (a chart or a picture that fills the width fills that).
         val inner = v.padding?.let { availW - px(it[1]) - px(it[3]) } ?: availW
-        for (child in v.children) add(rv, id, child, build(child, inItem, inner))
+        val share = slotWidths(v, inner)
+        for (child in v.children) add(rv, id, child, build(child, inItem, share(child)))
         v.items?.let { items ->
             val listId = listIds[pendingLists.size]
             if (v.lay == Lay.GRID) rv.setInt(listId, "setNumColumns", v.columns)
@@ -276,6 +277,19 @@ class CardViews(private val ctx: Context, private val widgetId: Int, private val
         if (img is Img.Url && !img.url.startsWith("data:")) CardImages.failed[img.url]?.let { problems.add("图片没取到（${img.url.take(120)}）：$it") }
         if (img is Img.Path && bmp == null) problems.add("图标路径画不出来（${v.id}）")
         rv.setImageViewResource(R.id.w_self, R.drawable.w_image_placeholder)
+    }
+
+    /**
+     * The room each child of [v] has across, given [inner] for the whole of [v]: all of it, except in a Row, where weighted slots (and
+     * weighted gaps) share what the fixed gaps leave by their weights. What a chart or picture that fills the width should be as wide as.
+     */
+    private fun slotWidths(v: VNode, inner: Int): (VNode) -> Int {
+        if (v.lay != Lay.ROW) return { inner }
+        fun weightOf(c: VNode) = when (c.lay) { Lay.SLOT_H -> c.weight; Lay.GAP_H -> if (c.weight >= 2) 2 else 1; else -> 0 }
+        val total = v.children.sumOf { weightOf(it) }
+        if (total == 0) return { inner }
+        val fixed = v.children.filter { weightOf(it) == 0 }.sumOf { c -> if (c.lay == Lay.SPACE) px(c.minSize ?: 0f) else (c.width as? Dim.Dp)?.let { px(it.dp) } ?: 0 }
+        return { c -> if (weightOf(c) > 0) maxOf(0, (inner - fixed) * weightOf(c) / total) else inner }
     }
 
     /** A chart: drawn here at the size it has in the widget and in the colours of the theme, and counted in the bitmap budget like any picture. */

@@ -90,7 +90,7 @@ class CardWidgetProvider : AppWidgetProvider() {
                     else {
                         val (wDp, hDp) = sizeDp(ctx, manager, id, view.card)
                         val hhmm = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(view.card.updatedAt))
-                        val stale = Stale.of(ctx.getString(R.string.ash_stale_tag, hhmm), ctx.getString(R.string.ash_stale_22, hhmm))
+                        val stale = Stale.of(ctx.getString(R.string.ash_stale_tag, hhmm), ctx.getString(R.string.ash_stale_level))
                         render(ctx, id, view.card, render, wDp, hDp, stale = stale) { rv, problem -> show(rv ?: broken(ctx, id, view.card, problem ?: "未知原因")) }
                     }
                 }

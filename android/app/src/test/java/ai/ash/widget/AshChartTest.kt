@@ -129,18 +129,21 @@ class AshChartTest {
 
     @Test fun aStaleCardKeepsItsFaceInGreyAndSaysWhenItWasLastTrue() {
         val render = CardSpec.parse(resolved("design/vitals/card/examples/err.json"))
-        val stale = Stale.of("已过期 · 最后 12:31", "12:31 之后没收到我的消息")
+        val stale = Stale.of("已过期 · 最后 12:31", "已过期")
         val wide = render.sizes.first { it.width > CardStale.NARROW_DP }
-        val greyWide = CardStale.grey(CardPlan.plan(render, wide.root), stale, wide.width)
-        assertTrue(greyWide.walk().filter { it.id.endsWith(".at") }.all { it.text?.text == "已过期 · 最后 12:31" })
-        assertTrue(greyWide.walk().none { it.id == "stale~22" })
-        assertTrue(greyWide.walk().filter { it.text != null }.all { it.textColor == stale.text3 })
+        val before = CardPlan.plan(render, wide.root)
+        val greyWide = CardStale.grey(before, stale, wide.width)
+        // wide: the time becomes a tag on a pill; the level word is left alone
+        greyWide.walk().filter { it.id.endsWith(".at") }.forEach { assertEquals("已过期 · 最后 12:31", it.text?.text); assertEquals(stale.surface2, it.bg); assertEquals(stale.text2, it.textColor) }
+        assertTrue(greyWide.walk().filter { it.text != null && !it.id.endsWith(".at") }.all { it.textColor == stale.text3 })
         assertTrue(greyWide.walk().none { (it.image as? Img.Chart)?.chart?.series?.any { s -> s.highlight != null || s.limit != null } == true })
-        assertEquals(CardPlan.plan(render, wide.root).bg, greyWide.bg)
+        assertTrue(greyWide.walk().filter { it.id.endsWith(".halo") }.all { it.alpha == 0f })
+        assertEquals(before.bg, greyWide.bg)
+        // narrow: no room for the tag: the time stays, the level word says 已过期
         val narrow = render.sizes.first { it.width <= CardStale.NARROW_DP }
         val greyNarrow = CardStale.grey(CardPlan.plan(render, narrow.root), stale, narrow.width)
-        assertEquals("12:31 之后没收到我的消息", greyNarrow.walk().first { it.id == "stale~22" }.text?.text)
-        assertFalse(greyNarrow.walk().any { it.text?.text == "已过期 · 最后 12:31" })
+        assertTrue(greyNarrow.walk().filter { it.id.endsWith(".lv") }.all { it.text?.text == "已过期" })
+        assertTrue(greyNarrow.walk().none { it.text?.text == "已过期 · 最后 12:31" })
     }
 
     @Test fun theStaleWordsInTheAppAreTheDesignersWords() {
@@ -148,6 +151,6 @@ class AshChartTest {
         val xml = repoFile("android/app/src/main/res/values/strings.xml").readText()
         fun res(name: String) = Regex("<string name=\"$name\">([^<]*)</string>").find(xml)!!.groupValues[1]
         assertEquals(copy.getString("stale_tag").replace("{hhmm}", "%1\$s"), res("ash_stale_tag"))
-        assertEquals(copy.getString("stale_22").replace("{hhmm}", "%1\$s"), res("ash_stale_22"))
+        assertEquals(JSONObject(repoFile("design/vitals/copy.json").readText()).getJSONObject("levels").getJSONObject("stale").getString("name"), res("ash_stale_level"))
     }
 }
