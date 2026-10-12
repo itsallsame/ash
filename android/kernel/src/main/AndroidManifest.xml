@@ -13,6 +13,8 @@
     <!-- Shared storage: the agent in the container reads and writes the phone's files (targetSdk 28 + legacy storage). -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- The pairing guide posts notifications (the owner types the code into one). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
       Two signature-level permissions, declared by both packages (same signature may declare twice, so either installs first):
@@ -87,5 +89,20 @@
                 <action android:name="ai.ash.kernel.RESTART" />
             </intent-filter>
         </receiver>
+        <!--
+          「后台也能动手」 (host/): the kernel's own high-privilege layer. The shell host, launched through wireless debugging,
+          gets the kernel bridge here; only the shell and the system hold INTERACT_ACROSS_USERS_FULL.
+        -->
+        <provider
+            android:name=".host.KernelHostDoor"
+            android:authorities="${applicationId}.kernelhost"
+            android:multiprocess="false"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <!-- The minutes of a pairing or reconnection, while the owner is in the system's settings. -->
+        <service android:name=".host.GuideService" android:exported="false" android:foregroundServiceType="shortService" />
+        <!-- The reconnect notice's tap opens this, which begins the guide (signature permission: only the hand app can start it). -->
+        <activity android:name=".host.GuideActivity" android:exported="true" android:permission="ai.ash.permission.KERNEL"
+            android:excludeFromRecents="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
     </application>
 </manifest>

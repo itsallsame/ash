@@ -64,6 +64,9 @@ object Notifications {
      */
     const val MIUI_APP_ICON = "miui.appIcon"
     const val ID = 1
+    /** Channels the pairing guide uses: progress (silent, same as the status channel) and a ringing one for what the owner must do now. */
+    const val CH_STATUS = CHANNEL
+    const val CH_URGENT = "ash.kernel.urgent"
     /** The hand app's chat page (its only launcher activity). */
     const val HOME_ACTIVITY = "ai.ash.ui.HomeActivity"
 
@@ -76,9 +79,17 @@ object Notifications {
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             },
         )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_URGENT, "Ash 内核配对", NotificationManager.IMPORTANCE_HIGH).apply { setShowBadge(false) },
+        )
         // A channel still carrying a running service's notification cannot be deleted (SecurityException); the next start retires it.
         for (old in RETIRED_CHANNELS) runCatching { nm.deleteNotificationChannel(old) }
     }
+
+    /** A builder on [channel] with Ash's icon, for the pairing guide. */
+    fun builder(ctx: Context, channel: String): Notification.Builder =
+        Notification.Builder(ctx, channel).setSmallIcon(R.drawable.ic_stat_ash)
+            .addExtras(Bundle().apply { putParcelable(MIUI_APP_ICON, Icon.createWithResource(ctx, R.mipmap.ic_launcher)) })
 
     fun build(ctx: Context, text: String): Notification {
         val b = Notification.Builder(ctx, CHANNEL)

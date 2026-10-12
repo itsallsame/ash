@@ -10,6 +10,10 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         Log.i("ash.kernel.boot", "${intent.action}: starting the kernel")
         KernelService.start(ctx)
+        // Paired with wireless debugging, but the shell host is gone after a reboot: ask the owner to connect it again.
+        if (ai.ash.kernel.host.adb.AdbKey.exists(ctx) && !ai.ash.kernel.host.KernelHost.ready()) {
+            ai.ash.kernel.host.KernelPairing.askToConnect(ctx.applicationContext)
+        }
     }
 }
 

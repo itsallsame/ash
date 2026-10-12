@@ -103,7 +103,7 @@ android {
 
     sourceSets["main"].assets.srcDir(payloadAssets)
     sourceSets["main"].assets.srcDir(containerAssets)
-    buildFeatures { aidl = true }
+    buildFeatures { aidl = true; prefab = true }
 
     androidResources {
         // The payload is extracted with java.util.zip and the container with tar -z: store both,
@@ -133,6 +133,9 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    // Pairing with the phone's wireless debugging (host/adb): BoringSSL's SPAKE2 (static), a self-signed cert (okhttp-tls).
+    implementation("io.github.vvb2060.ndk:boringssl:20251124")
+    implementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

@@ -66,13 +66,17 @@ class KernelService : Service() {
             provisioner = AndroidProvisioner(this, paths),
             launcher = AndroidNodeLauncher(this, paths, sys, api, server, log, version),
             env = sys,
-            stopped = { secrets.stopped },
+            // The shell host (the kernel's own high-privilege layer, launched through wireless debugging) runs the core
+            // when it is present; the service then yields so there is only ever one core.
+            stopped = { secrets.stopped || ai.ash.kernel.host.HostPresence.yielded },
             show = ::show,
             note = { Log.i(TAG, it); log.note(it) },
             onNodeGone = { api.token = null; connector.forget() },
             powerSaver = { getSystemService(PowerManager::class.java).isPowerSaveMode },
         )
 
+        // Re-evaluate whether to run the core when the shell host comes or goes.
+        ai.ash.kernel.host.HostPresence.watch { supervisor.poke() }
         // Stale core from an earlier host process first, then supervise.
         Thread({
             NodeProcess.reapStale(paths.nodePid, paths.coreBundle) { log.note(it) }
