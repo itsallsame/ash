@@ -12,7 +12,8 @@ data class WState(val revision: Long, val cards: Map<String, WCard>, val binding
 /** What one "Ash 卡片" widget shows. */
 sealed class CardView {
     object Unbound : CardView()
-    data class Expired(val card: WCard) : CardView()
+    /** The card's core stopped updating it: it is shown as it was, in grey, saying when (not cleared); [render] is null when it could not be drawn at all. */
+    data class Expired(val card: WCard, val render: CardRender?) : CardView()
     data class Broken(val card: WCard, val problem: String) : CardView()
     data class Show(val card: WCard, val render: CardRender) : CardView()
 }
@@ -51,7 +52,7 @@ object WidgetPlan {
     fun view(state: WState?, widgetId: Int, localCard: String?, now: Long): CardView {
         val cardId = state?.bindings?.get(widgetId.toString()) ?: localCard ?: return CardView.Unbound
         val card = state?.cards?.get(cardId) ?: return CardView.Unbound
-        if (card.expiresAt != null && card.expiresAt <= now) return CardView.Expired(card)
+        if (card.expiresAt != null && card.expiresAt <= now) return CardView.Expired(card, card.render)
         val render = card.render ?: return CardView.Broken(card, card.problem ?: "卡片内容缺失")
         return CardView.Show(card, render)
     }

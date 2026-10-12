@@ -169,6 +169,10 @@ class AppsPane(private val activity: Activity, private val ash: Ash, private val
                 if (a.hasTrouble && !stopped) addView(AshPage.errorBadge(activity).apply {
                     (layoutParams as FrameLayout.LayoutParams).apply { gravity = Gravity.TOP or Gravity.END; marginEnd = d(6); topMargin = -d(5) }
                 })
+                // An app that keeps its own state (her status): a dot of its colour, the badge's size, when it is not simply fine.
+                else if (!stopped) when (a.badge) { "warn" -> c.warnFill; "err" -> c.errFill; "paused" -> c.text3; else -> null }?.let { fill ->
+                    addView(AshPage.statusDot(activity, fill).apply { (layoutParams as FrameLayout.LayoutParams).apply { gravity = Gravity.TOP or Gravity.END; marginEnd = d(6); topMargin = -d(5) } })
+                }
             })
             addView(AshUi.text(activity, if (stopped) "${a.name} · 停用" else a.name, AshType(12.5f, 17f, 400, if (stopped) Role.TEXT_3 else Role.TEXT), maxLines = 2)
                 .apply { gravity = Gravity.CENTER; if (stopped) setTextColor(c.text3) })

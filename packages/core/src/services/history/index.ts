@@ -128,6 +128,7 @@ export function createHistoryService(options: HistoryOptions): Member {
         case "window": return { data: windows.window(body) };
         case "current": return { data: windows.current(body) };
         case "activity.page": return { data: windows.activityPage(body) };
+        case "activity.count": return { data: { total_count: windows.activityPage({ limit: 1, since_ts: body.since_ts as number | undefined, until_ts: body.until_ts as number | undefined, agent: body.agent as string | undefined }).total_count } };
         case "query": return { data: query(body) };
         case "read": return { data: read(body) };
         case "turn": return { data: turn(body) };

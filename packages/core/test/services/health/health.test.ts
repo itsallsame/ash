@@ -190,3 +190,31 @@ test("continuous owner typing is active; a plain read still counts as an idle lo
   s.run(40, spin(s));
   assert.ok((await s.events()).some((e) => e.id === "idle.msg_key_rate" && e.top[0].key === "service:history/current:person"));
 });
+
+test("a breach that was written gets its end (ok), with when it began and its worst value; one that was never written gets none", async () => {
+  let lag = 500;
+  const { ledger } = openLedger();
+  let t = 1_000_000_000_000;
+  const { createHealthService: make } = await import("../../../src/services/health");
+  const service = make({ ledger, now: () => t, sampler: { sample: () => ({ cpu_pct: 1, rss: MB, heap: MB, lag_p99_ms: lag }) }, router: { subscribe: () => () => {} }, registry: { find: () => null },
+    invariants: [{ id: "loop.lag", metric: "lag", agg: "value", window_s: 10, idle: false, budget: 200, persist_s: 30, note: "late" }] });
+  service.start();
+  const step = (n: number) => { for (let i = 0; i < n; i++) { t += 10_000; service.tick(); } };
+  step(2); lag = 100; step(8); // broken for twenty seconds, never long enough to be written
+  assert.deepEqual((await call(service, owner, "recent", {})).events.map((e: any) => e.type), ["start"]);
+  lag = 300; step(4); lag = 900; step(2); lag = 100; step(8); // long enough; the worst was 900
+  const events = (await call(service, owner, "recent", {})).events as any[];
+  const breach = events.find((e) => e.type === "breach")!, ok = events.find((e) => e.type === "ok")!;
+  assert.equal(ok.id, "loop.lag");
+  assert.equal(ok.since, breach.since);
+  assert.equal(ok.peak, 900);
+  assert.ok(ok.at > breach.at);
+});
+
+test("the minute rows say how many times a hand connected", async () => {
+  const s = setup();
+  s.run(30, () => { s.service.noteLink("open", "AAA"); });
+  s.run(60);
+  const { minutes } = await call(s.service, owner, "recent", { kind: "minute" });
+  assert.ok(minutes.some((m: any) => m.link_opens >= 1), JSON.stringify(minutes));
+});

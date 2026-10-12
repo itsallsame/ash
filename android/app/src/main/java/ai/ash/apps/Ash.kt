@@ -30,6 +30,8 @@ data class AppInfo(
     val needs: List<Need> = emptyList(), val running: Boolean = false, val error: String = "",
     /** What kind of trouble [error] is (`manifest`, `folder`, `run`; blank when the kernel did not say): [error] itself is for an agent and is never shown. */
     val problem: String = "",
+    /** The app's own state, which it keeps up to date itself (`service:apps/apps.badge`): `warn`, `err` or `paused`; blank when it is simply fine. The grid draws a dot of it. */
+    val badge: String = "",
 ) {
     /** The app's app.json cannot be read or does not pass: it cannot be installed and cannot be opened. (An older kernel gave no kind: a not-yet-installed app with an error is such a one.) */
     val broken get() = problem == "manifest" || (problem.isEmpty() && error.isNotBlank() && !granted)
@@ -55,6 +57,8 @@ data class AppInfo(
     }
 
     companion object {
+        private val BADGES = setOf("warn", "err", "paused")
+
         /** `apps` of the result of `service:apps/apps.list`; entries with an id the shell cannot give an origin to are left out. */
         fun list(a: JSONArray): List<AppInfo> =
             (0 until a.length()).mapNotNull { i ->
@@ -68,7 +72,8 @@ data class AppInfo(
                 }
                 AppInfo(id, o.optString("name", id).ifBlank { id }.take(60), o.optString("version").take(40), o.optString("summary").take(300),
                     surfaces, o.optBoolean("enabled", true), o.optBoolean("granted", false),
-                    needs(o.optJSONArray("needs")), o.optBoolean("running", false), o.optString("error").trim().take(300), o.optString("problem").trim().take(20))
+                    needs(o.optJSONArray("needs")), o.optBoolean("running", false), o.optString("error").trim().take(300), o.optString("problem").trim().take(20),
+                    o.optString("badge").takeIf { it in BADGES } ?: "")
             }
 
         private fun needs(a: JSONArray?): List<Need> = if (a == null) emptyList() else (0 until a.length()).mapNotNull { i ->
@@ -216,9 +221,10 @@ class Ash(ctx: Context, private val app: String?, private val inProcess: Boolean
         }
     }
 
+    /** The app's icon: a picture the system decodes, or an SVG (the first-party apps' icons) drawn by [SvgIcon]. */
     fun icon(id: String): Bitmap? = runCatching {
         val bytes = Base64.decode(Replies.data(call("service:apps", "apps.icon", JSONObject().put("id", id)))?.optString("data") ?: return null, Base64.DEFAULT)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: SvgIcon.render(String(bytes, Charsets.UTF_8))
     }.getOrNull()
 
     fun surface(id: String, surface: String): Surface {

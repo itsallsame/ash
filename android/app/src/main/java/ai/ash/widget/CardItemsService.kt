@@ -40,7 +40,7 @@ class CardItemsService : RemoteViewsService() {
                 val root = WidgetPlan.pick(render, w, h)
                 val local = WidgetHost.local(card)
                 val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-                val builder = CardViews(ctx, widgetId, card, night, local) { CardWidgetProvider.updateCard(ctx, card.id) }
+                val builder = CardViews(ctx, widgetId, card, night, local, { CardWidgetProvider.updateCard(ctx, card.id) })
                 val availW = (w * ctx.resources.displayMetrics.density).toInt()
                 if (listId == WHOLE_CARD) builder.items(listOf(CardPlan.item(render, root, local, false)), availW)
                 else {

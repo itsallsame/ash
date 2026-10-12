@@ -1,0 +1,345 @@
+/* =====================================================================
+   Ash 设计系统 · ash.css
+   延伸自灵动岛（docs/island/island-tokens.json）。一份 CSS，两套主题：
+   .t-light / .t-dark 只换变量；实现时把 .t-dark 的变量放进
+   @media (prefers-color-scheme: dark) { :root { … } } 即可跟随系统。
+   颜色（陪伴型的「暖光」）：奶油白的底、暖深棕的字；珊瑚橙 = Ash 这个牌子和「你的动作」
+   （主按钮、发送、你的蜜桃色气泡）；薄荷青 = 她醒着、在做事（来自头像耳机上的光）。
+   琥珀 = 等你，绿 = 完成，红 = 出错。暗色是暖炭灰，不是纯黑。
+   没有底部页签：对话是主屏，「应用」从顶栏进入（底部只留给输入框）。
+   ===================================================================== */
+
+/* ---------- 1. Tokens ---------- */
+.t-light{
+  color-scheme:light;
+  --bg:#FFF8F1; --surface:#FFFFFF; --surface-2:#FBEFE5; --surface-3:#F3E2D5; --elev:#FFFFFF;
+  --line:#F0E2D7; --line-2:#E5D0C1;
+  --ink:#2E2420; --text:#3B302B; --text-2:#7C6B62; --text-3:#A8978D; --on-ink:#FFFFFF;
+  --you:#CC4B2E; --you-press:#B8432A; --you-mark:#F2704E; --you-soft:rgba(242,112,78,.12); --you-text:#C8502F; --on-you:#FFFFFF;
+  --her:#0E8A80; --her-fill:#4CC7BE; --her-soft:rgba(76,199,190,.14);
+  --ok:#18804F; --ok-fill:#2BB673; --ok-soft:rgba(43,182,115,.12);
+  --warn:#A35F00; --warn-fill:#F5A623; --warn-soft:rgba(245,166,35,.15);
+  --err:#C9302F; --err-fill:#E5484D; --err-soft:rgba(229,72,77,.10);
+  --bubble-her:#FFFFFF; --bubble-me:#FFE2D1; --on-me:#3A1D10;
+  --code-bg:#FBF3EC;
+  --shadow-1:0 1px 2px rgba(120,70,40,.05),0 2px 10px rgba(120,70,40,.06);
+  --shadow-2:0 12px 32px rgba(120,70,40,.14),0 2px 6px rgba(120,70,40,.06);
+  --scrim:rgba(46,36,32,.32);
+  --bezel:#2A2420;
+}
+.t-dark{
+  color-scheme:dark;
+  --bg:#1B1715; --surface:#25201D; --surface-2:#2E2825; --surface-3:#38312D; --elev:#2A2421;
+  --line:#342D29; --line-2:#433A35;
+  --ink:#F6EDE7; --text:#EADFD8; --text-2:#B7A79E; --text-3:#85766E; --on-ink:#1B1715;
+  --you:#FF8A66; --you-press:#FF9E80; --you-mark:#FF8A66; --you-soft:rgba(255,138,102,.16); --you-text:#FFAA8C; --on-you:#2A1208;
+  --her:#6FDBD2; --her-fill:#4CC7BE; --her-soft:rgba(76,199,190,.16);
+  --ok:#6FD9A4; --ok-fill:#2BB673; --ok-soft:rgba(43,182,115,.16);
+  --warn:#FFD08A; --warn-fill:#F5A623; --warn-soft:rgba(245,166,35,.15);
+  --err:#FF8A8A; --err-fill:#FF6B6B; --err-soft:rgba(255,107,107,.14);
+  --bubble-her:#25201D; --bubble-me:#5C3B2B; --on-me:#FFE8DA;
+  --code-bg:#211C1A;
+  --shadow-1:none;
+  --shadow-2:0 12px 32px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.04);
+  --scrim:rgba(0,0,0,.5);
+  --bezel:#3A332F;
+}
+.t-light,.t-dark{
+  --font:-apple-system,system-ui,"PingFang SC","MiSans","HarmonyOS Sans SC","Noto Sans SC",sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --ease:cubic-bezier(.32,.72,0,1);
+  --r-xs:8px; --r-sm:12px; --r-md:16px; --r-lg:20px; --r-xl:28px; --r-pill:999px;
+  font-family:var(--font); color:var(--text); font-variant-numeric:tabular-nums;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- 2. Type scale（中文为主，行高偏松） ---------- */
+.tx-display{font-size:30px;line-height:38px;font-weight:700;letter-spacing:.01em;color:var(--ink)}
+.tx-title{font-size:22px;line-height:30px;font-weight:650;color:var(--ink)}
+.tx-headline{font-size:17px;line-height:24px;font-weight:600;color:var(--ink)}
+.tx-body{font-size:15px;line-height:24px;color:var(--text)}
+.tx-callout{font-size:14px;line-height:21px;color:var(--text-2)}
+.tx-sub{font-size:13px;line-height:19px;color:var(--text-2)}
+.tx-caption{font-size:11.5px;line-height:16px;color:var(--text-3)}
+.tx-num{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+/* 颜色工具类优先于组件默认色（例如顶栏状态文字「等你一句话」要是琥珀色） */
+.c-her{color:var(--her)!important} .c-you{color:var(--you-text)!important} .c-ok{color:var(--ok)!important} .c-warn{color:var(--warn)!important} .c-err{color:var(--err)!important} .c-2{color:var(--text-2)!important} .c-3{color:var(--text-3)!important}
+
+/* ---------- 3. Icons（24 网格，1.8 线宽，圆头圆角） ---------- */
+.i{width:22px;height:22px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;display:block}
+.i-s{width:18px;height:18px}.i-xs{width:16px;height:16px;stroke-width:2}.i-l{width:26px;height:26px}
+.i-solid{fill:currentColor;stroke:none}
+
+/* ---------- 4. Device frame（展示用） ---------- */
+.device{width:390px;height:844px;padding:9px;border-radius:56px;background:var(--bezel);flex:none;box-sizing:content-box}
+.screen{position:relative;width:390px;height:844px;border-radius:47px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column}
+.sb{height:34px;flex:none;position:relative}
+.sb::after{content:"";position:absolute;left:50%;top:11px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#050506}
+.home-ind{position:absolute;left:50%;bottom:7px;width:120px;height:4px;margin-left:-60px;border-radius:2px;background:var(--ink);opacity:.22}
+
+/* ---------- 5. Avatar & presence ---------- */
+.av{position:relative;flex:none;display:block}
+.av img{width:100%;height:100%;display:block;object-fit:cover;object-position:50% 18%;background:var(--surface-2);border-radius:32%}
+.av-28{width:28px;height:28px}.av-36{width:36px;height:36px}.av-40{width:40px;height:40px}.av-56{width:56px;height:56px}.av-88{width:88px;height:88px}.av-120{width:120px;height:120px}
+.av-round img{border-radius:50%}
+.av .dot{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;border:2.5px solid var(--bg);background:var(--ok-fill)}
+.av .dot.off{background:var(--text-3)} .av .dot.warn{background:var(--warn-fill)}
+/* 醒着：头像外一圈青色光环缓慢转动（在做事）；呼吸（在想） */
+.av-live::before{content:"";position:absolute;inset:-3px;border-radius:36%;padding:1.6px;
+  background:conic-gradient(from 0deg,var(--her-fill),transparent 40%,transparent 60%,var(--her-fill));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  animation:spin 2.4s linear infinite}
+.av-breath::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--her-fill);animation:breath 1.8s ease-in-out infinite}
+.av-wait::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--warn-fill);animation:breath 1.6s ease-in-out infinite}
+.av-letter{display:flex;align-items:center;justify-content:center;border-radius:32%;font-weight:650;color:#fff}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breath{0%,100%{opacity:.25;transform:scale(.97)}50%{opacity:1;transform:scale(1)}}
+@keyframes dots{0%,100%{opacity:.25}50%{opacity:1}}
+.typing{display:inline-flex;gap:3px;vertical-align:middle}
+.typing i{width:4px;height:4px;border-radius:50%;background:currentColor;animation:dots 1.2s ease-in-out infinite}
+.typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--her-soft);border-top-color:var(--her-fill);animation:spin .9s linear infinite;flex:none}
+
+/* ---------- 6. Top bar / tab bar ---------- */
+.topbar{height:56px;flex:none;display:flex;align-items:center;gap:10px;padding:0 6px 0 14px}
+.topbar .who{display:flex;align-items:center;gap:10px;flex:1;min-width:0;border:0;background:none;padding:0;font:inherit;color:inherit;text-align:left}
+.topbar .name{font-size:17px;line-height:22px;font-weight:650;color:var(--ink)}
+.topbar .state{font-size:12px;line-height:16px;color:var(--text-2);display:flex;align-items:center;gap:5px;white-space:nowrap}
+.state-dot{width:6px;height:6px;border-radius:50%;background:var(--ok-fill);flex:none}
+.navbar{height:52px;flex:none;display:flex;align-items:center;gap:4px;padding:0 6px}
+.navbar .ttl{flex:1;text-align:center;font-size:17px;font-weight:600;color:var(--ink)}
+.iconbtn{width:44px;height:44px;border-radius:50%;border:0;background:none;color:var(--text);display:flex;align-items:center;justify-content:center;flex:none;padding:0;position:relative}
+.iconbtn.fill{background:var(--surface-2)}
+.badge{position:absolute;top:6px;right:6px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:var(--err-fill);color:#fff;font-size:10.5px;line-height:16px;font-weight:600;text-align:center;border:2px solid var(--bg)}
+.tabbar{flex:none;height:58px;padding-bottom:14px;display:flex;border-top:.5px solid var(--line);background:var(--bg)}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:0;background:none;font:inherit;font-size:11px;color:var(--text-3);padding:6px 0 0}
+.tab.on{color:var(--ink);font-weight:600}
+.large-title{padding:6px 20px 14px}
+
+/* ---------- 7. Conversation ---------- */
+.stream{flex:1;min-height:0;overflow:hidden;padding:4px 14px 10px;display:flex;flex-direction:column;justify-content:flex-end;gap:4px;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 20px);mask-image:linear-gradient(to bottom,transparent 0,#000 20px)}
+.daysep{align-self:center;font-size:11.5px;color:var(--text-3);margin:12px 0 6px}
+.row{display:flex;flex-direction:column;gap:3px}
+.row.me{align-items:flex-end}
+.row.her{align-items:flex-start}
+.b{max-width:80%;padding:10px 14px;font-size:15.5px;line-height:24px;border-radius:20px;word-break:break-word;box-sizing:border-box}
+.b-me{background:var(--bubble-me);color:var(--on-me);border-bottom-right-radius:6px}
+.b-her{background:var(--bubble-her);color:var(--text);border-bottom-left-radius:6px;box-shadow:var(--shadow-1)}
+.b-her.mid{border-top-left-radius:6px}
+.b-me.mid{border-top-right-radius:6px}
+.b-wide{max-width:92%}
+.meta{font-size:11px;color:var(--text-3);padding:0 6px}
+.meta-pending{display:flex;align-items:center;gap:4px;font-size:11.5px;color:var(--text-2);padding:0 4px}
+.byline{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);margin:6px 0 2px 2px}
+.gap-s{height:10px;flex:none}
+/* markdown in bubble */
+.md h4{margin:2px 0 6px;font-size:16px;line-height:24px;font-weight:650;color:var(--ink)}
+.md p{margin:0 0 8px}.md p:last-child{margin-bottom:0}
+.md ul,.md ol{margin:4px 0 8px;padding-left:20px}.md li{margin:2px 0}
+.md b{font-weight:600;color:var(--ink)}
+.md code{font-family:var(--mono);font-size:13px;background:var(--code-bg);padding:1px 5px;border-radius:5px}
+.md a{color:var(--you-text);text-decoration:none;border-bottom:1px solid currentColor}
+.codeblk{margin:6px 0 8px;border-radius:12px;background:var(--code-bg);overflow:hidden;border:1px solid var(--line)}
+.codeblk .hd{display:flex;align-items:center;justify-content:space-between;height:32px;padding:0 6px 0 12px;font-size:11.5px;color:var(--text-3);border-bottom:1px solid var(--line)}
+.codeblk pre{margin:0;padding:10px 12px;font:12.5px/19px var(--mono);color:var(--text);white-space:pre;overflow:hidden}
+.tbl{margin:6px 0 8px;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13.5px;line-height:20px}
+.tbl table{border-collapse:collapse;width:100%}
+.tbl th{text-align:left;font-weight:600;color:var(--text-2);font-size:12px;background:var(--surface-2);padding:7px 10px}
+.tbl td{padding:8px 10px;border-top:1px solid var(--line)}
+/* attachments */
+.att-img{width:200px;height:150px;border-radius:16px;overflow:hidden;background:var(--surface-3);position:relative}
+.att-file{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:var(--surface);border:1px solid var(--line);min-width:220px;box-sizing:border-box}
+.att-file .ic{width:36px;height:36px;border-radius:10px;background:var(--you-soft);color:var(--you-text);display:flex;align-items:center;justify-content:center}
+
+/* ---------- 8. Cards in stream ---------- */
+.card{width:100%;max-width:330px;box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:14px 14px 12px;display:flex;flex-direction:column;gap:10px;box-shadow:var(--shadow-1)}
+.card-hd{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600}
+.card-hd .chip-ic{width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.card-hd .exp{margin-left:auto;font-weight:400;color:var(--text-3);font-size:11.5px}
+.card-title{font-size:16px;line-height:23px;font-weight:600;color:var(--ink)}
+.card-body{font-size:14px;line-height:21px;color:var(--text-2)}
+.card-note{font-size:13px;line-height:19px;color:var(--text-2);background:var(--surface-2);border-radius:12px;padding:9px 11px}
+.card-link{display:flex;align-items:center;gap:2px;font-size:13px;color:var(--you-text);border:0;background:none;padding:0;font-family:inherit;align-self:flex-start;min-height:28px}
+.card-acts{display:flex;flex-direction:column;gap:8px;margin-top:2px}
+.card-acts .two{display:flex;gap:8px}.card-acts .two>*{flex:1}
+.resolved{height:40px;border-radius:20px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13.5px;color:var(--text-2);background:var(--surface-2)}
+.resolved.ok{color:var(--ok);background:var(--ok-soft)}
+.opts{display:flex;flex-wrap:wrap;gap:8px}
+.opt{height:40px;padding:0 15px;border-radius:20px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink);font:inherit;font-size:14px;display:inline-flex;align-items:center;gap:6px}
+.opt.on{background:var(--you);border-color:var(--you);color:#fff}
+.opt.dim{opacity:.4}
+.say{display:flex;align-items:center;gap:8px;height:40px;border-radius:20px;background:var(--surface-2);padding:0 6px 0 14px;font-size:14px;color:var(--text-3)}
+.say .sbtn{margin-left:auto;width:30px;height:30px;border-radius:50%;background:var(--surface-3);color:var(--text-2);display:flex;align-items:center;justify-content:center}
+
+/* ---------- 9. Buttons ---------- */
+.btn{height:44px;padding:0 20px;border-radius:22px;border:0;font:inherit;font-size:16px;font-weight:650;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;box-sizing:border-box}
+.btn-primary{background:var(--you);color:var(--on-you)}
+.btn-secondary{background:var(--you-soft);color:var(--you-text)}
+.btn-neutral{background:var(--surface-2);color:var(--ink)}
+.btn-ink{background:var(--ink);color:var(--on-ink)}
+.btn-danger{background:var(--err-soft);color:var(--err)}
+.btn-ghost{background:none;color:var(--you-text);padding:0 10px}
+.btn-sm{height:34px;padding:0 14px;font-size:13.5px;border-radius:17px}
+.btn-lg{height:52px;border-radius:26px;font-size:16px}
+.btn-block{width:100%}
+.btn[disabled]{opacity:.4}
+
+/* ---------- 10. Progress pill / chips above composer ---------- */
+.dock{flex:none;display:flex;justify-content:center;padding:6px 14px 2px;gap:8px}
+.pill{height:32px;border-radius:16px;padding:0 10px 0 10px;background:var(--elev);border:1px solid var(--line);box-shadow:var(--shadow-1);display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2);white-space:nowrap}
+.pill b{font-weight:600;color:var(--ink)}
+.ctx{height:30px;border-radius:15px;padding:0 4px 0 12px;background:var(--you-soft);color:var(--you-text);display:inline-flex;align-items:center;gap:4px;font-size:12.5px}
+
+/* ---------- 11. Composer ---------- */
+.composer{flex:none;display:flex;align-items:flex-end;gap:8px;padding:8px 10px 24px}
+.field{flex:1;min-height:44px;border-radius:22px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;gap:6px;padding:0 6px 0 5px;box-sizing:border-box}
+.field .to{width:34px;height:34px;border-radius:50%;border:0;background:none;padding:0;position:relative;flex:none}
+.field .to img{width:28px;height:28px;border-radius:32%;object-fit:cover;object-position:50% 18%;margin:3px}
+.field .ph{flex:1;font-size:15px;color:var(--text-3)}
+.field .txt{flex:1;font-size:15px;color:var(--text)}
+.send{width:44px;height:44px;border-radius:50%;border:0;background:var(--you);color:var(--on-you);display:flex;align-items:center;justify-content:center;flex:none}
+.send.idle{background:var(--surface-2);color:var(--text-3)}
+.plus{width:44px;height:44px;border-radius:50%;border:0;background:var(--surface-2);color:var(--text);display:flex;align-items:center;justify-content:center;flex:none}
+
+/* ---------- 12. Lists / groups / switch ---------- */
+.page{flex:1;min-height:0;overflow:hidden;padding:0 16px 16px;display:flex;flex-direction:column;gap:20px}
+.group{display:flex;flex-direction:column;gap:8px}
+.group-ttl{font-size:13px;color:var(--text-2);padding:0 6px}
+.group-foot{font-size:12px;line-height:18px;color:var(--text-3);padding:0 6px}
+.list{background:var(--surface);border-radius:20px;overflow:hidden;box-shadow:var(--shadow-1)}
+.li{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 14px;box-sizing:border-box;position:relative}
+.li+.li::before{content:"";position:absolute;top:0;left:54px;right:0;height:.5px;background:var(--line)}
+.li.noic+.li.noic::before,.list.noic .li::before{left:14px}
+.li .lic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--surface-2);color:var(--text)}
+.li .lt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.li .lt .t{font-size:15.5px;line-height:22px;color:var(--ink)}
+.li .lt .s{font-size:12.5px;line-height:18px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .lv{font-size:14px;color:var(--text-2);white-space:nowrap}
+.li .chev{color:var(--text-3)}
+.sw{width:46px;height:28px;border-radius:14px;background:var(--surface-3);position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:var(--ok-fill)}.sw.on::after{left:21px}
+.tag{height:22px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:600;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.tag-ok{background:var(--ok-soft);color:var(--ok)}.tag-warn{background:var(--warn-soft);color:var(--warn)}.tag-err{background:var(--err-soft);color:var(--err)}.tag-mute{background:var(--surface-2);color:var(--text-2)}.tag-her{background:var(--her-soft);color:var(--her)}.tag-you{background:var(--you-soft);color:var(--you-text)}
+.seg{display:flex;background:var(--surface-2);border-radius:14px;padding:3px;gap:2px}
+.seg>*{flex:1;height:32px;border-radius:11px;border:0;background:none;font:inherit;font-size:13.5px;color:var(--text-2);display:flex;align-items:center;justify-content:center;gap:4px;position:relative}
+.seg>.on{background:var(--elev);color:var(--ink);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.under{display:flex;gap:22px;padding:0 20px;border-bottom:.5px solid var(--line)}
+.under>*{height:42px;display:flex;align-items:center;font-size:15px;color:var(--text-2);position:relative;gap:4px}
+.under>.on{color:var(--ink);font-weight:600}
+.under>.on::after{content:"";position:absolute;left:50%;bottom:-.5px;width:18px;height:3px;margin-left:-9px;border-radius:2px;background:var(--ink)}
+.cnt{min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:var(--err-fill);color:#fff;font-size:10.5px;line-height:16px;font-weight:600;text-align:center}
+
+/* ---------- 13. Sheet / scrim / toast / empty / skeleton ---------- */
+.scrim{position:absolute;inset:0;background:var(--scrim)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--elev);border-radius:28px 28px 0 0;padding:8px 16px 28px;box-shadow:var(--shadow-2);display:flex;flex-direction:column;gap:12px}
+.grabber{width:36px;height:5px;border-radius:3px;background:var(--line-2);align-self:center;margin-bottom:4px}
+.toast{position:absolute;left:50%;transform:translateX(-50%);bottom:140px;height:38px;padding:0 16px;border-radius:19px;background:var(--ink);color:var(--on-ink);font-size:13.5px;display:flex;align-items:center;gap:8px;white-space:nowrap;box-shadow:var(--shadow-2)}
+.banner{flex:none;margin:0 14px 6px;padding:9px 12px;border-radius:14px;display:flex;align-items:center;gap:8px;font-size:13px}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:0 40px}
+.sk{background:var(--surface-2);border-radius:8px;position:relative;overflow:hidden}
+.sk::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:shimmer 1.6s infinite}
+.t-dark .sk::after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent)}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.hr{height:.5px;background:var(--line);flex:none}
+
+/* ---------- 14. Board chrome（只用于画布展示） ---------- */
+.board{box-sizing:border-box;padding:56px 64px 64px;display:flex;flex-direction:column;gap:28px;font-family:-apple-system,system-ui,"PingFang SC","Noto Sans SC",sans-serif}
+.board-light{background:#F2ECE6;color:#2E2420}
+.board-row{display:flex;gap:44px;align-items:flex-start}
+.shot{display:flex;flex-direction:column;gap:14px;align-items:center}
+.shot-cap{font-size:15px;font-weight:600;color:#3A3B40}
+.shot-cap span{font-weight:400;color:#7A7C83;margin-left:6px}
+.theme-lbl{font-size:13px;letter-spacing:.08em;color:#7A7C83;font-weight:600}
+
+@media (prefers-reduced-motion:reduce){.av-live::before,.av-breath::before,.av-wait::before,.typing i,.spinner,.sk::after,.lamp-err.lamp-xl::after{animation:none}}
+
+/* 滚动区里的直接子元素不被压缩，超出部分就是「还能往下滑」 */
+.page>*,.stream>*{flex-shrink:0}
+
+/* ---------- 14. 她的状态：状态灯 · 小组件 ---------- */
+/* 状态灯三档 = ok / warn / err 令牌；另有「刚到」(her) 和「不知道 / 过期」(灰色空心)。
+   灯芯 = *-fill，光晕 = *-soft；大号灯两圈光晕叠在一起，里圈自然更浓。 */
+.lamp{--c:var(--ok-fill);--s:var(--ok-soft);width:10px;height:10px;border-radius:50%;background:var(--c);box-shadow:0 0 0 3px var(--s);flex:none;box-sizing:border-box;position:relative}
+.lamp-warn{--c:var(--warn-fill);--s:var(--warn-soft)} .lamp-err{--c:var(--err-fill);--s:var(--err-soft)} .lamp-new{--c:var(--her-fill);--s:var(--her-soft)}
+.lamp-off{--c:transparent;--s:transparent;border:2px solid var(--text-3)}
+.lamp-xl{width:22px;height:22px;margin:18px;box-shadow:0 0 0 9px var(--s),0 0 0 18px var(--s)}
+.lamp-xl.lamp-off{box-shadow:0 0 0 9px var(--surface-2)}
+/* 只有「有问题」的大灯外圈慢慢涨落（2.4s），减少动画时不跑 */
+.lamp-err.lamp-xl::after{content:"";position:absolute;inset:-20px;border-radius:50%;border:2px solid var(--err-fill);opacity:0;animation:lampring 2.4s var(--ease) infinite}
+@keyframes lampring{0%{transform:scale(.6);opacity:.5}100%{transform:scale(1.15);opacity:0}}
+.lvl-ok{color:var(--ok)} .lvl-warn{color:var(--warn)} .lvl-err{color:var(--err)} .lvl-new{color:var(--her)} .lvl-off{color:var(--text-3)}
+.vt-ic{background:#2E2420;color:#4CC7BE;display:flex;align-items:center;justify-content:center;flex:none}
+.t-dark .vt-ic{box-shadow:inset 0 0 0 1px rgba(255,255,255,.10)}
+.vt-chip{height:30px;padding:0 12px;border-radius:15px;background:var(--surface);box-shadow:var(--shadow-1);font-size:13px;color:var(--text-2);display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.t-dark .vt-chip{background:var(--surface-2)}
+.vt-tile{background:var(--surface);border-radius:18px;padding:12px;display:flex;flex-direction:column;gap:1px;box-shadow:var(--shadow-1);min-width:0}
+.vt-word{font-size:18px;line-height:26px;font-weight:650;color:var(--ink)}
+.vt-sec{display:flex;flex-direction:column;gap:10px}
+.vt-sec-hd{display:flex;align-items:baseline;padding:0 4px}
+.vt-sec-hd .tx-headline{flex:1}
+.vt-day{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));padding:14px 4px 12px}
+.vt-day>span{display:flex;flex-direction:column;align-items:center;gap:1px}
+.vt-day b{font-size:20px;line-height:28px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.vt-day .z b,.vt-day .z .tx-caption{color:var(--text-3);opacity:.6}
+.vt-bars{display:flex;align-items:flex-end;gap:3px;height:var(--h,40px)}
+.vt-bars>i{flex:1;border-radius:2px;background:var(--surface-3);min-height:2px}
+.vt-bars>i.now{background:var(--her-fill)} .vt-bars>i.bad{background:var(--err-fill)} .vt-bars>i.was{background:var(--warn-fill)}
+.btn-fix{height:34px;padding:0 14px;border-radius:17px;border:0;font:inherit;font-size:13.5px;font-weight:650;background:var(--warn-soft);color:var(--warn)}
+/* 读数条：灰轨 + 正常范围刻度 + 实际值 */
+.gauge{position:relative;height:8px;border-radius:4px;background:var(--surface-2)}
+.gauge>.v{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--err-fill)}
+.gauge>.lim{position:absolute;top:-5px;bottom:-5px;width:2px;margin-left:-1px;border-radius:1px;background:var(--ink)}
+
+/* 桌面小组件 · 沿用「Ash 卡片」外框：圆角 22、内边距 14；颜色全部换成令牌 */
+.wg{box-sizing:border-box;background:var(--surface);border-radius:22px;padding:14px;display:flex;flex-direction:column;flex:none;box-shadow:0 8px 24px rgba(60,30,15,.16);font-family:var(--font);color:var(--text)}
+.t-dark .wg,.t-dark.wg{box-shadow:0 8px 24px rgba(0,0,0,.4),inset 0 0 0 1px rgba(255,255,255,.05)}
+.wg-42{width:330px;height:150px} .wg-22{width:150px;height:150px}
+.wg-hd{display:flex;align-items:center;gap:6px;height:18px;font-size:12px;color:var(--text-2)}
+.wg-hd .vt-ic{width:18px;height:18px;border-radius:6px}
+.wg-hd .time{margin-left:auto;font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.wg-say{display:flex;align-items:center;gap:9px;margin-top:12px;font-size:18px;line-height:24px;font-weight:650;color:var(--ink)}
+.wg-nums{margin-top:auto;display:flex;gap:28px}
+.wg-nums>span{display:flex;flex-direction:column}
+.wg-nums b{font-size:24px;line-height:30px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.wg-alert{margin-top:auto;border-radius:14px;padding:7px 11px;display:flex;flex-direction:column;gap:1px;background:var(--err-soft)}
+.wg-alert .k{font-size:11px;line-height:15px;color:var(--err);opacity:.85}
+.wg-alert .v{font-size:13.5px;line-height:19px;font-weight:600;color:var(--err);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wg-alert.warn{background:var(--warn-soft)} .wg-alert.warn .k,.wg-alert.warn .v{color:var(--warn)}
+/* 过期：不清空，整张卡退成灰色（灯变空心灰、所有颜色换成 text-3），右上角换成「已过期」 */
+.wg.stale .wg-say{color:var(--text-2)} .wg.stale .wg-nums b{color:var(--text-3)} .wg.stale .tx-caption{color:var(--text-3)}
+.wg-tag{margin-left:auto;height:20px;padding:0 8px;border-radius:10px;background:var(--surface-2);color:var(--text-2);font-size:11px;font-weight:600;display:inline-flex;align-items:center}
+
+/* 小组件 v2：每个数配一张小图（最近 1 小时 / 近 7 天）。图在原生里画成位图（A2UI 新增 Spark） */
+.wg-44{width:330px;height:330px}
+.wg-line{font-size:14px;line-height:18px;font-weight:650;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.wg.stale .wg-line{color:var(--text-2)}
+.spark{display:block;overflow:visible;flex:none}
+.wg-cells{margin-top:auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.wg-cell{display:flex;flex-direction:column;gap:1px;min-width:0}
+.wg-cell .k{font-size:11px;line-height:14px;color:var(--text-3);white-space:nowrap}
+.wg-cell .v{font-size:17px;line-height:22px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
+.wg-cell .v small{font-size:10.5px;font-weight:500;color:var(--text-3);margin-left:2px}
+.wg-cell .spark{margin-top:5px}
+.wg-stack{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.wg-stack .wg-cell{display:grid;grid-template-columns:auto 1fr;column-gap:6px;align-items:baseline}
+.wg-stack .wg-cell .v{text-align:right;font-size:15px;line-height:19px}
+.wg-stack .wg-cell .spark{grid-column:1 / -1;margin-top:3px}
+.wg-sub{margin:2px 0 0 23px;font-size:12px;line-height:16px;color:var(--text-3)}
+.wg-legend{display:flex;gap:12px;margin-top:12px;font-size:11.5px;line-height:16px;color:var(--text-3);white-space:nowrap}
+.wg-legend>span{display:flex;align-items:center;gap:4px}
+.wg-legend i{width:8px;height:8px;border-radius:2px;display:block}
+.wg-legend b{font-size:13px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.wg-big{position:relative;height:84px;margin-top:6px}
+.wg-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.wg-tile{background:var(--surface-2);border-radius:14px;padding:8px 10px 9px;display:flex;flex-direction:column;gap:1px}
+.wg-tile .k{font-size:11px;line-height:14px;color:var(--text-3)}
+.wg-tile .v{font-size:17px;line-height:22px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.wg-tile .v small{font-size:10.5px;font-weight:500;color:var(--text-3);margin-left:2px}
+.wg-tile .spark{margin-top:4px}
+.wg.stale .wg-cell .v,.wg.stale .wg-tile .v,.wg.stale .wg-legend b,.wg.stale .wg-today b{color:var(--text-3)!important}
+.wg-today{margin-top:auto;display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-3)}
+.wg-today>span{display:flex;align-items:baseline;gap:4px}
+.wg-today b{font-size:16px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.wg-today .z b{color:var(--text-3)}
+.wg-44 .wg-alert{margin-top:auto}

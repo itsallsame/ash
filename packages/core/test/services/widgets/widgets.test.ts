@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Message } from "../../../../sdk/src/message";
 import { createWidgetsService, STATE_WORD } from "../../../src/services/widgets";
+import { validateCard } from "../../../src/services/widgets/card";
 import { openLedger } from "../../kernel/ledger/helpers";
 import { agent, call, code, ctxOf, fakeRouter, msg, owner } from "../support";
 
@@ -179,4 +180,28 @@ test("ttl marks a card expired; at most 50 cards", async () => {
   for (let i = 0; i < 49; i++) await call(svc, agent(), "widget.card.put", put(`c${i}`, text("a")));
   assert.equal(await code(call(svc, agent(), "widget.card.put", put("last", text("a")))), "bad_request");
   await call(svc, agent(), "widget.card.put", put("c0", text("b")));
+});
+
+test("Chart: lines and bars with colours, highlight, limit; the phone draws it at the size the card gives; bad ones are told why", () => {
+  const card = (chart: Record<string, unknown>) => ({ components: [{ id: "root", component: "Column", children: ["c"] }, { id: "c", component: "Chart", style: { width: "fill", height: 30 }, ...chart }] });
+  const ok = validateCard(card({ gap: 1, series: [
+    { type: "bars", values: [0, 4, 8, 44], color: "teal", max: 57.5, colors: { 3: "red" }, lastColor: "#FF0000", limit: 30, limitColor: "gray" },
+    { type: "line", values: [2, -1, 3], color: { light: "#00FF00", dark: "#00AA00" }, fill: true, width: 2, highlight: { from: 1, to: 2, color: "orange" } },
+  ] }));
+  const chart = ok.components.find((c) => c.id === "c")!;
+  assert.equal(chart.series!.length, 2);
+  assert.deepEqual(chart.series![1]!.values, [2, 0, 3], "negative values are drawn as zero");
+  assert.equal(chart.gap, 1);
+  const refused = (chart: Record<string, unknown>, why: RegExp) => assert.throws(() => validateCard(card(chart)), why);
+  refused({ series: [] }, /1 to 4 series/);
+  refused({ series: [{ type: "pie", values: [1], color: "teal" }] }, /line.*bars/);
+  refused({ series: [{ type: "line", values: [], color: "teal" }] }, /1 to 240/);
+  refused({ series: [{ type: "line", values: [1, Infinity], color: "teal" }] }, /finite/);
+  refused({ series: [{ type: "line", values: [1], color: "mauve" }] }, /colour/);
+  refused({ series: [{ type: "bars", values: [1, 2], color: "teal", colors: { 5: "red" } }] }, /index/);
+  refused({ series: [{ type: "line", values: [1, 2], color: "teal", highlight: { from: 3, to: 2, color: "red" } }] }, /highlight/);
+  refused({ series: [{ type: "line", values: [1], color: "teal", width: 9 }] }, /width/);
+  refused({ series: [{ type: "line", values: [1], color: "teal", glow: true }] }, /unknown field/);
+  refused({ series: Array.from({ length: 3 }, () => ({ type: "line", values: Array.from({ length: 240 }, () => 1), color: "teal" })) }, /600/);
+  assert.throws(() => validateCard({ components: [{ id: "root", component: "Chart", series: [{ type: "line", values: [1], color: "teal" }] }] }), /style.height/);
 });

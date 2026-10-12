@@ -50,6 +50,8 @@ const ENV_CHANGED: JsonSchema = { type: "object", oneOf: [
 // ---- how a word is written --------------------------------------------------------------------------------------------
 const OWNER: CallerKind[] = ["owner"];
 const OWNER_AGENT: CallerKind[] = ["owner", "agent"];
+/** For the readings only the owner and an app the owner installed may see (the app is granted them in its needs). */
+const OWNER_APP: CallerKind[] = ["owner", "app"];
 const KERNEL: CallerKind[] = ["kernel"];
 
 interface Options {
@@ -113,6 +115,13 @@ add("service:admin", "status", "request", empty,
 add("service:admin", "logs", "request", obj({ lines: { type: "integer", minimum: 1, maximum: 1000 }, level: choice("error", "warn", "info", "debug"), since: nonnegativeSafe }),
   obj({ lines: strings }, ["lines"]),
   { ...adminOwnerOnly, label: "在看日志", description: "The tail of the hub's log file (default 200 lines, newest last; the lines carry no level or time yet, so level and since do not narrow them). Only the owner, from a channel on this machine: logs can hold things nobody else should see." });
+const checkupGroup = obj({ id: nonempty, title: { type: "string", minLength: 1, maxLength: 40 }, todo: nonnegativeSafe, optional: bool, text: { type: "string", maxLength: 40 } }, ["id", "title", "todo"]);
+const checkupSummary = { todo: nonnegativeSafe, groups: { type: "array", items: checkupGroup, maxItems: 16 } };
+add("service:admin", "checkup.changed", "event", obj(checkupSummary, ["todo", "groups"]), undefined,
+  { direction: "in", label: "在收手机的体检摘要", description: "A hand reports its checkup in counts: how many things need dealing with, and for each part of the phone its name, the count and a short phrase. No contents. Sent when the summary changes and when the hand connects; not recorded." });
+add("service:admin", "checkup", "request", empty,
+  obj({ known: bool, ...checkupSummary, at: nonnegativeSafe, device: nonempty }, ["known"]),
+  { label: "在看手机的体检", description: "The last checkup summary the phone reported (how many things need dealing with, per part of the phone). known is false until a phone has reported. Use it when asked whether the phone's permissions and keep-alive switches are in order; the details are on the phone." });
 add("service:admin", "settings.changed", "event", obj({ keys: strings, by: id }, ["keys"]), undefined,
   { record: true, label: "在记下设置改动", description: "A setting was changed (the key names, never the values). Goes into the ledger so that what changed, when and by whom can be found again." });
 
@@ -120,7 +129,7 @@ add("service:admin", "settings.changed", "event", obj({ keys: strings, by: id },
 // service:health: how the hub itself is behaving (counts and budgets, never contents)
 // ===================================================================================================================
 const healthKey = obj({ key: nonempty, per_min: num }, ["key", "per_min"]);
-const healthEvent = obj({ at: nonnegativeSafe, type: choice("breach", "start"), id: nonempty, value: num, budget: num, window_s: integer, idle: bool, top: array(obj({ key: nonempty, n: num }, ["key", "n"])), note: str, last_seen: nonnegativeSafe },
+const healthEvent = obj({ at: nonnegativeSafe, type: choice("breach", "start", "ok"), id: nonempty, since: nonnegativeSafe, peak: num, value: num, budget: num, window_s: integer, idle: bool, top: array(obj({ key: nonempty, n: num }, ["key", "n"])), note: str, last_seen: nonnegativeSafe },
   ["at", "type", "id"]);
 add("service:health", "status", "request", obj({ window_s: { type: "integer", minimum: 60, maximum: 3600 } }),
   obj({
@@ -132,8 +141,8 @@ add("service:health", "status", "request", obj({ window_s: { type: "integer", mi
     last_events: array(healthEvent),
   }, ["now", "uptime_s", "idle", "window_s", "rates", "top", "proc", "invariants", "last_events"]),
   { label: "在看自己的运行状况", description: "How the hub is doing right now: message and ledger rates, the busiest words, process CPU and memory, event loop delay, and which behaviour budgets (idle traffic, ledger growth, reconnect storms, errors) are kept or broken. Use it when asked why Ash is slow, busy or heating the phone. It counts words and callers, never contents." });
-add("service:health", "recent", "request", obj({ since: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 500 }, kind: choice("event", "minute") }),
-  obj({ events: array(healthEvent), minutes: array(obj({ at: nonnegativeSafe, idle: bool, msg: num, ledger: num, err: num, cpu_pct: num, rss_mb: num, lag_p99_ms: num, top: array(healthKey) }, ["at"])) }),
+add("service:health", "recent", "request", obj({ since: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 1440 }, kind: choice("event", "minute") }),
+  obj({ events: array(healthEvent), minutes: array(obj({ at: nonnegativeSafe, idle: bool, msg: num, ledger: num, err: num, link_opens: num, cpu_pct: num, rss_mb: num, lag_p99_ms: num, top: array(healthKey) }, ["at"])) }),
   { label: "在翻运行记录", description: "The health history: budget breaches and starts (kind event, default) or one summary per minute for up to seven days (kind minute), newest first. Use it to find out when something started misbehaving and which word did it." });
 
 // ===================================================================================================================
@@ -473,7 +482,7 @@ add("service:persona", "propose", "request", obj({ file: personaFile, content: {
 // service:cost: usage and quota
 // ===================================================================================================================
 add("service:cost", "usage.get", "request", obj({ days: { type: "integer", minimum: 1, maximum: 90 } }), free,
-  { callers: OWNER, label: "在看用量", description: "What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls." });
+  { callers: OWNER_APP, label: "在看用量", description: "What the models used and cost: today, 7 and 30 days, by part of Ash, by day, and the latest calls." });
 add("service:cost", "balance.get", "request", empty, free,
   { callers: OWNER, label: "在看余额", description: "The provider account balance for the configured API key; fails rather than reporting zero when it cannot be read." });
 add("service:cost", "quota.check", "request", obj({ agent: agentRef }, ["agent"]), obj({ allowed: bool, reason: str, used: num, limit: num }, ["allowed"]),
@@ -570,6 +579,8 @@ add("service:history", "current", "request", obj({ ...historyPageInput, agent: i
   { callers: OWNER, label: "在看现在的事", description: "Authoritative current presence and bounded progress, with independently paginated pending questions and complete total count. Optional agent scopes turns and question publishers; gate approvals remain in the unfiltered owner view. Read without snapshot_seq for current state; old conversation windows do not determine current presence." });
 add("service:history", "activity.page", "request", obj({ ...historyPageInput, turn: nonempty, since_ts: nonnegativeSafe, until_ts: nonnegativeSafe, agent: id }), obj({ ...historyPageResult, total_count: nonnegativeSafe }, [...historyPageRequired, "total_count"]),
   { callers: OWNER, label: "在看她做过的事", description: "Bidirectional bounded turn summaries with an authoritative total count, optionally filtered by inclusive since_ts, exclusive until_ts and agent. With turn, read its safe display steps and complete step count instead; time/agent filters then do not apply. Step details remain on demand through history.activity." });
+add("service:history", "activity.count", "request", obj({ since_ts: nonnegativeSafe, until_ts: nonnegativeSafe, agent: id }), obj({ total_count: nonnegativeSafe }, ["total_count"]),
+  { callers: OWNER_APP, label: "在数她做过的事", description: "How many things she did (turns) in a time range, optionally for one agent: the same count as the total of activity.page, without any of the turns. since_ts inclusive, until_ts exclusive. For a status page that only needs the number." });
 add("service:history", "confirm", "request", obj({ ids: { type: "array", items: nonempty, maxItems: 24, uniqueItems: true }, snapshot_seq: nonnegativeSafe }, ["ids"]),
   obj({ dataset_id: nonempty, snapshot_seq: nonnegativeSafe, ids: strings }, ["dataset_id", "snapshot_seq", "ids"]),
   { callers: OWNER, label: "在确认消息已送达", description: "Confirm at most 24 owner's outgoing message ids against the authoritative ledger, independently of retained history pages. Does not send or execute anything." });
@@ -591,6 +602,8 @@ add("service:host", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]),
   { callers: KERNEL, direction: "out", label: "在转达唤醒闹钟", description: "The host's alarm went off (the device woke): the host module passes it on to service:clock." });
 add("service:host", "env.changed", "event", ENV_CHANGED, undefined,
   { callers: KERNEL, direction: "out", label: "在转达环境变化", description: "The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay)." });
+add("service:host", "restart", "request", obj({ reason: { type: "string", maxLength: 200 } }), obj({ restarting: { const: true } }, ["restarting"]),
+  { callers: ["owner", "app"], effect: "act", label: "在重启大脑", description: "Have the host restart the kernel: it is away for about ten seconds and what it was doing is cut off. The caller has asked the owner first (an app puts the question on its own screen); an agent cannot call it." });
 add("service:host", "hands.handoff", "request", obj({ port: { type: "integer", minimum: 1, maximum: 65535 }, token: secret({ type: "string", minLength: 1 }) }, ["port", "token"]), obj({ delivered: strings }, ["delivered"]),
   { callers: KERNEL, effect: "act", label: "在交接本机的手", description: "Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down." });
 add("service:host", "update.install", "request", obj({ version: nonempty, url: nonempty, sha256: sha }, ["version", "url", "sha256"]), empty,
@@ -634,7 +647,8 @@ export const WIDGET_A2UI_GUIDE = "a2ui is A2UI v0.9 (basic catalog) as a flat co
   "Image {url, fit: contain|cover|fill|none|scaleDown, variant: icon|avatar|smallFeature|mediumFeature|largeFeature|header} with url https://… or data:image/png|jpeg|webp|gif;base64,… (the phone fetches, downsizes and caches; no SVG), 'avatar' / 'avatar:<face>' (Ash), 'icon:<name>'; " +
   "Icon {name: an A2UI icon name (check, close, star, favorite, home, settings, refresh, add, delete, edit, mail, phone, person, search, share, warning, info, …) or Ash's sun, cloud, rain, snow, wind, moon, heart, steps, weight, sleep, water, fire, calendar, clock, alert, bell, car, money, chart; or {svgPath}}; " +
   "Button {child: any component id, variant: default|primary|borderless, action}; CheckBox / Switch {label, value: bool or {path}}; ChoicePicker {options:[{label, value}], value:[...] or {path}, variant: mutuallyExclusive|multipleSelection, displayStyle: checkbox|chips}; " +
-  "ProgressBar {value, max?: 100, label?}; Badge {text}; Clock {format?, timeZone?} (live); Timer {since | until: epoch ms} (live count up/down). " +
+  "ProgressBar {value, max?: 100, label?}; Badge {text}; Clock {format?, timeZone?} (live); Timer {since | until: epoch ms} (live count up/down); " +
+  "Chart {series:[1-4 of {type: line|bars, values: 1-240 numbers, color, fill?, width?, dot?, max?, floor?, highlight?: {from, to?, color}, colors?: {\"<bar index>\": colour}, lastColor?, limit?, limitColor?}], gap?} (at most 600 values; style.height in dp is required; the phone draws it as a bitmap of the size it is given, in the colours of the phone's mode). " +
   "Not drawable in a widget (refused): Video, AudioPlayer, TextField, DateTimeInput, Slider, Modal, web pages, scripts, animation. " +
   "Every component may have: weight (share of the free space in a Row/Column), visible (bool or {path}), accessibility {label}, action, and style {background, color (text/icon/tint; inherited by children), cornerRadius, padding, margin, width, height (dp | 'fill' | 'wrap'), fontSize (sp), fontWeight (normal|medium|bold|100-900), italic, underline, strikethrough, textAlign, maxLines, ellipsize (end|start|middle|none), lineHeight, letterSpacing, opacity}. " +
   "Colours: '#RRGGBB', '#RRGGBBAA' (alpha last, e.g. '#000000B3' translucent dark), theme names text, textSecondary, accent, onAccent, background, surface, surfaceVariant, line, transparent, translucentDark, translucentLight, white, black, red, orange, yellow, green, teal, blue, purple, pink, gray (these follow the phone's dark mode), or {light, dark}. " +
@@ -739,7 +753,7 @@ add("service:pulse", "pulse.due", "request", obj({ kind: choice("wake", "daily",
 // Independent apps (contract ash-app/1): discovery, install with the owner's approval of what an app needs, and grants.
 const appId: JsonSchema = { type: "string", pattern: APP_NAME_PATTERN };
 const appInfo = obj({ id: appId, name: str, version: str, summary: str, role: str, publisher: str, enabled: bool, granted: bool, running: bool,
-  needs: array(obj({}, [], true)), surfaces: array(obj({}, [], true)), events: strings, tools: strings, error: str,
+  needs: array(obj({}, [], true)), surfaces: array(obj({}, [], true)), events: strings, tools: strings, error: str, badge: choice("warn", "err", "paused"),
   cards: array(obj({ id: str, title: str, size: str, card: widgetCardId, problem: str }, ["id", "title", "size", "card"])) }, ["id", "name", "version", "enabled", "granted", "running"], true);
 add("service:apps", "apps.list", "request", empty, obj({ apps: array(appInfo) }, ["apps"]),
   { label: "在看有哪些应用", description: "Every app found in the container (/root/apps/<id>/app.json): name, version, whether the owner installed (granted) it and whether it is running. " +
@@ -760,6 +774,8 @@ add("service:apps", "apps.refresh", "request", empty, obj({ apps: array(appInfo)
   { label: "在查找新应用", description: "Read /root/apps again: new apps appear, removed ones stop." });
 // Running apps: restart after editing, read what the server said, clear its data, remove it. No approval: they stay
 // within what the owner already granted, or narrow it.
+add("service:apps", "apps.badge", "request", obj({ tone: choice("ok", "warn", "err", "paused") }, ["tone"]), obj({ tone: choice("ok", "warn", "err", "paused") }, ["tone"]),
+  { callers: ["app"], effect: "write", label: "在亮应用的小点", description: "An app says how it is, for the dot on its icon in the app grid: ok (no dot), warn, err or paused. Only about itself; it shows while the app runs and is asked again by the app when it starts." });
 add("service:apps", "apps.restart", "request", obj({ id: appId }, ["id"]), obj({ id: appId, running: bool, problems: array(obj({}, [], true)) }, ["id", "running"], true),
   { effect: "act", label: "在重启应用", description: "Restart an installed app's server so edits to its files (server.mjs, tools, app.json cards) take effect. It is checked first as apps.validate does: " +
     "a failing app is not restarted and the problems come back (error.detail.problems). If app.json's needs changed, use apps.install instead (the owner approves them). Pages need no restart." });

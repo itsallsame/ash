@@ -1,0 +1,89 @@
+/* 「她的状态」用到的新 class（状态灯、此刻 / 今天 / 趋势、读数条、桌面小组件的网页参考）。
+   依赖 ash-tokens.css 的令牌；和 design/app/ash.css 同一套写法。应用页面在沙箱 WebView 里，要把 ash-tokens.css + ash-ui.css + 本文件内联进页面。 */
+/* ---------- 14. 她的状态：状态灯 · 小组件 ---------- */
+/* 状态灯三档 = ok / warn / err 令牌；另有「刚到」(her) 和「不知道 / 过期」(灰色空心)。
+   灯芯 = *-fill，光晕 = *-soft；大号灯两圈光晕叠在一起，里圈自然更浓。 */
+.lamp{--c:var(--ok-fill);--s:var(--ok-soft);width:10px;height:10px;border-radius:50%;background:var(--c);box-shadow:0 0 0 3px var(--s);flex:none;box-sizing:border-box;position:relative}
+.lamp-warn{--c:var(--warn-fill);--s:var(--warn-soft)} .lamp-err{--c:var(--err-fill);--s:var(--err-soft)} .lamp-new{--c:var(--her-fill);--s:var(--her-soft)}
+.lamp-off{--c:transparent;--s:transparent;border:2px solid var(--text-3)}
+.lamp-xl{width:22px;height:22px;margin:18px;box-shadow:0 0 0 9px var(--s),0 0 0 18px var(--s)}
+.lamp-xl.lamp-off{box-shadow:0 0 0 9px var(--surface-2)}
+/* 只有「有问题」的大灯外圈慢慢涨落（2.4s），减少动画时不跑 */
+.lamp-err.lamp-xl::after{content:"";position:absolute;inset:-20px;border-radius:50%;border:2px solid var(--err-fill);opacity:0;animation:lampring 2.4s var(--ease) infinite}
+@keyframes lampring{0%{transform:scale(.6);opacity:.5}100%{transform:scale(1.15);opacity:0}}
+.lvl-ok{color:var(--ok)} .lvl-warn{color:var(--warn)} .lvl-err{color:var(--err)} .lvl-new{color:var(--her)} .lvl-off{color:var(--text-3)}
+.vt-ic{background:#2E2420;color:#4CC7BE;display:flex;align-items:center;justify-content:center;flex:none}
+.t-dark .vt-ic{box-shadow:inset 0 0 0 1px rgba(255,255,255,.10)}
+.vt-chip{height:30px;padding:0 12px;border-radius:15px;background:var(--surface);box-shadow:var(--shadow-1);font-size:13px;color:var(--text-2);display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.t-dark .vt-chip{background:var(--surface-2)}
+.vt-tile{background:var(--surface);border-radius:18px;padding:12px;display:flex;flex-direction:column;gap:1px;box-shadow:var(--shadow-1);min-width:0}
+.vt-word{font-size:18px;line-height:26px;font-weight:650;color:var(--ink)}
+.vt-sec{display:flex;flex-direction:column;gap:10px}
+.vt-sec-hd{display:flex;align-items:baseline;padding:0 4px}
+.vt-sec-hd .tx-headline{flex:1}
+.vt-day{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));padding:14px 4px 12px}
+.vt-day>span{display:flex;flex-direction:column;align-items:center;gap:1px}
+.vt-day b{font-size:20px;line-height:28px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.vt-day .z b,.vt-day .z .tx-caption{color:var(--text-3);opacity:.6}
+.vt-bars{display:flex;align-items:flex-end;gap:3px;height:var(--h,40px)}
+.vt-bars>i{flex:1;border-radius:2px;background:var(--surface-3);min-height:2px}
+.vt-bars>i.now{background:var(--her-fill)} .vt-bars>i.bad{background:var(--err-fill)} .vt-bars>i.was{background:var(--warn-fill)}
+.btn-fix{height:34px;padding:0 14px;border-radius:17px;border:0;font:inherit;font-size:13.5px;font-weight:650;background:var(--warn-soft);color:var(--warn)}
+/* 读数条：灰轨 + 正常范围刻度 + 实际值 */
+.gauge{position:relative;height:8px;border-radius:4px;background:var(--surface-2)}
+.gauge>.v{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--err-fill)}
+.gauge>.lim{position:absolute;top:-5px;bottom:-5px;width:2px;margin-left:-1px;border-radius:1px;background:var(--ink)}
+
+/* 桌面小组件 · 沿用「Ash 卡片」外框：圆角 22、内边距 14；颜色全部换成令牌 */
+.wg{box-sizing:border-box;background:var(--surface);border-radius:22px;padding:14px;display:flex;flex-direction:column;flex:none;box-shadow:0 8px 24px rgba(60,30,15,.16);font-family:var(--font);color:var(--text)}
+.t-dark .wg,.t-dark.wg{box-shadow:0 8px 24px rgba(0,0,0,.4),inset 0 0 0 1px rgba(255,255,255,.05)}
+.wg-42{width:330px;height:150px} .wg-22{width:150px;height:150px}
+.wg-hd{display:flex;align-items:center;gap:6px;height:18px;font-size:12px;color:var(--text-2)}
+.wg-hd .vt-ic{width:18px;height:18px;border-radius:6px}
+.wg-hd .time{margin-left:auto;font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.wg-say{display:flex;align-items:center;gap:9px;margin-top:12px;font-size:18px;line-height:24px;font-weight:650;color:var(--ink)}
+.wg-nums{margin-top:auto;display:flex;gap:28px}
+.wg-nums>span{display:flex;flex-direction:column}
+.wg-nums b{font-size:24px;line-height:30px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.wg-alert{margin-top:auto;border-radius:14px;padding:7px 11px;display:flex;flex-direction:column;gap:1px;background:var(--err-soft)}
+.wg-alert .k{font-size:11px;line-height:15px;color:var(--err);opacity:.85}
+.wg-alert .v{font-size:13.5px;line-height:19px;font-weight:600;color:var(--err);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wg-alert.warn{background:var(--warn-soft)} .wg-alert.warn .k,.wg-alert.warn .v{color:var(--warn)}
+/* 过期：不清空，整张卡退成灰色（灯变空心灰、所有颜色换成 text-3），右上角换成「已过期」 */
+.wg.stale .wg-say{color:var(--text-2)} .wg.stale .wg-nums b{color:var(--text-3)} .wg.stale .tx-caption{color:var(--text-3)}
+.wg-tag{margin-left:auto;height:20px;padding:0 8px;border-radius:10px;background:var(--surface-2);color:var(--text-2);font-size:11px;font-weight:600;display:inline-flex;align-items:center}
+
+/* 小组件 v2：每个数配一张小图（最近 1 小时 / 近 7 天）。图在原生里画成位图（A2UI 新增 Spark） */
+.wg-44{width:330px;height:330px}
+.wg-line{font-size:14px;line-height:18px;font-weight:650;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.wg.stale .wg-line{color:var(--text-2)}
+.spark{display:block;overflow:visible;flex:none}
+.wg-cells{margin-top:auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.wg-cell{display:flex;flex-direction:column;gap:1px;min-width:0}
+.wg-cell .k{font-size:11px;line-height:14px;color:var(--text-3);white-space:nowrap}
+.wg-cell .v{font-size:17px;line-height:22px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
+.wg-cell .v small{font-size:10.5px;font-weight:500;color:var(--text-3);margin-left:2px}
+.wg-cell .spark{margin-top:5px}
+.wg-stack{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.wg-stack .wg-cell{display:grid;grid-template-columns:auto 1fr;column-gap:6px;align-items:baseline}
+.wg-stack .wg-cell .v{text-align:right;font-size:15px;line-height:19px}
+.wg-stack .wg-cell .spark{grid-column:1 / -1;margin-top:3px}
+.wg-sub{margin:2px 0 0 23px;font-size:12px;line-height:16px;color:var(--text-3)}
+.wg-legend{display:flex;gap:12px;margin-top:12px;font-size:11.5px;line-height:16px;color:var(--text-3);white-space:nowrap}
+.wg-legend>span{display:flex;align-items:center;gap:4px}
+.wg-legend i{width:8px;height:8px;border-radius:2px;display:block}
+.wg-legend b{font-size:13px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.wg-big{position:relative;height:84px;margin-top:6px}
+.wg-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.wg-tile{background:var(--surface-2);border-radius:14px;padding:8px 10px 9px;display:flex;flex-direction:column;gap:1px}
+.wg-tile .k{font-size:11px;line-height:14px;color:var(--text-3)}
+.wg-tile .v{font-size:17px;line-height:22px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.wg-tile .v small{font-size:10.5px;font-weight:500;color:var(--text-3);margin-left:2px}
+.wg-tile .spark{margin-top:4px}
+.wg.stale .wg-cell .v,.wg.stale .wg-tile .v,.wg.stale .wg-legend b,.wg.stale .wg-today b{color:var(--text-3)!important}
+.wg-today{margin-top:auto;display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-3)}
+.wg-today>span{display:flex;align-items:baseline;gap:4px}
+.wg-today b{font-size:16px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+.wg-today .z b{color:var(--text-3)}
+.wg-44 .wg-alert{margin-top:auto}
+@media (prefers-reduced-motion:reduce){.lamp-err.lamp-xl::after{animation:none}}
