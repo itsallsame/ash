@@ -47,7 +47,7 @@ test(...withBrowser("the kernel opens a page on the chat: an order opens it, a s
 }));
 
 test(...withBrowser("recent history paints first and scrolling up loads the earlier page", async ({ kernel, browser }) => {
-  for (let n = 1; n <= 230; n++) say(kernel, `message ${n}`);
+  kernel.batch(() => { for (let n = 1; n <= 230; n++) say(kernel, `message ${n}`); });
   const { page } = await openPage(browser, kernel);
   await page.locator("#log .msg", { hasText: "message 230" }).waitFor();
   const first = await page.locator("#log .msg").evaluateAll(nodes => Math.min(...nodes.map(node => Number(node.dataset.seq))));
@@ -84,7 +84,7 @@ test(...withBrowser("an attachment in the ledger opens from its bytes, or from t
 }));
 
 test(...withBrowser("the progress pill appearing leaves the last message in view, not under the pill", async ({ kernel, browser }) => {
-  for (let n = 1; n <= 40; n++) say(kernel, `message ${n}`);
+  kernel.batch(() => { for (let n = 1; n <= 40; n++) say(kernel, `message ${n}`); });
   const { page } = await openPage(browser, kernel);
   await page.locator("#log .msg", { hasText: "message 40" }).waitFor();
   kernel.append({ from: "agent:main", kind: "event", word: "turn.started", turn: "t_pill", body: { turn: "t_pill", lane: "front" } });

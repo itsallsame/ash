@@ -5,7 +5,7 @@ import { homeHub, openHome } from "./home-support.js";
 
 test(...withBrowser("bounded history jumps directly, keeps an old reading window during live arrivals, and returns to latest", async ({ kernel, browser }) => {
   homeHub(kernel);
-  for (let i = 1; i <= 300; i++) say(kernel, `History message ${i}`, { id: `history_${i}` });
+  kernel.batch(() => { for (let i = 1; i <= 300; i++) say(kernel, `History message ${i}`, { id: `history_${i}` }); });
   const { page } = await openPage(browser, kernel);
   const firstPage = kernel.requests.find(row => row.to === "service:history" && row.word === "window");
   assert.equal(firstPage.body.limit, 10);
@@ -89,7 +89,7 @@ test(...withBrowser("a cached expanded body revisits as a preview until scrollin
   homeHub(kernel);
   const paragraphs = Array.from({ length: 180 }, (_, i) => `第${i}段：` + "原文保持完整。".repeat(15));
   const original = [...paragraphs, "恢复后的完整结尾。"].join("\n\n");
-  for (let i = 1; i <= 220; i++) say(kernel, i === 100 ? original : `History ${i}`, { id: `restore_${i}` });
+  kernel.batch(() => { for (let i = 1; i <= 220; i++) say(kernel, i === 100 ? original : `History ${i}`, { id: `restore_${i}` }); });
   const { page } = await openPage(browser, kernel);
   const jump = id => page.evaluate(id => window.dispatchEvent(new CustomEvent("ash:jump", { cancelable: true, detail: { id } })), id);
   await jump("restore_100");
@@ -119,7 +119,7 @@ test(...withBrowser("a cached expanded body revisits as a preview until scrollin
 test(...withBrowser("an old-message jump does not page itself away as inline Markdown and live arrivals change layout", async ({ kernel, browser }) => {
   homeHub(kernel);
   const inline = Array.from({ length: 60 }, (_, i) => `Paragraph ${i}: keep the reading position.`).join("\n\n");
-  for (let i = 1; i <= 240; i++) say(kernel, i <= 10 && i !== 5 ? inline : `Reading target ${i}`, { id: `reading_${i}` });
+  kernel.batch(() => { for (let i = 1; i <= 240; i++) say(kernel, i <= 10 && i !== 5 ? inline : `Reading target ${i}`, { id: `reading_${i}` }); });
   const { page } = await openPage(browser, kernel);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("ash:jump", { cancelable: true, detail: { id: "reading_5" } })));
   const target = page.locator('#log .msg[data-seq="5"]');

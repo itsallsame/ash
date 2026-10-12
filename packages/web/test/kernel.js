@@ -87,6 +87,8 @@ export function startKernel({ local = true, grant = null, owner = "person:owner"
   };
   /** Something another member said or did: it goes into the ledger and to every following sync. */
   kernel.append = (partial) => row(partial);
+  // Initial fixtures use the real append/index path with one commit, before any browser subscribes.
+  kernel.batch = (seed) => historyLedger.tx(seed);
 
   /** The page's frames, one connection. */
   const attach = (session) => {
