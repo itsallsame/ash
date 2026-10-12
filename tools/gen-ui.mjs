@@ -1,11 +1,8 @@
 #!/usr/bin/env node
-// The same UI source produces the page the kernel serves to browsers and the Android packaged page. They differ in one
-// thing only, the transport (SPEC-05 §4.1): a browser opens its own WebSocket with the browser client of packages/link;
-// the appassets origin selects AshNative and excludes the browser connection client. Both bundles use the shared page entry.
+// The UI source becomes the page the kernel serves to browsers (the phone app draws its chat natively and packages no page).
 // Browser frame checks are compiled from the protocol schemas during this build, not while opening the page.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync as writeFile, renameSync, unlinkSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync as writeFile, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { assertNoInlineScripts } from "./ui-scripts.mjs";
 // Readers (tests/builds) may run while another build refreshes the generated module.
 function writeFileSync(path, content) { const temp = `${path}.${process.pid}.tmp`; writeFile(temp, content); renameSync(temp, path); }
 import { dirname, join } from "node:path";
@@ -16,10 +13,8 @@ import "./gen-island.mjs";
 const ui = join(dirname(fileURLToPath(import.meta.url)), "../packages/web");
 const read = (f) => JSON.stringify(readFileSync(join(ui, f), "utf8"));
 const { code: app } = await buildUiBundle("browser");
-const { code: appInApp } = await buildUiBundle("native");
 const scriptName = (name, text) => `${name}.${createHash("sha256").update(text).digest("hex")}.js`;
 const appFile = scriptName("app", app);
-const nativeAppFile = scriptName("app", appInApp);
 // Design tokens (generated from design/app/tokens.json) and the component styles, ahead of the page's own rules.
 const styles = `<style>\n${["ash-tokens.css", "ash-ui.css", "home.css"].map((f) => readFileSync(join(ui, f), "utf8").trim()).join("\n")}\n</style>`;
 const html = readFileSync(join(ui, "index.html"), "utf8").replace("<!-- ash-style -->", () => styles);
@@ -27,25 +22,6 @@ if (!html.includes("<!-- ui-app -->")) throw new Error("UI app marker missing");
 if (!html.includes("--you-soft")) throw new Error("UI style marker missing");
 // External browser scripts can be streamed/compiled independently of the HTML parser.
 const generatedHtml = html.replace("<!-- ui-app -->", `<script defer src="/${appFile}"></script>`);
-const assetRoot = join(ui, "../../android/app/src/main/assets/ash-ui");
-const nativeBootstrap = readFileSync(join(ui, "js/native-bootstrap.js"), "utf8");
-const bootstrapFile = scriptName("native-bootstrap", nativeBootstrap);
-// Classic deferred scripts execute in order: register native boot before the bridge can answer hello synchronously.
-// File previews still use blob/srcdoc; packaged scripts load only from the same appassets origin.
-const assetHtml = html.replace("<!-- ui-app -->", `<script defer src="${nativeAppFile}"></script>`).replace("<head>", `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; form-action 'none'; frame-src about:; worker-src 'none'; base-uri 'none'">`)
-  .replace("</body>", `<script defer src="${bootstrapFile}"></script>\n</body>`);
-assertNoInlineScripts(assetHtml);
-mkdirSync(join(assetRoot, "avatars"), { recursive: true });
-writeFileSync(join(assetRoot, "index.html"), assetHtml);
-writeFileSync(join(assetRoot, nativeAppFile), appInApp);
-writeFileSync(join(assetRoot, bootstrapFile), nativeBootstrap);
-for (const file of readdirSync(assetRoot))
-  if (/^(?:app|native-bootstrap)(?:\.[a-f0-9]{64})?\.js$/.test(file) && file !== nativeAppFile && file !== bootstrapFile)
-    unlinkSync(join(assetRoot, file));
-writeFileSync(join(assetRoot, "manifest.webmanifest"), readFileSync(join(ui, "manifest.webmanifest")));
-writeFileSync(join(assetRoot, "icon.svg"), readFileSync(join(ui, "icon.svg")));
-for (const face of readdirSync(join(ui, "avatars")).filter((f) => f.endsWith(".webp")))
-  writeFileSync(join(assetRoot, "avatars", face), readFileSync(join(ui, "avatars", face)));
 // Ash's faces, one per state (ui/avatars/<state>.webp), shipped as base64.
 const avatars = Object.fromEntries(readdirSync(join(ui, "avatars")).filter((f) => f.endsWith(".webp")).sort().map((f) => [f.slice(0, -5), readFileSync(join(ui, "avatars", f)).toString("base64")]));
 writeFileSync(

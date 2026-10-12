@@ -67,8 +67,8 @@ test("every CSS variable the page uses is defined by the tokens, the aliases or 
     for (const m of read(f).matchAll(/var\((--[a-z0-9-]+)/g)) assert.ok(defined.has(m[1]), `${f} uses undefined ${m[1]}`);
 });
 
-test("the generated page and the app's packaged page start with the tokens and the component styles", () => {
-  for (const [rel, what] of [["packages/core/src/edges/link-server/ui.generated.ts", "browser page"], ["android/app/src/main/assets/ash-ui/index.html", "app page"]]) {
+test("the generated browser page starts with the tokens and the component styles", () => {
+  for (const [rel, what] of [["packages/core/src/edges/link-server/ui.generated.ts", "browser page"]]) {
     const text = read(rel);
     assert.ok(text.includes("--you-soft"), `${what}: tokens`);
     assert.ok(text.includes(".a-card"), `${what}: component styles`);

@@ -121,6 +121,7 @@ export class Channel {
   readonly messages: Message[] = [];
   readonly pages: SyncPageFrame[] = [];
   readonly logs: string[] = [];
+  readonly streams: { sid: string; mime?: string; data: Uint8Array }[] = [];
   clientId = "";
   constructor(readonly hand: TestHand, private readonly options: ChannelOptions) {}
 
@@ -133,6 +134,7 @@ export class Channel {
         present: async (frame) => { self.presents.push(frame); return options.present ? options.present(frame) : { ok: true }; },
         welcome: (w) => { const g = w.channels.human; if (g && "client" in g) self.clientId = g.client; },
         log: (message) => self.logs.push(message),
+        stream: (stream) => { self.streams.push({ sid: stream.sid, ...(stream.mime ? { mime: stream.mime } : {}), data: stream.data }); },
       },
     });
     self = new Channel(hand, options);

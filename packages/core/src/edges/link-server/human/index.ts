@@ -61,6 +61,11 @@ export interface HumanEdge {
   clients(): ClientInfo[];
   /** The channels open now, as little as the agents' environment needs (「主人在哪」): which kind, what it is called, local or not (whether it is being looked at is `clients()`, for delivery). */
   channels(): { client: string; kind: ClientInfo["channel"]; label: string; local: boolean }[];
+  /**
+   * Sends [bytes] to one channel as a stream (`stream` frames) and returns the stream id, which the answer to its word carries
+   * (`service:blobs/get`). [client] is the channel the word came in through; throws `offline` when it is not connected.
+   */
+  openStream(client: string | undefined, bytes: Uint8Array, mime: string): string;
   /** Brings a channel (default: the one the owner is on) to the front, e.g. after an authorization page. */
   focus(client?: string): Promise<PresentResult>;
   close(): void;
@@ -242,6 +247,11 @@ export function createHuman(deps: HumanDeps): HumanEdge {
 
   return {
     member, attach,
+    openStream(client, bytes, mime) {
+      const c = client ? clients.get(client) : undefined;
+      if (!c) throw new WordError("unavailable", "this connection cannot receive a stream");
+      return c.session.sendStream("human", bytes, { mime });
+    },
     clients: () => clients.info(),
     channels: () => clients.all().map((c) => ({ client: c.client, kind: c.channel, label: c.label, local: c.local })),
     async focus(client) {

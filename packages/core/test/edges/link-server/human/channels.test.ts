@@ -171,3 +171,20 @@ test("channels(): the open channels, with what the agents' environment needs (no
   web.client.stop();
   await eventually(() => hub.human.channels().length === 1, "the web channel gone");
 });
+
+test("a stream goes to the channel that asked, whole, and to nobody else; a caller with no channel cannot be sent one", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const phone = await Channel.open(hub, { label: "手机" });
+  const web = await Channel.open(hub, { label: "网页", kind: "browser" });
+  const bytes = new Uint8Array(300_000).map((_, i) => i % 251);   // more than one chunk
+
+  const sid = hub.human.openStream(phone.clientId, bytes, "image/png");
+  const got = await eventually(() => phone.streams.find((s) => s.sid === sid), "the stream on the phone");
+  assert.equal(got.mime, "image/png");
+  assert.deepEqual(got.data, bytes);
+  await quiet();
+  assert.equal(web.streams.length, 0, "the other channel got nothing");
+
+  assert.throws(() => hub.human.openStream(undefined, bytes, "image/png"), { code: "unavailable" });
+  assert.throws(() => hub.human.openStream("client:nobody", bytes, "image/png"), { code: "unavailable" });
+});

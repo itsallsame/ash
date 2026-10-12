@@ -100,7 +100,7 @@ internal object OnboardingViews {
 
     /** One of her faces (the same set the island uses); null when the asset is missing. */
     fun face(ctx: Context, name: String): Bitmap? = synchronized(faces) {
-        faces.getOrPut(name) { runCatching { ctx.assets.open("ash-ui/avatars/$name.webp").use { BitmapFactory.decodeStream(it) } }.getOrNull() }
+        faces.getOrPut(name) { runCatching { ctx.assets.open("ash-island/avatars/$name.webp").use { BitmapFactory.decodeStream(it) } }.getOrNull() }
     }
 
     /** A square avatar [sizeDp] wide: the view is [Layout.avatarPad] larger on every side (room for its ring), and the margins take that back. */
