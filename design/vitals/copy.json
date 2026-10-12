@@ -91,7 +91,8 @@
       "row": "最慢 {v} 毫秒，200 以内算正常", "widget": "我卡了一下",
       "value": { "unit": "毫秒", "limit": "200", "limit_unit": "毫秒以内" },
       "why": "有件事一下子占住了我，比如一次读了很多文件。这段时间你说话，我会回得晚。",
-      "actions": [["先不用管，我会自己恢复", "dismiss"]]
+      "actions": [["先不用管，我会自己恢复", "dismiss"]],
+      "recovered": { "lead": "那一分钟里你跟我说话，我可能回得晚。", "why": "当时有件事一下子占住了我，比如一次读了很多文件。过去之后就好了，不用做什么。" }
     }
   },
   "unknown": {
@@ -121,7 +122,7 @@
     "recovered_when": "今天 {hhmm} · 持续了 {n} 分钟",
     "cols_live": ["现在", "正常", "已经"],
     "cols_recovered": ["当时最多", "正常", "持续了"],
-    "gauge_mark": "正常到这里",
+    "gauge_mark": "正常到这里", "minutes_unit": "分钟",
     "why": "为什么会这样",
     "what": "你能做什么",
     "recovered_action": "知道了",
@@ -150,9 +151,22 @@
     "hands": "手和眼", "hands_todo": "手和眼 · {n} 处要修",
     "all_good_t": "7 处都好", "all_good_s": "大脑、闹钟、叫你、在后台醒着、眼睛和手…",
     "rest": "其余 {n} 处都好", "fix": "去修",
-    "run": "运行"
+    "run": "运行",
+    "parts": {
+      "brain":    { "name": "大脑",       "icon": "cpu",    "bad": "我的大脑没连上" },
+      "alarm":    { "name": "闹钟",       "icon": "alarm",  "bad": "到点了我可能叫不醒你" },
+      "notify":   { "name": "叫你",       "icon": "bell",   "bad": "有事我没法提醒你" },
+      "awake":    { "name": "在后台醒着", "icon": "bolt",   "bad": "可能被系统清理掉" },
+      "eyes":     { "name": "眼睛和手",   "icon": "eye",    "bad": "屏幕上的事我看不到了" },
+      "files":    { "name": "照片和文件", "icon": "folder", "bad": "你的照片和文件我读不到" },
+      "location": { "name": "位置和健康", "icon": "pin",    "bad": "我不知道你在哪、走了多少" }
+    }
   },
   "trend": { "title": "最近 24 小时", "act": "做事", "cpu": "CPU", "now": "现在", "empty": "过一个小时再来看，这里会画出我每小时忙了多少。" },
+  "app": {
+    "busy_unknown": "手头的事", "unknown_device": "一台设备", "read_failed_t": "现在读不到我的状态", "read_failed_s": "过一会儿会再试",
+    "copied": "复制好了", "copy_failed": "没复制成功", "restart_failed": "没重启成功", "restarting": "正在重启…", "back": "返回"
+  },
   "widget": {
     "card_title": "她的状态",
     "load": "负载", "load_unit": "条/分", "cpu": "CPU", "cpu_unit": "%", "mem": "内存", "mem_unit": "MB",
