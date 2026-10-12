@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>她的状态 · 告警详情</title>
+
+<link rel="stylesheet" href="./ash.css">
+</head>
+<body>
+
+
+<style>body{margin:0}</style>
+
+<div class="board board-light" style="width: 1480px; height: 2190px">
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5.5L8.5 12l6.5 6.5"></path></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"></rect><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"></path></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"></path><path d="M20 4v4.5h-4.5"></path></symbol>
+</svg>
+<div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 40px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 13px; letter-spacing: .08em; color: #7A7C83; font-weight: 600">F · 她的状态 · 点开一条告警</span>
+<h1 style="margin: 0; font-size: 40px; font-weight: 700; color: #111113">发生了什么 · 为什么 · 你能做什么</h1>
+</div>
+<p style="margin: 0; max-width: 820px; font-size: 15px; line-height: 1.65; color: #5A5C63">数字只有三个：现在多少、正常是多少以内、持续了多久，上面一条读数条画出越过了多少。「为什么」是她用「我」说的（第一版固定文案，见说明板）。要动手的建议点了先确认，不会自己执行。</p>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">亮色</span>
+<div class="board-row">
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="navbar"><button class="iconbtn" aria-label="返回"><svg class="i"><use href="#i-back"></use></svg></button><span class="ttl"></span><span style="width: 44px"></span></div>
+<div class="page" style="gap: 18px; padding-top: 0">
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 0 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span class="tag tag-err">进行中</span><span class="tx-sub">今天 14:02 开始 · 已经 6 分钟</span></span>
+<span class="tx-display" style="font-size: 27px; line-height: 36px">我在空转</span>
+<span class="tx-body" style="color: var(--text-2)">你没找我的时候，我还在不停地来回传消息。</span>
+</div>
+<div class="list" style="padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 16px">
+<div style="padding-top: 16px; position: relative">
+<span class="tx-caption" style="position: absolute; top: -2px; left: 54.54545454545454%; transform: translateX(-50%); white-space: nowrap">正常到这里</span>
+<div class="gauge"><span class="v" style="width: 80%; background: var(--err-fill)"></span><span class="lim" style="left: 54.54545454545454%"></span></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">现在</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--err)">44</span><span class="tx-caption">条 / 分钟</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">正常</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">30</span><span class="tx-caption">条以内</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">已经</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">6</span><span class="tx-caption">分钟</span></div>
+</div>
+</div>
+<div class="group"><span class="group-ttl">为什么会这样</span>
+<div class="list" style="padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start"><span class="av av-28"><img src="../../../../packages/web/avatars/default.webp" alt=""></span><span style="flex: 1; font-size: 15px; line-height: 24px; color: var(--text)">多半是我身体里有两处在互相等对方回话，停不下来。不是你操作的问题。这样会白白耗电，手机可能会发热。</span></div></div>
+<div class="group"><span class="group-ttl">你能做什么</span>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<button class="btn btn-primary btn-block">重启我的大脑</button>
+<button class="btn btn-neutral btn-block">去体检看看</button>
+<button class="btn btn-ghost btn-block">先不用管，我会盯着</button>
+</div></div>
+<button class="btn btn-ghost btn-sm" style="align-self: center; color: var(--text-3)"><svg class="i i-xs"><use href="#i-copy"></use></svg>复制详情发给开发者</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">进行中<span>主按钮 = 她最推荐的那一步</span></span>
+</div>
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="navbar"><button class="iconbtn" aria-label="返回"><svg class="i"><use href="#i-back"></use></svg></button><span class="ttl"></span><span style="width: 44px"></span></div>
+<div class="page" style="gap: 18px; padding-top: 0">
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 0 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span class="tag tag-ok">已恢复</span><span class="tx-sub">今天 09:15 · 持续了 1 分钟</span></span>
+<span class="tx-display" style="font-size: 27px; line-height: 36px">我卡了一下</span>
+<span class="tx-body" style="color: var(--text-2)">那一分钟里你跟我说话，我可能回得晚。</span>
+</div>
+<div class="list" style="padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 16px">
+<div style="padding-top: 16px; position: relative">
+<span class="tx-caption" style="position: absolute; top: -2px; left: 20%; transform: translateX(-50%); white-space: nowrap">正常到这里</span>
+<div class="gauge"><span class="v" style="width: 86%; background: var(--warn-fill)"></span><span class="lim" style="left: 20%"></span></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">当时最慢</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--warn)">860</span><span class="tx-caption">毫秒</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">正常</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">200</span><span class="tx-caption">毫秒以内</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">持续了</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">1</span><span class="tx-caption">分钟</span></div>
+</div>
+</div>
+<div class="group"><span class="group-ttl">为什么会这样</span>
+<div class="list" style="padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start"><span class="av av-28"><img src="../../../../packages/web/avatars/default.webp" alt=""></span><span style="flex: 1; font-size: 15px; line-height: 24px; color: var(--text)">当时有件事一下子占住了我，比如一次读了很多文件。过去之后就好了，不用做什么。</span></div></div>
+<div class="group"><span class="group-ttl">你能做什么</span>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<button class="btn btn-neutral btn-block">知道了</button>
+<span class="group-foot">常这样的话，跟我说一声，我去查查是哪件事。</span>
+</div></div>
+<button class="btn btn-ghost btn-sm" style="align-self: center; color: var(--text-3)"><svg class="i i-xs"><use href="#i-copy"></use></svg>复制详情发给开发者</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">已恢复<span>不用做什么，就只给「知道了」</span></span>
+</div>
+<div class="shot">
+<div class="t-light device"><div class="screen">
+<div class="sb"></div>
+<div class="navbar"><button class="iconbtn" aria-label="返回"><svg class="i"><use href="#i-back"></use></svg></button><span class="ttl"></span><span style="width: 44px"></span></div>
+<div class="page" style="gap: 18px; padding-top: 0">
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 0 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span class="tag tag-err">进行中</span><span class="tx-sub">今天 14:02 开始 · 已经 6 分钟</span></span>
+<span class="tx-display" style="font-size: 27px; line-height: 36px">我在空转</span>
+<span class="tx-body" style="color: var(--text-2)">你没找我的时候，我还在不停地来回传消息。</span>
+</div>
+<div class="list" style="padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 16px">
+<div style="padding-top: 16px; position: relative">
+<span class="tx-caption" style="position: absolute; top: -2px; left: 54.54545454545454%; transform: translateX(-50%); white-space: nowrap">正常到这里</span>
+<div class="gauge"><span class="v" style="width: 80%; background: var(--err-fill)"></span><span class="lim" style="left: 54.54545454545454%"></span></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">现在</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--err)">44</span><span class="tx-caption">条 / 分钟</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">正常</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">30</span><span class="tx-caption">条以内</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">已经</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">6</span><span class="tx-caption">分钟</span></div>
+</div>
+</div>
+<div class="group"><span class="group-ttl">为什么会这样</span>
+<div class="list" style="padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start"><span class="av av-28"><img src="../../../../packages/web/avatars/default.webp" alt=""></span><span style="flex: 1; font-size: 15px; line-height: 24px; color: var(--text)">多半是我身体里有两处在互相等对方回话，停不下来。不是你操作的问题。这样会白白耗电，手机可能会发热。</span></div></div>
+<div class="group"><span class="group-ttl">你能做什么</span>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<button class="btn btn-primary btn-block">重启我的大脑</button>
+<button class="btn btn-neutral btn-block">去体检看看</button>
+<button class="btn btn-ghost btn-block">先不用管，我会盯着</button>
+</div></div>
+<button class="btn btn-ghost btn-sm" style="align-self: center; color: var(--text-3)"><svg class="i i-xs"><use href="#i-copy"></use></svg>复制详情发给开发者</button>
+</div>
+<div class="scrim"></div>
+<div class="sheet">
+<div class="grabber"></div>
+<div style="display: flex; align-items: center; gap: 12px; padding-top: 4px"><span class="lic" style="width: 40px; height: 40px; border-radius: 12px; background: var(--you-soft); color: var(--you-text); display: flex; align-items: center; justify-content: center; flex: none"><svg class="i"><use href="#i-refresh"></use></svg></span><span class="tx-title" style="font-size: 20px">重启我的大脑？</span></div>
+<span class="tx-body" style="color: var(--text-2)">大约 10 秒。这期间我不回话，正在做的事会中断。重启以后，空转应该就停了。</span>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px">
+<button class="btn btn-primary btn-block btn-lg">重启大脑</button>
+<button class="btn btn-neutral btn-block btn-lg">先不重启</button>
+</div>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">确认<span>要动手的事先问一次</span></span>
+</div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="theme-lbl">暗色</span>
+<div class="board-row">
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="navbar"><button class="iconbtn" aria-label="返回"><svg class="i"><use href="#i-back"></use></svg></button><span class="ttl"></span><span style="width: 44px"></span></div>
+<div class="page" style="gap: 18px; padding-top: 0">
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 0 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span class="tag tag-err">进行中</span><span class="tx-sub">今天 14:02 开始 · 已经 6 分钟</span></span>
+<span class="tx-display" style="font-size: 27px; line-height: 36px">我在空转</span>
+<span class="tx-body" style="color: var(--text-2)">你没找我的时候，我还在不停地来回传消息。</span>
+</div>
+<div class="list" style="padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 16px">
+<div style="padding-top: 16px; position: relative">
+<span class="tx-caption" style="position: absolute; top: -2px; left: 54.54545454545454%; transform: translateX(-50%); white-space: nowrap">正常到这里</span>
+<div class="gauge"><span class="v" style="width: 80%; background: var(--err-fill)"></span><span class="lim" style="left: 54.54545454545454%"></span></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">现在</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--err)">44</span><span class="tx-caption">条 / 分钟</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">正常</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">30</span><span class="tx-caption">条以内</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">已经</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">6</span><span class="tx-caption">分钟</span></div>
+</div>
+</div>
+<div class="group"><span class="group-ttl">为什么会这样</span>
+<div class="list" style="padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start"><span class="av av-28"><img src="../../../../packages/web/avatars/default.webp" alt=""></span><span style="flex: 1; font-size: 15px; line-height: 24px; color: var(--text)">多半是我身体里有两处在互相等对方回话，停不下来。不是你操作的问题。这样会白白耗电，手机可能会发热。</span></div></div>
+<div class="group"><span class="group-ttl">你能做什么</span>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<button class="btn btn-primary btn-block">重启我的大脑</button>
+<button class="btn btn-neutral btn-block">去体检看看</button>
+<button class="btn btn-ghost btn-block">先不用管，我会盯着</button>
+</div></div>
+<button class="btn btn-ghost btn-sm" style="align-self: center; color: var(--text-3)"><svg class="i i-xs"><use href="#i-copy"></use></svg>复制详情发给开发者</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">进行中<span>主按钮 = 她最推荐的那一步</span></span>
+</div>
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="navbar"><button class="iconbtn" aria-label="返回"><svg class="i"><use href="#i-back"></use></svg></button><span class="ttl"></span><span style="width: 44px"></span></div>
+<div class="page" style="gap: 18px; padding-top: 0">
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 0 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span class="tag tag-ok">已恢复</span><span class="tx-sub">今天 09:15 · 持续了 1 分钟</span></span>
+<span class="tx-display" style="font-size: 27px; line-height: 36px">我卡了一下</span>
+<span class="tx-body" style="color: var(--text-2)">那一分钟里你跟我说话，我可能回得晚。</span>
+</div>
+<div class="list" style="padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 16px">
+<div style="padding-top: 16px; position: relative">
+<span class="tx-caption" style="position: absolute; top: -2px; left: 20%; transform: translateX(-50%); white-space: nowrap">正常到这里</span>
+<div class="gauge"><span class="v" style="width: 86%; background: var(--warn-fill)"></span><span class="lim" style="left: 20%"></span></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">当时最慢</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--warn)">860</span><span class="tx-caption">毫秒</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">正常</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">200</span><span class="tx-caption">毫秒以内</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">持续了</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">1</span><span class="tx-caption">分钟</span></div>
+</div>
+</div>
+<div class="group"><span class="group-ttl">为什么会这样</span>
+<div class="list" style="padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start"><span class="av av-28"><img src="../../../../packages/web/avatars/default.webp" alt=""></span><span style="flex: 1; font-size: 15px; line-height: 24px; color: var(--text)">当时有件事一下子占住了我，比如一次读了很多文件。过去之后就好了，不用做什么。</span></div></div>
+<div class="group"><span class="group-ttl">你能做什么</span>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<button class="btn btn-neutral btn-block">知道了</button>
+<span class="group-foot">常这样的话，跟我说一声，我去查查是哪件事。</span>
+</div></div>
+<button class="btn btn-ghost btn-sm" style="align-self: center; color: var(--text-3)"><svg class="i i-xs"><use href="#i-copy"></use></svg>复制详情发给开发者</button>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">已恢复<span>不用做什么，就只给「知道了」</span></span>
+</div>
+<div class="shot">
+<div class="t-dark device"><div class="screen">
+<div class="sb"></div>
+<div class="navbar"><button class="iconbtn" aria-label="返回"><svg class="i"><use href="#i-back"></use></svg></button><span class="ttl"></span><span style="width: 44px"></span></div>
+<div class="page" style="gap: 18px; padding-top: 0">
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 0 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span class="tag tag-err">进行中</span><span class="tx-sub">今天 14:02 开始 · 已经 6 分钟</span></span>
+<span class="tx-display" style="font-size: 27px; line-height: 36px">我在空转</span>
+<span class="tx-body" style="color: var(--text-2)">你没找我的时候，我还在不停地来回传消息。</span>
+</div>
+<div class="list" style="padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 16px">
+<div style="padding-top: 16px; position: relative">
+<span class="tx-caption" style="position: absolute; top: -2px; left: 54.54545454545454%; transform: translateX(-50%); white-space: nowrap">正常到这里</span>
+<div class="gauge"><span class="v" style="width: 80%; background: var(--err-fill)"></span><span class="lim" style="left: 54.54545454545454%"></span></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">现在</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--err)">44</span><span class="tx-caption">条 / 分钟</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">正常</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">30</span><span class="tx-caption">条以内</span></div>
+<div style="display: flex; flex-direction: column; gap: 1px"><span class="tx-caption">已经</span><span class="tx-num" style="font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink)">6</span><span class="tx-caption">分钟</span></div>
+</div>
+</div>
+<div class="group"><span class="group-ttl">为什么会这样</span>
+<div class="list" style="padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start"><span class="av av-28"><img src="../../../../packages/web/avatars/default.webp" alt=""></span><span style="flex: 1; font-size: 15px; line-height: 24px; color: var(--text)">多半是我身体里有两处在互相等对方回话，停不下来。不是你操作的问题。这样会白白耗电，手机可能会发热。</span></div></div>
+<div class="group"><span class="group-ttl">你能做什么</span>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<button class="btn btn-primary btn-block">重启我的大脑</button>
+<button class="btn btn-neutral btn-block">去体检看看</button>
+<button class="btn btn-ghost btn-block">先不用管，我会盯着</button>
+</div></div>
+<button class="btn btn-ghost btn-sm" style="align-self: center; color: var(--text-3)"><svg class="i i-xs"><use href="#i-copy"></use></svg>复制详情发给开发者</button>
+</div>
+<div class="scrim"></div>
+<div class="sheet">
+<div class="grabber"></div>
+<div style="display: flex; align-items: center; gap: 12px; padding-top: 4px"><span class="lic" style="width: 40px; height: 40px; border-radius: 12px; background: var(--you-soft); color: var(--you-text); display: flex; align-items: center; justify-content: center; flex: none"><svg class="i"><use href="#i-refresh"></use></svg></span><span class="tx-title" style="font-size: 20px">重启我的大脑？</span></div>
+<span class="tx-body" style="color: var(--text-2)">大约 10 秒。这期间我不回话，正在做的事会中断。重启以后，空转应该就停了。</span>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px">
+<button class="btn btn-primary btn-block btn-lg">重启大脑</button>
+<button class="btn btn-neutral btn-block btn-lg">先不重启</button>
+</div>
+</div>
+<span class="home-ind"></span>
+</div></div>
+<span class="shot-cap">确认<span>要动手的事先问一次</span></span>
+</div>
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

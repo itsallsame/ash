@@ -1,0 +1,171 @@
+{
+  "$comment": "「她的状态」（app id vitals）界面上的全部文字。她自称「我」、叫主人「你」。{v} 实际值，{n} 数量，{hhmm} 钟点，{device} 设备名（top 里的 hand 去设备列表查，查不到用「一台设备」）。界面上不出现 id、英文 note、top 的 key。",
+  "name": "她的状态",
+  "levels": {
+    "ok":     { "name": "正常",   "lamp": "ok-fill",   "halo": "ok-soft",   "text": "ok" },
+    "warn":   { "name": "留意",   "lamp": "warn-fill", "halo": "warn-soft", "text": "warn" },
+    "err":    { "name": "有问题", "lamp": "err-fill",  "halo": "err-soft",  "text": "err", "pulse": true },
+    "new":    { "name": "刚到",   "lamp": "her-fill",  "halo": "her-soft",  "text": "her" },
+    "paused": { "name": "暂停",   "lamp": "off",       "text": "text-3" },
+    "stale":  { "name": "已过期", "lamp": "off",       "text": "text-3" }
+  },
+  "say": {
+    "ok": "我一切正常",
+    "ok_busy": "我在忙，一切正常",
+    "warn_recovered": "我刚才有点忙，已经缓过来了",
+    "warn_recovered_lag": "我刚才卡了一下，已经好了",
+    "warn_hands": "我一切正常，但有 {n} 处要你帮我修",
+    "err_brain_down": "我的大脑没在运行",
+    "new": "我刚到，还在熟悉这台手机",
+    "paused": "你让我先停一停"
+  },
+  "chips": { "online": "连着 {n} 台设备", "idle": "闲着", "busy": "在忙 · {what}" },
+  "err_action": "看看怎么办",
+  "priority": ["idle.msg_rate", "idle.msg_key_rate", "idle.cpu", "idle.ledger_growth", "errors.internal", "errors.rate", "link.reconnect_storm", "loop.lag"],
+  "rules": [
+    { "name": "闲着时不空转",     "ids": ["idle.msg_rate", "idle.msg_key_rate"], "idle": true,  "line": "每分钟 {v} 条消息，30 条以内" },
+    { "name": "闲着时记录不变长", "ids": ["idle.ledger_growth"],                 "idle": true,  "line": "每分钟多 {v} 条，10 条以内" },
+    { "name": "闲着时大脑不费电", "ids": ["idle.cpu"],                           "idle": true,  "line": "CPU {v}%，5% 以内" },
+    { "name": "不频繁断线",       "ids": ["link.reconnect_storm"],               "idle": false, "line": "5 分钟里重连 {v} 次，5 次以内" },
+    { "name": "出错不多",         "ids": ["errors.rate", "errors.internal"],     "idle": false, "line": "每分钟 {v} 次，20 次以内" },
+    { "name": "不卡住",           "ids": ["loop.lag"],                           "idle": false, "line": "最慢 {v} 毫秒，200 以内" }
+  ],
+  "rule_tags": { "ok": "正常", "err": "越界", "busy": "在忙，不算", "wait": "在看", "wait_line": "看满一分钟才知道" },
+  "invariants": {
+    "idle.msg_rate": {
+      "say": "我在空转，可能很费电", "title": "我在空转", "lead": "你没找我的时候，我还在不停地来回传消息。",
+      "row": "每分钟 {v} 条消息，30 条以内算正常", "widget": "闲着时消息不停来回",
+      "value": { "unit": "条 / 分钟", "limit": "30", "limit_unit": "条以内" },
+      "why": "多半是我身体里有两处在互相等对方回话，停不下来。不是你操作的问题。这样会白白耗电，手机可能会发热。",
+      "actions": [["重启我的大脑", "restart_brain"], ["去体检看看", "open_checkup"], ["先不用管，我会盯着", "dismiss"]],
+      "restart_effect": "重启以后，空转应该就停了。"
+    },
+    "idle.msg_key_rate": {
+      "say": "我在空转，可能很费电", "title": "我在一件事上兜圈子", "lead": "你没找我的时候，我在反复做同一个动作。",
+      "row": "同一件事每分钟 {v} 次，6 次以内算正常", "widget": "闲着时在一件事上兜圈子",
+      "value": { "unit": "次 / 分钟", "limit": "6", "limit_unit": "次以内" },
+      "why": "我在反复做同一个动作，像在原地打转。不是你操作的问题，会白白耗电。",
+      "actions": [["重启我的大脑", "restart_brain"], ["先不用管，我会盯着", "dismiss"]],
+      "restart_effect": "重启以后，应该就不兜圈子了。"
+    },
+    "idle.ledger_growth": {
+      "say": "我的记录一直在变长", "title": "没在聊，记录却一直在变长", "lead": "你没找我，我的对话记录还在一直加东西。",
+      "row": "每分钟多 {v} 条，10 条以内算正常", "widget": "没在聊，记录一直变长",
+      "value": { "unit": "条 / 分钟", "limit": "10", "limit_unit": "条以内" },
+      "why": "你没找我，我的对话记录却还在一直加东西。时间长了会占手机空间，也会让我变慢。",
+      "actions": [["重启我的大脑", "restart_brain"], ["先不用管", "dismiss"]],
+      "restart_effect": "重启以后，记录应该就不再自己变长了。"
+    },
+    "idle.cpu": {
+      "say": "我闲着却很忙，手机可能发热", "title": "闲着时我的大脑很忙", "lead": "没有事要做，我却一直在用手机的 CPU。",
+      "row": "CPU 到了 {v}%，5% 以内算正常", "widget": "闲着时大脑很忙",
+      "value": { "unit": "%", "limit": "5", "limit_unit": "% 以内" },
+      "why": "没有事要做，我却一直在用手机的 CPU，手机会发热、费电。",
+      "actions": [["重启我的大脑", "restart_brain"], ["先不用管，我会盯着", "dismiss"]],
+      "restart_effect": "重启以后，应该就安静下来了。"
+    },
+    "link.reconnect_storm": {
+      "say": "「{device}」一直断开又连上", "title": "「{device}」重连了好多次", "lead": "「{device}」5 分钟里断开又连上了 {v} 次。",
+      "row": "5 分钟里重连 {v} 次，5 次以内算正常", "widget": "「{device}」反复断开重连",
+      "value": { "unit": "次 / 5 分钟", "limit": "5", "limit_unit": "次以内" },
+      "why": "可能是这台电脑网络不稳，或者它的登录过期了，被拒以后一直在重试。",
+      "actions": [["去看看这台电脑", "open_device"], ["先不用管", "dismiss"]]
+    },
+    "errors.rate": {
+      "say": "我做事老是失败", "title": "我做事老是失败", "lead": "最近一分钟，很多事没做成。",
+      "row": "每分钟失败 {v} 次，20 次以内算正常", "widget": "很多事没做成",
+      "value": { "unit": "次 / 分钟", "limit": "20", "limit_unit": "次以内" },
+      "why": "最近很多事没做成，常见原因是网络不好、密钥失效，或者某个应用出了问题。",
+      "actions": [["去体检看看", "open_checkup"], ["去看看密钥", "open_keys"]]
+    },
+    "errors.internal": {
+      "say": "我自己出了几次错", "title": "我自己出了几次错", "lead": "我内部接连出了几次错。",
+      "row": "每分钟 {v} 次，5 次以内算正常", "widget": "我自己出了几次错",
+      "value": { "unit": "次 / 分钟", "limit": "5", "limit_unit": "次以内" },
+      "why": "这是我内部的毛病，不是你操作的问题。一般我会自己恢复；一直这样的话，重启大脑通常有用。",
+      "actions": [["先不用管，我会自己恢复", "dismiss"], ["重启我的大脑", "restart_brain"]],
+      "restart_effect": "重启以后，通常就好了。"
+    },
+    "loop.lag": {
+      "say": "我卡住了，回你会慢一点", "title": "我卡了一下", "lead": "这段时间你跟我说话，我可能回得晚。",
+      "row": "最慢 {v} 毫秒，200 以内算正常", "widget": "我卡了一下",
+      "value": { "unit": "毫秒", "limit": "200", "limit_unit": "毫秒以内" },
+      "why": "有件事一下子占住了我，比如一次读了很多文件。这段时间你说话，我会回得晚。",
+      "actions": [["先不用管，我会自己恢复", "dismiss"]]
+    }
+  },
+  "unknown": {
+    "say": "我有一项检查越界了", "title": "我有一项检查越界了", "lead": "实际是 {v}，正常是 {budget} 以内。",
+    "row": "实际 {v}，{budget} 以内算正常", "widget": "有一项检查越界了",
+    "why": "我有一项检查越界了。",
+    "actions": [["复制详情发给开发者", "copy_debug"]]
+  },
+  "action_kinds": {
+    "restart_brain": "先弹确认（confirm_restart），确认后才重启；这一步就是审批，不自动执行",
+    "open_checkup": "打开体检页（她的手和眼 · 这台手机）",
+    "open_device": "打开她的手和眼 · 这台设备",
+    "open_keys": "打开幕后 · 密钥",
+    "dismiss": "关掉详情，回首页；不改任何东西",
+    "copy_debug": "把原始事件（id、value、budget、window_s、top、note、since）复制到剪贴板，toast「复制好了」"
+  },
+  "confirm_restart": {
+    "title": "重启我的大脑？",
+    "body": "大约 10 秒。这期间我不回话，正在做的事会中断。{restart_effect}",
+    "yes": "重启大脑",
+    "no": "先不重启"
+  },
+  "detail": {
+    "live_tag": "进行中",
+    "recovered_tag": "已恢复",
+    "live_when": "今天 {hhmm} 开始 · 已经 {n} 分钟",
+    "recovered_when": "今天 {hhmm} · 持续了 {n} 分钟",
+    "cols_live": ["现在", "正常", "已经"],
+    "cols_recovered": ["当时最多", "正常", "持续了"],
+    "gauge_mark": "正常到这里",
+    "why": "为什么会这样",
+    "what": "你能做什么",
+    "recovered_action": "知道了",
+    "recovered_foot": "常这样的话，跟我说一声，我去查查是哪件事。",
+    "copy_debug": "复制详情发给开发者"
+  },
+  "now": {
+    "title": "此刻", "right": "刚刚",
+    "busy": { "label": "忙不忙", "num": "CPU {v}%", "idle_suffix": " · 闲着", "bands": [[5, "很闲"], [30, "有点忙"], [null, "很忙"]], "red_when_idle_over": 5 },
+    "mem":  { "label": "占了多少内存", "num": "{v} MB", "bands": [[300, "不多"], [600, "有点多"], [null, "很多"]] },
+    "lag":  { "label": "反应快不快", "num": "延迟 {v} 毫秒", "bands": [[50, "很快"], [200, "有点慢"], [null, "卡住了"]] }
+  },
+  "today": {
+    "title": "今天", "since": "从 {hhmm} 开始算",
+    "cells": [["turns", "做的事"], ["calls", "想了几次"], ["cost", "花了"], ["reconnects", "断线重连"], ["errors", "出错"]],
+    "foot": "做一件事常要想好几次，花的钱按想的次数算。"
+  },
+  "alerts": {
+    "title": "最近告警", "max": 5,
+    "empty_t": "最近一切正常", "empty_s": "过去 24 小时没有越界",
+    "first_t": "还没有记录", "first_s": "我看满一会儿，才知道什么算正常",
+    "recovered_prefix": "已恢复 · "
+  },
+  "checkup": {
+    "title": "体检",
+    "hands": "手和眼", "hands_todo": "手和眼 · {n} 处要修",
+    "all_good_t": "7 处都好", "all_good_s": "大脑、闹钟、叫你、在后台醒着、眼睛和手…",
+    "rest": "其余 {n} 处都好", "fix": "去修",
+    "run": "运行"
+  },
+  "trend": { "title": "最近 24 小时", "act": "做事", "cpu": "CPU", "now": "现在", "empty": "过一个小时再来看，这里会画出我每小时忙了多少。" },
+  "widget": {
+    "card_title": "她的状态",
+    "load": "负载", "load_unit": "条/分", "cpu": "CPU", "cpu_unit": "%", "mem": "内存", "mem_unit": "MB",
+    "cost": "今天花", "cost_7d": "今天花 · 近 7 天",
+    "legend_window": "最近 1 小时",
+    "sub": "连着 {n} 台设备 · {idle_or_busy}",
+    "today": [["turns", "做的事"], ["calls", "想了几次"], ["errors", "出错"], ["reconnects", "断线"]],
+    "alert_k": "最近告警",
+    "alert_live": "{hhmm} 起 · {what}",
+    "alert_live_long": "{hhmm} 起 · {what}，已经 {n} 分钟",
+    "alert_recovered": "{hhmm} · {what}，{n} 分钟",
+    "hands_todo": "有 {n} 处要你帮我修",
+    "stale_tag": "已过期 · 最后 {hhmm}",
+    "stale_22": "{hhmm} 之后没收到我的消息"
+  }
+}
