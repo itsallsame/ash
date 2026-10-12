@@ -119,7 +119,7 @@ test("a minute becomes one row; recent reads them newest first; a restart says w
   assert.ok(minutes.length >= 1);
   assert.ok(minutes[0].at % 60_000 === 0 && minutes[0].msg > 0 && minutes[0].top[0].key.includes("service:clock/list"));
   // The same database, a second process.
-  const again = createHealthService({ ledger: s.ledger, now: () => s.clock() + 5 * 60_000, sampler: { sample: () => ({ cpu_pct: 0, rss: 0, heap: 0, lag_p99_ms: 0 }) }, router: { subscribe: () => () => {} }, registry: { find: () => undefined } });
+  const again = createHealthService({ ledger: s.ledger, now: () => s.clock() + 5 * 60_000, sampler: { sample: () => ({ cpu_pct: 0, rss: 0, heap: 0, lag_p99_ms: 0 }) }, router: { subscribe: () => () => {} }, registry: { find: () => null } });
   again.start();
   const start = (await call(again, owner, "recent", {})).events.find((e: any) => e.type === "start");
   assert.ok(start.last_seen > 0 && start.last_seen % 60_000 === 0);
