@@ -8,19 +8,35 @@ import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
+import android.text.InputFilter
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import ai.ash.kernel.host.GuideService
+import ai.ash.kernel.host.HostPresence
+import ai.ash.kernel.host.KernelHost
+import ai.ash.kernel.host.KernelPairing
+import ai.ash.kernel.host.PairingStage
+import ai.ash.kernel.host.adb.AdbKey
 
 /**
  * 「Ash 内核」: the kernel's one screen, with a launcher icon and a task of its own, so that it has a card in recent apps
- * the owner can lock (the maker's cleaning then leaves the kernel alone, as it does for any locked app). It shows how the
- * brain is doing and how to lock it, and starts the kernel service like [StartActivity] does. It reads nothing from the
- * intent that opened it.
+ * the owner can lock. It shows the brain and shell host separately, accepts the owner's pairing code, and starts the
+ * kernel service like [StartActivity] does. Pairing and takeover continue without any notification interaction.
+ * It reads nothing from the intent that opened it.
  */
-class StatusActivity : Activity() {
+open class StatusActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var state: TextView
+    private lateinit var hostState: TextView
+    private lateinit var progress: TextView
+    private lateinit var code: EditText
+    private lateinit var submit: Button
+    private lateinit var retry: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,17 +45,59 @@ class StatusActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(pad, dp(72), pad, pad)
+            setPadding(pad, dp(24), pad, pad)
         }
         root.addView(text("Ash 内核", 26f, bold = true))
         state = text("", 16f).also { it.setPadding(0, dp(16), 0, 0) }
         root.addView(state)
+        hostState = text("", 16f).also { it.setPadding(0, dp(8), 0, 0) }
+        root.addView(hostState)
+        root.addView(text("开启无线调试，点「使用配对码配对设备」，在这里输入 6 位码。", 15f)
+            .also { it.setPadding(0, dp(24), 0, dp(8)) })
+        root.addView(Button(this).apply {
+            text = "打开无线调试"
+            setOnClickListener {
+                startGuide()
+                val settings = KernelPairing.wirelessDebuggingIntent()
+                // Settings cancels its pairing server in onPause. Android 12L+ can open it beside this page,
+                // keeping both resumed so the owner can type here without losing the code's server.
+                if (android.os.Build.VERSION.SDK_INT >= 32) settings.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+                runCatching { startActivity(settings) }
+                    .onFailure { progress.text = "请在系统设置中打开开发者选项 › 无线调试" }
+            }
+        })
+        code = EditText(this).apply {
+            hint = "6 位配对码"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(InputFilter.LengthFilter(6))
+            setSingleLine()
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setText(savedInstanceState?.getString("pairing_code").orEmpty())
+            setOnEditorActionListener { _, action, event ->
+                if (action == EditorInfo.IME_ACTION_DONE ||
+                    (event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN)) {
+                    submitCode(); true
+                } else false
+            }
+        }
+        root.addView(code, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
+        submit = Button(this).apply { text = "配对并启动"; setOnClickListener { submitCode() } }
+        root.addView(submit)
+        progress = text("", 15f).also { it.setPadding(0, dp(8), 0, 0) }
+        root.addView(progress)
+        retry = Button(this).apply { text = "重试"; setOnClickListener { startGuide() } }
+        root.addView(retry)
         root.addView(text(LOCK_HINT, 15f).also { it.setPadding(0, dp(32), 0, 0) })
         root.addView(Button(this).apply {
             text = "打开 Ash"
             setOnClickListener { packageManager.getLaunchIntentForPackage(HAND_PACKAGE)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(32) })
-        setContentView(root)
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(android.graphics.Color.WHITE)
+            isFillViewport = true
+            addView(root)
+        })
+        if (!KernelHost.ready() && !GuideService.running) startGuide()
     }
 
     override fun onResume() {
@@ -53,8 +111,39 @@ class StatusActivity : Activity() {
     }
 
     private fun refresh() {
-        state.text = "大脑：" + (KernelService.status ?: KernelText.STARTING)
-        main.postDelayed(::refresh, 2_000)
+        val host = KernelHost.ready()
+        state.text = "大脑：" + if (host) HostPresence.status else KernelService.status ?: KernelText.STARTING
+        hostState.text = "宿主：" + if (host) "已连接" else "未连接"
+        val p = GuideService.progress
+        val busy = GuideService.running && p.stage in listOf(PairingStage.PAIRING, PairingStage.CONNECTING, PairingStage.STARTING)
+        if (host && HostPresence.coreReady) {
+            progress.text = "宿主已连接，中枢已就绪。可以关闭无线调试"
+            code.text.clear()
+        } else {
+            progress.text = if (!host && p.stage == PairingStage.READY) "宿主未连接，请开启无线调试后点重新连接"
+                else p.text.ifEmpty { "输入配对码后自动连接宿主、停止旧中枢并启动" }
+        }
+        submit.isEnabled = !busy && !host
+        code.isEnabled = !busy && !host
+        retry.isEnabled = !busy
+        retry.text = if (AdbKey.paired(this) || host) "重新连接" else "重试"
+        main.postDelayed(::refresh, 500)
+    }
+
+    private fun startGuide() {
+        runCatching { GuideService.start(this, if (AdbKey.paired(this) || KernelHost.ready()) GuideService.CONNECT else GuideService.PAIR) }
+            .onFailure { if (::progress.isInitialized) progress.text = "无法启动配对：${it.message}" }
+    }
+
+    private fun submitCode() {
+        val value = code.text.toString().trim()
+        if (!GuideService.validCode(value)) { code.error = "请输入 6 位数字"; return }
+        runCatching { GuideService.submit(this, value) }.onFailure { progress.text = "无法提交配对码：${it.message}" }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("pairing_code", code.text.toString())
+        super.onSaveInstanceState(outState)
     }
 
     private fun text(s: String, sp: Float, bold: Boolean = false) = TextView(this).apply {

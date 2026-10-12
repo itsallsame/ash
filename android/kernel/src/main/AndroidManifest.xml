@@ -13,7 +13,7 @@
     <!-- Shared storage: the agent in the container reads and writes the phone's files (targetSdk 28 + legacy storage). -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <!-- The pairing guide posts notifications (the owner types the code into one). -->
+    <!-- Optional pairing/reconnect shortcuts; code input also lives on the kernel page. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
@@ -34,6 +34,9 @@
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true"
         tools:ignore="GoogleAppIndexingWarning">
+
+        <!-- Keep both the system pairing dialog and this page resumed while typing on Android 10+. -->
+        <meta-data android:name="android.allow_multiple_resumed_activities" android:value="true" />
 
         <!-- Supervises ash core. The hand app starts it (needs ai.ash.permission.KERNEL) when it finds the kernel not running. -->
         <service
@@ -101,8 +104,8 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <!-- The minutes of a pairing or reconnection, while the owner is in the system's settings. -->
         <service android:name=".host.GuideService" android:exported="false" android:foregroundServiceType="shortService" />
-        <!-- The reconnect notice's tap opens this, which begins the guide (signature permission: only the hand app can start it). -->
+        <!-- Existing hand-app links open the persistent kernel pairing page. -->
         <activity android:name=".host.GuideActivity" android:exported="true" android:permission="ai.ash.permission.KERNEL"
-            android:excludeFromRecents="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
+            android:launchMode="singleTask" />
     </application>
 </manifest>

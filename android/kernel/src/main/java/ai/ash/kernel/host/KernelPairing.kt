@@ -1,11 +1,13 @@
 package ai.ash.kernel.host
 
+import ai.ash.kernel.KernelService
+import ai.ash.kernel.Notifications
+import ai.ash.kernel.StatusActivity
 import ai.ash.kernel.host.adb.AdbClient
 import ai.ash.kernel.host.adb.AdbKey
 import ai.ash.kernel.host.adb.AdbMdns
 import ai.ash.kernel.host.adb.AdbNotPaired
 import ai.ash.kernel.host.adb.AdbWrongCode
-import ai.ash.kernel.Notifications
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Notification
@@ -13,11 +15,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.database.ContentObserver
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
@@ -26,276 +26,220 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
-import android.widget.Toast
 import java.util.concurrent.Executors
 
-/**
- * How Ash leads the owner to give it the phone's debug identity, and to start it again after a restart. Ash only reads and
- * asks: the owner opens wireless debugging, pairs, and turns it off again; Ash reads the announcement of the port, talks to
- * it with its own key, and starts the service with one fixed command (the line [KernelHost.startCommand]). It never writes a
- * setting, grants itself nothing and turns nothing on or off.
- */
+/** All entrypoints lead to the kernel page. Notifications are optional shortcuts. */
 object KernelPairing {
-    private const val TAG = "ash.hostshell"
     internal const val NOTICE = "host-shell"
-
-    /** 「去开启」/「去配对」: pair when Ash has no key yet, otherwise connect again. [done] runs once nothing is left on [a]. */
+    private val main = Handler(Looper.getMainLooper())
     fun open(a: Activity, done: () -> Unit = {}) {
-        if (KernelHost.ready()) return done()
-        val pairing = !AdbKey.exists(a)
-        if (!developerOptions(a)) {
-            AlertDialog.Builder(a).setTitle("先打开开发者选项")
-                .setMessage("在「关于手机」里连点「版本号」7 次，打开开发者选项，再回 Ash 点一次「去开启」。")
-                .setPositiveButton("去关于手机") { _, _ -> runCatching { a.startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)) } }
-                .setNegativeButton("以后再说", null).setOnDismissListener { done() }.show()
-            return
-        }
-        if (!onWifi(a)) {
-            Toast.makeText(a, "无线调试要连着 Wi-Fi 才能打开：先连上 Wi-Fi", Toast.LENGTH_LONG).show()
-            return done()
-        }
-        GuideService.start(a, if (pairing) GuideService.PAIR else GuideService.CONNECT)
-        Toast.makeText(a, if (pairing) "打开「无线调试」，点「使用配对码配对设备」，再下拉通知栏输入配对码" else "打开「无线调试」开关，Ash 会自己接上", Toast.LENGTH_LONG).show()
-        openWirelessDebugging(a)
+        a.startActivity(Intent(a, StatusActivity::class.java))
         done()
     }
-
-    /** 「撤销」: stops the service and forgets Ash's key; the owner removes Ash from the paired devices themself. */
     fun revoke(a: Activity) {
-        AlertDialog.Builder(a).setTitle("撤销「后台也能动手」")
-            .setMessage("Ash 会停掉它在手机上的后台服务，并忘掉配对。之后可以在「开发者选项 › 无线调试 › 已配对的设备」里把 Ash 也删掉。")
+        AlertDialog.Builder(a).setTitle("撤销配对")
+            .setMessage("忘掉配对记录。已启动的宿主会运行到手机重启；也可以在无线调试的已配对设备里删除 Ash。")
             .setPositiveButton("撤销") { _, _ -> KernelHost.revoke(a) }
             .setNegativeButton("取消", null).show()
     }
-
-    /** The part came or went: say so to the owner when it went without being asked to (the phone restarted, or the system stopped it). */
     internal fun changed(ctx: Context) {
         if (KernelHost.ready()) { cancel(ctx); return }
-        if (!AdbKey.exists(ctx)) return
-        // An update of Ash starts the new service a moment later: only a part still gone after that is news.
-        main.postDelayed({ if (!KernelHost.ready() && AdbKey.exists(ctx)) askToConnect(ctx) }, 20_000)
+        if (!AdbKey.paired(ctx)) return
+        main.postDelayed({ if (!KernelHost.ready() && AdbKey.paired(ctx)) askToConnect(ctx) }, 20_000)
     }
-
-    /** After a restart the service is gone; the owner is asked to connect it again (one notice, three taps). */
     internal fun askToConnect(ctx: Context) {
-        notify(ctx, "后台动手要重新接上", "手机重启过或服务停了：点这里，打开「无线调试」开关，接好后再关掉",
-            PendingIntent.getActivity(ctx, 41, Intent(ctx, GuideActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE), ongoing = false)
+        if (!AdbKey.paired(ctx)) return
+        notify(ctx, "宿主要重新接上", "打开 Ash 内核，开启无线调试后点「重新连接」", openPage(ctx), false)
     }
-
-    // ---- reading the phone (nothing is changed) ----
-
-    fun developerOptions(ctx: Context): Boolean = Settings.Global.getInt(ctx.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
-
-    fun wirelessDebugging(ctx: Context): Boolean = Settings.Global.getInt(ctx.contentResolver, "adb_wifi_enabled", 0) == 1
-
+    fun developerOptions(ctx: Context) = Settings.Global.getInt(ctx.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
+    fun wirelessDebugging(ctx: Context) = Settings.Global.getInt(ctx.contentResolver, "adb_wifi_enabled", 0) == 1
     fun onWifi(ctx: Context): Boolean = runCatching {
         val cm = ctx.getSystemService(ConnectivityManager::class.java)
         cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
     }.getOrDefault(false)
-
-    /** The developer options, scrolled to wireless debugging. */
-    internal fun wirelessDebuggingIntent(): Intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+    internal fun wirelessDebuggingIntent() = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
         .putExtra(":settings:fragment_args_key", "toggle_adb_wireless").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-    private fun openWirelessDebugging(ctx: Context) {
-        runCatching { ctx.startActivity(wirelessDebuggingIntent()) }
-            .onFailure { runCatching { ctx.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
-    }
-
-    // ---- notices ----
-
-    private val main = Handler(Looper.getMainLooper())
-
-    /** [loud]: the owner has something to do now (a code to type, a switch to turn off); progress is shown silently. */
-    internal fun notification(ctx: Context, title: String, text: String, tap: PendingIntent?, ongoing: Boolean, input: Notification.Action? = null, loud: Boolean = true): Notification =
-        Notifications.builder(ctx, if (loud) Notifications.CH_URGENT else Notifications.CH_STATUS).setContentTitle(title).setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText(text)).setOngoing(ongoing).setAutoCancel(!ongoing).setOnlyAlertOnce(true)
-            .setCategory(Notification.CATEGORY_REMINDER)
-            .apply { if (tap != null) setContentIntent(tap); if (input != null) addAction(input) }
-            .build()
-
-    internal fun notify(ctx: Context, title: String, text: String, tap: PendingIntent?, ongoing: Boolean, input: Notification.Action? = null) =
-        ctx.getSystemService(NotificationManager::class.java).notify(NOTICE, 0, notification(ctx, title, text, tap, ongoing, input))
-
+    internal fun openPage(ctx: Context): PendingIntent = PendingIntent.getActivity(ctx, 42,
+        Intent(ctx, StatusActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    internal fun notification(ctx: Context, title: String, text: String, tap: PendingIntent?, ongoing: Boolean,
+        input: Notification.Action? = null, loud: Boolean = true): Notification =
+        Notifications.builder(ctx, if (loud) Notifications.CH_URGENT else Notifications.CH_STATUS)
+            .setContentTitle(title).setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
+            .setOngoing(ongoing).setAutoCancel(!ongoing).setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_REMINDER)
+            .apply { if (tap != null) setContentIntent(tap); if (input != null) addAction(input) }.build()
+    internal fun notify(ctx: Context, title: String, text: String, tap: PendingIntent?, ongoing: Boolean) =
+        ctx.getSystemService(NotificationManager::class.java).notify(NOTICE, 0, notification(ctx, title, text, tap, ongoing))
     internal fun cancel(ctx: Context) = ctx.getSystemService(NotificationManager::class.java).cancel(NOTICE, 0)
-
-    internal fun openPage(ctx: Context): PendingIntent =
-        PendingIntent.getActivity(ctx, 42, wirelessDebuggingIntent(), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-
-    /** How Ash's key names it in the phone's list of paired devices. */
-    internal fun keyName(): String = "ash@" + (Build.MODEL ?: "phone").replace(Regex("[^A-Za-z0-9._-]"), "_")
-
-    internal fun log(msg: String) = Log.i(TAG, msg)
+    internal fun keyName() = KernelHost.keyName()
+    internal fun log(msg: String) = Log.i("ash.hostshell", msg)
 }
 
-/**
- * The few minutes of a pairing or a reconnection, while the owner is in the system's settings: Ash waits for the port to be
- * announced, takes the code from its notification, and starts the service. A short foreground service, so that the system
- * lets it finish while Ash is in the background.
- */
+enum class PairingStage { IDLE, WAITING_CODE, PAIRING, CONNECTING, STARTING, READY, ERROR }
+data class PairingProgress(val stage: PairingStage = PairingStage.IDLE, val text: String = "", val pairingPort: Int = 0)
+
+/** One worker owns pairing and launch; page progress does not depend on notification permission. */
 class GuideService : Service() {
     private val work = Executors.newSingleThreadExecutor()
     private var mdns: AdbMdns? = null
     private var mode = ""
+    private var discoveryEpoch = 0
     private var pairingPort = 0
     private var busy = false
-    private var watcher: ContentObserver? = null
-
+    private var waitingCode: String? = null
+    private val main = Handler(Looper.getMainLooper())
+    private val expiry = Runnable {
+        if (progress.stage != PairingStage.READY) publish(PairingStage.ERROR, "等待超时，请在内核页面重试")
+        stopSelf()
+    }
+    override fun onCreate() { super.onCreate(); running = true; Notifications.createChannel(this) }
     override fun onBind(intent: Intent?): IBinder? = null
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val ctx = applicationContext
+        foreground(progress.text.ifEmpty { "正在准备配对" })
         when (intent?.action) {
-            PAIR, CONNECT -> {
-                foreground(if (intent.action == PAIR) waiting(PAIR) else waiting(CONNECT))
-                begin(intent.action!!)
-            }
+            PAIR, CONNECT -> work.execute { if (!busy) begin(intent.action!!) }
             CODE -> {
-                foreground(KernelPairing.notification(ctx, "正在配对…", "请稍等", null, ongoing = true, loud = false))
-                val code = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_CODE)?.toString()?.trim().orEmpty()
-                val port = intent.getIntExtra(EXTRA_PORT, pairingPort)
-                work.execute { pair(port, code) }
+                val code = intent.getStringExtra(KEY_CODE)
+                    ?: RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_CODE)?.toString().orEmpty()
+                work.execute {
+                    if (!busy) {
+                        if (!validCode(code)) publish(PairingStage.ERROR, "请输入 6 位数字配对码")
+                        else if (pairingPort > 0) pair(pairingPort, code.trim())
+                        else {
+                            waitingCode = code.trim()
+                            begin(PAIR)
+                            publish(PairingStage.WAITING_CODE, "正在寻找配对端口，请保持系统配对框打开")
+                        }
+                    }
+                }
             }
             else -> stopSelf()
         }
+        main.removeCallbacks(expiry)
+        main.postDelayed(expiry, 170_000)
         return START_NOT_STICKY
     }
-
     private fun begin(next: String) {
+        if (KernelHost.ready()) { awaitCore(); return }
         mdns?.stop()
+        val epoch = ++discoveryEpoch
         mode = next
-        val type = if (next == PAIR) AdbMdns.PAIRING else AdbMdns.CONNECT
-        mdns = AdbMdns(applicationContext, type) { port -> work.execute { found(next, port) } }.also { it.start() }
+        if (next == PAIR) publish(PairingStage.WAITING_CODE, "打开无线调试，查看配对码，在内核页面输入")
+        else publish(PairingStage.CONNECTING, "正在连接无线调试")
+        mdns = AdbMdns(applicationContext, if (next == PAIR) AdbMdns.PAIRING else AdbMdns.CONNECT) { port ->
+            if (!work.isShutdown) runCatching { work.execute {
+                if (epoch == discoveryEpoch && mode == next && !busy) {
+                    if (next == PAIR) {
+                        pairingPort = port
+                        publish(PairingStage.WAITING_CODE, "已找到配对端口，输入 6 位配对码")
+                        waitingCode?.also { waitingCode = null; pair(port, it) }
+                    } else connect(port)
+                }
+            } }
+        }.also { it.start() }
     }
-
-    private fun found(kind: String, port: Int) {
-        if (kind != mode || busy) return
-        when (kind) {
-            PAIR -> {
-                pairingPort = port
-                foreground(askCode(port, "在手机屏幕上看到的 6 位配对码，输在这里"))
-            }
-            CONNECT -> connect(port)
-        }
-    }
-
     private fun pair(port: Int, code: String) {
-        if (code.length !in 6..8 || port <= 0) { foreground(askCode(port, "配对码是 6 位数字，再输一次")); return }
+        if (!validCode(code)) { publish(PairingStage.ERROR, "请输入 6 位数字配对码"); return }
         busy = true
+        publish(PairingStage.PAIRING, "正在配对")
         try {
-            val key = AdbKey.load(applicationContext, create = true) ?: throw IllegalStateException("no key")
+            val key = AdbKey.load(this, create = true) ?: error("无法生成配对密钥")
             AdbClient.pair(port, code, key, KernelPairing.keyName())
+            AdbKey.markPaired(this)
+            pairingPort = 0
+            busy = false
             KernelPairing.log("paired")
-            foreground(KernelPairing.notification(applicationContext, "配对好了，正在接上…", "请稍等，不要关掉无线调试", null, ongoing = true, loud = false))
-            busy = false
             begin(CONNECT)
-        } catch (e: AdbWrongCode) {
+        } catch (_: AdbWrongCode) {
             busy = false
-            foreground(askCode(port, "配对码不对，再看一眼屏幕上的码"))
+            publish(PairingStage.ERROR, "配对码不对，请重新输入")
         } catch (e: Exception) {
             busy = false
             KernelPairing.log("pairing failed: ${e.javaClass.simpleName}")
-            foreground(askCode(port, "没配对上（${e.javaClass.simpleName}）。确认配对框还开着，再输一次"))
+            publish(PairingStage.ERROR, "配对失败，请重新打开系统配对框、查看新码后重试")
         }
     }
-
     private fun connect(port: Int) {
         busy = true
-        val ctx = applicationContext
         try {
-            val key = AdbKey.load(ctx, create = false) ?: throw AdbNotPaired("no key")
-            AdbClient.shell(port, key, KernelHost.startCommand(ctx))
-            val end = System.currentTimeMillis() + 10_000
-            while (!KernelHost.ready() && System.currentTimeMillis() < end) Thread.sleep(200)
-            if (!KernelHost.ready()) throw IllegalStateException("the service did not come up")
-            KernelPairing.log("the service is up")
-            mdns?.stop()
-            done()
-        } catch (e: AdbNotPaired) {
+            publish(PairingStage.CONNECTING, "配对已完成，正在连接无线调试")
+            val key = AdbKey.load(this, create = false) ?: throw AdbNotPaired("no key")
+            if (!KernelHost.ready()) {
+                publish(PairingStage.STARTING, "正在拉起宿主，停止旧中枢")
+                AdbClient.shell(port, key, KernelHost.startCommand(this))
+            }
+            awaitCore()
+        } catch (_: AdbNotPaired) {
             busy = false
-            KernelPairing.log("not paired any more: ${e.message}")
-            foreground(KernelPairing.notification(ctx, "配对失效了，要重新配对", "超过 7 天没接上过，或配对被删了：在无线调试里点「使用配对码配对设备」",
-                KernelPairing.openPage(ctx), ongoing = true))
-            AdbKey.forget(ctx)
+            AdbKey.forget(this)
             begin(PAIR)
+            publish(PairingStage.ERROR, "配对已失效，请查看新的配对码后输入")
         } catch (e: Exception) {
             busy = false
             KernelPairing.log("connect failed: ${e.javaClass.simpleName}: ${e.message}")
-            foreground(KernelPairing.notification(ctx, "没接上，再试一次", "把「无线调试」关掉再打开，Ash 会再接一次", KernelPairing.openPage(ctx), ongoing = true))
+            publish(PairingStage.ERROR, "连接失败，请确认无线调试已打开，再点重新连接")
         }
     }
-
-    /** Connected: ask the owner to turn wireless debugging off, and stop once they have. */
-    private fun done() {
-        val ctx = applicationContext
-        if (!KernelPairing.wirelessDebugging(ctx)) return finish()
-        foreground(KernelPairing.notification(ctx, "已接上。可以关掉无线调试了", "点这里打开无线调试，把开关关掉（后台动手会一直在，直到手机重启）",
-            KernelPairing.openPage(ctx), ongoing = true))
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) { if (!KernelPairing.wirelessDebugging(ctx)) finish() }
-        }
-        watcher = observer
-        contentResolver.registerContentObserver(Settings.Global.getUriFor("adb_wifi_enabled"), false, observer)
-    }
-
-    private fun finish() {
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        KernelPairing.cancel(applicationContext)
-        stopSelf()
-    }
-
-    override fun onTimeout(startId: Int) {
-        // A short service has about three minutes; a guide still waiting then is left to the owner's next 「去开启」.
-        val ctx = applicationContext
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        if (!KernelHost.ready()) KernelPairing.notify(ctx, "没等到无线调试", "下次在 Ash 的体检里点「后台也能动手 › 去开启」再来", null, ongoing = false)
-        stopSelf()
-    }
-
-    override fun onDestroy() {
+    private fun awaitCore() {
+        busy = true
         mdns?.stop()
-        watcher?.let { contentResolver.unregisterContentObserver(it) }
-        work.shutdownNow()
-        super.onDestroy()
+        discoveryEpoch++
+        publish(PairingStage.STARTING, "正在等待宿主和中枢启动")
+        val deadline = android.os.SystemClock.elapsedRealtime() + 90_000
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            if (KernelHost.ready() && HostPresence.coreReady) {
+                publish(PairingStage.READY, "宿主已连接，中枢已就绪。可以关闭无线调试")
+                busy = false
+                main.post { stopSelf() }
+                return
+            }
+            if (KernelHost.ready()) publish(PairingStage.STARTING, "宿主已连接 · ${HostPresence.status}")
+            Thread.sleep(300)
+        }
+        busy = false
+        publish(PairingStage.ERROR, if (KernelHost.ready()) "宿主已连接，但中枢未就绪：${HostPresence.status}" else "宿主启动失败，请点重新连接")
     }
-
-    private fun waiting(kind: String): Notification = KernelPairing.notification(applicationContext,
-        if (kind == PAIR) "等你点「使用配对码配对设备」" else "等你打开「无线调试」",
-        if (kind == PAIR) "开发者选项 › 无线调试：打开开关，点「使用配对码配对设备」，然后回这里输入配对码" else "开发者选项 › 无线调试：打开开关，Ash 会自己接上",
-        KernelPairing.openPage(applicationContext), ongoing = true, loud = false)
-
-    private fun askCode(port: Int, text: String): Notification {
-        val reply = PendingIntent.getService(this, 43, Intent(this, GuideService::class.java).setAction(CODE).putExtra(EXTRA_PORT, port),
+    private fun publish(stage: PairingStage, text: String) {
+        progress = PairingProgress(stage, text, pairingPort)
+        main.post { if (running) foreground(text) }
+    }
+    private fun foreground(text: String) {
+        val reply = PendingIntent.getService(this, 43, Intent(this, GuideService::class.java).setAction(CODE),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-        val action = Notification.Action.Builder(null, "输入配对码", reply)
-            .addRemoteInput(RemoteInput.Builder(KEY_CODE).setLabel("6 位配对码").build()).build()
-        return KernelPairing.notification(applicationContext, "输入配对码", text, null, ongoing = true, input = action)
-    }
-
-    private fun foreground(n: Notification) {
+        val input = if (progress.stage == PairingStage.WAITING_CODE) Notification.Action.Builder(null, "输入配对码", reply)
+            .addRemoteInput(RemoteInput.Builder(KEY_CODE).setLabel("6 位配对码").build()).build() else null
+        val n = KernelPairing.notification(this, "Ash 内核", text, KernelPairing.openPage(this), true, input, loud = false)
         if (Build.VERSION.SDK_INT >= 34) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
         else startForeground(ID, n)
     }
-
+    override fun onTimeout(startId: Int) { publish(PairingStage.ERROR, "等待超时，请在内核页面重试"); stopSelf() }
+    override fun onDestroy() {
+        running = false
+        main.removeCallbacksAndMessages(null)
+        mdns?.stop()
+        work.shutdownNow()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        super.onDestroy()
+    }
     companion object {
         const val PAIR = "ai.ash.hostshell.PAIR"
         const val CONNECT = "ai.ash.hostshell.CONNECT"
         private const val CODE = "ai.ash.hostshell.CODE"
-        private const val EXTRA_PORT = "port"
         private const val KEY_CODE = "code"
         private const val ID = 0x5a17
-
-        fun intent(ctx: Context, action: String): Intent = Intent(ctx, GuideService::class.java).setAction(action)
-
-        fun start(ctx: Context, action: String) { ctx.startForegroundService(intent(ctx, action)) }
+        @Volatile var progress = PairingProgress()
+            private set
+        @Volatile var running = false
+            private set
+        internal fun validCode(code: String) = code.trim().matches(Regex("[0-9]{6}"))
+        fun start(ctx: Context, action: String) {
+            KernelService.start(ctx)
+            ctx.startForegroundService(Intent(ctx, GuideService::class.java).setAction(action))
+        }
+        fun submit(ctx: Context, code: String) = ctx.startForegroundService(
+            Intent(ctx, GuideService::class.java).setAction(CODE).putExtra(KEY_CODE, code))
     }
 }
 
-/** The notice's tap: an activity (a notification may not start one through a service), which begins the guide and goes. */
-class GuideActivity : Activity() {
-    override fun onCreate(savedInstanceState: android.os.Bundle?) {
-        super.onCreate(savedInstanceState)
-        KernelPairing.open(this) { finish() }
-    }
-}
+/** Existing app links land on the same persistent kernel page. */
+class GuideActivity : StatusActivity()

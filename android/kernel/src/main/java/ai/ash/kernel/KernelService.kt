@@ -75,7 +75,11 @@ class KernelService : Service() {
         )
 
         // Re-evaluate whether to run the core when the shell host comes or goes.
-        ai.ash.kernel.host.HostPresence.watch { supervisor.poke() }
+        ai.ash.kernel.host.HostPresence.watch {
+            supervisor.poke()
+            // attach does not return until the old core and its agents have stopped. The shell host may then launch.
+            supervisor.tick()
+        }
         // Stale core from an earlier host process first, then supervise.
         Thread({
             NodeProcess.reapStale(paths.nodePid, paths.coreBundle) { log.note(it) }
@@ -114,6 +118,10 @@ class KernelService : Service() {
     }
 
     private fun show(text: String) {
+        if (ai.ash.kernel.host.HostPresence.yielded) {
+            publishHostStatus(this, ai.ash.kernel.host.HostPresence.status)
+            return
+        }
         if (text == lastShown) return
         lastShown = text
         status = text
@@ -165,6 +173,12 @@ class KernelService : Service() {
         /** The line the notification shows now (null before the service ran in this process); [StatusActivity] shows it too. */
         @Volatile var status: String? = null
             private set
+
+        internal fun publishHostStatus(ctx: Context, text: String) {
+            if (status == text) return
+            status = text
+            Notifications.update(ctx, text)
+        }
 
         fun start(ctx: Context, action: String? = null, at: Long = 0L) {
             val i = Intent(ctx, KernelService::class.java).setAction(action)

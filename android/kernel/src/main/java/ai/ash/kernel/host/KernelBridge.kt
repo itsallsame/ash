@@ -70,6 +70,13 @@ class KernelBridge(ctx: Context) : IKernelBridge.Stub() {
         return runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0"
     }
 
+    override fun reportCoreStatus(text: String, ready: Boolean) {
+        if (HostPresence.yielded) {
+            HostPresence.report(text, ready)
+            ai.ash.kernel.KernelService.publishHostStatus(app, text)
+        }
+    }
+
     companion object {
         private const val TAG = "ash.kernel.bridge"
 
@@ -89,18 +96,30 @@ object HostPresence {
     @Volatile private var onChange: (() -> Unit)? = null
 
     val yielded: Boolean get() = callback?.asBinder()?.isBinderAlive == true
+    @Volatile var coreReady = false
+        private set
+    @Volatile var status = "正在启动"
+        private set
+
+    internal fun report(text: String, ready: Boolean) { status = text; coreReady = ready }
 
     /** The kernel service registers what to run when the host comes or goes (it re-evaluates whether to run the core). */
     fun watch(onChange: () -> Unit) { this.onChange = onChange }
 
-    internal fun take(ctx: Context, cb: IHostCallback) {
+    @Synchronized internal fun take(ctx: Context, cb: IHostCallback) {
+        check(!yielded) { "a shell host is already supervising the core" }
+        coreReady = false
+        status = "正在启动"
         callback = cb
-        try { cb.asBinder().linkToDeath({ gone(ctx) }, 0) } catch (e: Exception) { callback = null; return }
+        try { cb.asBinder().linkToDeath({ gone(ctx, cb) }, 0) } catch (e: Exception) { callback = null; throw e }
         onChange?.invoke()
     }
 
-    private fun gone(ctx: Context) {
+    @Synchronized private fun gone(ctx: Context, cb: IHostCallback) {
+        if (callback?.asBinder() != cb.asBinder()) return
         callback = null
+        coreReady = false
+        status = "宿主未连接"
         onChange?.invoke()
         // The host went away (its service stopped or wireless debugging was revoked): the kernel service takes over.
         runCatching { ai.ash.kernel.KernelService.start(ctx) }

@@ -25,6 +25,29 @@ class SupervisorTest {
 
     private fun crash() { launcher.launched.last().running = false }
 
+    @Test fun handingOverStopsTheOldCoreBeforeTheNewLauncherRuns() {
+        sup.tick()
+        val old = launcher.launched.single()
+        sup.onReady("old", 43999)
+        stopped = true
+        sup.tick() // The bridge performs this synchronously before acknowledging attach.
+        assertFalse(old.running)
+        assertEquals(1, old.stopCalls)
+        assertEquals(KernelState.STOPPED, sup.state)
+        assertEquals(1, gone)
+        val newLauncher = object : NodeLauncher {
+            override fun launch(): NodeHandle {
+                assertFalse("old core must be gone before launching a new one", old.running)
+                return FakeNode(clock.now())
+            }
+        }
+        val host = KernelSupervisor(clock, provisioner, newLauncher, env, { false }, {}, {}, {})
+        host.tick()
+        assertEquals(KernelState.STARTING, host.state)
+        sup.tick()
+        assertEquals(1, launcher.launched.size) // The ordinary service cannot restart behind the shell host.
+    }
+
     // ---- the backoff itself
 
     @Test fun backoffDoublesFromFiveSecondsToFiveMinutes() {

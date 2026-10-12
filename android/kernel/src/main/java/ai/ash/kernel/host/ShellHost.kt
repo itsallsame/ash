@@ -60,8 +60,6 @@ object ShellHost {
         val runDir = File("/data/local/tmp/ash-kernel-host").apply { mkdirs() }
         val sys = SystemEnv(ctx)
 
-        bridge.provision() // install payload and container (idempotent) before the first start
-
         val clock: Clock = SystemClock()
         lateinit var supervisor: KernelSupervisor
         val callbacks = object : HostCallbacks {
@@ -84,7 +82,10 @@ object ShellHost {
             launcher = ShellNodeLauncher(bridge, pkg, paths, sys, api, pipe, runDir, version),
             env = sys,
             stopped = { false },
-            show = { Log.i(TAG, "status: $it") },
+            show = {
+                Log.i(TAG, "status: $it")
+                bridge.reportCoreStatus(it, supervisor.state == ai.ash.kernel.KernelState.RUNNING)
+            },
             note = { Log.i(TAG, it) },
             // A new core knows of no virtual screen: do not leave the old one behind.
             onNodeGone = { runCatching { phone.close() } },
@@ -96,7 +97,9 @@ object ShellHost {
             override fun wakeFired(atMs: Long) { supervisor.sendEvent(HostEvents.wakeFired(atMs)) }
             override fun shutdown(reason: String) { Thread({ supervisor.shutdown(reason, 5_000) }, "ash-host-shutdown").start() }
         }
-        runCatching { bridge.attach(cb) }
+        // Claim supervision first: the bridge stops the old core before acknowledging the handover.
+        // A second host is refused here and exits instead of starting a second core.
+        bridge.attach(cb)
 
         // The bridge — this host's only way to the Keystore, the alarm and host.json — belongs to the kernel package's
         // process. When that process goes (an upgrade replaces the package, or it is killed), the new kernel service
@@ -110,7 +113,17 @@ object ShellHost {
             }, 0)
         }
 
-        Thread({ supervisor.run() }, "ash-kernel-host").start()
+        Thread({
+            try {
+                bridge.reportCoreStatus("正在准备内核", false)
+                bridge.provision()
+                supervisor.run()
+            } catch (t: Throwable) {
+                runCatching { bridge.reportCoreStatus("启动失败：${t.message ?: t.javaClass.simpleName}", false) }
+                Log.e(TAG, "cannot run core", t)
+                System.exit(1)
+            }
+        }, "ash-kernel-host").start()
         Log.i(TAG, "started for $pkg (uid $kernelUid)")
     }
 

@@ -90,11 +90,18 @@ class AdbKey private constructor(private val privateKey: PrivateKey, private val
 
         private fun file(ctx: Context) = File(File(ctx.noBackupFilesDir, "hostshell"), "adbkey")
 
-        /** Ash has paired with this phone before (the owner may still have removed the pairing in the system's list). */
+        /** A local key exists; this alone does NOT mean that pairing succeeded. */
         fun exists(ctx: Context): Boolean = file(ctx).isFile
+
+        // Existing installations have no marker; try their key before asking the owner to pair again.
+        // Newly generated keys stay pending until the pairing protocol actually succeeds.
+        fun paired(ctx: Context): Boolean = exists(ctx) && !File(file(ctx).parentFile, "pending").isFile
+
+        fun markPaired(ctx: Context) { File(file(ctx).parentFile, "pending").delete() }
 
         /** Forgets the key (「撤销」): the phone's list of paired devices still names Ash until the owner removes it there. */
         fun forget(ctx: Context) {
+            File(file(ctx).parentFile, "pending").delete()
             file(ctx).delete()
             runCatching { KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(WRAP_ALIAS) }
         }
@@ -115,6 +122,8 @@ class AdbKey private constructor(private val privateKey: PrivateKey, private val
                 if (!create) return null
             }
             if (!create) return null
+            f.parentFile?.mkdirs()
+            File(f.parentFile, "pending").writeText("pending")
             val pair = KeyPairGenerator.getInstance("RSA").apply { initialize(RSAKeyGenParameterSpec(2048, RSAKeyGenParameterSpec.F4)) }.generateKeyPair()
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, wrap)

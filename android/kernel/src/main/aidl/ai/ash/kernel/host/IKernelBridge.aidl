@@ -26,4 +26,6 @@ interface IKernelBridge {
     // The shell host is in charge of the core now: the kernel service stops its own core and stays yielded while [cb]
     // lives. The bridge calls [cb] on a wake or a device shutdown. Returns the kernel version.
     String attach(IHostCallback cb);
+    // Visible launch progress, and whether this host's core has said lifecycle.ready.
+    void reportCoreStatus(String text, boolean ready);
 }

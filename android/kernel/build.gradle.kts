@@ -1,4 +1,4 @@
-// The ash kernel package: no UI. Installs and runs ash core (Node + proot/Ubuntu + DSH), is the Android kernel host
+// The ash kernel package: a status/pairing page. Installs and runs ash core (Node + proot/Ubuntu + DSH), is the Android kernel host
 // of the ash-host/1 contract (host.json, the host interface, host events on stdin) and hands the local link to the hand app.
 import java.security.KeyStore
 
@@ -63,7 +63,7 @@ android {
         // 28 on purpose: the payload's executables (node, git, python, proot) are run from the app's private files/,
         // which Android refuses for apps targeting 29 and above. Same reason the shared-storage permissions work as they do.
         targetSdk = 28
-        versionCode = 9
+        versionCode = 10
         versionName = "0.4.8"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
