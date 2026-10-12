@@ -114,9 +114,13 @@ export class Health {
     try {
       const result = phoneJson(await this.ash.call(await this.phone("health.read"), "health.read", { metrics: ["weight", "steps", "sleep", "heart_rate"],
         from: new Date(startOfDay(now) - (days - 1) * DAY).toISOString(), to: new Date(now).toISOString(), max_rows: 20000 }));
+      this.failure = null;
       return { rows: Array.isArray(result.rows) ? result.rows : [], errors: result.source_errors ? [sourceErrors(result.source_errors)] : [], stale: null };
     } catch (error) {
-      process.stderr.write(`health.read failed: ${error instanceof Error ? error.message : error}\n`);
+      // Once per change of state: the phone being away is the same news every time the page asks.
+      const why = error instanceof Error ? error.message : String(error);
+      if (why !== this.failure) process.stderr.write(`health.read failed: ${why}\n`);
+      this.failure = why;
       const recent = error && typeof error === "object" ? error.recent : null;
       const rows = Array.isArray(recent?.rows) ? recent.rows : [];
       return { rows, errors: [plain(error)], stale: rows.length ? { as_of: typeof recent.as_of === "number" ? recent.as_of : rows.reduce((at, row) => Math.max(at, Number(row?.ts) || 0), 0), source: String(recent.source ?? "Ash 的记录") } : null, failed: true };

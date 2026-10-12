@@ -13,7 +13,7 @@
  * `service:history` returns.
  */
 import { generateKeyPairSync, sign as signBytes } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -756,10 +756,18 @@ export class Scenario {
    * [whileStarting] runs once the link is open and the hub is not done starting (an agent's runtime held with
    * `driver.holdStarts`): a person can connect and speak then, as on the phone while the agent comes up.
    */
-  async restart(whileStarting?: () => Promise<void>): Promise<void> {
+  async restart(whileStarting?: () => Promise<void>, o: { crash?: boolean } = {}): Promise<void> {
+    // A crash: the database is taken as it is now and put back after the stop, so the stop's own writes (the ends of the turns) are lost, as when the system kills the process.
+    const image = o.crash ? mkdtempSync(join(tmpdir(), "ash-crash-")) : null;
+    if (image) for (const name of ["ash.db", "ash.db-wal", "ash.db-shm"]) if (existsSync(join(this.dataDir, name))) cpSync(join(this.dataDir, name), join(image, name));
     // The hub goes first: it ends the turns and the tool lines it holds itself, then the fake driver lets go.
     await this.hub.stop();
     await this.driver.dispose();
+    if (image) {
+      for (const name of ["ash.db", "ash.db-wal", "ash.db-shm"]) rmSync(join(this.dataDir, name), { force: true });
+      cpSync(image, this.dataDir, { recursive: true });
+      rmSync(image, { recursive: true, force: true });
+    }
     this.hubValue = undefined;
     // Events the host sends while the hub is down wait in the host's stream for the next boot's pipe.
     if (this.stdin) { this.host.stdin.unpipe(this.stdin); this.stdin.end(); }
