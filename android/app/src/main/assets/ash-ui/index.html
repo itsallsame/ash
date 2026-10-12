@@ -186,7 +186,7 @@ body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums
 .b-me{background:var(--bubble-me);color:var(--on-me);border-bottom-right-radius:6px}
 .b-her{background:var(--bubble-her);color:var(--text);border-bottom-left-radius:6px;position:relative;z-index:0}
 /* Equal shadow radii avoid WebView's per-tile blur textures; the bubble keeps its small corners. */
-.b-her::before{content:"";position:absolute;inset:0;border-radius:20px;box-shadow:var(--shadow-1);pointer-events:none;z-index:-1}
+.b-her::before{content:"";position:absolute;inset:0;border-radius:20px;box-shadow:var(--shadow-1);pointer-events:none;z-index:-1;contain:layout style;isolation:isolate}
 .b-her.mid{border-top-left-radius:6px}
 .b-me.mid{border-top-right-radius:6px}
 .b-wide{max-width:92%}
