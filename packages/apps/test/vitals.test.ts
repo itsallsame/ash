@@ -57,6 +57,7 @@ async function make(w: World) {
 
 test("the lamp: ok, busy, new, paused, the brain not answering", async () => {
   assert.deepEqual(pick(await (await make({})).status()), { lamp: "ok", say: { id: "ok" }, stale: false });
+  assert.equal((await (await make({ idle: false })).status()).busy_what, null, "no source for what she is busy with yet");
   assert.deepEqual(pick(await (await make({ idle: false })).status()), { lamp: "ok", say: { id: "ok_busy" }, stale: false });
   assert.deepEqual(pick(await (await make({ uptime_s: 20, minutes: [] })).status()), { lamp: "new", say: { id: "new" }, stale: false });
   assert.deepEqual(pick(await (await make({ paused: true })).status()), { lamp: "paused", say: { id: "paused" }, stale: false });

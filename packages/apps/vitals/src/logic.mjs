@@ -88,7 +88,8 @@ export class Vitals {
 
     return {
       now, stale: !health, lamp, say, primary_alert: first ? { id: first.id, since: first.since } : null,
-      hands_online: admin?.hands_online ?? 0, busy: health ? health.idle === false : false, uptime_s: health?.uptime_s ?? 0,
+      hands_online: admin?.hands_online ?? 0, busy: health ? health.idle === false : false, busy_what: null, // what she is busy with has no source in the hub yet; the pages say "busy" without it
+      uptime_s: health?.uptime_s ?? 0,
       vitals: health ? { cpu_pct: health.proc.cpu_pct, rss_mb: health.proc.rss_mb, lag_p99_ms: health.proc.lag_p99_ms, idle: health.idle } : null,
       rules: invariants.map((item) => ({
         id: item.id, value: item.value, budget: item.budget,
