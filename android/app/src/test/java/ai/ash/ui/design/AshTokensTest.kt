@@ -34,6 +34,15 @@ class AshTokensTest {
         }
     }
 
+    @Test fun lightPrimaryIsTheTerracottaThatCarriesWhiteText() {
+        assertEquals(0xFFCC4B2E.toInt(), AshTokens.light.you)
+        assertEquals(0xFFB8432A.toInt(), AshTokens.light.youPress)
+        assertEquals(0xFFFF8A66.toInt(), AshTokens.dark.you)
+        // the brighter coral stays for marks with no text on them
+        assertEquals(0xFFF2704E.toInt(), AshTokens.light.youMark)
+        assertEquals(AshTokens.dark.you, AshTokens.dark.youMark)
+    }
+
     @Test fun nightPicksTheDarkPalette() {
         assertTrue(AshTokens.palette(true) === AshTokens.dark)
         assertTrue(AshTokens.palette(false) === AshTokens.light)
@@ -55,6 +64,8 @@ class AshTokensTest {
         assertEquals(size.getInt("button"), AshTokens.Size.button)
         assertEquals(size.getInt("listRow"), AshTokens.Size.listRow)
         assertEquals(size.getInt("switchW"), AshTokens.Size.switchW)
+        assertEquals(420, AshTokens.Size.glowW)
+        assertEquals(320, AshTokens.Size.glowH)
         assertEquals(size.getDouble("stroke").toFloat(), AshTokens.Size.stroke)
         assertTrue("controls are at least 44dp", AshTokens.Size.touch >= 44 && AshTokens.Size.iconButton >= 44)
     }

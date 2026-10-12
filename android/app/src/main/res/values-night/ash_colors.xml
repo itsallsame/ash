@@ -15,6 +15,7 @@
     <color name="ash_on_ink">#FF1B1715</color>
     <color name="ash_you">#FFFF8A66</color>
     <color name="ash_you_press">#FFFF9E80</color>
+    <color name="ash_you_mark">#FFFF8A66</color>
     <color name="ash_you_soft">#29FF8A66</color>
     <color name="ash_you_text">#FFFFAA8C</color>
     <color name="ash_on_you">#FF2A1208</color>
@@ -30,6 +31,13 @@
     <color name="ash_err">#FFFF8A8A</color>
     <color name="ash_err_fill">#FFFF6B6B</color>
     <color name="ash_err_soft">#24FF6B6B</color>
+    <color name="ash_on_helper">#FFFFFFFF</color>
+    <color name="ash_helper_purple">#FF6B5BD6</color>
+    <color name="ash_helper_blue">#FF2F73C9</color>
+    <color name="ash_helper_teal">#FF14837A</color>
+    <color name="ash_helper_green">#FF3A8540</color>
+    <color name="ash_helper_amber">#FFA8641A</color>
+    <color name="ash_helper_rose">#FFB5456C</color>
     <color name="ash_bubble_her">#FF25201D</color>
     <color name="ash_bubble_me">#FF5C3B2B</color>
     <color name="ash_on_me">#FFFFE8DA</color>

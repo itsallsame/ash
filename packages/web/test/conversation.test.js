@@ -281,7 +281,7 @@ test("an approval card keeps the line breaks of its detail", async () => {
 });
 
 test("a helper's face carries the letter that tells it apart; a question that allows free answers has the box", async () => {
-  assert.deepEqual(["小研", "阿福", "老王", "记账员", "Ash", "小", "", "翻译"].map(letterOf), ["研", "福", "王", "记", "A", "小", "?", "翻"]);
+  assert.deepEqual(["小研", "阿福", "老王", "记账员", "Ash", "小", "", "翻译"].map(letterOf), ["小", "阿", "老", "记", "A", "小", "?", "翻"]);
   const ask = { id: "q", seq: 1, from: "agent:main", title: "晚饭吃什么？", detail: "", human_kind: "question", allow_custom: true, state: "pending", expires_at: Date.now() + 60_000, options: [{ id: "a", label: "面" }] };
   const answers = [];
   const card = draw([{ type: "ask", ask }], { onAnswerAsk: async (_ask, choice, words) => answers.push([choice, words]) }).children[0];

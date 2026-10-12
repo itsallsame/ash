@@ -36,6 +36,17 @@ test("Android resources carry every colour in both themes", () => {
   }
 });
 
+test("the light primary colour carries white text; the brighter coral is only for marks with no text", () => {
+  const lum = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const c = tokens.color;
+  assert.deepEqual([c.you.light, c["you-press"].light], ["#CC4B2E", "#B8432A"]);
+  assert.ok(1.05 / (lum(c.you.light) + 0.05) >= 4.5, "white on the light primary reads");
+  assert.equal(c.you.dark, "#FF8A66", "the dark theme is unchanged");
+  assert.deepEqual([c["you-mark"].light, c["you-mark"].dark], ["#F2704E", c.you.dark]);
+  const home = read("packages/web/home.css");
+  assert.match(home, /\.hm-bar\.last\{background:var\(--you-mark\)\}/, "today's bar in the spend chart uses the mark colour");
+});
+
 test("component styles are plain page CSS built on the tokens", () => {
   const ui = read("packages/web/ash-ui.css").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.ok(!/\.t-(light|dark)\b/.test(ui), "the canvas wrappers are not part of the page styles");

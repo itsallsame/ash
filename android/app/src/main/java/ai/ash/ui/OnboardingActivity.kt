@@ -239,7 +239,7 @@ class OnboardingActivity : Activity() {
             addView(body, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         val middle = FrameLayout(this).apply {
-            if (glow) addView(OnboardingViews.glow(this@OnboardingActivity), FrameLayout.LayoutParams(dp(Layout.glow), dp(Layout.glow), Gravity.CENTER))
+            if (glow) addView(OnboardingViews.glow(this@OnboardingActivity), FrameLayout.LayoutParams(dp(AshTokens.Size.glowW), dp(AshTokens.Size.glowH), Gravity.CENTER))
             addView(scroll, OnboardingViews.frame())
         }
         return LinearLayout(this).apply {

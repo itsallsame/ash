@@ -41,7 +41,7 @@
 .hm-avatar{width:104px;height:104px}
 .hm-avatar.off{opacity:.55}
 .hm-avatar.av-letter{display:flex;align-items:center;justify-content:center}
-.hm-avatar .hm-letter{font-size:44px;font-weight:700}
+.hm-avatar .hm-letter{font-size:44px}
 .hm-name{font-size:28px;line-height:36px;font-weight:700;color:var(--ink);margin-top:6px}
 .hm-state{height:28px;padding:0 12px;font-size:13px;gap:6px}
 .hm-spin{width:11px;height:11px}
@@ -215,7 +215,7 @@
 .hm-spend-n{font-size:28px;line-height:36px;font-weight:700;color:var(--ink)}
 .hm-bars{display:flex;align-items:flex-end;gap:5px;height:52px}
 .hm-bar{width:9px;border-radius:3px;background:var(--surface-3)}
-.hm-bar.last{background:var(--you)}
+.hm-bar.last{background:var(--you-mark)}
 
 /* the file reader (a dialog of files.js) */
 .hm-root ~ .files-view{z-index:60}

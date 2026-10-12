@@ -13,8 +13,9 @@
   --text-2:#7C6B62;
   --text-3:#A8978D;
   --on-ink:#FFFFFF;
-  --you:#F2704E;
-  --you-press:#E25E3C;
+  --you:#CC4B2E;
+  --you-press:#B8432A;
+  --you-mark:#F2704E;
   --you-soft:rgba(242,112,78,.12);
   --you-text:#C8502F;
   --on-you:#FFFFFF;
@@ -30,6 +31,13 @@
   --err:#C9302F;
   --err-fill:#E5484D;
   --err-soft:rgba(229,72,77,.10);
+  --on-helper:#FFFFFF;
+  --helper-purple:#6B5BD6;
+  --helper-blue:#2F73C9;
+  --helper-teal:#14837A;
+  --helper-green:#3A8540;
+  --helper-amber:#A8641A;
+  --helper-rose:#B5456C;
   --bubble-her:#FFFFFF;
   --bubble-me:#FFE2D1;
   --on-me:#3A1D10;
@@ -56,6 +64,7 @@
     --on-ink:#1B1715;
     --you:#FF8A66;
     --you-press:#FF9E80;
+    --you-mark:#FF8A66;
     --you-soft:rgba(255,138,102,.16);
     --you-text:#FFAA8C;
     --on-you:#2A1208;
@@ -71,6 +80,13 @@
     --err:#FF8A8A;
     --err-fill:#FF6B6B;
     --err-soft:rgba(255,107,107,.14);
+    --on-helper:#FFFFFF;
+    --helper-purple:#6B5BD6;
+    --helper-blue:#2F73C9;
+    --helper-teal:#14837A;
+    --helper-green:#3A8540;
+    --helper-amber:#A8641A;
+    --helper-rose:#B5456C;
     --bubble-her:#25201D;
     --bubble-me:#5C3B2B;
     --on-me:#FFE8DA;

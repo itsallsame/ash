@@ -8,10 +8,12 @@ import ai.ash.ui.design.Role
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -45,7 +47,6 @@ internal object OnboardingViews {
 
         const val welcomeAvatar = 136
         const val welcomeTitleTop = 16
-        const val glow = 460
 
         const val brainRing = 176
         const val brainRingRadius = 82
@@ -162,12 +163,22 @@ internal object OnboardingViews {
     fun ghost(ctx: Context, label: String, onClick: () -> Unit): TextView =
         AshUi.button(ctx, label, AshUi.Kind.GHOST, AshUi.BtnSize.MD, block = true, onClick = onClick).also { it.setTextColor(AshUi.p(ctx).text2) }
 
-    /** The glow behind her on the first screen: her soft colour fading to nothing. */
-    fun glow(ctx: Context): View = View(ctx).apply {
-        val r = AshUi.dpF(ctx, Layout.glow / 2f)
-        background = GradientDrawable().apply {
-            gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = r
-            colors = intArrayOf(AshUi.p(ctx).herSoft, Color.TRANSPARENT)
+    /**
+     * The glow behind her on the first screen: a radial gradient from her soft colour to nothing, an ellipse filling a
+     * glowW × glowH box centred on her. It does not move with her state.
+     */
+    fun glow(ctx: Context): View = object : View(ctx) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val soft = AshUi.p(ctx).herSoft
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            paint.shader = RadialGradient(w / 2f, h / 2f, w / 2f, soft, soft and 0x00FFFFFF, Shader.TileMode.CLAMP)
+        }
+        override fun onDraw(canvas: Canvas) {
+            // the gradient is a circle of radius w/2; squash it to the box's height
+            canvas.save()
+            canvas.scale(1f, height.toFloat() / width, width / 2f, height / 2f)
+            canvas.drawRect(0f, (height - width) / 2f, width.toFloat(), (height + width) / 2f, paint)
+            canvas.restore()
         }
     }
 
