@@ -1,6 +1,9 @@
 import { initialView, projectRecords } from "../../sdk/src/conversation.ts";
 import { ConversationStore } from "./conversation-store.js";
 
+const MAX_TIMER_MS = 2147483647;
+const MAX_CURRENT_RETRY_MS = 30000;
+
 /** Hydrated history and finite current state; live facts never become a retained ledger replay. */
 export class ConversationTimeline {
   constructor(net, onChange = () => {}) {
@@ -12,7 +15,7 @@ export class ConversationTimeline {
   reset() {
     this.epoch = (this.epoch ?? 0) + 1;
     this.pageAbort?.abort();
-    clearTimeout(this.currentTimer);
+    this.clearCurrentRefresh();
     this.store.reset();
     this.current = null;
     this.ready = this.loading = false;
@@ -49,12 +52,34 @@ export class ConversationTimeline {
   acceptCurrent(current) {
     if (this.store.dataset !== null && this.store.dataset !== current.dataset_id) return;
     if (this.current?.dataset_id === current.dataset_id && this.current.snapshot_seq > current.snapshot_seq) return;
-    if (this.current?.dataset_id === current.dataset_id && this.current.snapshot_seq === current.snapshot_seq && this.current.as_of > current.as_of) return;
+    if (this.current?.dataset_id === current.dataset_id && this.current.snapshot_seq === current.snapshot_seq && Number.isSafeInteger(this.current.as_of) && Number.isSafeInteger(current.as_of) && this.current.as_of > current.as_of) return;
     this.current = current;
     clearTimeout(this.currentTimer);
-    if (Number.isFinite(current.next_change_at)) this.currentTimer = setTimeout(() => { this.currentDirty = true; this.scheduleLive(); }, Math.max(50, current.next_change_at - Date.now() + 50));
+    this.currentTimer = null;
+    const serial = ++this.currentRefreshSerial;
+    if (current.next_change_at === null) this.currentRetryMs = 0;
+    else {
+      // Both timestamps use the server's clock; the device's wall clock may be far ahead or behind it.
+      const wait = current.next_change_at - current.as_of;
+      const future = Number.isSafeInteger(current.next_change_at) && Number.isSafeInteger(current.as_of) && current.as_of >= 0 && wait > 0;
+      this.currentRetryMs = future ? 0 : Math.min(MAX_CURRENT_RETRY_MS, (this.currentRetryMs || 500) * 2);
+      const delay = future ? Math.min(MAX_TIMER_MS, wait + 50) : this.currentRetryMs;
+      this.currentTimer = setTimeout(() => {
+        if (serial !== this.currentRefreshSerial) return;
+        this.currentTimer = null;
+        this.currentDirty = true;
+        this.scheduleLive();
+      }, delay);
+    }
     this.onCurrent?.(current);
     this.onChange(this.view, false);
+  }
+  clearCurrentRefresh() {
+    clearTimeout(this.currentTimer);
+    this.currentTimer = null;
+    this.currentRetryMs = 0;
+    this.currentRefreshSerial = (this.currentRefreshSerial ?? 0) + 1;
+    this.currentDirty = false;
   }
   async read(params, direction) {
     if (this.loading) return 0;
@@ -138,9 +163,10 @@ export class ConversationTimeline {
         } catch { /* the next authoritative snapshot can still confirm this item */ }
       }));
       if (refreshCurrent) {
+        const currentSerial = this.currentRefreshSerial;
         try {
           const current = await this.net.current();
-          if (epoch === this.epoch && this.net.same(binding)) this.acceptCurrent(current);
+          if (epoch === this.epoch && this.net.same(binding) && currentSerial === this.currentRefreshSerial) this.acceptCurrent(current);
         } catch { /* connection state tells the owner when the current picture cannot be refreshed */ }
       }
       if (dirty.size && epoch === this.epoch && this.net.same(binding)) this.onChange(this.view, true, dirty);

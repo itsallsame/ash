@@ -292,6 +292,7 @@ export function boot({ bridge } = {}) {
       return { ok: true, data: { opened } };
     },
     onState: (status, detail) => {
+      if (["connecting", "offline", "closed"].includes(status)) timeline?.clearCurrentRefresh();
       window.dispatchEvent(new CustomEvent("ash:net-state", { detail: { net, event: "onState" } }));
       if (status !== "online") identityName?.reset();
       presenceBar.network(status, status === "closed" ? detail : "");
@@ -299,6 +300,7 @@ export function boot({ bridge } = {}) {
       if (status === "online" || status === "connecting") sendable();
     },
     onOpen: () => {
+      timeline?.clearCurrentRefresh();
       homeFeed.reset();
       window.dispatchEvent(new CustomEvent("ash:net-state", { detail: { net, event: "onOpen" } }));
       void identityName?.refresh();
@@ -476,7 +478,7 @@ export function boot({ bridge } = {}) {
     if (typeof globalThis.__ashOpenNative === "function") globalThis.__ashOpenNative("apps");
     else openHome({ page: "apps" });
   });
-  window.addEventListener("pagehide", () => { clearInterval(progressTimer); clearInterval(typingTimer); restorer.dispose(); navigationObserver.disconnect(); views.get(log)?.dispose(); net.stop(); });
+  window.addEventListener("pagehide", () => { timeline.clearCurrentRefresh(); clearInterval(progressTimer); clearInterval(typingTimer); restorer.dispose(); navigationObserver.disconnect(); views.get(log)?.dispose(); net.stop(); });
   window.addEventListener("online", () => net.reconnect());
   window.addEventListener("pageshow", (event) => {
     if (!event.persisted) return;
