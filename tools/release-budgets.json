@@ -1,7 +1,35 @@
 {
-  "_": "Budgets for tools/release-gate.mjs, per phase and metric (a value must be at or under its budget). First guesses: calibrate them on the test phone with a build known to spin (must fail) and a good one (must pass).",
-  "fg_idle": { "app_cpu_pct": 8, "kernel_cpu_pct": 3, "frames_per_s": 1, "ledger_rows_per_min": 10, "health_breaches": 0 },
-  "bg_idle": { "app_cpu_pct": 1, "kernel_cpu_pct": 2, "health_breaches": 0 },
-  "screen_off": { "app_cpu_pct": 1, "kernel_cpu_pct": 2, "health_breaches": 0 },
-  "daily": { "frame_p95_ms": 32, "kernel_restarts": 0, "health_breaches": 0 }
+  "_": "K30 calibration: CPU budgets are three times the measured normal phase averages (one core = 100%); frame/ledger zero baselines retain a small floor. Zero breaches/restarts are required. Daily frame p95 has three times the measured 16ms margin. See tools/release-gate.md.",
+  "fg_idle": {
+    "app_cpu_pct": 1.8,
+    "render_cpu_pct": 0.3,
+    "kernel_cpu_pct": 1.8,
+    "host_cpu_pct": 0.6,
+    "frames_per_s": 0.1,
+    "ledger_rows_per_min": 0.6,
+    "health_breaches": 0
+  },
+  "bg_idle": {
+    "app_cpu_pct": 0.6,
+    "render_cpu_pct": 0.3,
+    "kernel_cpu_pct": 1.5,
+    "host_cpu_pct": 0.6,
+    "health_breaches": 0
+  },
+  "screen_off": {
+    "app_cpu_pct": 0.6,
+    "render_cpu_pct": 0.3,
+    "kernel_cpu_pct": 1.5,
+    "host_cpu_pct": 0.9,
+    "health_breaches": 0
+  },
+  "daily": {
+    "app_cpu_pct": 18.9,
+    "render_cpu_pct": 6,
+    "kernel_cpu_pct": 3,
+    "host_cpu_pct": 0.9,
+    "frame_p95_ms": 48,
+    "kernel_restarts": 0,
+    "health_breaches": 0
+  }
 }

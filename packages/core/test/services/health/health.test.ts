@@ -93,7 +93,7 @@ test("while a turn runs, or the owner has just asked for something, the hub is n
 test("a reader that polls the health every second shows: the meter counts its own words like any other", async () => {
   const s = setup();
   s.run(60);
-  s.run(40, () => { for (let i = 0; i < 100; i++) s.feed("service:health", "status"); });
+  s.run(40, () => { for (let i = 0; i < 10; i++) s.feed("service:health", "status"); });
   assert.ok((await s.events()).some((e) => e.id === "idle.msg_key_rate" && e.top[0].key === "service:health/status:person"));
 });
 
@@ -173,4 +173,20 @@ test("the invariants are plain data: they survive JSON, and a record added to th
   const found = (await s.events()).find((e) => e.id === "clock.calls");
   assert.ok(found && found.note === "The clock is asked too often." && found.top.length === 1 && found.top[0].key.startsWith("service:clock/"));
   assert.deepEqual((await s.status()).invariants.map((i: any) => i.id), ["clock.calls"]);
+});
+
+// Typing is the owner's activity even before a message is sent.
+test("continuous owner typing is active; a plain read still counts as an idle loop", async () => {
+  const s = setup();
+  s.run(60);
+  s.run(180, () => {
+    s.feed(null, "typing", { kind: "event", from: "person:owner" });
+    spin(s)();
+  });
+  assert.equal((await s.status()).idle, false);
+  assert.deepEqual((await s.events()).map((e) => e.type), ["start"]);
+  s.run(60);
+  assert.equal((await s.status()).idle, true);
+  s.run(40, spin(s));
+  assert.ok((await s.events()).some((e) => e.id === "idle.msg_key_rate" && e.top[0].key === "service:history/current:person"));
 });

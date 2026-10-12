@@ -5,9 +5,9 @@
 // view renderers and the kernel (/proc, with the busiest threads), frames drawn (gfxinfo) and memory (meminfo); from the hub,
 // `service:health` (rates and the budget breaches it wrote). Exit 0 when every budget is kept.
 //
-//   node tools/release-gate.mjs --serial <adb serial> --link-file link.json [--phases fg_idle,daily] [--scale 0.1] [--input-xy 540,2100]
+//   node tools/release-gate.mjs --serial <adb serial> --link-file link.json [--phases fg_idle,daily] [--scale 0.1] --input-xy 540,2100
 //
-// --scale shortens the waits (0.1 = a dry run of a minute and a half); a scaled run says so and always exits 1: it is not a gate.
+// --scale shortens the waits (0.1 = a short diagnostic); a scaled run says so and always exits 1: it is not a gate.
 // The debug build of the app is needed (the link is read with run-as), see tools/e2e/README.md. Report: build/release-gate/.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -72,7 +72,7 @@ export function parseGfx(dump) {
   const text = String(dump ?? "");
   const frames = /Total frames rendered:\s*(\d+)/.exec(text);
   const p95 = /95th percentile:\s*(\d+)ms/.exec(text);
-  return { frames: frames ? Number(frames[1]) : null, p95_ms: p95 ? Number(p95[1]) : null };
+  return { frames: frames ? Number(frames[1]) : null, p95_ms: frames && Number(frames[1]) > 0 && p95 ? Number(p95[1]) : null };
 }
 
 /** Every budgeted metric against its value: `[{phase, metric, value, budget, pass}]`. A metric nobody could measure fails: it cannot be shown to be kept. */
@@ -94,12 +94,23 @@ const round = (n) => Math.round(n * 10) / 10;
 const PHASES = { fg_idle: 600, bg_idle: 300, screen_off: 300, daily: 180 };
 const PACKAGE = "ai.ash.agent", KERNEL = "ai.ash.kernel";
 
+/** Renderer services bound by this package, including its off-screen web views; exclude other apps' web views. */
+export function rendererPids(dump) {
+  const ids = [];
+  for (const block of String(dump).split(/(?=^\s*\* ServiceRecord\{)/m)) {
+    if (!new RegExp(`ServiceRecord\\{[^\\n]* ${PACKAGE}/org\\.chromium\\.content\\.app\\.SandboxedProcessService`).test(block)) continue;
+    const pid = /(?:app|isolatedProc)=ProcessRecord\{\S+ (\d+):/.exec(block)?.[1];
+    if (pid) ids.push(Number(pid));
+  }
+  return [...new Set(ids)];
+}
+
 class Phone {
   constructor(adb, owner, inputXy) { this.adb = adb; this.owner = owner; this.inputXy = inputXy; }
   async pids() {
     const pid = async (pkg) => Number((await this.adb.shell(`pidof ${pkg}`)).out.trim().split(/\s+/)[0]) || null;
     const ps = (await this.adb.shell("ps -A -o PID,ARGS")).out;
-    return { app: await pid(PACKAGE), host: await pid(KERNEL), core: parsePs(ps, /runtime\/bin\/node/)[0]?.pid ?? null, renderers: parsePs(ps, /sandboxed_process/).map((p) => p.pid) };
+    return { app: await pid(PACKAGE), host: await pid(KERNEL), core: parsePs(ps, /\/ash-core\.mjs(?:\s|$)/)[0]?.pid ?? null, renderers: rendererPids((await this.adb.shell(`dumpsys activity services ${PACKAGE}`)).out) };
   }
   async snapshot(pids) {
     const list = [pids.app, pids.host, pids.core, ...pids.renderers].filter(Boolean).join(" ");
@@ -109,7 +120,7 @@ class Phone {
   launch() { return this.adb.shell(`monkey -p ${PACKAGE} -c android.intent.category.LAUNCHER 1`).then(() => sleep(2500)); }
   async act(phase) {
     const { adb } = this;
-    if (phase === "fg_idle") { await adb.shell("input keyevent 224"); await adb.shell("wm dismiss-keyguard"); await this.launch(); }
+    if (phase === "fg_idle" || phase === "daily") { await adb.shell("input keyevent 224"); await adb.shell("wm dismiss-keyguard"); await this.launch(); }
     else if (phase === "bg_idle") await adb.key(3);
     else if (phase === "screen_off") await adb.key(223);
   }
@@ -133,45 +144,58 @@ export async function runGate(opts, log = (m) => process.stderr.write(`${m}\n`))
   await owner.refreshLink();
   const phone = new Phone(adb, owner, opts.inputXy);
   const metrics = {}, detail = {};
-  for (const phase of opts.phases) {
-    const seconds = Math.round(PHASES[phase] * opts.scale);
-    log(`... ${phase} (${seconds} s)`);
-    await phone.act(phase);
-    const pids = await phone.pids();
-    const health0 = (await owner.call("service:health", "status", {})).data;
-    const started = Date.now();
-    await adb.shell(`dumpsys gfxinfo ${PACKAGE} reset`);
-    const before = await phone.snapshot(pids);
-    const gfx0 = parseGfx((await adb.shell(`dumpsys gfxinfo ${PACKAGE}`)).out);
-    if (phase === "daily") await phone.daily();
-    await sleep(Math.max(0, seconds * 1000 - (Date.now() - started)));
-    const after = await phone.snapshot(pids);
-    const gfx = parseGfx((await adb.shell(`dumpsys gfxinfo ${PACKAGE}`)).out);
-    const cpu = cpuBetween(before, after);
-    const elapsed = (after.up ?? 0) - (before.up ?? 0);
-    const sum = (ids) => round(ids.reduce((n, id) => n + (cpu[id]?.cpu_pct ?? 0), 0));
-    const health = (await owner.call("service:health", "status", { window_s: Math.min(3600, Math.max(60, seconds)) })).data;
-    // The hub's clock, not this machine's. A budget that stays broken is written once per ten minutes, so one still broken at the end counts too.
-    const events = (await owner.call("service:health", "recent", { since: health0?.now ?? 0, limit: 100 })).data?.events ?? [];
-    const breaches = [...new Set([...events.filter((e) => e.type === "breach").map((e) => e.id), ...(health?.invariants ?? []).filter((i) => !i.ok).map((i) => i.id)])];
-    metrics[phase] = {
-      app_cpu_pct: pids.app && cpu[pids.app] ? cpu[pids.app].cpu_pct : null,
-      render_cpu_pct: pids.renderers.length ? sum(pids.renderers) : null,
-      kernel_cpu_pct: pids.core && cpu[pids.core] ? cpu[pids.core].cpu_pct : null,
-      host_cpu_pct: pids.host && cpu[pids.host] ? cpu[pids.host].cpu_pct : null,
-      frames_per_s: gfx.frames !== null && gfx0.frames !== null && elapsed > 0 ? round((gfx.frames - gfx0.frames) / elapsed) : null,
-      frame_p95_ms: gfx.p95_ms,
-      ledger_rows_per_min: health ? health.rates.ledger_rows_per_min : null,
-      health_breaches: health ? breaches.length : null,
-      kernel_restarts: health && health0 ? (health.uptime_s + 5 < health0.uptime_s + elapsed - 5 ? 1 : 0) : null,
-    };
-    detail[phase] = {
-      seconds, threads: Object.fromEntries(Object.entries({ app: pids.app, kernel: pids.core }).filter(([, p]) => p).map(([k, p]) => [k, cpu[p]?.threads ?? []])),
-      pss_kb: { app: totalPssKb((await adb.shell(`dumpsys meminfo ${PACKAGE}`)).out), kernel: totalPssKb((await adb.shell(`dumpsys meminfo ${KERNEL}`)).out) },
-      top_words: health?.top ?? [], breaches,
-    };
+  const oldTimeout = (await adb.shell("settings get system screen_off_timeout")).out.trim();
+  // Keep the foreground phase in front for its whole window; restore the phone's setting even on a failed run.
+  await adb.shell("settings put system screen_off_timeout 3600000");
+  try {
+    for (const phase of opts.phases) {
+      const seconds = Math.round(PHASES[phase] * opts.scale);
+      log(`... ${phase} (${seconds} s)`);
+      await phone.act(phase);
+      const pids = await phone.pids();
+      const health0 = (await owner.call("service:health", "status", {})).data;
+      const started = Date.now();
+      await adb.shell(`dumpsys gfxinfo ${PACKAGE} reset`);
+      const before = await phone.snapshot(pids);
+      const gfx0 = parseGfx((await adb.shell(`dumpsys gfxinfo ${PACKAGE}`)).out);
+      if (phase === "daily") await phone.daily();
+      await sleep(Math.max(0, seconds * 1000 - (Date.now() - started)));
+      const after = await phone.snapshot(pids);
+      const gfx = parseGfx((await adb.shell(`dumpsys gfxinfo ${PACKAGE}`)).out);
+      const cpu = cpuBetween(before, after);
+      const elapsed = (after.up ?? 0) - (before.up ?? 0);
+      const sum = (ids) => ids.every((id) => cpu[id]) ? round(ids.reduce((n, id) => n + cpu[id].cpu_pct, 0)) : null;
+      const health = (await owner.call("service:health", "status", { window_s: Math.min(3600, Math.max(60, seconds)) })).data;
+      // The hub's clock, not this machine's. A budget that stays broken is written once per ten minutes, so one still broken at the end counts too.
+      const events = (await owner.call("service:health", "recent", { since: health0?.now ?? 0, limit: 100 })).data?.events ?? [];
+      const breaches = [...new Set([...events.filter((e) => e.type === "breach").map((e) => e.id), ...(health?.invariants ?? []).filter((i) => !i.ok).map((i) => i.id)])];
+      metrics[phase] = {
+        app_cpu_pct: pids.app && cpu[pids.app] ? cpu[pids.app].cpu_pct : null,
+        render_cpu_pct: pids.renderers.length ? sum(pids.renderers) : null,
+        kernel_cpu_pct: pids.core && cpu[pids.core] ? cpu[pids.core].cpu_pct : null,
+        host_cpu_pct: pids.host && cpu[pids.host] ? cpu[pids.host].cpu_pct : null,
+        frames_per_s: gfx.frames !== null && gfx0.frames !== null && elapsed > 0 ? round((gfx.frames - gfx0.frames) / elapsed) : null,
+        frame_p95_ms: gfx.p95_ms,
+        ledger_rows_per_min: health ? health.rates.ledger_rows_per_min : null,
+        health_breaches: health ? breaches.length : null,
+        kernel_restarts: health && health0 ? (health.uptime_s + 5 < health0.uptime_s + elapsed - 5 ? 1 : 0) : null,
+      };
+      detail[phase] = {
+        seconds, elapsed_s: elapsed, pids, health, events, threads: Object.fromEntries(Object.entries({ app: pids.app, kernel: pids.core }).filter(([, p]) => p).map(([k, p]) => [k, cpu[p]?.threads ?? []])),
+        pss_kb: { app: totalPssKb((await adb.shell(`dumpsys meminfo ${PACKAGE}`)).out), kernel: totalPssKb((await adb.shell(`dumpsys meminfo ${KERNEL}`)).out) },
+        top_words: health?.top ?? [], breaches,
+      };
+      if (phase === "daily") {
+        // Undo the 16 test characters minus the one already deleted; leave no typing heartbeat after the test.
+        await adb.shell(`input keyevent 123 ${Array(15).fill(67).join(" ")}`);
+        await adb.key(4);
+      }
+      log(JSON.stringify({ phase, metrics: metrics[phase], breaches }));
+    }
+  } finally {
+    if (/^\d+$/.test(oldTimeout)) await adb.shell(`settings put system screen_off_timeout ${oldTimeout}`);
+    await adb.key(224);
   }
-  await adb.key(224);
   const rows = judge(budgets, metrics);
   return { at: new Date().toISOString(), serial: opts.serial ?? null, scale: opts.scale, hub: (await owner.call("service:admin", "status", {})).data?.version ?? null, pass: rows.length > 0 && rows.every((r) => r.pass), rows, metrics, detail };
 }
@@ -190,6 +214,7 @@ export function parseArgs(argv, env = process.env) {
   if (typeof o.phases === "string") o.phases = o.phases.split(",");
   if (o.phases.some((p) => !PHASES[p])) throw new Error(`phases are ${Object.keys(PHASES).join(", ")}`);
   if (typeof o.inputXy === "string") o.inputXy = o.inputXy.split(",").map(Number);
+  if (o.phases.includes("daily") && (!Array.isArray(o.inputXy) || o.inputXy.length !== 2 || o.inputXy.some((n) => !Number.isFinite(n) || n < 0))) throw new Error("daily needs --input-xy X,Y at the chat input on this phone");
   return o;
 }
 
