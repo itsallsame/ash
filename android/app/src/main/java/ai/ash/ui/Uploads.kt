@@ -171,6 +171,9 @@ object Uploads {
         return Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true).also { if (it !== raw) raw.recycle() }
     }
 
+    /** The bytes a base64 text stands for. */
+    fun base64Size(b64: String): Int = if (b64.isEmpty()) 0 else b64.length / 4 * 3 - (if (b64.endsWith("==")) 2 else if (b64.endsWith("=")) 1 else 0)
+
     /** An attachment as the ledger carries it, checked: [preview] says the bytes are really a still picture the page may show. */
     class Decoded(val bytes: ByteArray, val mime: String, val preview: Boolean)
 

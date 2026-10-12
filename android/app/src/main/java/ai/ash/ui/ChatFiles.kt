@@ -286,6 +286,8 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
         return chip(name, image = looksLikeImage(name)) { viewer.open(ref) }
     }
 
+    override fun openLink(href: String) = viewer.openLink(href)
+
     override fun card(item: JSONObject, card: JSONObject): View? {
         val type = card.optString("type")
         if (type != "file" && type != "image") return null

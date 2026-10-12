@@ -66,3 +66,22 @@ class UploadsTest {
         assertNull(Uploads.decodeInline("QUJ=", "x/y"))
     }
 }
+
+class AttachmentSizesTest {
+    @Test fun base64Size() {
+        assertEquals(0, Uploads.base64Size(""))
+        assertEquals(3, Uploads.base64Size("QUJD"))
+        assertEquals(2, Uploads.base64Size("QUI="))
+        assertEquals(1, Uploads.base64Size("QQ=="))
+    }
+    @Test fun filePathsAreFileLinks() {
+        assertTrue(Md.isFileLink("notes/a.md"))
+        assertTrue(Md.isFileLink("/abs/a.md"))
+        assertFalse(Md.isFileLink("https://x.y"))
+        assertFalse(Md.isFileLink("javascript:alert(1)"))
+        assertFalse(Md.isFileLink("//host/x"))
+        assertFalse(Md.isFileLink("#top"))
+        assertFalse(Md.isFileLink("a\\b"))
+        assertFalse(Md.isFileLink(""))
+    }
+}

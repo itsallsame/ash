@@ -20,6 +20,8 @@ object ChatHooks {
         fun attachment(item: JSONObject, attachment: JSONObject, mine: Boolean): View?
         /** A view for a `file` or `image` card (`card` of a window item of type `card`), or null. */
         fun card(item: JSONObject, card: JSONObject): View?
+        /** A link in a message that names a file on a body (a path): opens it in the file viewer. */
+        fun openLink(href: String)
         /** Results of activities this part started (pickers, camera, save). True when it was one of its own. */
         fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean
     }

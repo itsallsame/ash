@@ -66,6 +66,11 @@ class ChatScreen(
     private val pillSlot = FrameLayout(ctx)
     private val input = EditText(ctx)
     private val target = AshUi.text(ctx, "", AshType(12f, 16f, 500, Role.TEXT_2)).apply { visibility = View.GONE }
+    /** Files chosen so far (photos, videos, files), sent with the next message. */
+    private var picked = JSONArray()
+    private val pickedChip = AshUi.hstack(ctx, 2).apply {
+        background = AshUi.rounded(c.youSoft, AshUi.dpF(ctx, 15f)); setPadding(dp(12), 0, dp(2), 0); visibility = View.GONE
+    }
 
     /** The rows shown, by seq; the newest window replaces what it covers, older pages add below it. */
     private val items = TreeMap<Long, JSONObject>()
@@ -219,10 +224,15 @@ class ChatScreen(
         setPadding(dp(12), dp(4), dp(12), dp(10))
         addView(target, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(52) })
         target.setOnClickListener { pickTarget() }
+        addView(pickedChip, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(52) })
         addView(AshUi.hstack(ctx, 8).apply {
             gravity = Gravity.BOTTOM
             addView(AshUi.iconButton(ctx, ctx.getDrawable(R.drawable.ash_ic_plus)!!, "加附件") {
-                files.pick { chosenFiles -> if (chosenFiles.length() > 0) say(input.text.toString(), chosenFiles).also { input.setText("") } }
+                files.pick { chosen ->
+                    // Files picked one choice after another add up until sent (at most 32); a new pick never drops the earlier ones.
+                    for (i in 0 until chosen.length()) if (picked.length() < Uploads.MAX_ATTACHMENTS) picked.put(chosen.get(i))
+                    paintPicked()
+                }
             })
             input.apply {
                 hint = "跟 Ash 说…"
@@ -244,10 +254,27 @@ class ChatScreen(
             }
             addView(input, LinearLayout.LayoutParams(0, -2, 1f))
             addView(AshUi.iconButton(ctx, ctx.getDrawable(R.drawable.ash_ic_up)!!, "发送", filled = true) {
-                val t = input.text.toString()
-                if (t.isNotBlank()) { input.setText(""); say(t) }
+                val t = input.text.toString().trim()
+                if (t.isEmpty() && picked.length() == 0) return@iconButton
+                if (!Uploads.fits(t, picked)) { toast("附件太大：一条消息最多带约 3 MB"); return@iconButton }
+                val sending = picked
+                input.setText(""); picked = JSONArray(); paintPicked()
+                say(t, sending)
             })
         })
+    }
+
+    /** 「N 个附件」 with a ✕ to take them all off, above the text field while something is picked. */
+    private fun paintPicked() {
+        pickedChip.removeAllViews()
+        pickedChip.visibility = if (picked.length() == 0) View.GONE else View.VISIBLE
+        if (picked.length() == 0) return
+        pickedChip.addView(AshUi.text(ctx, "${picked.length()} 个附件", AshType(12.5f, 18f, 400, null), c.youText))
+        pickedChip.addView(FrameLayout(ctx).apply {
+            contentDescription = "移除附件"; isClickable = true
+            addView(View(ctx).apply { background = ctx.getDrawable(R.drawable.ash_ic_x)!!.mutate().apply { setTint(c.youText) } }, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER))
+            setOnClickListener { picked = JSONArray(); paintPicked() }
+        }, LinearLayout.LayoutParams(dp(30), dp(30)))
     }
 
     private fun paintTarget() {
@@ -372,14 +399,15 @@ class ChatScreen(
         val mine = item.optString("side") == "owner"
         val box = AshUi.vstack(ctx, 4).apply { gravity = if (mine) Gravity.END else Gravity.START }
         val text = item.opt("text").let { if (it is String) it else (it as? JSONObject)?.optString("text").orEmpty() }
-        if (text.isNotEmpty()) box.addView(AshUi.bubbleText(ctx, if (mine) text else Md.render(text, c.surface2, c.her), mine).apply {
-            setTextIsSelectable(true); movementMethod = LinkMovementMethod.getInstance()
-        }, LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START })
+        // Attachments stand above the words, as their own blocks; a message of attachments alone has no bubble.
         val attachments = item.optJSONArray("attachments") ?: JSONArray()
         for (i in 0 until attachments.length()) attachments.optJSONObject(i)?.let { a ->
             (files.attachment(item, a, mine) ?: AshUi.text(ctx, "📎 ${a.optString("name").ifEmpty { "附件" }}", AshTokens.Type.callout, c.text2))
                 .let { box.addView(it, LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START }) }
         }
+        if (text.isNotBlank()) box.addView(AshUi.bubbleText(ctx, if (mine) text else Md.render(text, c.surface2, c.her) { files.openLink(it) }, mine).apply {
+            setTextIsSelectable(true); movementMethod = LinkMovementMethod.getInstance()
+        }, LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START })
         val reactions = item.optJSONArray("reactions") ?: JSONArray()
         if (reactions.length() > 0) box.addView(AshUi.text(ctx, (0 until reactions.length()).joinToString(" ") { reactions.optJSONObject(it)?.optString("emoji").orEmpty() }, AshTokens.Type.callout),
             LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START })
@@ -389,7 +417,13 @@ class ChatScreen(
     private fun pending(o: JSONObject): View {
         val body = o.optJSONObject("body") ?: JSONObject()
         val box = AshUi.vstack(ctx, 2).apply { gravity = Gravity.END }
-        box.addView(AshUi.bubbleText(ctx, body.optString("text").ifEmpty { "[附件]" }, true).apply { alpha = 0.7f }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END })
+        val attached = body.optJSONArray("attachments") ?: JSONArray()
+        for (i in 0 until attached.length()) attached.optJSONObject(i)?.let { a ->
+            val kib = (Uploads.base64Size(a.optString("data")) + 1023) / 1024
+            box.addView(AshUi.text(ctx, "${a.optString("name").ifEmpty { "附件" }} · $kib KiB", AshTokens.Type.callout, c.text2), LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END })
+        }
+        if (body.optString("text").isNotBlank() || attached.length() == 0)
+            box.addView(AshUi.bubbleText(ctx, body.optString("text"), true).apply { alpha = 0.7f }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END })
         val status = when (o.optString("status")) { "failed" -> "没发出去 · 点这里删掉"; "unsent" -> "还没发出，连上就发"; else -> "发送中…" }
         box.addView(AshUi.text(ctx, status, AshType(11.5f, 15f, 400, Role.TEXT_3)).apply {
             if (o.optString("status") == "failed") setOnClickListener { outbox.remove(o); paintList() }
@@ -508,18 +542,42 @@ class ChatScreen(
     /** What the owner wrote and the kernel has not taken yet; kept on the phone, so a closed app sends it next time. */
     private class Outbox(ctx: Context) {
         private val prefs = ctx.getSharedPreferences("ash.chat.outbox", Context.MODE_PRIVATE)
+        /** What is attached waits in files (a message may carry about 3 MB): the list in the preferences only names them. */
+        private val dir = java.io.File(ctx.filesDir, "outbox").apply { mkdirs() }
         private val list = runCatching { JSONArray(prefs.getString("items", "[]")) }.getOrDefault(JSONArray())
             .let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.toMutableList() }
-        private fun save() = prefs.edit().putString("items", JSONArray(list).toString()).apply()
+        init { list.forEach(::load); dir.listFiles()?.forEach { f -> if (list.none { f.name.startsWith(it.optString("client_id") + ".") }) f.delete() } }
+
+        private fun attachments(o: JSONObject) = o.optJSONObject("body")?.optJSONArray("attachments")
+        private fun fileOf(o: JSONObject, i: Int) = java.io.File(dir, "${o.optString("client_id")}.$i")
+        private fun load(o: JSONObject) {
+            val a = attachments(o) ?: return
+            for (i in 0 until a.length()) a.optJSONObject(i)?.let { att ->
+                if (att.has("file")) { att.put("data", runCatching { fileOf(o, i).readText() }.getOrDefault("")); att.remove("file") }
+            }
+        }
+        private fun stored(o: JSONObject): JSONObject {
+            val copy = JSONObject(o.toString())
+            val a = attachments(copy) ?: return copy
+            for (i in 0 until a.length()) a.optJSONObject(i)?.let { att ->
+                val f = fileOf(o, i)
+                if (!f.exists()) runCatching { f.writeText(att.optString("data")) }
+                att.remove("data"); att.put("file", f.name)
+            }
+            return copy
+        }
+        private fun save() = prefs.edit().putString("items", JSONArray(list.map(::stored)).toString()).apply()
+        private fun forget(o: JSONObject) { dir.listFiles()?.forEach { if (it.name.startsWith(o.optString("client_id") + ".")) it.delete() } }
         fun items(): List<JSONObject> = list.toList()
         fun add(o: JSONObject) { o.put("status", "sending"); list.add(o); save() }
         fun next(): JSONObject? = list.firstOrNull { it.optString("status") != "failed" && !it.has("id") }
         fun mark(o: JSONObject, status: String) { o.put("status", status); save() }
-        fun sent(o: JSONObject, id: String?) { if (id.isNullOrEmpty()) list.remove(o) else o.put("id", id).put("status", "sent"); save() }
-        fun remove(o: JSONObject) { list.remove(o); save() }
+        fun sent(o: JSONObject, id: String?) { if (id.isNullOrEmpty()) { list.remove(o); forget(o) } else o.put("id", id).put("status", "sent"); save() }
+        fun remove(o: JSONObject) { list.remove(o); forget(o); save() }
         /** Drops what the window now shows (by its ledger id or its client id). */
         fun drop(clientIds: Set<String>, ids: Set<String>) {
-            if (list.removeAll { it.optString("client_id") in clientIds || it.optString("id") in ids }) save()
+            val gone = list.filter { it.optString("client_id") in clientIds || it.optString("id") in ids }
+            if (gone.isNotEmpty()) { list.removeAll(gone.toSet()); gone.forEach(::forget); save() }
         }
     }
 
