@@ -106,7 +106,7 @@ test("the rules: one line per group of the table over the nine checks; the one o
   assert.deepEqual(view("fresh").rules.slice(0, 3).map((r: any) => [r.tag, r.line]), Array(3).fill(["在看", "看满一分钟才知道"]));
   const split = view("ok", (s) => { s.rules.find((r: any) => r.id === "idle.msg_key_rate").state = "err"; s.rules.find((r: any) => r.id === "idle.msg_key_rate").value = 9; });
   assert.equal(split.rules[0].tag, "越界", "of the two checks under one line, the one over speaks");
-  assert.equal(split.rules[0].line, "每分钟 9 条消息，30 条以内");
+  assert.equal(split.rules[0].line, "同一件事每分钟 9 次，6 次以内算正常", "and says it with that check's own limit, not the line's");
 });
 
 test("the checkup: not told yet draws nothing; all good is one row; otherwise only the parts to fix, the optional one never", () => {

@@ -95,7 +95,11 @@ export function ruleRows(rules) {
     const pick = [...found].sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state))[0];
     const line = fill(r.line, { v: fmtValue(pick?.value) });
     if (!pick || pick.state === "ok") return { name: r.name, line, tag: COPY.rule_tags.ok, tone: "ok" };
-    if (pick.state === "err") return { name: r.name, line, tag: COPY.rule_tags.err, tone: "err" };
+    // 一行管几个检查：越界的若不是排头那条（它的上限和这一行写的不一样），就用它自己那句「实际 x，上限 y」
+    if (pick.state === "err") {
+      const own = pick.id !== r.ids[0] ? copyFor(pick.id) : null;
+      return { name: r.name, line: own ? fill(own.row, { v: fmtValue(pick.value), budget: fmtValue(pick.budget) }) : line, tag: COPY.rule_tags.err, tone: "err" };
+    }
     if (pick.state === "wait") return { name: r.name, line: COPY.rule_tags.wait_line, tag: COPY.rule_tags.wait, tone: "mute" };
     return { name: r.name, line, tag: COPY.rule_tags.busy, tone: "mute" };
   });
