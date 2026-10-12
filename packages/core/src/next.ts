@@ -204,7 +204,11 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
 
   // 6. edges
   const isolation = spec.isolation;
-  const body = late.body = createLocalBody({ isolation, stateDir: dataDir, ...(spec.network ? { network: spec.network } : {}) });
+  // A binary or large file of this body goes to the channel that asked for it, as the long attachments do.
+  const body = late.body = createLocalBody({
+    isolation, stateDir: dataDir, streams: (bytes, mime, ctx) => late.human!.openStream(ctx.caller.client, bytes, mime),
+    ...(spec.network ? { network: spec.network } : {}),
+  });
   const hands = late.hands = new HandRegistry({
     db: ledger.db(), registry, router, now, splitBodyCapabilities,
     bodies: { isBound: (id) => bodies.isBound(id), forget: (id) => bodies.forget(id) },

@@ -33,7 +33,7 @@ async function fixture(): Promise<Fixture> {
   const streams: Fixture["streams"] = [];
   const ran: Fixture["ran"] = [];
   const body = createLocalBody({
-    isolation: { kind: "proot", proot }, streams: (bytes, meta) => { streams.push({ bytes, mime: meta.mime }); return `st_${streams.length}`; },
+    isolation: { kind: "proot", proot }, streams: (bytes, mime) => { streams.push({ bytes, mime }); return `st_${streams.length}`; },
     exec: (command, place) => { ran.push({ command, cwd: place.cwd }); return spawn("sh", ["-c", command], { cwd: place.hostCwd, detached: true, stdio: ["ignore", "pipe", "pipe"] }); },
   });
   return { dir, rootfs, streams, body, ran };
@@ -142,7 +142,8 @@ test("isolation native (development machine, fake host): body:main is a director
   const dir = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "body-"));
   const workspace = join(dir, "ws");                       // not there yet: the body makes it
   const streams: Uint8Array[] = [];
-  const body = createLocalBody({ isolation: { kind: "native", native: { workspace, dsh_bin: "dsh", dsh_home: join(dir, "dsh") } }, streams: (bytes) => { streams.push(bytes); return "st_1"; } });
+  const askers: HandleContext["caller"][] = [];
+  const body = createLocalBody({ isolation: { kind: "native", native: { workspace, dsh_bin: "dsh", dsh_home: join(dir, "dsh") } }, streams: (bytes, _mime, ctx) => { streams.push(bytes); askers.push(ctx.caller); return "st_1"; } });
   try {
     assert.equal(body.id, "body:main");
     assert.equal(body.words().length, 10);
@@ -155,6 +156,7 @@ test("isolation native (development machine, fake host): body:main is a director
     assert.equal(await readFile(join(workspace, "root", "work", "a", "out.txt"), "utf8"), "native 2\n");
     await writeFile(join(workspace, "root", "work", "blob.bin"), Buffer.from([0, 1, 2]));
     assert.equal((await ask(body, "workspace.read", { path: "blob.bin" })).data.stream, "st_1");
+    assert.deepEqual(askers, [caller], "the stream goes back to whoever asked: the publisher gets the call's caller");
     assert.equal((await ask(body, "body.info", {})).data.ownership, "own");
     // The container's view: an absolute path starts at the workspace, and nothing gets out of it.
     await ask(body, "workspace.write", { path: "/root/agents/x/AGENTS.md", content: "hi" });

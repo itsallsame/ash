@@ -35,7 +35,8 @@ const ACTIONS = [...STANDARD_NAMESPACES.workspace!, ...STANDARD_NAMESPACES.body!
 
 /**
  * Sends bytes to the caller as a stream and returns the stream id the result refers to
- * (`{type: "resource", stream, mime, size}`, SPEC-03 §3.4). On a hand this is the link client's `sendStream`.
+ * (`{type: "resource", stream, mime, size}`, SPEC-03 §3.4). On a hand this is the link client's `sendStream`; on the hub's own body it
+ * is the channel the call came in through (a `streams` of the call).
  */
 export type StreamPublisher = (data: Uint8Array, meta: { mime: string }) => string | Promise<string>;
 
@@ -55,7 +56,7 @@ export interface WorkspaceOptions {
   exec?: Executor;
   /** Where command output is saved (a host directory). Default: a fresh temporary directory, made on first use. */
   spillDir?: string;
-  /** How a binary or large file is sent. Without it such a file cannot be read (`unavailable`). */
+  /** How a binary or large file is sent, unless the call brings its own. Without either such a file cannot be read (`unavailable`). */
   streams?: StreamPublisher;
   /** Reported by `body.info`. Default "borrowed". */
   ownership?: "own" | "borrowed";
@@ -85,7 +86,7 @@ export class Workspace {
   }
 
   /** Runs one standard action. Failures are thrown as the sdk's `WordError`. */
-  async call(name: string, args: Args, opts: { signal?: AbortSignal } = {}): Promise<CallOutcome> {
+  async call(name: string, args: Args, opts: { signal?: AbortSignal; streams?: StreamPublisher } = {}): Promise<CallOutcome> {
     const validate = this.validators.get(name);
     if (!validate) throw new WordError("not_found", `No such action: ${name}`);
     if (!validate(args)) {
@@ -94,7 +95,7 @@ export class Workspace {
     }
     try {
       opts.signal?.throwIfAborted();
-      return await this.run(name, args, opts.signal);
+      return await this.run(name, args, opts.signal, opts.streams ?? this.o.streams);
     } catch (error) {
       throw asWorkspaceError(error, opts.signal);
     }
@@ -159,7 +160,7 @@ export class Workspace {
 
   // --- actions ---
 
-  private async run(name: string, a: Args, signal?: AbortSignal): Promise<CallOutcome> {
+  private async run(name: string, a: Args, signal?: AbortSignal, streams?: StreamPublisher): Promise<CallOutcome> {
     switch (name) {
       case "body.info": {
         const data = await describeBody(this.jail, this.workdir, this.ownership);
@@ -179,7 +180,7 @@ export class Workspace {
         return this.job(await this.jobs.start(a.command, { cwd: this.shownDir(cwd), hostCwd: cwd }, { timeout: a.timeout, yield_ms: a.yield_ms ?? 10000 }, signal));
       }
       case "workspace.ls": return this.ls(await this.target(a, cwd), a.limit ?? 1000);
-      case "workspace.read": return this.read(await this.target(a, cwd), a, signal);
+      case "workspace.read": return this.read(await this.target(a, cwd), a, signal, streams);
       case "workspace.find": return this.find(await this.target(a, cwd), a.pattern, a.limit ?? 1000, signal);
       case "workspace.grep": return this.grep(await this.target(a, cwd), a, signal);
       case "workspace.write": return this.write(await this.target(a, cwd), a.content);
@@ -208,11 +209,11 @@ export class Workspace {
     return { data, content: json(data) };
   }
 
-  private async read(file: string, a: Args, signal?: AbortSignal): Promise<CallOutcome> {
+  private async read(file: string, a: Args, signal?: AbortSignal, streams?: StreamPublisher): Promise<CallOutcome> {
     const info = await stat(file);
     if (info.isDirectory()) throw new WordError("bad_request", "That is a directory; use workspace.ls");
     const explicitRange = a.offset !== undefined || a.limit !== undefined;
-    if (await this.isBinary(file, info.size) || (info.size > MAX_TEXT_BYTES && !explicitRange)) return this.stream(file, info.size);
+    if (await this.isBinary(file, info.size) || (info.size > MAX_TEXT_BYTES && !explicitRange)) return this.stream(file, info.size, streams);
     const offset: number = a.offset ?? 1, limit: number = a.limit ?? 2000;
     const source = createReadStream(file, { signal });
     const lines = createInterface({ input: source, crlfDelay: Infinity });
@@ -249,12 +250,12 @@ export class Workspace {
     } finally { await handle.close(); }
   }
 
-  private async stream(file: string, size: number): Promise<CallOutcome> {
-    if (!this.o.streams) throw new WordError("unavailable", "This body cannot send a binary or large file: no stream is available");
+  private async stream(file: string, size: number, streams?: StreamPublisher): Promise<CallOutcome> {
+    if (!streams) throw new WordError("unavailable", "This body cannot send a binary or large file: no stream is available");
     if (size > MAX_STREAM_BYTES) throw new WordError("too_large", `The file is ${size} bytes; at most ${MAX_STREAM_BYTES} can be sent`);
     const mime = IMAGE_TYPES[extname(file).toLowerCase()] ?? ((await this.isBinary(file, size)) ? "application/octet-stream" : "text/plain");
     const bytes = await readFile(file);
-    const sid = await this.o.streams(bytes, { mime });
+    const sid = await streams(bytes, { mime });
     const data = { path: this.show(file), size: bytes.length, mime, stream: sid };
     return { data, content: [{ type: "text", text: `${this.show(file)} is ${mime}, ${bytes.length} bytes: sent as a stream` }, { type: "resource", stream: sid, mime, size: bytes.length }] };
   }

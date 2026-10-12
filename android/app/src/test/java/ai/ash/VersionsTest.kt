@@ -17,7 +17,7 @@ class VersionsTest {
 
     /** Raise these with every build that leaves the machine (see CONTRIBUTING.md): the floors below are the last release's. */
     @Test fun versionCodesOnlyGoUp() {
-        assertTrue("app versionCode must be above the last build handed out (0.4.7, 19)", code(gradle("app")) >= 20)
-        assertTrue("kernel versionCode must be above the last build handed out (0.4.7, 8)", code(gradle("kernel")) >= 9)
+        assertTrue("app versionCode must be above the last build handed out (0.4.8, 20)", code(gradle("app")) >= 21)
+        assertTrue("kernel versionCode must be above the last build handed out (0.4.8, 14)", code(gradle("kernel")) >= 15)
     }
 }

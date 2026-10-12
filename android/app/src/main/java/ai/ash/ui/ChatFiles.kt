@@ -20,6 +20,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.LruCache
 import android.view.Gravity
@@ -64,6 +65,11 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
     private val opened = object : LruCache<String, Opened>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Opened) = value.bytes.size + (value.thumb?.byteCount ?: 0)
     }
+
+    /** The small pictures of image cards (a file's bytes are not kept, only its [THUMB_PX] picture), and what is being read or has just failed. */
+    private val cardThumbs = object : LruCache<String, Bitmap>(12 * 1024 * 1024) { override fun sizeOf(key: String, value: Bitmap) = value.byteCount }
+    private val cardLoading = HashMap<String, MutableList<(Bitmap?) -> Unit>>()
+    private val cardFailed = HashMap<String, Long>()
 
     // ---------- 「+」 ----------
 
@@ -292,10 +298,46 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
         val type = card.optString("type")
         if (type != "file" && type != "image") return null
         val ref = FileLinks.ref(card.optString("workspace"), card.optString("path"), card.optString("name").ifEmpty { null }) ?: return null
-        val label = if (type == "image") "查看图片" else ref.baseName.ifEmpty { "打开文件" }
+        if (type == "image") return imageCard(ref, card.optString("alt"))
         return AshUi.card(activity, 6).apply {
             setPadding(AshUi.dp(activity, 14), AshUi.dp(activity, 10), AshUi.dp(activity, 14), AshUi.dp(activity, 10))
-            addView(chip(label, image = type == "image", framed = false) { viewer.open(ref) }, LinearLayout.LayoutParams(-1, -2))
+            addView(chip(ref.baseName.ifEmpty { "打开文件" }, image = false, framed = false) { viewer.open(ref) }, LinearLayout.LayoutParams(-1, -2))
+        }
+    }
+
+    /** An image card: the picture itself in the chat, and a tap opens it large in the viewer; until it is read (or when it cannot be) a chip stands in for it. */
+    private fun imageCard(ref: FileRef, alt: String): View {
+        val box = AshUi.vstack(activity, 6)
+        val open = { viewer.open(ref) }
+        val chip = chip("查看图片", image = true, onClick = open)
+        box.addView(chip, LinearLayout.LayoutParams(-1, -2))
+        loadCardThumb(ref) { bitmap ->
+            if (bitmap == null || chip.parent !== box) return@loadCardThumb
+            box.removeView(chip)
+            box.addView(thumbnail(bitmap, alt.ifEmpty { "图片" }, CARD_THUMB_W, CARD_THUMB_H, open))
+        }
+        return box
+    }
+
+    /** The picture of an image card's file: from the cache, or read from its body and shrunk off the main thread. [done] gets null when it cannot be had. */
+    private fun loadCardThumb(ref: FileRef, done: (Bitmap?) -> Unit) {
+        val key = "${ref.workspace}|${ref.path}"
+        cardThumbs.get(key)?.let { return done(it) }
+        // A file that just failed is not asked for again at every redraw; the viewer (a tap) asks anyway.
+        if (SystemClock.elapsedRealtime() - (cardFailed[key] ?: -RETRY_MS) < RETRY_MS) return done(null)
+        cardLoading[key]?.let { it.add(done); return }
+        cardLoading[key] = arrayListOf(done)
+        fun finish(bitmap: Bitmap?) {
+            if (bitmap != null) cardThumbs.put(key, bitmap) else cardFailed[key] = SystemClock.elapsedRealtime()
+            cardLoading.remove(key)?.forEach { it(bitmap) }
+        }
+        val body = ref.body ?: return finish(null)
+        access.read(body, ref.path) { bytes, _ ->
+            if (bytes == null || bytes.data.size > FileLinks.MAX_READ_BYTES) return@read finish(null)
+            Thread {
+                val bitmap = runCatching { Pictures.bitmap(bytes.data, THUMB_PX) }.getOrNull()
+                activity.runOnUiThread { finish(bitmap) }
+            }.start()
         }
     }
 
@@ -328,7 +370,7 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
         var loading = false
         fun showPicture(o: Opened, fresh: Boolean) {
             if (thumb != null || o.thumb == null) return
-            val view = thumbnail(o.thumb) { viewer.show(o.name, o.mime, o.bytes) }
+            val view = thumbnail(o.thumb, "附件图片", ATTACHMENT_THUMB_W, ATTACHMENT_THUMB_H) { viewer.show(o.name, o.mime, o.bytes) }
             thumb = view
             box.addView(view)
             if (fresh && AshUi.motionOn(activity)) { view.alpha = 0f; view.animate().alpha(1f).setDuration(AshTokens.Motion.message).start() }
@@ -352,13 +394,13 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
         return box
     }
 
-    /** The picture of an attachment, at most 200 x 150 dp, round cornered; a tap opens it large. */
-    private fun thumbnail(bitmap: Bitmap, onClick: () -> Unit) = ImageView(activity).apply {
+    /** A picture in a message, at most [maxW] x [maxH] dp, round cornered; a tap opens it large. */
+    private fun thumbnail(bitmap: Bitmap, description: String, maxW: Int, maxH: Int, onClick: () -> Unit) = ImageView(activity).apply {
         setImageBitmap(bitmap); adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER
-        maxWidth = AshUi.dp(activity, 200); maxHeight = AshUi.dp(activity, 150)
+        maxWidth = AshUi.dp(activity, maxW); maxHeight = AshUi.dp(activity, maxH)
         val r = AshUi.dpF(activity, AshTokens.Radius.md.toFloat())
         outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, r) } }
-        clipToOutline = true; isClickable = true; contentDescription = "附件图片"
+        clipToOutline = true; isClickable = true; contentDescription = description
         setOnClickListener { onClick() }
     }
 
@@ -370,5 +412,10 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
         const val REQ_SAVE = 7203
         private const val MAX_SAVE_BYTES = Uploads.MAX_FILE_BYTES
         private const val THUMB_PX = 600
+        private const val ATTACHMENT_THUMB_W = 200
+        private const val ATTACHMENT_THUMB_H = 150
+        private const val CARD_THUMB_W = 260
+        private const val CARD_THUMB_H = 200
+        private const val RETRY_MS = 60_000L
     }
 }

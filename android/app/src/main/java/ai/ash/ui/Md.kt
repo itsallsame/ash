@@ -77,12 +77,16 @@ object Md {
                 g[3].isNotEmpty() -> { spans(out, g[3], codeBg, onFileLink); out.setSpan(StrikethroughSpan(), s, out.length, X) }
                 g[4].isNotEmpty() -> { out.append(g[4]); out.setSpan(TypefaceSpan("monospace"), s, out.length, X); out.setSpan(BackgroundColorSpan(codeBg), s, out.length, X) }
                 g[5].isNotEmpty() -> {
-                    out.append(g[5])
+                    // `![alt](path)` is not drawn as a picture (nothing is fetched): it is a link to it, worded as the web page worded it.
+                    val image = m.range.first > at && text[m.range.first - 1] == '!'
+                    val start = if (image) s - 1 else s
+                    if (image) out.delete(start, s)
+                    out.append(if (image) "图片：${g[5]}" else g[5])
                     val href = g[6]
                     when {
-                        Regex("^(https?://|mailto:)", RegexOption.IGNORE_CASE).containsMatchIn(href) -> out.setSpan(URLSpan(href), s, out.length, X)
+                        Regex("^(https?://|mailto:)", RegexOption.IGNORE_CASE).containsMatchIn(href) -> out.setSpan(URLSpan(href), start, out.length, X)
                         // A path (not a URL, a script or a fragment) names a file on a body: the viewer opens it.
-                        onFileLink != null && isFileLink(href) -> out.setSpan(object : ClickableSpan() { override fun onClick(w: View) = onFileLink(href) }, s, out.length, X)
+                        onFileLink != null && isFileLink(href) -> out.setSpan(object : ClickableSpan() { override fun onClick(w: View) = onFileLink(href) }, start, out.length, X)
                     }
                 }
                 g[7].isNotEmpty() -> { spans(out, g[7], codeBg, onFileLink); out.setSpan(StyleSpan(Typeface.ITALIC), s, out.length, X) }

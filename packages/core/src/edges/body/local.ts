@@ -17,7 +17,7 @@ import { MAIN_BODY_ID } from "../../../../sdk/src/ids";
 import { WordError, type HandleContext, type Message, type WordResult } from "../../../../sdk/src/message";
 import { standardContracts } from "../../../../sdk/src/namespaces";
 import type { Member, Risk, WordContract } from "../../../../sdk/src/word";
-import { Workspace, type Executor, type StreamPublisher } from "../../../../workspace/src";
+import { Workspace, type Executor } from "../../../../workspace/src";
 import type { AppJson } from "../../../../sdk/src/app";
 import { proxyEnv } from "../../../../sdk/src/proxy";
 import { PROOT_WORKDIR, prootCommand, prootMounts, reapContainer, runInProot, type ProotConfig, type ProotSpawnOptions } from "./proot";
@@ -67,8 +67,8 @@ const nativePath = (workspace: string, cwd: string): string => join(workspace, p
 export interface LocalBodyOptions {
   /** How the host isolates the main body (host.json `isolation`). */
   isolation: HostIsolation;
-  /** How a binary or large file travels to the caller (SPEC-03 §3.4). */
-  streams?: StreamPublisher;
+  /** How a binary or large file travels to the caller of a `workspace.read` (SPEC-03 §3.4): on the channel the call came in through. */
+  streams?: (data: Uint8Array, mime: string, ctx: HandleContext) => string;
   /** Extra environment for commands inside the container (proot only). */
   env?: Record<string, string>;
   /** The host's network now (`spec.network`): its proxy goes into every program started in the container (proot only). */
@@ -140,7 +140,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     if (isolation.kind === "native") {
       mkdirSync(join(isolation.native.workspace, PROOT_WORKDIR), { recursive: true });
       return workspace = new Workspace({
-        root: isolation.native.workspace, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", exec: o.exec, streams: o.streams,
+        root: isolation.native.workspace, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", exec: o.exec,
         spillDir: join(isolation.native.workspace, "var", "tmp", "ash-workspace"),
       });
     }
@@ -150,7 +150,7 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
     mkdirSync(join(proot.rootfs, PROOT_WORKDIR), { recursive: true });
     writeResolvConf(proot);
     return workspace = new Workspace({
-      root: proot.rootfs, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", streams: o.streams, mounts: prootMounts(proot),
+      root: proot.rootfs, chroot: true, workdir: PROOT_WORKDIR, ownership: "own", mounts: prootMounts(proot),
       exec: o.exec ?? ((command, place) => runProot(proot, ["/bin/bash", "-c", command], { workdir: place.cwd, env: { ...proxyEnv(network), ...o.env }, detached: true })),
       // Command output is kept in the container's own /var/tmp, where a file call can read it too.
       spillDir: join(proot.rootfs, "var", "tmp", "ash-workspace"),
@@ -215,7 +215,8 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
       return null;
     },
     async handle(msg: Message, ctx: HandleContext): Promise<WordResult> {
-      return open().call(msg.word, (msg.body ?? {}) as Record<string, unknown>, { signal: ctx.signal });
+      const streams = o.streams;
+      return open().call(msg.word, (msg.body ?? {}) as Record<string, unknown>, { signal: ctx.signal, ...(streams ? { streams: (data, meta) => streams(data, meta.mime, ctx) } : {}) });
     },
     async assess(msg) {
       try { return await open().assess(msg.word, (msg.body ?? {}) as Record<string, unknown>); } catch { return null; }
