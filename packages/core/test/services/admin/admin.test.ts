@@ -99,3 +99,16 @@ test("status and logs", async () => {
   assert.equal(await code(call(setup().service, owner, "logs")), "unavailable");
   assert.equal(await code(setup().service.handle(msg("service:admin", "nope", {}), ctxOf(owner)) as Promise<unknown>), "not_found");
 });
+
+test("checkup: a hand's summary is kept and read back; before one has come, known is false; only a hand's report counts", async () => {
+  const s = setup();
+  assert.deepEqual(await call(s.service, owner, "checkup"), { known: false });
+  const summary = { todo: 1, groups: [{ id: "brain", title: "大脑", todo: 0, optional: false, text: "在运行" }, { id: "alarm", title: "闹钟", todo: 1, optional: false, text: "可能晚几分钟" }] };
+  const report = (from: string) => s.service.handle(msg("service:admin", "checkup.changed", summary, from, "event"), ctxOf({ member: from, via: "hand", local: false }, summary));
+  await report("service:clock");
+  assert.deepEqual(await call(s.service, owner, "checkup"), { known: false }, "a service's report is not the phone's");
+  await report("device:AAAAAAAAAAAAAAAAAAAAAA");
+  const got = await call(s.service, agent(), "checkup");
+  assert.deepEqual({ ...got, at: 0 }, { known: true, ...summary, at: 0, device: "device:AAAAAAAAAAAAAAAAAAAAAA" });
+  assert.equal(got.at, 10_000);
+});

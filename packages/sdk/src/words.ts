@@ -113,6 +113,13 @@ add("service:admin", "status", "request", empty,
 add("service:admin", "logs", "request", obj({ lines: { type: "integer", minimum: 1, maximum: 1000 }, level: choice("error", "warn", "info", "debug"), since: nonnegativeSafe }),
   obj({ lines: strings }, ["lines"]),
   { ...adminOwnerOnly, label: "在看日志", description: "The tail of the hub's log file (default 200 lines, newest last; the lines carry no level or time yet, so level and since do not narrow them). Only the owner, from a channel on this machine: logs can hold things nobody else should see." });
+const checkupGroup = obj({ id: nonempty, title: { type: "string", minLength: 1, maxLength: 40 }, todo: nonnegativeSafe, optional: bool, text: { type: "string", maxLength: 40 } }, ["id", "title", "todo"]);
+const checkupSummary = { todo: nonnegativeSafe, groups: { type: "array", items: checkupGroup, maxItems: 16 } };
+add("service:admin", "checkup.changed", "event", obj(checkupSummary, ["todo", "groups"]), undefined,
+  { direction: "in", label: "在收手机的体检摘要", description: "A hand reports its checkup in counts: how many things need dealing with, and for each part of the phone its name, the count and a short phrase. No contents. Sent when the summary changes and when the hand connects; not recorded." });
+add("service:admin", "checkup", "request", empty,
+  obj({ known: bool, ...checkupSummary, at: nonnegativeSafe, device: nonempty }, ["known"]),
+  { label: "在看手机的体检", description: "The last checkup summary the phone reported (how many things need dealing with, per part of the phone). known is false until a phone has reported. Use it when asked whether the phone's permissions and keep-alive switches are in order; the details are on the phone." });
 add("service:admin", "settings.changed", "event", obj({ keys: strings, by: id }, ["keys"]), undefined,
   { record: true, label: "在记下设置改动", description: "A setting was changed (the key names, never the values). Goes into the ledger so that what changed, when and by whom can be found again." });
 
@@ -120,7 +127,7 @@ add("service:admin", "settings.changed", "event", obj({ keys: strings, by: id },
 // service:health: how the hub itself is behaving (counts and budgets, never contents)
 // ===================================================================================================================
 const healthKey = obj({ key: nonempty, per_min: num }, ["key", "per_min"]);
-const healthEvent = obj({ at: nonnegativeSafe, type: choice("breach", "start"), id: nonempty, value: num, budget: num, window_s: integer, idle: bool, top: array(obj({ key: nonempty, n: num }, ["key", "n"])), note: str, last_seen: nonnegativeSafe },
+const healthEvent = obj({ at: nonnegativeSafe, type: choice("breach", "start", "ok"), id: nonempty, since: nonnegativeSafe, peak: num, value: num, budget: num, window_s: integer, idle: bool, top: array(obj({ key: nonempty, n: num }, ["key", "n"])), note: str, last_seen: nonnegativeSafe },
   ["at", "type", "id"]);
 add("service:health", "status", "request", obj({ window_s: { type: "integer", minimum: 60, maximum: 3600 } }),
   obj({
@@ -133,7 +140,7 @@ add("service:health", "status", "request", obj({ window_s: { type: "integer", mi
   }, ["now", "uptime_s", "idle", "window_s", "rates", "top", "proc", "invariants", "last_events"]),
   { label: "在看自己的运行状况", description: "How the hub is doing right now: message and ledger rates, the busiest words, process CPU and memory, event loop delay, and which behaviour budgets (idle traffic, ledger growth, reconnect storms, errors) are kept or broken. Use it when asked why Ash is slow, busy or heating the phone. It counts words and callers, never contents." });
 add("service:health", "recent", "request", obj({ since: nonnegativeSafe, limit: { type: "integer", minimum: 1, maximum: 500 }, kind: choice("event", "minute") }),
-  obj({ events: array(healthEvent), minutes: array(obj({ at: nonnegativeSafe, idle: bool, msg: num, ledger: num, err: num, cpu_pct: num, rss_mb: num, lag_p99_ms: num, top: array(healthKey) }, ["at"])) }),
+  obj({ events: array(healthEvent), minutes: array(obj({ at: nonnegativeSafe, idle: bool, msg: num, ledger: num, err: num, link_opens: num, cpu_pct: num, rss_mb: num, lag_p99_ms: num, top: array(healthKey) }, ["at"])) }),
   { label: "在翻运行记录", description: "The health history: budget breaches and starts (kind event, default) or one summary per minute for up to seven days (kind minute), newest first. Use it to find out when something started misbehaving and which word did it." });
 
 // ===================================================================================================================
@@ -591,6 +598,8 @@ add("service:host", "wake.fired", "event", obj({ at: nonnegativeSafe }, ["at"]),
   { callers: KERNEL, direction: "out", label: "在转达唤醒闹钟", description: "The host's alarm went off (the device woke): the host module passes it on to service:clock." });
 add("service:host", "env.changed", "event", ENV_CHANGED, undefined,
   { callers: KERNEL, direction: "out", label: "在转达环境变化", description: "The network or the power state changed: the host module passes it on to service:agents and service:link (which reconnects the relay)." });
+add("service:host", "restart", "request", obj({ reason: { type: "string", maxLength: 200 } }), obj({ restarting: { const: true } }, ["restarting"]),
+  { callers: ["owner", "app"], effect: "act", label: "在重启大脑", description: "Have the host restart the kernel: it is away for about ten seconds and what it was doing is cut off. The caller has asked the owner first (an app puts the question on its own screen); an agent cannot call it." });
 add("service:host", "hands.handoff", "request", obj({ port: { type: "integer", minimum: 1, maximum: 65535 }, token: secret({ type: "string", minLength: 1 }) }, ["port", "token"]), obj({ delivered: strings }, ["delivered"]),
   { callers: KERNEL, effect: "act", label: "在交接本机的手", description: "Hand the local link port and token to the hands on this device (the phone app) so they connect. The token is held in memory and never written down." });
 add("service:host", "update.install", "request", obj({ version: nonempty, url: nonempty, sha256: sha }, ["version", "url", "sha256"]), empty,

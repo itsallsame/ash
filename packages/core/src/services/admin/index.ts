@@ -13,6 +13,8 @@
  *   plugins.list / plugins.op            forwarded to `service:agents/plugins` for the primary agent.
  *   status                               time, pause, version, uptime, how many agents and hands are here.
  *   logs {lines?, level?, since?}        owner, this machine; the lines come from an injected reader.
+ *   checkup.changed (event in)           a hand reports its checkup in counts; the last one is kept in `kv` (`admin.checkup`).
+ *   checkup                              the last one: {known, todo, groups, at, device}.
  *
  * Who must stop while paused listens for `settings.changed` and asks `status`.
  */
@@ -80,6 +82,8 @@ export class AdminService implements Member {
       case "plugins.op": return { data: await this.plugins(body.op === "plugin" ? { op: body.enabled ? "enable" : "disable", name: body.id } : body) };
       case "status": return { data: this.status() };
       case "logs": return { data: await this.logs(body) };
+      case "checkup.changed": return this.keepCheckup(msg.from, body);
+      case "checkup": return { data: this.read("admin.checkup", { known: false }) };
       default: throw new WordError("not_found", `service:admin has no word ${msg.word}`);
     }
   }
@@ -145,6 +149,12 @@ export class AdminService implements Member {
 
   private async plugins(body: Record<string, unknown>) {
     return this.ask("plugins", { ...body, agent: await this.primary() });
+  }
+
+  /** The phone's summary, as it sent it (counts and short phrases). Only a hand's report counts. */
+  private keepCheckup(from: string, body: Record<string, any>): void {
+    if (!from.startsWith("device:")) return;
+    this.write("admin.checkup", { known: true, todo: body.todo, groups: body.groups, at: this.now(), device: from });
   }
 
   // ---- reading ----

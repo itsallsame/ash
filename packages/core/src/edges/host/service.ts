@@ -21,7 +21,7 @@ export const HOST_ID = "service:host";
 const SELF: Caller = { member: HOST_ID, via: "service", local: true };
 
 export interface HostServiceDeps {
-  client: Pick<HostClient, "wakeAt" | "wakeClear" | "powerHold" | "powerRelease" | "handsHandoff" | "updateInstall">;
+  client: Pick<HostClient, "wakeAt" | "wakeClear" | "powerHold" | "powerRelease" | "handsHandoff" | "updateInstall" | "lifecycleRestart">;
   router: Pick<Router, "send">;
   /** The host asked the kernel to stop before `deadline` (Unix ms). */
   onStop(deadline: number, reason: string): void | Promise<void>;
@@ -57,6 +57,8 @@ export function createHostService(deps: HostServiceDeps): HostService {
         case "power.release": return done(await client.powerRelease());
         case "hands.handoff": return done(await client.handsHandoff(b.port, b.token));
         case "update.install": return done(await client.updateInstall(b.version, b.url, b.sha256));
+        // The answer goes out first: the restart takes this process with it.
+        case "restart": setTimeout(() => { client.lifecycleRestart(String(b.reason ?? "restart asked")).catch((error) => log("lifecycle.restart failed", error)); }, 300).unref(); return { data: { restarting: true } };
         default: throw new WordError("not_found", `${HOST_ID} has no word ${msg.word}`);
       }
     },

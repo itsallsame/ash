@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "5ff1c57e73df057156ede8acf5a90a9b62d08f1842bf1136624d80a15a557545",
+ "hash": "830d7d7c466eb89fb779ec0ffd4da1751775627d0a26683853c18276726debaf",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -436,6 +436,157 @@
   },
   {
    "member": "service:admin",
+   "word": "checkup.changed",
+   "kind": "event",
+   "direction": "in",
+   "description": "A hand reports its checkup in counts: how many things need dealing with, and for each part of the phone its name, the count and a short phrase. No contents. Sent when the summary changes and when the hand connects; not recorded.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "todo": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "groups": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string",
+         "minLength": 1
+        },
+        "title": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 40
+        },
+        "todo": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "optional": {
+         "type": "boolean"
+        },
+        "text": {
+         "type": "string",
+         "maxLength": 40
+        }
+       },
+       "required": [
+        "id",
+        "title",
+        "todo"
+       ],
+       "additionalProperties": false
+      },
+      "maxItems": 16
+     }
+    },
+    "required": [
+     "todo",
+     "groups"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在收手机的体检摘要"
+   }
+  },
+  {
+   "member": "service:admin",
+   "word": "checkup",
+   "kind": "request",
+   "direction": "in",
+   "description": "The last checkup summary the phone reported (how many things need dealing with, per part of the phone). known is false until a phone has reported. Use it when asked whether the phone's permissions and keep-alive switches are in order; the details are on the phone.",
+   "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "known": {
+      "type": "boolean"
+     },
+     "todo": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "groups": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string",
+         "minLength": 1
+        },
+        "title": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 40
+        },
+        "todo": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "optional": {
+         "type": "boolean"
+        },
+        "text": {
+         "type": "string",
+         "maxLength": 40
+        }
+       },
+       "required": [
+        "id",
+        "title",
+        "todo"
+       ],
+       "additionalProperties": false
+      },
+      "maxItems": 16
+     },
+     "at": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "device": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "known"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在看手机的体检"
+   }
+  },
+  {
+   "member": "service:admin",
    "word": "settings.changed",
    "kind": "event",
    "direction": "out",
@@ -626,12 +777,21 @@
          "type": "string",
          "enum": [
           "breach",
-          "start"
+          "start",
+          "ok"
          ]
         },
         "id": {
          "type": "string",
          "minLength": 1
+        },
+        "since": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "peak": {
+         "type": "number"
         },
         "value": {
          "type": "number"
@@ -754,12 +914,21 @@
          "type": "string",
          "enum": [
           "breach",
-          "start"
+          "start",
+          "ok"
          ]
         },
         "id": {
          "type": "string",
          "minLength": 1
+        },
+        "since": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "peak": {
+         "type": "number"
         },
         "value": {
          "type": "number"
@@ -830,6 +999,9 @@
          "type": "number"
         },
         "err": {
+         "type": "number"
+        },
+        "link_opens": {
          "type": "number"
         },
         "cpu_pct": {
@@ -13818,6 +13990,45 @@
    ],
    "label": {
     "doing": "在转达环境变化"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "restart",
+   "kind": "request",
+   "direction": "in",
+   "description": "Have the host restart the kernel: it is away for about ten seconds and what it was doing is cut off. The caller has asked the owner first (an app puts the question on its own screen); an agent cannot call it.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "reason": {
+      "type": "string",
+      "maxLength": 200
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "restarting": {
+      "const": true
+     }
+    },
+    "required": [
+     "restarting"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "act",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "app"
+   ],
+   "label": {
+    "doing": "在重启大脑"
    }
   },
   {

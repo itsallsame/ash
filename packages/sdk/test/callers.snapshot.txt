@@ -10,6 +10,8 @@
   service:admin/plugins.op  owner,agent,app
   service:admin/status  owner,agent,app
 * service:admin/logs  owner  local_only
+* service:admin/checkup.changed  kernel  event-in
+  service:admin/checkup  owner,agent,app
 * service:admin/settings.changed  kernel  event-out
   service:health/status  owner,agent,app
   service:health/recent  owner,agent,app
@@ -157,6 +159,7 @@
 * service:host/power.release  kernel
 * service:host/wake.fired  kernel  event-out
 * service:host/env.changed  kernel  event-out
+* service:host/restart  owner,app
 * service:host/hands.handoff  kernel
 * service:host/update.install  owner
 * app:*/ash.on_event  kernel
