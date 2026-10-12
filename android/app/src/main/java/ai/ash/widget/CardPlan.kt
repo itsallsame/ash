@@ -30,6 +30,8 @@ sealed class Img {
     data class Avatar(val name: String) : Img()
     data class Url(val url: String) : Img()
     data class Path(val d: String, val tint: Tint) : Img()
+    /** A chart, drawn on the phone at the size the node has in the widget. */
+    data class Chart(val chart: AshChart.Chart) : Img()
 }
 
 /** One RemoteViews to build: a layout and what to set on its root. */
@@ -198,6 +200,7 @@ object CardPlan {
         "Clock" -> texty(base(Lay.CLOCK, n, ctx), n, ctx, null).copy(clockFormat = n.format, timeZone = n.timeZone)
         "Timer" -> texty(base(Lay.CHRONO, n, ctx), n, ctx, null).copy(chronoSince = n.since ?: n.until, countDown = n.until != null)
         "Icon" -> icon(n, ctx)
+        "Chart" -> chart(n, ctx)
         "Image" -> image(n, ctx)
         "Row", "Column" -> box(n, ctx)
         "Stack" -> stack(n, ctx)
@@ -257,6 +260,12 @@ object CardPlan {
         }
         val glyph = CardSpec.glyph(n.name ?: "") ?: throw CardProblem("没有叫「${n.name}」的图标")
         return base(Lay.ICON, n, ctx).copy(text = Styled(glyph), textSize = size, textColor = color)
+    }
+
+    /** A Chart is an image the phone draws itself: its height is the node's (required), its width the node's or the room there is. */
+    private fun chart(n: CNode, ctx: Ctx): VNode {
+        val h = (n.style.height as? Dim.Dp) ?: throw CardProblem("图表（${n.defId}）要写高度（dp）")
+        return base(Lay.IMAGE_FILL, n, ctx).copy(image = Img.Chart(n.chart ?: throw CardProblem("图表（${n.defId}）没有数据")), width = n.style.width ?: Dim.Fill, height = h)
     }
 
     private fun image(n: CNode, ctx: Ctx): VNode {

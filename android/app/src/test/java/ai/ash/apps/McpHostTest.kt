@@ -21,9 +21,11 @@ class McpHostTest {
     private class FakeUi(var allow: Boolean = true) : HostUi {
         val asked = mutableListOf<String>()
         val opened = mutableListOf<String>()
+        val checkups = mutableListOf<String?>()
         var size: Pair<Int?, Int?>? = null
         override fun confirmLink(url: String, answer: (Boolean) -> Unit) { asked += url; answer(allow) }
         override fun openLink(url: String) { opened += url }
+        override fun openCheckup(part: String?) { checkups += part }
         override fun sizeChanged(width: Int?, height: Int?) { size = width to height }
     }
 
@@ -155,5 +157,22 @@ class McpHostTest {
         assertEquals("Too many calls in flight", last().getJSONObject("error").getString("message"))
         queued.forEach { it.run() }
         assertEquals(McpHost.MAX_IN_FLIGHT, backend.calls.size)
+    }
+
+    @Test fun anAppCanOpenTheNativeCheckupAtAPartWithoutAsking() {
+        ui.allow = false
+        req(30, "ui/open-link", JSONObject().put("url", "ash://checkup/notify"))
+        req(31, "ui/open-link", JSONObject().put("url", "ash://checkup"))
+        assertEquals(listOf<String?>("notify", null), ui.checkups)
+        assertTrue(ui.asked.isEmpty())
+        assertTrue(last().has("result"))
+    }
+
+    @Test fun otherAshLinksAndUnknownPartsAreRefused() {
+        for (url in listOf("ash://checkup/nonsense", "ash://console", "ash://checkup/notify/x", "ash://checkup?x=1", "ash://widget-action/1/x")) {
+            req(40, "ui/open-link", JSONObject().put("url", url))
+            assertTrue(url, last().has("error"))
+        }
+        assertTrue(ui.checkups.isEmpty())
     }
 }

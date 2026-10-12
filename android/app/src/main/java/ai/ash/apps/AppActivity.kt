@@ -355,6 +355,9 @@ class AppActivity : Activity() {
                 catch (e: ActivityNotFoundException) { Toast.makeText(this@AppActivity, "没有能打开这个链接的应用", Toast.LENGTH_LONG).show() }
             }
         }
+        override fun openCheckup(part: String?) {
+            main.post { startActivity(Intent(this@AppActivity, ai.ash.ui.ConsoleActivity::class.java).also { i -> part?.let { i.putExtra(ai.ash.ui.ConsoleActivity.EXTRA_PART, it) } }) }
+        }
         override fun log(level: String, data: String) { Log.i(TAG, "$appId [$level] ${data.take(500)}") }
     }
 

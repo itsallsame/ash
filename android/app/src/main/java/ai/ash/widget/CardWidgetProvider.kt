@@ -84,9 +84,19 @@ class CardWidgetProvider : AppWidgetProvider() {
             }
             when (view) {
                 is CardView.Unbound -> show(message(ctx, id, "Ash 卡片", "点此选择卡片", pick = true))
-                is CardView.Expired -> show(message(ctx, id, view.card.title, "已过期", pick = false))
+                is CardView.Expired -> {
+                    val render = view.render
+                    if (render == null) show(message(ctx, id, view.card.title, "已过期", pick = false))
+                    else {
+                        val (wDp, hDp) = sizeDp(ctx, manager, id, view.card)
+                        val hhmm = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(view.card.updatedAt))
+                        val stale = Stale.of(ctx.getString(R.string.ash_stale_tag, hhmm), ctx.getString(R.string.ash_stale_22, hhmm))
+                        render(ctx, id, view.card, render, wDp, hDp, stale = stale) { rv, problem -> show(rv ?: broken(ctx, id, view.card, problem ?: "未知原因")) }
+                    }
+                }
                 is CardView.Broken -> { WidgetHost.report(ctx, view.card, view.problem); show(broken(ctx, id, view.card, view.problem)) }
                 is CardView.Show -> {
+                    expiryAlarm(ctx, id, view.card.expiresAt)
                     val (wDp, hDp) = sizeDp(ctx, manager, id, view.card)
                     render(ctx, id, view.card, view.render, wDp, hDp) { rv, problem ->
                         WidgetHost.report(ctx, view.card, problem)
@@ -104,8 +114,8 @@ class CardWidgetProvider : AppWidgetProvider() {
          * size on Android 12+), as a preview picture needs; [onBuilt] gets the checked build of that layout.
          */
         fun render(ctx: Context, id: Int, card: WCard, render: CardRender, wDp: Float, hDp: Float, single: Boolean = false,
-            onBuilt: ((CardViews.Built) -> Unit)? = null, done: (RemoteViews?, String?) -> Unit) {
-            val builder = CardViews(ctx, id, card, night(ctx), WidgetHost.local(card)) { updateCard(ctx, card.id) }
+            onBuilt: ((CardViews.Built) -> Unit)? = null, stale: Stale? = null, done: (RemoteViews?, String?) -> Unit) {
+            val builder = CardViews(ctx, id, card, night(ctx), WidgetHost.local(card), { updateCard(ctx, card.id) }, stale)
             val density = ctx.resources.displayMetrics.density
             val checks = Looper.myLooper() == Looper.getMainLooper()
             val layouts = if (!single && render.sizes.isNotEmpty() && Build.VERSION.SDK_INT >= 31) render.sizes.map { Triple(it.width, it.height, it.root) }
@@ -142,6 +152,14 @@ class CardWidgetProvider : AppWidgetProvider() {
         }
 
         private fun hasList(n: CNode): Boolean = n.kind == "List" || n.inner.any { hasList(it) }
+
+        /** The card is drawn again when it goes stale (nothing else would wake a widget whose card stopped being updated). */
+        private fun expiryAlarm(ctx: Context, id: Int, expiresAt: Long?) {
+            val alarms = ctx.getSystemService(android.app.AlarmManager::class.java) ?: return
+            val pi = PendingIntent.getBroadcast(ctx, 9300 + id, Intent(ctx, CardWidgetProvider::class.java).setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, intArrayOf(id)), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            if (expiresAt != null && expiresAt > System.currentTimeMillis()) alarms.set(android.app.AlarmManager.RTC, expiresAt + 1_000, pi) else alarms.cancel(pi)
+        }
 
         private fun openAsh(ctx: Context, id: Int): PendingIntent = PendingIntent.getActivity(ctx, 9100 + id, WidgetActions.ash(ctx),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

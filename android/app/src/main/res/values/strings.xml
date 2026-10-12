@@ -5,4 +5,7 @@
     <string name="widget_card_description">Ash 或应用放的一张卡片</string>
     <string name="a11y_service_label">Ash</string>
     <string name="accessibility_service_description">让 Ash 读取当前屏幕内容（控件文字与位置）并替你点击、输入、滚动，并在其他应用上方显示任务灵动岛。只在你（或你允许的设备）交给 Ash 的任务里使用，不采集数据。</string>
+    <!-- design/vitals/copy.json widget.stale_tag / widget.stale_22: a card that has gone stale (a test keeps them equal) -->
+    <string name="ash_stale_tag">已过期 · 最后 %1$s</string>
+    <string name="ash_stale_22">%1$s 之后没收到我的消息</string>
 </resources>

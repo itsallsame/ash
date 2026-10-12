@@ -36,7 +36,7 @@ import ai.ash.R
  * [problems] (the widget still draws the rest), so the card's creator hears about it.
  */
 class CardViews(private val ctx: Context, private val widgetId: Int, private val card: WCard, private val night: Boolean,
-    private val local: Local, private val redraw: () -> Unit) {
+    private val local: Local, private val redraw: () -> Unit, private val stale: Stale? = null) {
     val api31 = Build.VERSION.SDK_INT >= 31
     private val pkg = ctx.packageName
     private val density = ctx.resources.displayMetrics.density
@@ -63,7 +63,7 @@ class CardViews(private val ctx: Context, private val widgetId: Int, private val
 
     /** The whole widget for [root] at [wDp] wide, its lists drawn as [how] says. */
     fun frame(render: CardRender, root: CNode, wDp: Float, how: How): Built {
-        val plan = CardPlan.plan(render, root, local, api31)
+        val plan = CardPlan.plan(render, root, local, api31).let { p -> stale?.let { CardStale.grey(p, it, wDp) } ?: p }
         val f = CardPlan.frame(root, card.title, WidgetPlan.opensWithTitle(root, card.title))
         val scroll = how == How.SCROLL
         val rv = RemoteViews(pkg, if (scroll) R.layout.widget_card_scroll else R.layout.widget_card)
@@ -88,7 +88,7 @@ class CardViews(private val ctx: Context, private val widgetId: Int, private val
             for (p in pendingLists) { collection(rv, p.viewId, p.items, p.listId, p.availW); lists[p.viewId] = p.items.size }
         } else {
             // The card's own background and corners move to the frame; the scrolling item carries the content.
-            var item = CardPlan.item(render, root, local, api31)
+            var item = CardPlan.item(render, root, local, api31).let { p -> stale?.let { CardStale.grey(p, it, wDp) } ?: p }
             if (f.ownBackground) {
                 plan.bg?.let { color(rv, R.id.card_root, "setBackgroundColor", it) }
                 val p = plan.padding ?: floatArrayOf(14f, 14f, 14f, 14f)
@@ -239,7 +239,9 @@ class CardViews(private val ctx: Context, private val widgetId: Int, private val
         // Android 12+ recycles children added with a stable id when the card is drawn again, which needs this first.
         // (Only boxes get children here; the list and progress layouts keep the children their XML gives them.)
         if (api31 && v.children.isNotEmpty()) rv.removeAllViews(id)
-        for (child in v.children) add(rv, id, child, build(child, inItem, availW))
+        // What is inside a box has the room the box has less its padding (a chart or a picture that fills the width fills that).
+        val inner = v.padding?.let { availW - px(it[1]) - px(it[3]) } ?: availW
+        for (child in v.children) add(rv, id, child, build(child, inItem, inner))
         v.items?.let { items ->
             val listId = listIds[pendingLists.size]
             if (v.lay == Lay.GRID) rv.setInt(listId, "setNumColumns", v.columns)
@@ -259,6 +261,7 @@ class CardViews(private val ctx: Context, private val widgetId: Int, private val
     }
 
     private fun image(rv: RemoteViews, v: VNode, img: Img, availW: Int) {
+        if (img is Img.Chart) return chart(rv, v, img.chart, availW)
         val w = (v.width as? Dim.Dp)?.let { px(it.dp) } ?: availW
         val h = (v.height as? Dim.Dp)?.let { px(it.dp) } ?: availW
         if (img is Img.Url && img.url.startsWith("data:") && !CardImages.decodes(img.url)) problems.add("图片（${v.id}）的数据解不开")
@@ -273,6 +276,20 @@ class CardViews(private val ctx: Context, private val widgetId: Int, private val
         if (img is Img.Url && !img.url.startsWith("data:")) CardImages.failed[img.url]?.let { problems.add("图片没取到（${img.url.take(120)}）：$it") }
         if (img is Img.Path && bmp == null) problems.add("图标路径画不出来（${v.id}）")
         rv.setImageViewResource(R.id.w_self, R.drawable.w_image_placeholder)
+    }
+
+    /** A chart: drawn here at the size it has in the widget and in the colours of the theme, and counted in the bitmap budget like any picture. */
+    private fun chart(rv: RemoteViews, v: VNode, chart: AshChart.Chart, availW: Int) {
+        val wDp = (v.width as? Dim.Dp)?.dp ?: ((availW - px((v.margin?.get(1) ?: 0f) + (v.margin?.get(3) ?: 0f))) / density)
+        val hDp = (v.height as? Dim.Dp)?.dp ?: return
+        val bmp = AshChart.render(chart, wDp, hDp, density, night)
+        if (bitmapBytes + bmp.allocationByteCount > bitmapBudget) {
+            problems.add("图片太多太大，超过安卓给小组件的图片内存，有的没画（${v.id}）")
+            rv.setImageViewResource(R.id.w_self, R.drawable.w_image_placeholder)
+            return
+        }
+        bitmapBytes += bmp.allocationByteCount
+        rv.setImageViewBitmap(R.id.w_self, bmp)
     }
 
     // ---------------------------------------------------------------------------------------------------------------

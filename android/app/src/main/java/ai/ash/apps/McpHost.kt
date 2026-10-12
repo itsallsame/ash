@@ -20,6 +20,8 @@ class AppsError(message: String) : Exception(message)
 interface HostUi {
     fun confirmLink(url: String, answer: (Boolean) -> Unit)
     fun openLink(url: String)
+    /** The app asked for Ash's own checkup page (`ash://checkup`, `ash://checkup/<part>`): [part] is a part of [ai.ash.ui.Checkup], or null for the whole page. */
+    fun openCheckup(part: String?) {}
     fun sizeChanged(width: Int?, height: Int?) {}
     fun log(level: String, data: String) {}
 }
@@ -124,6 +126,8 @@ class McpHost(
 
     private fun openLink(id: Any, params: JSONObject) {
         val url = params.opt("url") as? String
+        // Ash's own checkup page opens at once: it is a page of Ash that changes nothing, so there is nothing to confirm.
+        if (url != null && checkupLink(url)) { ui.openCheckup(checkupPart(url)); return result(id, JSONObject()) }
         if (url == null || !webLink(url)) return error(id, SERVER_ERROR, "Invalid URL")
         if (asking) return error(id, SERVER_ERROR, "Link opening denied by user")
         asking = true
@@ -151,6 +155,12 @@ class McpHost(
         const val SERVER_ERROR = -32000
         const val MAX_MESSAGE = 4 shl 20
         const val MAX_IN_FLIGHT = 8
+
+        private val CHECKUP = Regex("^ash://checkup(?:/([a-z]+))?$")
+
+        /** `ash://checkup` or `ash://checkup/<part>` with a part the checkup has (HANDOFF §9: 「去修」 goes straight to the part). */
+        fun checkupLink(url: String): Boolean = url.length <= 64 && CHECKUP.matches(url) && (checkupPart(url)?.let { ai.ash.ui.Checkup.part(it) != null } ?: true)
+        fun checkupPart(url: String): String? = CHECKUP.find(url)?.groupValues?.get(1)?.ifEmpty { null }
 
         /** Only http(s), with a host, no credentials in it. */
         fun webLink(url: String): Boolean {
