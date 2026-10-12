@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { checkManifest } from "../../core/src/edges/apps/check";
 import { validateCard } from "../../core/src/services/widgets/card";
+import { INVARIANTS as HUB_INVARIANTS } from "../../core/src/services/health/budgets";
 import { bundleApp } from "../bundle.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -61,12 +62,15 @@ async function make(w: World) {
 
 test("the lamp: ok, busy, new, paused, the brain not answering", async () => {
   assert.deepEqual(pick(await (await make({})).status()), { lamp: "ok", say: { id: "ok" }, stale: false });
+  assert.equal((await (await make({ idle: false })).status()).busy_what, null, "no source for what she is busy with yet");
   assert.deepEqual(pick(await (await make({ idle: false })).status()), { lamp: "ok", say: { id: "ok_busy" }, stale: false });
   assert.deepEqual(pick(await (await make({ uptime_s: 20, minutes: [] })).status()), { lamp: "new", say: { id: "new" }, stale: false });
   assert.deepEqual(pick(await (await make({ paused: true })).status()), { lamp: "paused", say: { id: "paused" }, stale: false });
   const down = await (await make({ down: true })).status();
   assert.deepEqual(pick(down), { lamp: "err", say: { id: "err_brain_down" }, stale: true });
   assert.equal(down.vitals, null);
+  const empty = await (async () => { const { Vitals, Store } = await load("logic.mjs"); return new Vitals({ ash: { call: async () => ({}) }, store: new Store(join(mkdtempSync(join(tmpdir(), "v-")), "d.json")), now: () => NOW }).status(); })();
+  assert.deepEqual(pick(empty), { lamp: "err", say: { id: "err_brain_down" }, stale: true }, "an empty answer is no answer");
 });
 const pick = (s: any) => ({ lamp: s.lamp, say: s.say, stale: s.stale });
 
@@ -177,7 +181,6 @@ test("the card is what the card checker accepts, in every state, with the texts 
   const live = validateCard((await (await make(worlds[1]![1])).card()).a2ui);
   const texts = live.components.map((c) => c.text).filter((t): t is string => typeof t === "string");
   assert.ok(texts.includes("我在空转，可能很费电"), "the lamp's sentence, from the table");
-  assert.ok(texts.includes("13:56 起 · 6 分钟"), "the short alert of the 2x2");
   assert.ok(texts.some((t) => /^13:56 起 · 闲着时消息不停来回，已经 6 分钟$/.test(t)), "the long alert");
   assert.ok(texts.includes("2"), "CPU now");
 });
@@ -262,4 +265,11 @@ test("through the real Ash client and the hub's bridge shape (a word's data come
     assert.equal(status.hands_online, 2);
     assert.equal(status.rules.length, 8);
   } finally { http.close(); http.closeAllConnections(); }
+
+test("every budget the hub keeps has its words in the copy table, its place in the rules and in the priority", () => {
+  for (const { id } of HUB_INVARIANTS) {
+    assert.ok(copy.invariants[id], `${id} has no entry in copy.invariants`);
+    assert.ok(copy.rules.some((rule: { ids: string[] }) => rule.ids.includes(id)), `${id} is in no rule group`);
+    assert.ok(copy.priority.includes(id), `${id} is not in the priority`);
+  }
 });

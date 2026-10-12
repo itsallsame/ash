@@ -61,12 +61,14 @@ export class Vitals {
   // ---- the lamp and everything the pages show of her now ----
   async status() {
     const now = this.now();
-    const [health, events, admin, checkup] = await Promise.all([
+    const [answer, events, admin, checkup] = await Promise.all([
       this.read("service:health", "status", { window_s: 60 }, 15_000),
       this.read("service:health", "recent", { kind: "event", since: this.back(), limit: 100 }, 30_000),
       this.read("service:admin", "status", {}, 30_000),
       this.read("service:admin", "checkup", {}, 60_000),
     ]);
+    // An answer without the process in it is not an answer (the hub did not report): the brain counts as not running.
+    const health = answer?.proc && Array.isArray(answer.invariants) ? answer : null;
     if (admin?.time_zone) this.zone = admin.time_zone;
     const invariants = health?.invariants ?? [];
     const live = invariants.filter((item) => !item.ok).sort((a, b) => rank(a.id) - rank(b.id));
@@ -88,7 +90,8 @@ export class Vitals {
 
     return {
       now, stale: !health, lamp, say, primary_alert: first ? { id: first.id, since: first.since } : null,
-      hands_online: admin?.hands_online ?? 0, busy: health ? health.idle === false : false, uptime_s: health?.uptime_s ?? 0,
+      hands_online: admin?.hands_online ?? 0, busy: health ? health.idle === false : false, busy_what: null, // what she is busy with has no source in the hub yet; the pages say "busy" without it
+      uptime_s: health?.uptime_s ?? 0,
       vitals: health ? { cpu_pct: health.proc.cpu_pct, rss_mb: health.proc.rss_mb, lag_p99_ms: health.proc.lag_p99_ms, idle: health.idle } : null,
       rules: invariants.map((item) => ({
         id: item.id, value: item.value, budget: item.budget,
@@ -191,9 +194,7 @@ export class Vitals {
     const what = shown ? copy.invariants[shown.id]?.widget ?? copy.unknown.widget : "";
     const device = shown?.device?.name ?? "";
     const text = (s) => fill(s, { hhmm: shown ? hhmm(shown.since, zone) : "", what: fill(what, { device }), n: shown?.minutes ?? 0 });
-    const alert = !shown ? null : shown.state === "live"
-      ? { tone: "err", short: fill(copy.widget.alert_live, { hhmm: hhmm(shown.since, zone), what: `${shown.minutes} ${copy.widget.alert_live_long.split("{n} ")[1] ?? ""}`.trim() }), long: text(copy.widget.alert_live_long) }
-      : { tone: "warn", short: text(copy.widget.alert_recovered).split("，")[0], long: text(copy.widget.alert_recovered) };
+    const alert = !shown ? null : shown.state === "live" ? { tone: "err", long: text(copy.widget.alert_live_long) } : { tone: "warn", long: text(copy.widget.alert_recovered) };
 
     const sayText = st.say.id in copy.say ? fill(copy.say[st.say.id], st.say.args ?? {}) : fill((copy.invariants[st.say.id] ?? copy.unknown).say, { device });
     const nice = (values, floor) => r1(Math.max(floor, Math.max(...values) * 1.25));

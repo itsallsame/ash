@@ -21,12 +21,13 @@
   },
   "chips": { "online": "连着 {n} 台设备", "idle": "闲着", "busy": "在忙 · {what}" },
   "err_action": "看看怎么办",
-  "priority": ["idle.msg_rate", "idle.msg_key_rate", "idle.cpu", "idle.ledger_growth", "errors.internal", "errors.rate", "link.reconnect_storm", "loop.lag"],
+  "priority": ["idle.msg_rate", "idle.msg_key_rate", "idle.cpu", "idle.ledger_growth", "errors.internal", "errors.rate", "link.reconnect_storm", "hand.part_flap", "loop.lag"],
   "rules": [
     { "name": "闲着时不空转",     "ids": ["idle.msg_rate", "idle.msg_key_rate"], "idle": true,  "line": "每分钟 {v} 条消息，30 条以内" },
     { "name": "闲着时记录不变长", "ids": ["idle.ledger_growth"],                 "idle": true,  "line": "每分钟多 {v} 条，10 条以内" },
     { "name": "闲着时大脑不费电", "ids": ["idle.cpu"],                           "idle": true,  "line": "CPU {v}%，5% 以内" },
     { "name": "不频繁断线",       "ids": ["link.reconnect_storm"],               "idle": false, "line": "5 分钟里重连 {v} 次，5 次以内" },
+    { "name": "手机各部分不反复掉线", "ids": ["hand.part_flap"],                   "idle": false, "line": "10 分钟里反复 {v} 次，6 次以内", "review": "待设计师过目" },
     { "name": "出错不多",         "ids": ["errors.rate", "errors.internal"],     "idle": false, "line": "每分钟 {v} 次，20 次以内" },
     { "name": "不卡住",           "ids": ["loop.lag"],                           "idle": false, "line": "最慢 {v} 毫秒，200 以内" }
   ],
@@ -70,6 +71,17 @@
       "value": { "unit": "次 / 5 分钟", "limit": "5", "limit_unit": "次以内" },
       "why": "可能是这台电脑网络不稳，或者它的登录过期了，被拒以后一直在重试。",
       "actions": [["去看看这台电脑", "open_device"], ["先不用管", "dismiss"]]
+    },
+    "hand.part_flap": {
+      "review": "待设计师过目：中枢后来加的底线，口吻先照 link.reconnect_storm 写的",
+      "say": "手机上有一部分一直在掉线又恢复",
+      "title": "手机上有一部分反复掉线",
+      "lead": "10 分钟里，手机上的某个部分断开又恢复了 {v} 次。",
+      "row": "10 分钟里反复 {v} 次，6 次以内算正常",
+      "widget": "手机上某部分反复掉线",
+      "value": { "unit": "次 / 10 分钟", "limit": "6", "limit_unit": "次以内" },
+      "why": "多半是手机上的某项权限或保活开关时开时关，或者系统在反复清理我的某个服务。不是你操作的问题，但会让我时灵时不灵。",
+      "actions": [["去体检看看", "open_checkup"], ["先不用管", "dismiss"]]
     },
     "errors.rate": {
       "say": "我做事老是失败", "title": "我做事老是失败", "lead": "最近一分钟，很多事没做成。",
