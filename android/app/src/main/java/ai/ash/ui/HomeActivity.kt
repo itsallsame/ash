@@ -46,6 +46,9 @@ class HomeActivity : Activity() {
         files = ChatFiles(this, port)
         home = HomePages(this, port)
         chatScreen = ChatScreen(this, port, files, home) { showTab(HomeTab.APPS) }
+        home.composeHook = { text, _ -> showTab(HomeTab.CHAT); chatScreen.compose(text) }
+        home.jumpHook = { id -> showTab(HomeTab.CHAT); chatScreen.jumpTo(id) }
+        home.onName = { name -> chatScreen.setName(name) }
         // Edge to edge (targetSdk 35): the frame keeps clear of the bars and the keyboard; the chat is laid out in what is left.
         content = FrameLayout(this).apply {
             setBackgroundColor(AshUi.p(this@HomeActivity).bg)

@@ -50,7 +50,8 @@ class HomePages(private val activity: Activity, private val port: HumanPort) : C
         names.listen { n -> onName?.invoke(n) }
         port.onLink { open ->
             banner.visibility = if (open || !shown) View.GONE else View.VISIBLE
-            if (open && wasDown && shown) { names.refresh(); stack.toList().forEach { it.page.refresh() } }
+            if (open) names.refresh()
+            if (open && wasDown && shown) stack.toList().forEach { it.page.refresh() }
             wasDown = !open
         }
         names.refresh()
