@@ -17,6 +17,7 @@ data class AshPalette(
     val onInk: Int,
     val you: Int,
     val youPress: Int,
+    val youMark: Int,
     val youSoft: Int,
     val youText: Int,
     val onYou: Int,
@@ -32,6 +33,13 @@ data class AshPalette(
     val err: Int,
     val errFill: Int,
     val errSoft: Int,
+    val onHelper: Int,
+    val helperPurple: Int,
+    val helperBlue: Int,
+    val helperTeal: Int,
+    val helperGreen: Int,
+    val helperAmber: Int,
+    val helperRose: Int,
     val bubbleHer: Int,
     val bubbleMe: Int,
     val onMe: Int,
@@ -58,8 +66,9 @@ object AshTokens {
         text2 = 0xFF7C6B62.toInt(),
         text3 = 0xFFA8978D.toInt(),
         onInk = 0xFFFFFFFF.toInt(),
-        you = 0xFFF2704E.toInt(),
-        youPress = 0xFFE25E3C.toInt(),
+        you = 0xFFCC4B2E.toInt(),
+        youPress = 0xFFB8432A.toInt(),
+        youMark = 0xFFF2704E.toInt(),
         youSoft = 0x1FF2704E.toInt(),
         youText = 0xFFC8502F.toInt(),
         onYou = 0xFFFFFFFF.toInt(),
@@ -75,6 +84,13 @@ object AshTokens {
         err = 0xFFC9302F.toInt(),
         errFill = 0xFFE5484D.toInt(),
         errSoft = 0x1AE5484D.toInt(),
+        onHelper = 0xFFFFFFFF.toInt(),
+        helperPurple = 0xFF6B5BD6.toInt(),
+        helperBlue = 0xFF2F73C9.toInt(),
+        helperTeal = 0xFF14837A.toInt(),
+        helperGreen = 0xFF3A8540.toInt(),
+        helperAmber = 0xFFA8641A.toInt(),
+        helperRose = 0xFFB5456C.toInt(),
         bubbleHer = 0xFFFFFFFF.toInt(),
         bubbleMe = 0xFFFFE2D1.toInt(),
         onMe = 0xFF3A1D10.toInt(),
@@ -96,6 +112,7 @@ object AshTokens {
         onInk = 0xFF1B1715.toInt(),
         you = 0xFFFF8A66.toInt(),
         youPress = 0xFFFF9E80.toInt(),
+        youMark = 0xFFFF8A66.toInt(),
         youSoft = 0x29FF8A66.toInt(),
         youText = 0xFFFFAA8C.toInt(),
         onYou = 0xFF2A1208.toInt(),
@@ -111,6 +128,13 @@ object AshTokens {
         err = 0xFFFF8A8A.toInt(),
         errFill = 0xFFFF6B6B.toInt(),
         errSoft = 0x24FF6B6B.toInt(),
+        onHelper = 0xFFFFFFFF.toInt(),
+        helperPurple = 0xFF6B5BD6.toInt(),
+        helperBlue = 0xFF2F73C9.toInt(),
+        helperTeal = 0xFF14837A.toInt(),
+        helperGreen = 0xFF3A8540.toInt(),
+        helperAmber = 0xFFA8641A.toInt(),
+        helperRose = 0xFFB5456C.toInt(),
         bubbleHer = 0xFF25201D.toInt(),
         bubbleMe = 0xFF5C3B2B.toInt(),
         onMe = 0xFFFFE8DA.toInt(),
@@ -135,7 +159,7 @@ object AshTokens {
     }
     object Space { const val xxs = 4; const val xs = 8; const val sm = 12; const val md = 16; const val lg = 20; const val xl = 24; const val xxl = 32; const val pageX = 16; const val rowX = 14; const val cardGap = 10; const val groupGap = 20 }
     object Radius { const val xs = 8; const val sm = 12; const val md = 16; const val lg = 20; const val card = 22; const val sheet = 28; const val pill = 999; const val bubble = 20; const val bubbleTail = 6; const val iconTile = 9; const val avatarFraction = 0.32f }
-    object Size { const val touch = 44; const val button = 44; const val buttonSm = 34; const val buttonLg = 52; const val topBar = 56; const val navBar = 52; const val listRow = 56; const val iconButton = 44; const val icon = 22; const val iconSm = 18; const val iconXs = 16; const val stroke = 1.8f; const val avatarTop = 36; const val avatarHome = 104; const val avatarPage = 56; const val switchW = 46; const val switchH = 28; const val tagH = 22; const val segH = 38; const val cardMaxW = 330 }
+    object Size { const val touch = 44; const val button = 44; const val buttonSm = 34; const val buttonLg = 52; const val topBar = 56; const val navBar = 52; const val listRow = 56; const val iconButton = 44; const val icon = 22; const val iconSm = 18; const val iconXs = 16; const val stroke = 1.8f; const val avatarTop = 36; const val avatarHome = 104; const val avatarPage = 56; const val switchW = 46; const val switchH = 28; const val tagH = 22; const val segH = 38; const val cardMaxW = 330; const val glowW = 420; const val glowH = 320 }
     object Motion {
         const val message = 240L; const val sheet = 360L; const val cardResolve = 300L
         const val breathe = 1800L; const val ring = 2400L; const val spinner = 900L

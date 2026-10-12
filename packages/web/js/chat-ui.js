@@ -1,5 +1,6 @@
 // Small helpers the conversation page draws with: text nodes, the designed icons, and how times are said.
 import { icon } from "./ash-icons.js";
+import { graphemesOf } from "./graphemes.js";
 
 const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars";
 /** Where the face [name] (default, thinking, listening...) is served: the browser's own server, or the app's packaged assets. */
@@ -56,9 +57,22 @@ export function validUntil(ts, now = Date.now()) {
   return `${day} ${hhmm(d)} 前有效`;
 }
 
-/** The letter on a helper's face: the first character of its name that tells it apart ("小研" is 研, not 小). */
+/** The six colours of a helper's face, in the order of the design table (tokens `helper-*`). */
+export const HELPER_TONES = Object.freeze(["purple", "blue", "teal", "green", "amber", "rose"]);
+
+/** The letter on a helper's face: the first character of its name, whole (an emoji or an accented letter is never cut). */
 export function letterOf(name) {
-  const chars = [...String(name ?? "").trim()];
-  if (!chars.length) return "?";
-  return (chars.length > 1 ? chars.find((ch) => !"小阿老大".includes(ch)) : undefined) ?? chars[0];
+  const first = graphemesOf(String(name ?? "").trim())[0];
+  if (first === undefined) return "?";
+  return /^[a-z]$/.test(first) ? first.toUpperCase() : first;
 }
+
+/** Which of the six colours a helper wears: the sum of the code points of its name, mod 6. The same name always gets the same one. */
+export function toneOf(name) {
+  let sum = 0;
+  for (const ch of String(name ?? "").trim()) sum += ch.codePointAt(0);
+  return HELPER_TONES[sum % HELPER_TONES.length];
+}
+
+/** The classes of a helper's letter face: the shared look plus its colour. */
+export const letterClasses = (name) => `av-letter av-tone-${toneOf(name)}`;

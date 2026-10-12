@@ -1,6 +1,7 @@
 // What the home pages say, worked out from the ledger view and the services' answers: plain functions, no DOM.
 import { approvalSections } from "./approvals.js";
 import { startOfDay } from "./home-dom.js";
+import { graphemesOf } from "./graphemes.js";
 
 const DAY = 86_400_000;
 
@@ -77,6 +78,44 @@ export const memoryCount = (groups) => groups.reduce((total, group) => total + g
 
 /** A group whose rows are things she must not forget: they are drawn in the warning colour. */
 export const urgentGroup = (title) => /要紧|重要|注意|禁忌|过敏|务必/.test(title);
+
+/** How long a short label on the home page may be, in characters; a longer one is cut to one fewer and ends in "…". */
+const CHIP_LIMIT = 12;
+const isDigit = (ch) => ch !== undefined && ch >= "0" && ch <= "9";
+
+/**
+ * A memory line as a short label: the half before its first "：" or ":" (a ":" between digits, as in a time, is not one),
+ * otherwise up to its first "，", "。", "；" or "、" (a line that starts with the colon is read after it); over 12 characters it keeps 11 and ends in "…". The line itself is not changed.
+ */
+export function memoryChip(line) {
+  let full = String(line ?? "").trim();
+  let head = "";
+  for (let i = 0; i < full.length; i++) {
+    const ch = full[i];
+    if (ch !== "：" && !(ch === ":" && !(isDigit(full[i - 1]) && isDigit(full[i + 1])))) continue;
+    head = full.slice(0, i).trim();
+    if (!head) full = full.slice(i + 1).trim();
+    break;
+  }
+  if (!head) {
+    const clause = /[，。；、]/.exec(full);
+    head = clause ? full.slice(0, clause.index).trim() : full;
+  }
+  if (!head) head = full;
+  const chars = graphemesOf(head);
+  return chars.length > CHIP_LIMIT ? `${chars.slice(0, CHIP_LIMIT - 1).join("")}…` : head;
+}
+
+/**
+ * The labels of the home page's "她记得你": at most [limit] in all, the urgent groups' lines first. Up to [limit] lines are all
+ * shown; more than that, [limit] - 1 of them and a last label that says how many are left out (`more`).
+ */
+export function memoryChips(groups, limit = 5) {
+  const all = (groups ?? []).flatMap((group) => group.items.map((line) => ({ text: memoryChip(line), urgent: urgentGroup(group.title) })));
+  all.sort((a, b) => Number(b.urgent) - Number(a.urgent));
+  const shown = all.length > limit ? limit - 1 : all.length;
+  return { chips: all.slice(0, shown), more: all.length - shown };
+}
 
 /** The times a timer fires in [from, to): its next time, and every repeat of it. */
 export function occurrences(timer, from, to) {

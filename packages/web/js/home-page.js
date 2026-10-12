@@ -2,19 +2,19 @@
 // who she is, her files, and the backstage. Every block opens a page of its own (home-pages.js).
 import { ago, dayTime, duration, h, hhmm, ico, startOfDay, weekday, fill } from "./home-dom.js";
 import { card, list, note, row, section, tag } from "./home-ui.js";
-import { groupMemory, memoryCount, nextUp, urgentGroup, waitingItems } from "./home-model.js";
+import { groupMemory, memoryChips, memoryCount, nextUp, waitingItems } from "./home-model.js";
 import { quoteOf, readApproval, readClock, readDevices, readFile, readPersona, readQuiet, readUsage, readAgents, settled } from "./home-data.js";
 import { usdToCnyText as money } from "./money.js";
 import { repeatText } from "./clock.js";
 import { pauseControl } from "./home-pause.js";
 import { listDirectory } from "./body.js";
 import { BODY_MAIN } from "./body.js";
+import { letterClasses, letterOf } from "./chat-ui.js";
 import { HELPER, isSystemEntry, KEYS, appsSummary, providerName } from "./home-text.js";
 
 const AVATAR_ROOT = globalThis.location?.origin === "https://appassets.androidplatform.net" ? "/assets/ash-ui/avatars" : "/avatars";
 const FACE = { idle: "default", resting: "resting", listening: "listening", thinking: "thinking", working: "focused", done: "success", waiting_you: "listening" };
 const STATE_TEXT = { idle: "在线", resting: "休息中", listening: "在听", thinking: "在想", working: "在忙", done: "", waiting_you: "等你一句话" };
-const LETTER_TONES = ["--you", "--her-fill", "--warn-fill", "--ok-fill"];
 
 /** The face and the state line of an agent: presence of the ledger, as the conversation's top bar says it. */
 function stateOf(view, agent = null, online = true) {
@@ -30,11 +30,7 @@ function stateOf(view, agent = null, online = true) {
   return { state: "idle", face: "default", text: STATE_TEXT.idle, tone: "ok", since: null };
 }
 
-const letterAvatar = (name, size) => {
-  const letter = [...(name || "?")][0].toUpperCase();
-  const tone = LETTER_TONES[[...name].reduce((sum, char) => sum + char.codePointAt(0), 0) % LETTER_TONES.length];
-  return h("span", { class: `av av-letter ${size}`, style: `background:var(${tone})` }, h("span", { class: "hm-letter" }, letter));
-};
+const letterAvatar = (name, size) => h("span", { class: `av ${letterClasses(name)} ${size}` }, h("span", { class: "hm-letter" }, letterOf(name)));
 
 const stat = (value, label, { tone = "", onClick, id }) => h("button", { type: "button", class: "hm-stat", id, onclick: onClick }, h("span", { class: `tx-num hm-stat-n${tone ? ` c-${tone}` : ""}` }, value), h("span", { class: "tx-caption" }, label));
 
@@ -112,10 +108,9 @@ export function homePage(ctx, screen) {
     const total = groups ? memoryCount(groups) : 0;
     let chips = [];
     if (groups) {
-      const all = groups.flatMap((g) => g.items.map((text) => ({ text, urgent: urgentGroup(g.title) })));
-      all.sort((a, b) => Number(b.urgent) - Number(a.urgent));
-      chips = all.slice(0, 5).map((item) => h("span", { class: `hm-chip${item.urgent ? " urgent" : ""}` }, item.text));
-      if (total > 5) chips.push(h("span", { class: "hm-chip more" }, `还有 ${total - 5} 条`));
+      const shown = memoryChips(groups);
+      chips = shown.chips.map((item) => h("span", { class: `hm-chip${item.urgent ? " urgent" : ""}` }, item.text));
+      if (shown.more) chips.push(h("span", { class: "hm-chip more" }, `还有 ${shown.more} 条`));
     }
     fill(memoryBox, section("她记得你", { right: groups ? (total ? `${total} 条` : null) : null, onOpen: () => ctx.go("memory") },
       !groups ? note("正在读取…") : chips.length ? card("hm-chips", ...chips) : list(row({ icon: "pen", title: "她还没记下关于你的事", sub: "聊得多了，她会自己整理在这里" }))));
@@ -262,5 +257,5 @@ export function homePage(ctx, screen) {
     await Promise.all(loads);
   }
 
-  return { title: "", body: h("div", { class: "hm-home" }, h("div", { class: "hm-glow", "aria-hidden": "true" }), hero, body), refresh };
+  return { title: "", body: h("div", { class: "hm-home" }, isHer ? h("div", { class: "hm-glow", "aria-hidden": "true" }) : null, hero, body), refresh };
 }

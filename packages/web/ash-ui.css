@@ -53,7 +53,8 @@ body{font-family:var(--font);color:var(--text);font-variant-numeric:tabular-nums
   animation:spin 2.4s linear infinite}
 .av-breath::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--her-fill);animation:breath 1.8s ease-in-out infinite}
 .av-wait::before{content:"";position:absolute;inset:-3px;border-radius:36%;border:1.6px solid var(--warn-fill);animation:breath 1.6s ease-in-out infinite}
-.av-letter{display:flex;align-items:center;justify-content:center;border-radius:32%;font-weight:650;color:#fff}
+.av-letter{display:flex;align-items:center;justify-content:center;border-radius:32%;font-weight:650;color:var(--on-helper)}
+.av-tone-purple{background:var(--helper-purple)}.av-tone-blue{background:var(--helper-blue)}.av-tone-teal{background:var(--helper-teal)}.av-tone-green{background:var(--helper-green)}.av-tone-amber{background:var(--helper-amber)}.av-tone-rose{background:var(--helper-rose)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes breath{0%,100%{opacity:.25;transform:scale(.97)}50%{opacity:1;transform:scale(1)}}
 @keyframes dots{0%,100%{opacity:.25}50%{opacity:1}}

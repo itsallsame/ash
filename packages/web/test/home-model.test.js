@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HomeFeed } from "../js/home-feed.js";
-import { activityByDay, chipLabel, dayItems, groupMemory, memoryCount, nextUp, occurrences, turnsToday, urgentGroup, waitingItems, weekStrip } from "../js/home-model.js";
+import { activityByDay, chipLabel, dayItems, groupMemory, memoryChip, memoryChips, memoryCount, nextUp, occurrences, turnsToday, urgentGroup, waitingItems, weekStrip } from "../js/home-model.js";
 import { quoteOf } from "../js/home-data.js";
 import { fold, initialView, projectMessages } from "../js/project.js";
 
@@ -62,6 +62,48 @@ test("memory is one group per second-level heading and one row per line", () => 
   assert.equal(urgentGroup("要紧的"), true);
   assert.equal(urgentGroup("生活"), false);
   assert.deepEqual(groupMemory(""), []);
+});
+
+test("a memory line becomes a short label: the half before the colon, else the first clause, 12 characters at most", () => {
+  assert.equal(memoryChip("生日：3月5日，每年都想收到卡片"), "生日");
+  assert.equal(memoryChip("偏好: 咖啡不加糖"), "偏好");
+  assert.equal(memoryChip("对花生过敏，吃了会起疹子"), "对花生过敏");
+  assert.equal(memoryChip("喜欢安静的地方。不爱热闹"), "喜欢安静的地方");
+  assert.equal(memoryChip("先A；再B"), "先A");
+  assert.equal(memoryChip("苹果、香蕉和橙子"), "苹果");
+  assert.equal(memoryChip("住杭州"), "住杭州", "no colon, no punctuation: the whole line");
+  assert.equal(memoryChip("每天 7:30 起床"), "每天 7:30 起床", "a time is not a colon");
+  assert.equal(memoryChip("：只有后半句"), "只有后半句", "nothing before the colon: the line itself");
+  assert.equal(memoryChip("  "), "");
+  assert.equal(memoryChip("一二三四五六七八九十甲乙"), "一二三四五六七八九十甲乙", "12 characters stay whole");
+  assert.equal(memoryChip("一二三四五六七八九十甲乙丙"), "一二三四五六七八九十甲…", "13 become 11 and an ellipsis");
+  assert.equal(memoryChip("主人的生日是三月五日并且不喜欢惊喜：详情"), "主人的生日是三月五日并…");
+});
+
+test("labels count characters the reader sees: an emoji is one, and is never cut in half", () => {
+  const fourteen = "😀".repeat(14);
+  assert.equal(memoryChip(fourteen), `${"😀".repeat(11)}…`);
+  assert.equal(memoryChip("😀".repeat(12)), "😀".repeat(12));
+  const family = "👩‍👩‍👧";
+  assert.equal(memoryChip(`${family.repeat(12)}`), family.repeat(12), "a joined emoji counts once");
+  assert.equal(memoryChip(`${family.repeat(13)}`), `${family.repeat(11)}…`);
+  assert.equal(memoryChip("é".normalize("NFD").repeat(13)), `${"é".normalize("NFD").repeat(11)}…`, "a letter with its accent is one");
+  assert.equal(memoryChip("𠮷".repeat(13)), `${"𠮷".repeat(11)}…`, "a character outside the BMP is one");
+});
+
+test("the home page shows five labels in all: every line up to five, else four and 'N more', the urgent group's first", () => {
+  const groups = groupMemory("## 生活\n- 住杭州：西湖边\n- 开电车\n- 养了一只猫，叫团子\n## 要紧的\n- 对花生过敏\n- 不吃香菜\n## 习惯\n- 早起\n- 爱跑步\n");
+  const { chips, more } = memoryChips(groups);
+  assert.deepEqual(chips.map((chip) => chip.text), ["对花生过敏", "不吃香菜", "住杭州", "开电车"]);
+  assert.deepEqual(chips.map((chip) => chip.urgent), [true, true, false, false]);
+  assert.equal(more, 3, "seven lines: four shown, N = 7 - 4");
+  const five = memoryChips(groupMemory("## 生活\n- 甲\n- 乙\n- 丙\n- 丁\n- 戊\n"));
+  assert.deepEqual([five.chips.length, five.more], [5, 0], "exactly five: all shown, no 'more' label");
+  const six = memoryChips(groupMemory("## 生活\n- 甲\n- 乙\n- 丙\n- 丁\n- 戊\n- 己\n"));
+  assert.deepEqual([six.chips.length, six.more], [4, 2], "six: four and 'N more' where N = 6 - 4");
+  assert.deepEqual(memoryChips(groupMemory("## 生活\n- 住杭州\n")), { chips: [{ text: "住杭州", urgent: false }], more: 0 });
+  assert.deepEqual(memoryChips(null), { chips: [], more: 0 });
+  assert.equal(memoryCount(groups), 7, "the page behind it still lists every line in full");
 });
 
 test("a repeating timer falls on every day of its repeat; the week strip counts what happens each day", () => {

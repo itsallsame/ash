@@ -2,7 +2,7 @@
 import { cardHead, fileRef, renderCard } from "./cards.js";
 import { appendApprovalOriginal, appendFullAnswer } from "./approval-original.js";
 import { appendMarkdown } from "./markdown.js";
-import { addIcon, avatarUrl, button, dayStamp, letterOf, text, validUntil } from "./chat-ui.js";
+import { addIcon, avatarUrl, button, dayStamp, letterClasses, letterOf, text, validUntil } from "./chat-ui.js";
 export { fileRef } from "./cards.js";
 
 const say = (item) => item?.type === "say";
@@ -10,9 +10,6 @@ const grouped = (item, neighbor) => say(item) && say(neighbor) && item.side === 
 const deliveryText = { sent: "发送中", delivered: "已送达", read: "已读" };
 /** A pause this long between two messages gets its own time line. */
 const TIME_GAP = 3_600_000;
-/** What a hand's letter face is painted with: one of the design's fills, by the agent's id. */
-const LETTER_FILLS = Object.freeze(["her", "you", "warn", "ok"]);
-const letterFill = (id) => LETTER_FILLS[[...String(id)].reduce((sum, ch) => sum + ch.codePointAt(0), 0) % LETTER_FILLS.length];
 
 function attachment(parent, item, openInline, onOpenFile, lifetime) {
   const name = typeof item?.name === "string" ? item.name : "附件";
@@ -227,7 +224,7 @@ export function appendConversation(fragment, entries, { openInline, onOpenFile, 
       if (item.side === "owner" && item.origin?.label) text(fragment, "small", `来自 ${item.origin.label}`, "from r");
       if (item.side === "agent" && item.from?.startsWith("agent:") && item.from !== primary && !previous) {
         const byline = text(fragment, "div", "", "byline agent-byline");
-        text(byline, "span", letterOf(agentName(item.from)), `av-letter agent-avatar fill-${letterFill(item.from)}`);
+        text(byline, "span", letterOf(agentName(item.from)), `${letterClasses(agentName(item.from))} agent-avatar`);
         text(byline, "span", `${agentName(item.from)}${primary ? ` · ${agentName(primary)} 的帮手` : ""}`);
       }
       if (item.side === "owner" && item.to && item.to !== primary) text(fragment, "small", `@ ${agentName(item.to)}`, "from r");

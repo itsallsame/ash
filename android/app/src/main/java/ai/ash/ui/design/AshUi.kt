@@ -431,6 +431,30 @@ object AshUi {
     }
 
     /**
+     * A helper agent's face: a rounded square (the avatar's 32%), its first character in white at weight 650, on one of the six
+     * helper colours picked by its name ([AshLetter]). Ash herself always uses her picture ([AvatarView]), never this.
+     */
+    class LetterAvatarView(ctx: Context, name: String?) : View(ctx) {
+        private val letter = AshLetter.letterOf(name)
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AshLetter.color(p(ctx), name) }
+        private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p(ctx).onHelper; typeface = weighted(AshTokens.Type.button.weight); textAlign = Paint.Align.CENTER }
+        init { contentDescription = null; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        override fun onDraw(canvas: Canvas) {
+            val side = minOf(width, height).toFloat()
+            val r = side * AshTokens.Radius.avatarFraction
+            val box = RectF((width - side) / 2f, (height - side) / 2f, (width + side) / 2f, (height + side) / 2f)
+            canvas.drawRoundRect(box, r, r, fill)
+            glyph.textSize = side * 0.45f
+            val m = glyph.fontMetrics
+            canvas.drawText(letter, box.centerX(), box.centerY() - (m.ascent + m.descent) / 2f, glyph)
+        }
+    }
+
+    /** A [LetterAvatarView] [sizeDp] on a side. */
+    fun letterAvatar(ctx: Context, name: String?, sizeDp: Int = AshTokens.Size.avatarPage): LetterAvatarView =
+        LetterAvatarView(ctx, name).apply { layoutParams = ViewGroup.LayoutParams(dp(ctx, sizeDp), dp(ctx, sizeDp)) }
+
+    /**
      * Her face in a round frame with a ring of light around it (the first-launch guide: download progress, how many things are on).
      * [progress] of the ring is lit, from the top, clockwise; [spinning] lights a short arc that goes round instead (not when the
      * system's animations are off). [boxDp] is the view's side, [radiusDp] the ring's radius, [avatarDp] the face's diameter.
