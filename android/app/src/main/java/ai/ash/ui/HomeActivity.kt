@@ -27,6 +27,9 @@ import ai.ash.ui.design.AshUi
 class HomeActivity : Activity() {
     private lateinit var content: FrameLayout
     private lateinit var chatScreen: ChatScreen
+    private lateinit var port: HumanPort
+    private lateinit var files: ChatFiles
+    private lateinit var home: HomePages
     private var appsPane: AppsPane? = null
     private var tab = HomeTab.CHAT
     private var resumed = false
@@ -39,18 +42,22 @@ class HomeActivity : Activity() {
         setTheme(if (themedNight) R.style.Ash_Dark else R.style.Ash_Light)
         super.onCreate(savedInstanceState)
         ai.ash.apps.Ui.systemBars(this)
-        chatScreen = ChatScreen(this, Link.get(this).chat) { showTab(HomeTab.APPS) }
+        port = HumanPort(Link.get(this).chat)
+        files = ChatFiles(this, port)
+        home = HomePages(this, port)
+        chatScreen = ChatScreen(this, port, files, home) { showTab(HomeTab.APPS) }
         // Edge to edge (targetSdk 35): the frame keeps clear of the bars and the keyboard; the chat is laid out in what is left.
         content = FrameLayout(this).apply {
             setBackgroundColor(AshUi.p(this@HomeActivity).bg)
             addView(chatScreen.view, FrameLayout.LayoutParams(-1, -1))
+            addView(home.view, FrameLayout.LayoutParams(-1, -1))
         }
         ai.ash.apps.Ui.insets(content)
         setContentView(content)
         val saved = HomeTab.of(savedInstanceState?.getString(STATE_TAB))
         val focus = intent?.getBooleanExtra(EXTRA_FOCUS_INPUT, false) == true
         showTab(saved ?: HomeRoute.tabFor(intent?.getStringExtra(HomeRoute.EXTRA_TAB), focus, fromLauncher(intent), HomeTab.CHAT))
-        chatScreen.start()
+        port.start()
         ai.ash.host.AppState.homePageLive = true
         if (focus) ui.postDelayed({ chatScreen.focusInput() }, 300)
         val firstStart = OnboardingActivity.showOnce(this)
@@ -120,6 +127,11 @@ class HomeActivity : Activity() {
         super.onPause()
     }
 
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!files.onActivityResult(requestCode, resultCode, data)) super.onActivityResult(requestCode, resultCode, data)
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // Light and dark: the native screen is simply made again in the other colours.
@@ -130,13 +142,15 @@ class HomeActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (tab == HomeTab.APPS) { if (appsPane?.back() != true) showTab(HomeTab.CHAT); return }
+        if (home.back()) return
         moveTaskToBack(true)
     }
 
     override fun onDestroy() {
         ai.ash.host.AppState.homePageLive = false
         ui.removeCallbacksAndMessages(null)
-        chatScreen.stop()
+        chatScreen.close()
+        port.stop()
         appsPane?.close()
         super.onDestroy()
     }
