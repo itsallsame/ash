@@ -50,4 +50,9 @@ class AppInfoNeedsTest {
         assertEquals("这个应用的文件夹已经不在了，只剩安装记录；可以点「收回全部权限」把它卸掉。", gone.troubleText)
         assertNull(list("""[{"id":"w","enabled":true,"granted":true}]""").single().troubleText)
     }
+
+    @Test fun anAppsOwnStateIsReadOnlyWhenItIsOneTheGridKnows() {
+        val apps = list("""[{"id":"vitals","badge":"err"},{"id":"a","badge":"warn"},{"id":"b","badge":"paused"},{"id":"c","badge":"loud"},{"id":"d"}]""")
+        assertEquals(listOf("err", "warn", "paused", "", ""), apps.map { it.badge })
+    }
 }
