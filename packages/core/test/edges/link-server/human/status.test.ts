@@ -35,6 +35,17 @@ test("a turn on the front lane makes status frames: thinking, the tools as steps
   assert.equal(new Set(revisions).size, revisions.length);
 });
 
+test("the turn's last reply recorded just after its end is still the turn's reply", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const island = await Channel.open(hub, { surfaces: ["chat", "status"] });
+  hub.mini.announce("turn.started", { turn: "t1", lane: "front", ids: [] });
+  hub.mini.announce("turn.ended", { turn: "t1", lane: "front", outcome: "completed" });
+  await eventually(() => last(island).state === "done", "done");
+  await hub.mini.send({ to: "person:owner", kind: "request", word: "say", body: { text: "做完了" } }, { ...AGENT, turn: "t1" });
+  await eventually(() => last(island).reply === "做完了", "the late reply");
+  assert.equal(last(island).text, "本轮回复");
+});
+
 test("a turn that completes without saying anything to the owner ends with an empty reply and a plain end line", async (t) => {
   const hub = await startHumanHub(); t.after(() => hub.stop());
   const island = await Channel.open(hub, { surfaces: ["chat", "status"] });

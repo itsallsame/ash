@@ -67,7 +67,9 @@ export class TaskStatus {
   observe(m: Message): void {
     if (this.closed) return;
     const body = (m.body ?? {}) as Record<string, any>;
-    if (m.kind === "request" && m.to === OWNER_ID && m.word === "say" && this.turn && m.turn === this.turn && !this.ended && typeof body.text === "string") {
+    // The turn's last reply can be recorded just after its end (the end is an event, the reply a request that is checked
+    // first): a reply belongs to its turn, ended or not.
+    if (m.kind === "request" && m.to === OWNER_ID && m.word === "say" && this.turn && m.turn === this.turn && typeof body.text === "string") {
       this.replies.push(body.text);
       return this.changed();
     }
