@@ -13,8 +13,8 @@
 //   {sleep_ms: N}                                                               only a fallback: wait for state, not for time
 // A string of a body may hold ${step.path} (a result of an earlier step: `${a1.data.pending_id}`), `${msg.pending}` (in a handler:
 // the pending id of a message `[answers <id>, option <choice>] ...`), `${msg.option}`, `${msg.text}`, or `${run}`.
-// After the steps (or a handler's) the agent says one line to the owner, `{"script_report": {...}}`: the result of every step, in
-// order (ok, error code, status, data, ms), which the owner's command line asserts on.
+// After the steps (or a handler's) the agent says one line to the owner (`human_say`, kind heads_up: it never rings), `{"script_report": {...}}`:
+// the result of every step, in order (ok, error code, status, data, ms), which the owner's command line asserts on.
 import { createInterface } from "node:readline";
 
 const out = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
@@ -193,7 +193,9 @@ async function turn(s, prompt, signal) {
       report = { run: vars.run, trigger: "message", matched: handler.match, completed: !signal?.aborted, steps };
     }
   }
-  update(s.id, { sessionUpdate: "agent_message_chunk", messageId: `r${++toolId}`, content: { type: "text", text: JSON.stringify({ script_report: report }) } });
+  // Said through the tool surface, not as the turn's output: only the front lane's output reaches the owner, and a message that arrives
+  // on the back lane (the gate's word that a lease was taken back) is a turn too. `heads_up` never rings.
+  await callTool(s, "human_say", { text: JSON.stringify({ script_report: report }), kind: "heads_up" }, undefined);
   return signal?.aborted ? "cancelled" : "end_turn";
 }
 
