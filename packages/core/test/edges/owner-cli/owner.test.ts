@@ -169,8 +169,9 @@ test("an approval card shows in say, answer once lets the request through", asyn
   const phone = await s.phone();
   s.driver.script(async (turn) => {
     if (turn.messages.some(ownerMessage("打开笔记"))) await turn.call(phone.member, "apps.open", { app: "com.example.notes" }, { purpose: "open notes" });
-    else if (turn.messages.some((m) => m.word === "tell")) {
-      const pending = turn.messages.map((m) => /pend\w*_\w+|p_\w+/.exec(m.text)?.[0]).find(Boolean);
+    else {
+      // The owner's answer comes as their own message: `[answers <pending id>, option once] 批准：…`.
+      const pending = turn.messages.map((m) => (m.from === OWNER ? /^\[answers ([^,\]]+), option once\]/.exec(m.text)?.[1] : undefined)).find(Boolean);
       if (pending) await turn.tool("human_pending_redeem", { id: pending });
     }
   });
@@ -186,7 +187,9 @@ test("an approval card shows in say, answer once lets the request through", asyn
   const answered = await owner(s, ["answer", ask.id, "once"]);
   assert.equal(answered.code, 0, answered.err + answered.out);
   assert.equal(fields(answered.out, "answered").choice, "once");
-  await s.driver.delivery((m) => m.from === "service:gate" && m.word === "tell", "the answer reaching the asker");
+  const { message } = await s.driver.delivery((m) => m.from === OWNER && m.word === "say" && m.text.startsWith("[answers ") && m.text.includes("option once]"), "the answer reaching the asker");
+  assert.match(message.text, /批准：/);
+  await eventually(() => phone.calls.length === 1, "the asker redeemed it");
   const again = await owner(s, ["answer", ask.id, "deny"]);
   assert.equal(again.code, 3, "the second answer is a conflict");
 });
