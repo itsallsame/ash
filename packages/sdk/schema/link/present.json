@@ -275,6 +275,41 @@
           "maxLength": 128
         },
         "surface": {
+          "const": "status"
+        },
+        "op": {
+          "const": "lease"
+        },
+        "body": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
           "const": "widget"
         },
         "op": {

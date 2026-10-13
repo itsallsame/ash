@@ -22,7 +22,7 @@ function approvalScript(phone: Hand, flow: Flow, app = "com.example.notes"): Tur
       flow.again = await turn.tool("human_pending_redeem", { id: flow.pendingId });
       return;
     }
-    flow.first = await turn.call(phone.member, "apps.open", { app }, { purpose: "打开笔记给主人看" });
+    flow.first = await turn.call(phone.member, "clipboard.set", { text: app }, { purpose: "把笔记名放进剪贴板" });
     flow.pendingId = resultOf(flow.first)?.pending_id ?? "";
   };
 }
@@ -60,11 +60,11 @@ test("S032, S039, S033: an outward action waits for the owner; once approved the
   await eventually(() => flow.again, "the redeem results");
   assert.equal(flow.redeemed!.isError, false);
   assert.equal(phone.calls.length, 1, "the hand ran it once");
-  assert.equal(phone.calls[0]!.capability, "apps.open");
+  assert.equal(phone.calls[0]!.capability, "clipboard.set");
   assert.equal(phone.calls[0]!.caller.member, MAIN);
   assert.equal(flow.again!.isError, true, "a second redeem does not run it again");
-  const audit = await owner.call("service:gate", "audit", { word: "apps.open" });
-  assert.ok(audit.ok && JSON.stringify(dataOf(audit)).includes("apps.open"), "S034-S038: the decision left evidence in the audit");
+  const audit = await owner.call("service:gate", "audit", { word: "clipboard.set" });
+  assert.ok(audit.ok && JSON.stringify(dataOf(audit)).includes("clipboard.set"), "S034-S038: the decision left evidence in the audit");
 });
 
 test("S032: the owner says no: the asker is told, redeeming does nothing", async (t) => {
@@ -99,7 +99,7 @@ test("S032: 'always' makes a rule: the same request does not ask again", async (
   assert.notEqual(resultOf(flow.first!)?.status, "waiting_owner");
   assert.equal(phone.calls.length, 2, "it ran without a card");
   const rules = await owner.call("service:gate", "rules.list");
-  assert.ok(rules.ok && JSON.stringify(dataOf(rules)).includes("apps.open"), "S034-S038: the rule is listed");
+  assert.ok(rules.ok && JSON.stringify(dataOf(rules)).includes("clipboard.set"), "S034-S038: the rule is listed");
 });
 
 test("S039: the approval has expired: answering it late does not let the request run", async (t) => {
@@ -108,7 +108,7 @@ test("S039: the approval has expired: answering it late does not let the request
   const flow: Flow = { pendingId: "" };
   s.driver.script(byOwnerText({
     "帮我打开笔记": async (turn) => {
-      flow.first = await turn.call(phone.member, "apps.open", { app: "com.example.notes" }, { approval_ttl_minutes: 1 });
+      flow.first = await turn.call(phone.member, "clipboard.set", { text: "com.example.notes" }, { approval_ttl_minutes: 1 });
       flow.pendingId = resultOf(flow.first)?.pending_id ?? "";
     },
     "试试执行": async (turn) => { flow.redeemed = await turn.tool("human_pending_redeem", { id: flow.pendingId }); },

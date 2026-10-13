@@ -192,6 +192,24 @@ add("service:gate", "pending.skip", "request", obj({ id, reason: str }, ["id"]),
 add("service:gate", "pending.withdraw", "request", obj({ id }, ["id"]), obj({ withdrawn: bool }, ["withdrawn"]),
   { ...ORIGINATOR, effect: "write", label: "在撤回问题", description: "Withdraw a question or approval request you made, while it is still waiting; the owner's card is taken down." });
 
+// ---- screen leases: the owner lends the real screen for a while ---------------------------------------------------------------
+const leaseView = obj({ id, agent: nonempty, name: str, kind: choice("task", "timed"), purpose: str, granted_at: nonnegativeSafe, expires_at: nonnegativeSafe },
+  ["id", "agent", "kind", "granted_at", "expires_at"]);
+add("service:gate", "lease.request", "request", obj({ minutes: { type: "integer", minimum: 1, maximum: 120 }, goal: { type: "string", minLength: 1, maxLength: 200 } }, ["goal"]),
+  obj({ status: choice("waiting_owner", "active"), lease_id: id, expires_at: nonnegativeSafe }, ["status", "lease_id"]),
+  { callers: ["agent"], effect: "write", label: "在申请操作屏幕",
+    description: "Ask the owner to lend you the real phone screen for a while (taps, typing, scrolling, opening an app or a link, keys): the screen words are refused until the owner says yes. Say what for in goal; minutes is how long you need (default 15, the owner may give 'this task' or 1 hour instead). It does not wait: the owner's answer comes as their own message in the conversation. Do not ask again while one is waiting." });
+add("service:gate", "lease.status", "request", empty, obj({ lease: nullable(leaseView), asking: bool }, ["asking"]),
+  { callers: ["agent"], label: "在看屏幕授权", description: "Your screen lease now: when it ends, or null (and whether a request is waiting for the owner)." });
+add("service:gate", "lease.release", "request", empty, obj({ released: bool }, ["released"]),
+  { callers: ["agent"], effect: "write", label: "在交还屏幕", description: "Hand the screen back when your work on it is done, so the owner's lease ends at once." });
+add("service:gate", "lease.revoke", "request", obj({ id }), obj({ revoked: { type: "integer", minimum: 0 } }, ["revoked"]),
+  { callers: OWNER, effect: "write", label: "在收回屏幕授权", description: "The owner takes the screen lease back (one by id, else every one): the agent is stopped and told." });
+add("service:gate", "lease.list", "request", empty, obj({ leases: array(leaseView) }, ["leases"]),
+  { callers: OWNER, label: "在看屏幕授权", description: "The screen leases in force now." });
+add("service:gate", "lease.state", "event", obj({ leases: array(leaseView) }, ["leases"]), undefined,
+  { callers: KERNEL, direction: "out", label: "在转达屏幕授权", description: "The screen leases changed: the whole list for the owner's screens (the human edge pushes it as present{status/lease}; a channel that just connected gets service:gate/lease.list)." });
+
 // ===================================================================================================================
 // service:vault: credentials. An agent may look, never touch.
 // ===================================================================================================================

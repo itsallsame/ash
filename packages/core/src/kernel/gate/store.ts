@@ -77,6 +77,26 @@ export interface PendingRecord {
 const newId = (prefix: string) => `${prefix}_${randomBytes(9).toString("base64url")}`;
 type Row = Record<string, unknown>;
 
+export type LeaseState = "asking" | "active" | "ended";
+export type LeaseKind = "task" | "timed";
+
+/** The owner lending the real screen to one agent for a while (service:gate/lease.*). */
+export interface LeaseRecord {
+  id: string;
+  agent: string;
+  /** The turn that asked; a "task" lease ends with it. */
+  turn?: string;
+  purpose: string;
+  asked_minutes: number;
+  kind?: LeaseKind;
+  state: LeaseState;
+  requested_at: number;
+  granted_at?: number;
+  expires_at?: number;
+  ended_at?: number;
+  ended_reason?: string;
+}
+
 export class GateStore {
   /** Called when a question that was waiting becomes expired (it counts as a refusal); `service:gate` tells the originator. */
   onExpired?: (pending: PendingRecord) => void;
@@ -95,7 +115,11 @@ export class GateStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL UNIQUE, at INTEGER NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gate_pending (
         id TEXT PRIMARY KEY, originator TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, data TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS gate_pending_originator ON gate_pending(originator, state);`);
+      CREATE INDEX IF NOT EXISTS gate_pending_originator ON gate_pending(originator, state);
+      CREATE TABLE IF NOT EXISTS gate_leases (
+        id TEXT PRIMARY KEY, agent TEXT NOT NULL, turn TEXT, purpose TEXT NOT NULL, asked_minutes INTEGER NOT NULL, kind TEXT, state TEXT NOT NULL,
+        requested_at INTEGER NOT NULL, granted_at INTEGER, expires_at INTEGER, ended_at INTEGER, ended_reason TEXT);
+      CREATE INDEX IF NOT EXISTS gate_leases_agent ON gate_leases(agent, state);`);
   }
 
   private get db() { return this.ledger.db(); }
@@ -137,6 +161,67 @@ export class GateStore {
   }
   revokeRule(id: string): boolean {
     return Number(this.db.prepare("UPDATE gate_rules SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(this.now(), id).changes) > 0;
+  }
+
+  // ---- leases --------------------------------------------------------------------------------------------------
+  private lease(row: Row): LeaseRecord {
+    const n = (v: unknown) => (v === null || v === undefined ? undefined : Number(v));
+    return { id: String(row.id), agent: String(row.agent), ...(row.turn ? { turn: String(row.turn) } : {}), purpose: String(row.purpose),
+      asked_minutes: Number(row.asked_minutes), ...(row.kind ? { kind: row.kind as LeaseKind } : {}), state: row.state as LeaseState,
+      requested_at: Number(row.requested_at), ...(n(row.granted_at) !== undefined ? { granted_at: n(row.granted_at)! } : {}),
+      ...(n(row.expires_at) !== undefined ? { expires_at: n(row.expires_at)! } : {}),
+      ...(n(row.ended_at) !== undefined ? { ended_at: n(row.ended_at)! } : {}), ...(row.ended_reason ? { ended_reason: String(row.ended_reason) } : {}) };
+  }
+  askLease(agent: string, purpose: string, minutes: number, turn?: string): LeaseRecord {
+    const id = newId("ls");
+    this.db.prepare("INSERT INTO gate_leases(id,agent,turn,purpose,asked_minutes,state,requested_at) VALUES(?,?,?,?,?,'asking',?)").run(id, agent, turn ?? null, purpose, minutes, this.now());
+    return this.getLease(id)!;
+  }
+  getLease(id: string): LeaseRecord | null {
+    const row = this.db.prepare("SELECT * FROM gate_leases WHERE id=?").get(id) as Row | undefined;
+    return row ? this.lease(row) : null;
+  }
+  /** The lease the agent holds now: granted, not ended, and its time has not come. */
+  activeLease(agent: string): LeaseRecord | null {
+    const row = this.db.prepare("SELECT * FROM gate_leases WHERE agent=? AND state='active' AND expires_at>? ORDER BY expires_at DESC LIMIT 1").get(agent, this.now()) as Row | undefined;
+    return row ? this.lease(row) : null;
+  }
+  askingLease(agent: string): LeaseRecord | null {
+    const row = this.db.prepare("SELECT * FROM gate_leases WHERE agent=? AND state='asking' ORDER BY requested_at DESC LIMIT 1").get(agent) as Row | undefined;
+    return row ? this.lease(row) : null;
+  }
+  /** The leases still waiting for the owner (after a restart their cards are sent again). */
+  askingLeases(): LeaseRecord[] {
+    return (this.db.prepare("SELECT * FROM gate_leases WHERE state='asking' ORDER BY requested_at").all() as Row[]).map((r) => this.lease(r));
+  }
+  /** Every lease in force, soonest end first. */
+  activeLeases(): LeaseRecord[] {
+    return (this.db.prepare("SELECT * FROM gate_leases WHERE state='active' AND expires_at>? ORDER BY expires_at").all(this.now()) as Row[]).map((r) => this.lease(r));
+  }
+  /** Leases that are active by the table but whose time has come (a restart, or the timer): they are ended by the caller. */
+  dueLeases(): LeaseRecord[] {
+    return (this.db.prepare("SELECT * FROM gate_leases WHERE state='active' AND expires_at<=?").all(this.now()) as Row[]).map((r) => this.lease(r));
+  }
+  /** The last lease the agent had that is over, with how it ended (the refusal says why). */
+  lastEnded(agent: string): LeaseRecord | null {
+    const row = this.db.prepare("SELECT * FROM gate_leases WHERE agent=? AND state='ended' AND granted_at IS NOT NULL ORDER BY ended_at DESC LIMIT 1").get(agent) as Row | undefined;
+    return row ? this.lease(row) : null;
+  }
+  /** Grants a lease that was asked for; an agent holds one at a time, so an earlier one of the agent ends. */
+  grantLease(id: string, kind: LeaseKind, expiresAt: number): LeaseRecord | null {
+    const asked = this.getLease(id);
+    if (!asked || asked.state !== "asking") return null;
+    this.db.prepare("UPDATE gate_leases SET state='ended',ended_at=?,ended_reason='replaced' WHERE agent=? AND state='active'").run(this.now(), asked.agent);
+    this.db.prepare("UPDATE gate_leases SET state='active',kind=?,granted_at=?,expires_at=? WHERE id=? AND state='asking'").run(kind, this.now(), expiresAt, id);
+    return this.getLease(id);
+  }
+  /** Ends a lease (asked or active) with a reason; null when it was over already. */
+  endLease(id: string, reason: string): LeaseRecord | null {
+    const done = Number(this.db.prepare("UPDATE gate_leases SET state='ended',ended_at=?,ended_reason=? WHERE id=? AND state IN ('asking','active')").run(this.now(), reason, id).changes) > 0;
+    return done ? this.getLease(id) : null;
+  }
+  bindLeaseTurn(id: string, turn: string): void {
+    this.db.prepare("UPDATE gate_leases SET turn=? WHERE id=? AND state='active'").run(turn, id);
   }
 
   // ---- audit ---------------------------------------------------------------------------------------------------

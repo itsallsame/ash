@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `faa999d28931c5b8`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `2bf5b32aaa4c9508`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -9,7 +9,7 @@
 
 - [`service:admin`](#serviceadmin) (12)
 - [`service:health`](#servicehealth) (2)
-- [`service:gate`](#servicegate) (11)
+- [`service:gate`](#servicegate) (17)
 - [`service:vault`](#servicevault) (5)
 - [`service:devices`](#servicedevices) (15)
 - [`service:link`](#servicelink) (16)
@@ -92,6 +92,12 @@
 | `pending.redeem` | agent | act / none | - | id* | 在执行你批准的事 | Carry out a request the owner approved: the original request is sent again and, this time, passes the gate as approved. Works once, only for the agent that made it, in its own turn. |
 | `pending.skip` | agent | write / none | - | id*, reason | 在说明为何不再继续 | Say that you will not carry out a request that was answered, for example because it is no longer wanted. The owner is told. |
 | `pending.withdraw` | agent | write / none | - | id* | 在撤回问题 | Withdraw a question or approval request you made, while it is still waiting; the owner's card is taken down. |
+| `lease.request` | agent | write / none | - | minutes, goal* | 在申请操作屏幕 | Ask the owner to lend you the real phone screen for a while (taps, typing, scrolling, opening an app or a link, keys): the screen words are refused until the owner says yes. Say what for in goal; minutes is how long you need (default 15, the owner may give 'this task' or 1 hour instead). It does not wait: the owner's answer comes as their own message in the conversation. Do not ask again while one is waiting. |
+| `lease.status` | agent | read / none | - | - | 在看屏幕授权 | Your screen lease now: when it ends, or null (and whether a request is waiting for the owner). |
+| `lease.release` | agent | write / none | - | - | 在交还屏幕 | Hand the screen back when your work on it is done, so the owner's lease ends at once. |
+| `lease.revoke` | owner | write / none | - | id | 在收回屏幕授权 | The owner takes the screen lease back (one by id, else every one): the agent is stopped and told. |
+| `lease.list` | owner | read / none | - | - | 在看屏幕授权 | The screen leases in force now. |
+| `lease.state` | kernel | read / none | event out | leases* | 在转达屏幕授权 | The screen leases changed: the whole list for the owner's screens (the human edge pushes it as present{status/lease}; a channel that just connected gets service:gate/lease.list). |
 
 ## `service:vault`
 

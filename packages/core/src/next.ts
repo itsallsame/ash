@@ -36,7 +36,7 @@ import { staticWeb } from "./edges/link-server/web";
 import { createToolsEdge, TOOL_NAMES, toolWords } from "./edges/tools";
 import { APP_CONTRACT_DOC } from "./prompts/app-contract.generated";
 import { AGENT_RULES, MAIN_RULES } from "./prompts/rules.generated";
-import { createGate, GateStore } from "./kernel/gate";
+import { createGate, GateStore, needsLease } from "./kernel/gate";
 import { Ledger } from "./kernel/ledger";
 import { createRedact } from "./kernel/redact";
 import { createRegistry } from "./kernel/registry";
@@ -180,6 +180,12 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   const blobs = createBlobsService(ledger, { openStream: (bytes, mime, ctx) => late.human!.openStream(ctx.caller.client, bytes, mime) });
   const gateService = late.gateService = createGateService({
     ownerSay: (askId, to, body) => late.human!.sayAfterAnswer(askId, to, body),
+    // A screen lease ended: the fingers the agent still holds on the phone are let go, and what it has on the way to the screen is cancelled.
+    releaseScreen: async () => {
+      const hand = registry.findByWord("screen.touch", { kind: "device" })[0];
+      if (hand) await router.send({ to: hand.id, kind: "request", word: "screen.touch", body: { action: "release_all" } }, service("service:gate"));
+    },
+    cancelScreen: (agent) => router.cancelWhere((r) => r.from === agent && r.to !== null && needsLease(registry.find(r.to, r.word)?.contract ?? ({} as never))),
     store, gate, send: (msg, caller, o) => router.send(msg, caller, o), redeem: (id, caller, o) => router.redeem(id, caller, o),
     contractOf: (member, word) => registry.find(member, word)?.contract ?? null, nameOf: createNameOf({
       memberName: (id) => registry.get(id)?.name, handName: (hand) => late.hands?.get(hand)?.name,
@@ -321,6 +327,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     router.recover();
     tools.recover();
     gateService.start();
+    router.subscribe({}, (m) => gateService.observe(m));
     clock.start();
     widgets.start();
     await linkControl.start();

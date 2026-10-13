@@ -44,6 +44,12 @@ object TaskStatus {
     } }
     /** Show the current state again now (the accessibility service connected, Ash's own screen came or went). */
     fun refresh() { main.post { render() } }
+    /** What the agent is doing now, as the island reads it: the current line and the last steps (empty when nothing runs). Main thread. */
+    fun activity(): List<String> {
+        val f = model.frame ?: return emptyList()
+        if (f.state in setOf("idle", "resting", "done")) return emptyList()
+        return listOfNotNull(f.text.takeIf { it.isNotBlank() }) + f.steps.filter { it.isNotBlank() }
+    }
     fun accept(ctx: Context, body: JSONObject): Boolean {
         val frame = try { TaskFrame.parse(body) } catch (_: Exception) { return false }
         main.post {

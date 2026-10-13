@@ -11426,6 +11426,7 @@ var present = union(
   presentOf("island", "query", obj({})),
   presentOf("status", "frame", record()),
   presentOf("status", "vscreen", obj({ open: boolean() })),
+  presentOf("status", "lease", record()),
   presentOf("widget", "state", record()),
   presentOf("widget", "preview", obj({ card: anything(), size: anything() })),
   presentOf("chat", "focus", obj({})),

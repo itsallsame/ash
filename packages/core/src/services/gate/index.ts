@@ -11,8 +11,9 @@ import { isAgentId, OWNER_ID } from "../../../../sdk/src/ids";
 import { WordError, type Caller, type HandleContext, type Message, type Outgoing, type Reply, type WordResult } from "../../../../sdk/src/message";
 import type { Member, WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
-import { ALWAYS_ASK, contractFingerprint, isPayment, RULE_DAYS, type GateStore, type PendingRecord, type Rule } from "../../kernel/gate";
+import { ALWAYS_ASK, contractFingerprint, isPayment, needsLease, RULE_DAYS, type GateStore, type PendingRecord, type Rule } from "../../kernel/gate";
 import type { Gate, SendOptions } from "../../kernel/types";
+import { createLeases } from "./lease";
 
 export const GATE_ID = "service:gate";
 /** What the service itself sends as: the hub's own code. */
@@ -40,6 +41,10 @@ export interface GateServiceDeps {
    * answer it (it ended by its time); a refusal rejects. Absent: the agent is not spoken to.
    */
   ownerSay?(askId: string, to: string, body: Record<string, unknown>): Promise<boolean>;
+  /** A screen lease ended: lets go of the fingers the agent holds on the phone's screen. */
+  releaseScreen?(): Promise<void>;
+  /** A screen lease ended: cancels the screen requests the agent still has on the way; how many. */
+  cancelScreen?(agent: string): number;
 }
 
 export interface GateService extends Member {
@@ -50,6 +55,8 @@ export interface GateService extends Member {
   sweep(): void;
   /** Send the card for one parked request (the router's `onParked`). */
   issueCard(pending: PendingRecord): void;
+  /** What the router announces: an agent's turns beginning and ending end the leases bound to a task. */
+  observe(m: Message): void;
 }
 
 const bad = (message: string) => new WordError("bad_request", message);
@@ -64,6 +71,8 @@ export function createGateService(deps: GateServiceDeps): GateService {
   const { store, gate } = deps;
   const now = store.now;
   const cards = new Map<string, AbortController>();
+  const leases = createLeases({ store, now, send: deps.send, nameOf: (id) => nameOf(id), onError: deps.onError,
+    ...(deps.ownerSay ? { ownerSay: deps.ownerSay } : {}), ...(deps.releaseScreen ? { releaseScreen: deps.releaseScreen } : {}), ...(deps.cancelScreen ? { cancelScreen: deps.cancelScreen } : {}) });
   let timer: ReturnType<typeof setInterval> | undefined;
   const oops = (where: string) => (error: unknown) => deps.onError?.(where, error);
 
@@ -160,6 +169,7 @@ export function createGateService(deps: GateServiceDeps): GateService {
   function ruleSet(body: Record<string, any>): WordResult {
     const contract = deps.contractOf(body.member, body.word);
     if (!contract) throw new WordError("not_found", `${body.member} has no word ${body.word}`);
+    if (needsLease(contract)) throw new WordError("forbidden", "the screen words are used by a lease the owner gives (service:gate/lease.request); no rule can cover them");
     if (contract.effect === "execute" || isPayment(contract) || ALWAYS_ASK.has(`${body.member}/${body.word}`)) {
       throw new WordError("forbidden", "commands, payments and the words about the gate and the devices always ask the owner; no rule can cover them");
     }
@@ -182,6 +192,20 @@ export function createGateService(deps: GateServiceDeps): GateService {
           decision: e.decision, at: e.answered_at ?? e.at, ...(e.rule_id ? { rule_id: e.rule_id } : {}), ...(e.reason ? { reason: e.reason } : {}), ...(e.label ? { label: e.label } : {}) }));
         return { data: { items, ...(page.next_before ? { next_before: page.next_before } : {}) } };
       }
+      case "lease.request": {
+        if (ctx.caller.via !== "agent") throw new WordError("forbidden", "an agent asks for a screen lease");
+        return { data: leases.request(ctx.caller.member, ctx.caller.turn, body.minutes, String(body.goal)) };
+      }
+      case "lease.status": {
+        if (ctx.caller.via !== "agent") throw new WordError("forbidden", "an agent reads its own lease");
+        return { data: leases.status(ctx.caller.member) };
+      }
+      case "lease.release": {
+        if (ctx.caller.via !== "agent") throw new WordError("forbidden", "an agent gives back its own lease");
+        return { data: { released: leases.release(ctx.caller.member) } };
+      }
+      case "lease.revoke": return { data: { revoked: leases.revoke(typeof body.id === "string" ? body.id : undefined) } };
+      case "lease.list": return { data: { leases: leases.list() } };
       case "pending.list": {
         if (ctx.caller.via !== "agent") throw new WordError("forbidden", "pending requests belong to the agent that made them");
         return { data: { pending: store.listPending(ctx.caller.member).map(pendingView) } };
@@ -220,12 +244,20 @@ export function createGateService(deps: GateServiceDeps): GateService {
     words: (): WordContract[] => wordsOf(GATE_ID),
     handle,
     issueCard,
-    sweep() { store.expireDue(); },
+    sweep() { store.expireDue(); leases.sweep(); },
+    observe(m) {
+      if (m.kind !== "event" || !isAgentId(m.from)) return;
+      const turn = (m.body as { turn?: unknown } | null)?.turn;
+      if (typeof turn !== "string") return;
+      if (m.word === "turn.started") leases.turnStarted(m.from, turn);
+      else if (m.word === "turn.ended") leases.turnEnded(m.from, turn);
+    },
     start() {
+      leases.start();
       for (const p of store.waiting()) issueCard(p);
       timer = setInterval(() => this.sweep(), deps.sweepMs ?? 30_000);
       timer.unref();
     },
-    stop() { if (timer) clearInterval(timer); for (const c of cards.values()) c.abort(); cards.clear(); },
+    stop() { if (timer) clearInterval(timer); leases.stop(); for (const c of cards.values()) c.abort(); cards.clear(); },
   };
 }

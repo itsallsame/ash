@@ -168,7 +168,7 @@ test("an approval card shows in say, answer once lets the request through", asyn
   const s = await startScenario(t);
   const phone = await s.phone();
   s.driver.script(async (turn) => {
-    if (turn.messages.some(ownerMessage("打开笔记"))) await turn.call(phone.member, "apps.open", { app: "com.example.notes" }, { purpose: "open notes" });
+    if (turn.messages.some(ownerMessage("打开笔记"))) await turn.call(phone.member, "clipboard.set", { text: "com.example.notes" }, { purpose: "copy the notes name" });
     else {
       // The owner's answer comes as their own message: `[answers <pending id>, option once] 批准：…`.
       const pending = turn.messages.map((m) => (m.from === OWNER ? /^\[answers ([^,\]]+), option once\]/.exec(m.text)?.[1] : undefined)).find(Boolean);

@@ -136,6 +136,9 @@ export function createHuman(deps: HumanDeps): HumanEdge {
       switch (msg.word) {
         case "widget.preview": return preview(body as { card: string; size?: string });
         case "widget.state": void pushWidgets(body, clients.withSurface("widget")); return;
+        case "lease.state":
+          for (const c of clients.withSurface("status")) void presenter.send(c, { surface: "status", op: "lease", body: { leases: Array.isArray(body.leases) ? body.leases : [] } });
+          return;
         case "vscreen.state":
           for (const c of clients.withSurface("status")) void presenter.send(c, { surface: "status", op: "vscreen", body: { open: body.open === true } });
           return;
@@ -203,6 +206,7 @@ export function createHuman(deps: HumanDeps): HumanEdge {
     setImmediate(() => {
       if (surfaces.includes("status")) void presenter.send(c, { surface: "status", op: "frame", body: status.frame() as never });
       if (surfaces.includes("widget")) greetWidgets(c);
+      if (surfaces.includes("status")) greetLeases(c);
     });
 
     return {
@@ -246,6 +250,14 @@ export function createHuman(deps: HumanDeps): HumanEdge {
         ...(Array.isArray(data.widgets) ? { widgets: data.widgets } : {}), rendered: Array.isArray(data.rendered) ? data.rendered : [],
       } });
     }
+  }
+
+  /** A channel that shows status gets the screen leases in force now. */
+  function greetLeases(c: LiveClient): void {
+    void deps.router.send({ to: "service:gate", kind: "request", word: "lease.list", body: {} }, AS_SERVICE).then(
+      (reply) => { if (reply.ok && reply.result?.data !== undefined) return presenter.send(c, { surface: "status", op: "lease", body: reply.result.data as never }); },
+      (error) => log("lease.list failed", error),
+    );
   }
 
   /** A channel that just connected gets the current state. */

@@ -63,6 +63,13 @@ class ChatScreen(
     private val scroll = object : ScrollView(ctx) {
         override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) { super.onScrollChanged(l, t, oldl, oldt); if (t < dp(200)) loadOlder() }
     }.apply { isFillViewport = true; addView(list) }
+    /** While the owner has lent the screen: who, how long is left, and a tap takes it back. */
+    private val leaseBar = AshUi.text(ctx, "", AshType(12.5f, 16f, 500, Role.TEXT)).apply {
+        gravity = Gravity.CENTER; visibility = View.GONE; setPadding(dp(12), dp(7), dp(12), dp(7)); contentDescription = "屏幕授权中，点这里收回"
+        background = AshUi.rounded(0xFFFFE2A8.toInt(), AshUi.dpF(ctx, 10f))
+        setOnClickListener { LeaseState.revoke(ctx) }
+    }
+    private val onLease: () -> Unit = { paintLease() }
     private val pillSlot = FrameLayout(ctx)
     private val input = EditText(ctx)
     private val target = AshUi.text(ctx, "", AshType(12f, 16f, 500, Role.TEXT_2)).apply { visibility = View.GONE }
@@ -105,12 +112,14 @@ class ChatScreen(
     private var herName = "Ash"
     private val outbox = Outbox(ctx)
     private var flushing = false
-    private val tick = object : Runnable { override fun run() { paintProgress(); if (shown) main.postDelayed(this, 1_000) } }
+    private val tick = object : Runnable { override fun run() { paintProgress(); paintLease(); if (shown) main.postDelayed(this, 1_000) } }
     private val onChange: () -> Unit = { refresh() }
 
     init {
         view.addView(header(), LinearLayout.LayoutParams(-1, dp(56)))
         view.addView(banner, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(4)) })
+        view.addView(leaseBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(4)) })
+        LeaseState.onChange(onLease)
         view.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         view.addView(pillSlot, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(6) })
         view.addView(composer(), LinearLayout.LayoutParams(-1, -2))
@@ -121,7 +130,13 @@ class ChatScreen(
         }
     }
 
-    fun close() = port.removeChange(onChange)
+    fun close() { port.removeChange(onChange); LeaseState.removeChange(onLease) }
+
+    private fun paintLease() {
+        val first = LeaseState.leases.firstOrNull()
+        leaseBar.visibility = if (first == null) View.GONE else View.VISIBLE
+        if (first != null) leaseBar.text = "屏幕授权中 · ${first.name} · 剩 ${first.clock()} · 点这里收回"
+    }
 
     fun shown(visible: Boolean) {
         shown = visible

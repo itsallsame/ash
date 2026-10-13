@@ -111,6 +111,7 @@ class HomeActivity : Activity() {
         val front = HomeRoute.chatInFront(resumed, tab)
         if (ai.ash.host.AppState.homeVisible == front) return
         ai.ash.host.AppState.homeVisible = front
+        LeaseState.refresh()
         if (resumed) Link.get(this).presence.tell()
     }
 
@@ -118,6 +119,7 @@ class HomeActivity : Activity() {
         super.onResume()
         resumed = true
         ai.ash.host.AppState.homeVisible = HomeRoute.chatInFront(true, tab)
+        LeaseState.refresh()
         HandRuntime.appOpened(this)
         Link.get(this).presence.tell()
         chatScreen.shown(true)
@@ -133,6 +135,7 @@ class HomeActivity : Activity() {
     override fun onPause() {
         resumed = false
         ai.ash.host.AppState.homeVisible = false
+        LeaseState.refresh()
         HandRuntime.appLeft()
         Link.get(this).presence.tell()
         chatScreen.shown(false)

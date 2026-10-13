@@ -142,6 +142,7 @@
 
         <receiver android:name=".host.PresentActionReceiver" android:exported="false" />
         <receiver android:name=".host.TaskStopReceiver" android:exported="false" />
+        <receiver android:name=".ui.LeaseRevokeReceiver" android:exported="false" />
         <receiver android:name=".host.PresentExpiryReceiver" android:exported="false" />
         <receiver android:name=".caps.senses.CalendarAlarmReceiver" android:exported="false" />
 

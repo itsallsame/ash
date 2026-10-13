@@ -26,6 +26,12 @@
 * service:gate/pending.redeem  agent
 * service:gate/pending.skip  agent
 * service:gate/pending.withdraw  agent
+* service:gate/lease.request  agent
+* service:gate/lease.status  agent
+* service:gate/lease.release  agent
+* service:gate/lease.revoke  owner
+* service:gate/lease.list  owner
+* service:gate/lease.state  kernel  event-out
   service:vault/list  owner,agent,app
   service:vault/describe  owner,agent,app
 * service:vault/set  owner  local_only

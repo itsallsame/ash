@@ -96,6 +96,8 @@ export class HubRouter implements Router {
   private readonly subscribers = new Set<{ filter: Parameters<Router["subscribe"]>[0]; cb: (m: Message) => void }>();
   /** Ids of the requests being handled now, so an id a caller picked cannot be used twice, recorded or not. */
   private readonly inflight = new Set<string>();
+  /** The requests handed to a member and not answered yet, so one can be cancelled from outside (a lease ending cancels the screen requests on the way). */
+  private readonly delivering = new Map<string, { from: string; to: string | null; word: string; caller: Caller; cancel(): void }>();
 
   constructor(private readonly deps: RouterDeps) {
     this.now = deps.now ?? Date.now;
@@ -112,6 +114,13 @@ export class HubRouter implements Router {
     if (pending.state !== "approved") return fail(errorBody("conflict", pending.state === "redeemed" ? "this approval was already used" : pending.state === "expired" ? "this approval ran out; make the request again" : `this request is ${pending.state}, not approved`));
     const msg: Outgoing = { to: pending.to, kind: "request", word: pending.word, body: pending.body, ...(pending.thread ? { thread: pending.thread } : {}) };
     return this.run(msg, { ...pending.caller, turn: redeemer.turn }, opts, pending);
+  }
+
+  /** Cancels the requests being handled now that [match] picks (the caller sees `cancelled`); how many. */
+  cancelWhere(match: (r: { id: string; from: string; to: string | null; word: string; caller: Caller }) => boolean): number {
+    let n = 0;
+    for (const [id, r] of [...this.delivering]) if (match({ id, from: r.from, to: r.to, word: r.word, caller: r.caller })) { r.cancel(); n++; }
+    return n;
   }
 
   subscribe(filter: Parameters<Router["subscribe"]>[0], cb: (m: Message) => void): () => void {
@@ -294,6 +303,7 @@ export class HubRouter implements Router {
       const finish = (reply: Reply) => {
         if (settled) return;
         settled = true;
+        this.delivering.delete(msg.id);
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         resolve(reply);
@@ -308,6 +318,7 @@ export class HubRouter implements Router {
       const timer = setTimeout(() => stop(fail(errorBody("timeout", `no result within ${Math.round(timeoutMs / 1000)} s`))), timeoutMs);
       if (signal?.aborted) return onAbort();
       signal?.addEventListener("abort", onAbort, { once: true });
+      this.delivering.set(msg.id, { from: msg.from, to: msg.to, word: msg.word, caller, cancel: onAbort });
       Promise.resolve().then(() => member.handle(msg, { signal: controller.signal, caller, raw })).then(
         (result) => finish(result ? { ok: true, result } : { ok: true }),
         (error) => { if (!(error instanceof WordError)) this.deps.onError?.("handle", error); finish(fail(toError(error))); },

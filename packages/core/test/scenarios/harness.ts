@@ -882,7 +882,7 @@ export class Scenario {
   phone(o: HandOptions = {}): Promise<Hand> {
     return this.hand({
       name: "scenario phone", kind: "phone",
-      capabilities: [standardCapability("location.get"), standardCapability("apps.open"), ...(o.capabilities ?? [])],
+      capabilities: [standardCapability("location.get"), standardCapability("apps.open"), standardCapability("clipboard.set"), ...(o.capabilities ?? [])],
       events: ["sense.location", "sense.battery", "sense.geofence", "sense.calendar", "sense.source", "sense.activity", ...(o.events ?? [])],
       ...(o.identity ? { identity: o.identity } : {}),
     });

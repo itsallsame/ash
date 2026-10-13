@@ -8,6 +8,7 @@ import ai.ash.host.TaskStatus
 import ai.ash.host.screen.ScreenBridge
 import ai.ash.link.PresentOutcome
 import ai.ash.ui.HomeActivity
+import ai.ash.ui.LeaseState
 import ai.ash.ui.VScreenPreview
 import ai.ash.widget.WidgetHost
 import android.content.Context
@@ -46,6 +47,8 @@ internal object Surfaces {
                     "frame" -> if (TaskStatus.accept(app, body)) PresentOutcome(true) else PresentOutcome(false, null, "bad_request", "invalid task frame")
                     // The virtual screen was made or closed: the live preview comes up or goes down.
                     "vscreen" -> { VScreenPreview.screenState(app, body.optBoolean("open")); PresentOutcome(true) }
+                    // The owner's screen leases in force: the floating ball, the notice, the bar in the chat.
+                    "lease" -> { LeaseState.accept(app, body); PresentOutcome(true) }
                     else -> unknown("status", op)
                 }
             },

@@ -3,7 +3,7 @@ import { idKind } from "../../../../sdk/src/ids";
 import { WordError, type HandleContext, type Message, type Reply, type WordResult } from "../../../../sdk/src/message";
 import { DEFAULT_CALLERS, type Member, type WordContract } from "../../../../sdk/src/word";
 import { wordsOf } from "../../../../sdk/src/words";
-import { createGate, GateStore } from "../../../src/kernel/gate";
+import { createGate, GateStore, needsLease } from "../../../src/kernel/gate";
 import { createRedact } from "../../../src/kernel/redact";
 import { createRegistry } from "../../../src/kernel/registry";
 import { createRouter } from "../../../src/kernel/router";
@@ -103,6 +103,8 @@ export function world(options: WorldOptions = {}) {
   };
   const gate = createGate(deps, store, { now: () => clock.now, reviewMs: 30, assessMs: 30 });
   const errors: { where: string; error: unknown }[] = [];
+  /** What the end of a screen lease did: the times the fingers were let go, and the requests cancelled on the way. */
+  const screen = { released: 0, cancelled: [] as string[] };
   const router = createRouter({
     ledger, registry, gate, redact, store, now: () => clock.now,
     agentPolicy: (id) => (options.policies && id in options.policies ? options.policies[id]! : {}),
@@ -121,6 +123,12 @@ export function world(options: WorldOptions = {}) {
       memberName: (id) => registry.get(id)?.name, handName: (hand) => options.handNames?.[hand],
       mainAgentName: () => registry.get("agent:main")?.name,
     }), onError: (where, error) => errors.push({ where, error }),
+    releaseScreen: async () => { screen.released++; },
+    cancelScreen: (agent) => router.cancelWhere((r) => {
+      const hit = r.from === agent && r.to !== null && needsLease(registry.find(r.to, r.word)?.contract ?? ({} as never));
+      if (hit) screen.cancelled.push(r.word);
+      return hit;
+    }),
     ownerSay: async (_askId, to, body) => {
       if (options.ownerSay === "none") return false;
       if (options.ownerSay === "fails") throw new Error("the owner's channel is gone");
@@ -133,7 +141,7 @@ export function world(options: WorldOptions = {}) {
   const ownerMember = fakeOwner();
   const main = fakeAgent("main");
   registry.add(ownerMember); registry.add(main); registry.add(svc);
-  return { ledger, registry, redact, store, gate, router, svc, clock, state, errors, owner: ownerMember, main };
+  return { ledger, registry, redact, store, gate, router, svc, clock, state, errors, owner: ownerMember, main, screen };
 }
 
 export const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 15));

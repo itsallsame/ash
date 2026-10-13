@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "faa999d28931c5b8f1d0355661ecd18e35d8132f21acfa4d1e061b1fce9f016a",
+ "hash": "2bf5b32aaa4c95083ae02f6b94f0c2c5f6ca22cec34011b0016e65489cbe498d",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -1904,6 +1904,370 @@
    ],
    "label": {
     "doing": "在撤回问题"
+   }
+  },
+  {
+   "member": "service:gate",
+   "word": "lease.request",
+   "kind": "request",
+   "direction": "in",
+   "description": "Ask the owner to lend you the real phone screen for a while (taps, typing, scrolling, opening an app or a link, keys): the screen words are refused until the owner says yes. Say what for in goal; minutes is how long you need (default 15, the owner may give 'this task' or 1 hour instead). It does not wait: the owner's answer comes as their own message in the conversation. Do not ask again while one is waiting.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120
+     },
+     "goal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+     }
+    },
+    "required": [
+     "goal"
+    ],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "status": {
+      "type": "string",
+      "enum": [
+       "waiting_owner",
+       "active"
+      ]
+     },
+     "lease_id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "expires_at": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "status",
+     "lease_id"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "write",
+   "risk": "none",
+   "callers": [
+    "agent"
+   ],
+   "label": {
+    "doing": "在申请操作屏幕"
+   }
+  },
+  {
+   "member": "service:gate",
+   "word": "lease.status",
+   "kind": "request",
+   "direction": "in",
+   "description": "Your screen lease now: when it ends, or null (and whether a request is waiting for the owner).",
+   "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "lease": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string",
+          "minLength": 1
+         },
+         "agent": {
+          "type": "string",
+          "minLength": 1
+         },
+         "name": {
+          "type": "string"
+         },
+         "kind": {
+          "type": "string",
+          "enum": [
+           "task",
+           "timed"
+          ]
+         },
+         "purpose": {
+          "type": "string"
+         },
+         "granted_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         }
+        },
+        "required": [
+         "id",
+         "agent",
+         "kind",
+         "granted_at",
+         "expires_at"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "asking": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "asking"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "agent"
+   ],
+   "label": {
+    "doing": "在看屏幕授权"
+   }
+  },
+  {
+   "member": "service:gate",
+   "word": "lease.release",
+   "kind": "request",
+   "direction": "in",
+   "description": "Hand the screen back when your work on it is done, so the owner's lease ends at once.",
+   "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "released": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "released"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "write",
+   "risk": "none",
+   "callers": [
+    "agent"
+   ],
+   "label": {
+    "doing": "在交还屏幕"
+   }
+  },
+  {
+   "member": "service:gate",
+   "word": "lease.revoke",
+   "kind": "request",
+   "direction": "in",
+   "description": "The owner takes the screen lease back (one by id, else every one): the agent is stopped and told.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "revoked": {
+      "type": "integer",
+      "minimum": 0
+     }
+    },
+    "required": [
+     "revoked"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "write",
+   "risk": "none",
+   "callers": [
+    "owner"
+   ],
+   "label": {
+    "doing": "在收回屏幕授权"
+   }
+  },
+  {
+   "member": "service:gate",
+   "word": "lease.list",
+   "kind": "request",
+   "direction": "in",
+   "description": "The screen leases in force now.",
+   "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "leases": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string",
+         "minLength": 1
+        },
+        "agent": {
+         "type": "string",
+         "minLength": 1
+        },
+        "name": {
+         "type": "string"
+        },
+        "kind": {
+         "type": "string",
+         "enum": [
+          "task",
+          "timed"
+         ]
+        },
+        "purpose": {
+         "type": "string"
+        },
+        "granted_at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "expires_at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        }
+       },
+       "required": [
+        "id",
+        "agent",
+        "kind",
+        "granted_at",
+        "expires_at"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "leases"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner"
+   ],
+   "label": {
+    "doing": "在看屏幕授权"
+   }
+  },
+  {
+   "member": "service:gate",
+   "word": "lease.state",
+   "kind": "event",
+   "direction": "out",
+   "description": "The screen leases changed: the whole list for the owner's screens (the human edge pushes it as present{status/lease}; a channel that just connected gets service:gate/lease.list).",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "leases": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string",
+         "minLength": 1
+        },
+        "agent": {
+         "type": "string",
+         "minLength": 1
+        },
+        "name": {
+         "type": "string"
+        },
+        "kind": {
+         "type": "string",
+         "enum": [
+          "task",
+          "timed"
+         ]
+        },
+        "purpose": {
+         "type": "string"
+        },
+        "granted_at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        },
+        "expires_at": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 9007199254740991
+        }
+       },
+       "required": [
+        "id",
+        "agent",
+        "kind",
+        "granted_at",
+        "expires_at"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "leases"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "kernel"
+   ],
+   "label": {
+    "doing": "在转达屏幕授权"
    }
   },
   {

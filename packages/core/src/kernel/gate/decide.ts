@@ -27,6 +27,10 @@ export const isPayment = (contract: WordContract, body?: unknown): boolean =>
   PAYMENT.test(contract.word.replace(/[._-]/g, " ")) || PAYMENT.test(contract.label.doing)
   || (contract.word === "browser.click" && PAYMENT.test(String((body as { label?: unknown } | null)?.label ?? "")));
 
+/** Words that touch the screen the owner is looking at (the contract's `foreground`) and change something: only a lease lets an agent use them. */
+export const needsLease = (contract: WordContract): boolean => contract.foreground === true && contract.effect !== "read";
+const clock = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
 export const ASSESS_MS = 10_000;
 /** The outer limit on the review model; the reviewer gives itself less, more for a long request. */
 export const REVIEW_MS = 30_000;
@@ -61,6 +65,29 @@ export function createGate(deps: GateDeps, store: GateStore, options: GateOption
   };
   const carryKey = (req: Message, contract: WordContract, caller: Caller) =>
     [caller.member, req.to, req.word, contractFingerprint(contract), objectOf(req.body) ?? `exact:${stable(req.body)}`].join("\0");
+
+  /** An agent's screen word: allowed while it holds a lease; otherwise refused with what happened and how to ask. */
+  function leased(req: Message, contract: WordContract, caller: Caller, risk: Risk): Decision {
+    const deny = (reason: string, by = "lease_none"): Decision => {
+      evidence(req, contract, caller, risk, { by, decision: "lease_deny", reason });
+      return { verdict: "deny", by, offer_always: false, reason };
+    };
+    const lease = store.activeLease(caller.member);
+    if (lease) {
+      evidence(req, contract, caller, risk, { by: "lease", decision: "lease" });
+      return { verdict: "allow", by: "lease", offer_always: false };
+    }
+    const how = "需要的话先在对话里和主人说明要做什么，再调 service:gate/lease.request {minutes, purpose} 重新申请；主人点了之后会有一条主人的消息，之后再动手。";
+    if (store.askingLease(caller.member)) return deny("屏幕授权还在等主人回答，先别操作，也不要重复申请；主人答复后会有一条主人的消息。", "lease_asking");
+    const ended = store.lastEnded(caller.member);
+    if (ended && ended.ended_at && now() - ended.ended_at < 3_600_000) {
+      const at = clock(ended.ended_at);
+      if (ended.ended_reason === "revoked") return deny(`主人在 ${at} 收回了屏幕授权。不要继续操作屏幕。${how}`, "lease_revoked");
+      if (ended.ended_reason === "expired") return deny(`屏幕授权在 ${at} 到期了。${how}`, "lease_expired");
+      if (ended.ended_reason === "turn_ended") return deny(`「本次任务」的屏幕授权随那一轮在 ${at} 结束了。${how}`, "lease_expired");
+    }
+    return deny(`现在没有屏幕授权，不能操作主人的屏幕。${how}`);
+  }
 
   async function decide(req: Message, contract: WordContract, caller: Caller): Promise<Decision> {
     // 1. who is asking (SPEC-01 §6.1)
@@ -101,6 +128,9 @@ export function createGate(deps: GateDeps, store: GateStore, options: GateOption
     // 3. a payment   4. the words that always ask
     if (payment) return ask("payment", "a payment", false);
     if (ALWAYS_ASK.has(`${req.to}/${req.word}`)) return ask("always_ask", "this word always asks the owner", false);
+    // 4b. the owner's real screen: a lease, or nothing. It replaces rules, carry-over, the review model and the approval mode for these words;
+    // a payment (above) still asks, every time.
+    if (needsLease(contract)) return leased(req, contract, caller, risk);
     // 5. no risk
     if (risk === "none") return allow(assessed ? "assessed_none" : "declared_none", assessed ? "assessed_none" : "declared_none");
     // 6. a hand, or a computer lent as a body, that the owner trusts fully (body:main is always "ask")
