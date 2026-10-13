@@ -513,26 +513,40 @@ class ChatScreen(
         return box
     }
 
-    /** A bubble longer than four lines shows four and 「…」 with a 「展开」 under it (a tap on the bubble does the same); open, it has 「收起」. */
+    /**
+     * A bubble longer than four lines shows four, its last ones fading out (as the web timeline masks a folded message), with a 「展开全文 ⌄」
+     * button under it; open, the button reads 「收起 ⌃」. Whether it is long is the laid-out text's own line count (the layout holds every line;
+     * maxLines only cuts what is drawn): a selectable bubble with links never ellipsizes. The fade is a gradient on the text's paint, so it
+     * works on any bubble colour. The bubble keeps its taps for selecting text and following links.
+     */
     private fun foldable(bubble: TextView, id: String, box: LinearLayout, side: LinearLayout.LayoutParams) {
-        val toggle = AshUi.text(ctx, "展开", AshTokens.Type.callout, c.her).apply { visibility = View.GONE; setPadding(dp(6), dp(2), dp(6), dp(2)) }
-        box.addView(toggle, LinearLayout.LayoutParams(-2, -2).apply { gravity = side.gravity })
-        fun apply() {
-            val open = id.isNotEmpty() && id in unfolded
-            bubble.maxLines = if (open) Int.MAX_VALUE else FOLD_LINES
-            bubble.ellipsize = if (open) null else android.text.TextUtils.TruncateAt.END
-            toggle.text = if (open) "收起" else "展开"
+        val toggle = AshUi.button(ctx, "展开全文 ⌄", AshUi.Kind.SECONDARY, AshUi.BtnSize.SM).apply { visibility = View.GONE }
+        box.addView(toggle, LinearLayout.LayoutParams(-2, dp(AshTokens.Size.buttonSm)).apply { gravity = side.gravity; topMargin = dp(4) })
+        val ink = bubble.currentTextColor
+        fun open() = id.isNotEmpty() && id in unfolded
+        fun fade() {
+            val l = bubble.layout
+            val folded = !open() && l != null && l.lineCount > FOLD_LINES
+            bubble.paint.shader = if (!folded) null else {
+                val bottom = (bubble.totalPaddingTop + l!!.getLineBottom(FOLD_LINES - 1)).toFloat()
+                val top = bottom - l.getLineBottom(0) * 1.6f
+                android.graphics.LinearGradient(0f, top, 0f, bottom, ink, ink and 0x00FFFFFF, android.graphics.Shader.TileMode.CLAMP)
+            }
+            bubble.invalidate()
         }
-        fun flip() { if (id.isEmpty()) return; if (!unfolded.add(id)) unfolded.remove(id); apply() }
+        fun apply() {
+            bubble.maxLines = if (open()) Int.MAX_VALUE else FOLD_LINES
+            toggle.text = if (open()) "收起 ⌃" else "展开全文 ⌄"
+            fade()
+        }
         apply()
         bubble.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            val l = bubble.layout ?: return@addOnLayoutChangeListener
-            val open = id in unfolded
-            val long = if (open) l.lineCount > FOLD_LINES else l.lineCount >= FOLD_LINES && l.getEllipsisCount(l.lineCount - 1) > 0
+            val long = (bubble.layout?.lineCount ?: 0) > FOLD_LINES
             val want = if (long) View.VISIBLE else View.GONE
-            if (toggle.visibility != want) { toggle.visibility = want; bubble.setOnClickListener(if (long) View.OnClickListener { flip() } else null); bubble.isClickable = long }
+            if (toggle.visibility != want) toggle.post { toggle.visibility = want }
+            fade()
         }
-        toggle.setOnClickListener { flip() }
+        toggle.setOnClickListener { if (id.isEmpty()) return@setOnClickListener; if (!unfolded.add(id)) unfolded.remove(id); apply() }
     }
 
     private fun pending(o: JSONObject): View {
