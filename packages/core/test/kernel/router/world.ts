@@ -80,6 +80,8 @@ export interface WorldOptions {
   tap?: (traffic: Traffic) => void;
   /** What the hub does after the owner answered a card: the default says it to the agent as the owner, as the human edge does; false: the owner did not answer (the card ended by its time). */
   ownerSay?: "owner" | "none" | "fails";
+  /** The fast path of an approval: how long an agent's call waits for the owner (ms). Default 0: the receipt at once, as before. */
+  fastWaitMs?: number;
 }
 
 export function world(options: WorldOptions = {}) {
@@ -109,6 +111,7 @@ export function world(options: WorldOptions = {}) {
     ...(options.mayTalkToOwner ? { mayTalkToOwner: options.mayTalkToOwner } : {}),
     ...(options.mayAnswer ? { mayAnswer: options.mayAnswer } : {}),
     ...(options.tap ? { tap: options.tap } : {}),
+    fastWaitMs: () => options.fastWaitMs ?? 0,
     onParked: (p) => svc.issueCard(p),
     onError: (where, error) => errors.push({ where, error }),
   });

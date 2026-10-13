@@ -82,10 +82,12 @@ export function createGateService(deps: GateServiceDeps): GateService {
     if (!current || current.state !== "waiting" || !reply.ok) return;     // expired, withdrawn, or the card itself failed: it stays as it is
     const asked = (reply.result?.data as { choice?: unknown } | undefined)?.choice;
     const choice = asked === "once" || asked === "always" ? (asked === "always" && !current.offer_always ? "once" : asked) : "deny";
+    // A call that holds for this answer (the fast path) is told by the state change and goes on by itself: no word to the agent.
+    const held = store.isHeld(id);
     const record = store.setState(id, ["waiting"], choice === "deny" ? "denied" : "approved", { choice, at: now() });
     if (!record) return;
     try { gate.answered(original(record), choice); } catch (error) { oops("answered")(error); }
-    speak(record, choice, reply.id);
+    if (!held) speak(record, choice, reply.id);
   }
 
   /**

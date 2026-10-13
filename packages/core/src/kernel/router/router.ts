@@ -26,6 +26,11 @@ export interface RouterDeps extends AuthDeps {
   store: GateStore;
   /** A request was parked for the owner; `service:gate` sends the card. */
   onParked(pending: PendingRecord): void;
+  /**
+   * How long an agent's call that needs the owner waits for their answer before it gets the usual receipt (ms; 0: not at all). When
+   * the owner answers in that time, the call goes on in the same breath: it runs (or is refused) and its result is this call's result.
+   */
+  fastWaitMs?(): number;
   /** Something went wrong that the sender is not told about (a failed notification, an event nobody could take). */
   onError?(where: string, error: unknown): void;
   /** Sees every message once on the way in and once on the way out, recorded or not (health counts here). Must be quick. */
@@ -36,6 +41,11 @@ export interface RouterDeps extends AuthDeps {
 /** What `waiting_owner` looks like as a reply. */
 export const waitingOwner = (pendingId: string, expiresAt: number): Reply => ({ ok: true, result: { data: { status: "waiting_owner", pending_id: pendingId, expires_at: expiresAt } } });
 
+/**
+ * What an agent's call may take in all, for the fast path of an approval: its tool call is given 60 s by the agent runtime and the tool
+ * surface waits 50 s for a result (edges/tools: MAX_WAIT_MS); the wait for the owner ends well before that, with what the call took so far taken off.
+ */
+export const CALL_BUDGET_MS = 45_000;
 const READ_TIMEOUT_MS = 60_000;
 const OTHER_TIMEOUT_MS = 600_000;
 const OUTGOING_KEYS = new Set(["to", "kind", "word", "body", "reply_to", "thread"]);
@@ -204,7 +214,7 @@ export class HubRouter implements Router {
         return fail(caller.via === "app" ? errorBody("forbidden", decision.reason ?? "an app cannot do this", { recovery_hint: "An app cannot ask the owner. Leave it to an agent or the owner." })
           : errorBody("denied", decision.reason ?? "the gate refused"));
       }
-      if (decision.verdict === "ask") return this.park(stamped, view, raw, contract, caller, decision.offer_always, opts, member, decision.review_reason);
+      if (decision.verdict === "ask") return this.holdForOwner(this.park(stamped, view, raw, contract, caller, decision.offer_always, opts, member, decision.review_reason), stamped, caller, opts);
     }
 
     // 6. record: a request that was parked is in the ledger already and only goes on
@@ -229,6 +239,28 @@ export class HubRouter implements Router {
       } catch (error) { this.deps.onError?.("record", error); }
     }
     return shown;
+  }
+
+  /**
+   * The fast path: an agent's call that was parked waits here for the owner's answer for a few seconds. Answered in time, it goes on at once:
+   * approved, it is carried out and its result is the result of this call (no pending id, no message to the agent); refused, it is refused
+   * with the reason. Not answered in time, the agent gets the receipt as before and the answer comes later, in the conversation. One of the
+   * two happens, whichever is first (the store's `hold`).
+   */
+  private async holdForOwner(parked: Reply, stamped: Message, caller: Caller, opts: SendOptions): Promise<SendReply> {
+    const data = parked.ok ? parked.result?.data as { status?: unknown; expires_at?: unknown } | undefined : undefined;
+    const wait = this.deps.fastWaitMs?.() ?? 0;
+    if (caller.via !== "agent" || data?.status !== "waiting_owner" || typeof data.expires_at !== "number" || !(wait > 0)) return parked;
+    const ms = Math.min(wait, CALL_BUDGET_MS - (this.now() - stamped.ts), data.expires_at - this.now());
+    if (!(ms > 0)) return parked;
+    opts.waiting?.(this.now() + ms);
+    switch (await this.deps.store.hold(stamped.id, ms, opts.signal)) {
+      case "approved": return this.redeem(stamped.id, caller, opts);
+      case "denied": return fail(errorBody("denied", "the owner refused this request", { recovery_hint: "Do not repeat it as it is. Tell the owner what you could not do, or offer a way that does not need this." }));
+      case "timeout": return parked;
+      case "cancelled": return fail(errorBody("cancelled", "the request was cancelled"));
+      default: return fail(errorBody("timeout", "the question to the owner ended before they answered, which counts as a refusal"));
+    }
   }
 
   private park(stamped: Message, view: Message, raw: unknown, contract: WordContract, caller: Caller, offerAlways: boolean, opts: SendOptions, member: Member, reviewReason?: string): Reply {

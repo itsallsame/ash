@@ -106,6 +106,8 @@ interface Job {
   persisted: boolean;
   /** How many await_result calls are waiting for this one now: they will hand the answer over, so no wake yet. */
   awaiting: number;
+  /** The router holds the call for the owner's answer until about this time (Unix ms): the call is waited for until then. */
+  holdUntil?: number;
 }
 
 interface Dispatch {
@@ -245,7 +247,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     if (isObject(data) && data.status === "waiting_owner") {
       // The gate parked the call for the owner: the same receipt, with the id of this call next to the pending_id.
       return plain({ ...data, request_id: job.id, member: job.member, word: job.word,
-        guidance: "The owner has been asked; do not poll. The answer arrives as a message. Then reassess whether the action is still wanted and redeem it with human_pending_redeem {id: pending_id}." });
+        guidance: "The owner has been asked; do not poll. Their answer arrives as their own message in the conversation (`[answers <pending_id>, option once|always|deny] …`). Then reassess whether the action is still wanted and redeem it with human_pending_redeem {id: pending_id}." });
     }
     return shapeSuccess(reply.result, () => attachmentsOf(reply.ref));
   }
@@ -256,7 +258,7 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
     const job: Job = { id, agent: d.agent, member: d.to, word: d.word, label: d.label, at: now(), mode: d.mode, controller, shaped: null, done: undefined as unknown as Promise<Shaped>, persisted: false, awaiting: 0,
       ...(typeof d.body.expires_at === "number" ? { expires_at: d.body.expires_at } : {}) };
     const caller: Caller = { member: d.agent, via: "agent", local: true, turn: d.turn };
-    const opts = { signal: controller.signal, ...(d.approval ? { approval: d.approval } : {}) };
+    const opts = { signal: controller.signal, ...(d.approval ? { approval: d.approval } : {}), waiting: (until: number) => { job.holdUntil = until; } };
     job.done = Promise.resolve()
       .then(() => router.send({ to: d.to, kind: "request", word: d.word, body: d.body }, caller, opts))
       .then((reply) => shapeReply(job, reply), (error) => { options.log?.("tool call failed", d.to, d.word, error); return failure("internal", "Ash failed while handling this call"); })
@@ -283,7 +285,13 @@ export function createToolsEdge(options: ToolsEdgeOptions): ToolsEdge {
       const waitMs = d.mode === "sync" ? maxWaitMs
         : d.mode === "ask" || d.wait === false ? settleMs
         : d.wait === true || (d.wait === undefined && d.waitByDefault) ? maxWaitMs : fastPathMs;
-      const settled = await within(job.done, waitMs);
+      let settled = await within(job.done, waitMs);
+      // A call the router holds for the owner's answer is waited for until then (never past the longest wait): their answer then comes inline.
+      while (!settled && !job.shaped && job.holdUntil !== undefined && d.mode !== "ask" && d.wait !== false) {
+        const left = Math.min(job.holdUntil, job.at + maxWaitMs) - now();
+        if (left <= 0) break;
+        settled = await within(job.done, left);
+      }
       if (settled || job.shaped) { if (!job.persisted) live.delete(job.id); return settled ?? job.shaped!; }
       persist(job, d.turn);
       return plain(receiptData(job));

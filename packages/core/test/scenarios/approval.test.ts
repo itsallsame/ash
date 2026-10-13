@@ -245,3 +245,49 @@ test("SPEC-02 §3.2: an agent only sees the words its contract lets it call; the
   assert.ok(state.direct!.isError);
   assert.equal(errorCode(state.direct!), "forbidden", "and calling set is refused");
 });
+
+test("fast path: the owner answers in time: the same call returns the result and the agent goes on in the same turn; no message of the owner's, no redeem", async (t) => {
+  const s = await startScenario(t, { fastApproval: true });
+  const phone = await s.phone();
+  const flow: { first?: ToolResult; turns: number } = { turns: 0 };
+  s.driver.script(async (turn) => {
+    flow.turns++;
+    flow.first = await turn.call(phone.member, "apps.open", { app: "com.example.notes" }, { purpose: "打开笔记给主人看" });
+  });
+  const owner = await s.human();
+
+  accepted(await owner.say("帮我打开笔记"));
+  const card = await owner.seen(isApprovalAsk, "the approval card");
+  await quiet(200);
+  assert.equal(flow.first, undefined, "the call is held for the owner");
+  assert.equal(phone.calls.length, 0);
+
+  accepted(await owner.answer(card, "once"));
+  await eventually(() => flow.first, "the call's own result");
+  assert.equal(flow.first!.isError, false);
+  assert.equal(resultOf(flow.first!)?.status, undefined, "not a receipt");
+  assert.equal(phone.calls.length, 1, "it ran once");
+  await quiet(300);
+  assert.equal(s.driver.messages().some(ownerApproval), false, "no message about the answer");
+  assert.equal(flow.turns, 1, "the agent did not need another turn");
+  const audit = await owner.call("service:gate", "audit", { word: "apps.open" });
+  assert.ok(audit.ok && JSON.stringify(dataOf(audit)).includes("once"), "the decision left evidence");
+});
+
+test("fast path: refused in time, the same call is refused", async (t) => {
+  const s = await startScenario(t, { fastApproval: true });
+  const phone = await s.phone();
+  const flow: { first?: ToolResult } = {};
+  s.driver.script(async (turn) => { flow.first = await turn.call(phone.member, "apps.open", { app: "com.example.notes" }, { purpose: "打开笔记给主人看" }); });
+  const owner = await s.human();
+
+  accepted(await owner.say("帮我打开笔记"));
+  const card = await owner.seen(isApprovalAsk, "the approval card");
+  accepted(await owner.answer(card, "deny"));
+  await eventually(() => flow.first, "the call's own result");
+  assert.equal(flow.first!.isError, true);
+  assert.equal(errorCode(flow.first!), "denied");
+  assert.equal(phone.calls.length, 0);
+  await quiet(300);
+  assert.equal(s.driver.messages().some(ownerApproval), false);
+});

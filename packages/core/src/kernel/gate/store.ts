@@ -82,6 +82,8 @@ export class GateStore {
   onExpired?: (pending: PendingRecord) => void;
   /** Called with the response recorded when a request ends without being carried out; the router passes it to its subscribers. */
   onClosed?: (response: Message) => void;
+  /** Calls that hold for the owner's answer (the fast path), by pending id: told the state the question ends in. */
+  private readonly holds = new Map<string, (state: PendingState) => void>();
 
   constructor(private readonly ledger: Ledger, readonly now: () => number = Date.now) {
     ledger.db().exec(`
@@ -223,8 +225,30 @@ export class GateStore {
     const ending = ENDINGS[to];
     if (ending) this.close(next, ending[0], ending[1]);
     if (to === "expired" && rec.state === "waiting") { try { this.onExpired?.(next); } catch { /* telling is best effort */ } }
+    this.holds.get(id)?.(to);
     return next;
   }
+
+  /**
+   * The fast path of an approval: a call waits here for the question [id] to be answered, at most [ms]. Resolves with the state it ended
+   * in (approved, denied, expired, withdrawn), "timeout" when the time came first, or "cancelled" when [signal] fired. Whichever comes first
+   * decides, and the others find nothing to do: after a timeout or a cancel the question is an ordinary one (`isHeld` is false).
+   */
+  hold(id: string, ms: number, signal?: AbortSignal): Promise<PendingState | "timeout" | "cancelled"> {
+    return new Promise((resolve) => {
+      const end = (state: PendingState | "timeout" | "cancelled") => {
+        if (this.holds.get(id) !== settle) return;
+        this.holds.delete(id); clearTimeout(timer); signal?.removeEventListener("abort", onAbort); resolve(state);
+      };
+      const settle = (state: PendingState) => end(state);
+      const onAbort = () => end("cancelled");
+      const timer = setTimeout(() => end("timeout"), Math.max(0, ms));
+      this.holds.set(id, settle);
+      if (signal?.aborted) onAbort(); else signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  /** Some call holds for the owner's answer to [id] now. */
+  isHeld(id: string): boolean { return this.holds.has(id); }
 
   private close(p: PendingRecord, code: ErrorCode, message: string): void {
     if (this.ledger.request(p.id)?.state !== "waiting_owner") return;

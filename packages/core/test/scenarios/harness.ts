@@ -659,6 +659,8 @@ export interface ScenarioOptions {
    * was woken for `first_meeting` and its turn is over, the connection is closed and the driver's records are empty.
    */
   firstMeeting?: boolean;
+  /** Keep the hub's fast path of approvals (an agent's call waits for the owner's answer for a while). By default the scenario turns it off: its approvals take the slow way, where the answer comes as a message. */
+  fastApproval?: boolean;
 }
 
 /** A clock the test moves. Starts at 2026-10-10 07:00 UTC. */
@@ -786,6 +788,7 @@ export class Scenario {
     // A new install with no model key does not wake on a connection (the turn could only fail); the key the owner saves does.
     const saved = await owner.call("service:vault", "set", { ref: "DEEPSEEK_API_KEY", value: "sk-scenario", kind: "model" });
     if (!saved.ok) throw new Error(`the scenario's model key was not saved: ${saved.error.message}`);
+    if (!this.options.fastApproval) await owner.call("service:admin", "settings.set", { "approval.fast_seconds": 0 });
     const isMeeting = (m: DriverMessage): boolean => m.word === "wake" && m.text.startsWith("Wake · first_meeting");
     const turn = await this.driver.turn((record) => record.messages.some(isMeeting), "the first-meeting turn");
     await turn.done;

@@ -211,6 +211,16 @@ test("wait: true waits longer than the fast path; wait: false gives the receipt 
   assert.equal((await tools.call("capability_call", { member: "service:clock", word: "list", wait: false })).data.status, "accepted");
 });
 
+test("a call the router holds for the owner's answer is waited for until then, past the fast path: the answer comes inline; wait: false still gives the receipt", async () => {
+  const held = fakeRouter(async (_msg, _caller, opts) => { opts.waiting?.(Date.now() + 300); await new Promise((r) => setTimeout(r, 150)); return ok({ n: 4 }); });
+  const rig = await startRig({ router: held });
+  const tools = await rig.client();
+  assert.deepEqual((await tools.call("capability_call", { member: "service:clock", word: "list" })).data, { n: 4 }, "the fast path is 60 ms here; the hold is 300");
+  rig.router.script = async (_msg, _caller, opts) => { opts.waiting?.(Date.now() + 100); await new Promise((r) => setTimeout(r, 250)); return ok({ n: 5 }); };
+  assert.equal((await tools.call("capability_call", { member: "service:clock", word: "list" })).data.status, "accepted", "not answered within the hold: the receipt");
+  assert.equal((await tools.call("capability_call", { member: "service:clock", word: "list", wait: false })).data.status, "accepted");
+});
+
 test("an error that comes at once is returned as the error even for wait: false and for a question", async () => {
   const rig = await startRig({ router: fakeRouter(() => fail("bad_request", "title is required")) });
   const tools = await rig.client();

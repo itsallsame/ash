@@ -164,6 +164,8 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   }, store, { now });
   const router = createRouter({
     ledger, registry, gate, redact, store, now,
+    // The hub setting `approval.fast_seconds`: how long an agent's call that needs the owner waits for their answer (default 30; 0 turns the fast path off).
+    fastWaitMs: () => { const v = admin.settings(["approval.fast_seconds"])["approval.fast_seconds"]; return (typeof v === "number" && v >= 0 ? Math.min(v, 45) : 30) * 1000; },
     onParked: (pending) => late.gateService!.issueCard(pending),
     onError: (where, error) => { late.health?.noteError(where); log(where, error); },
     tap: (traffic) => late.health?.tap(traffic),

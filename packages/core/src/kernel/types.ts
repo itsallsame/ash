@@ -45,6 +45,8 @@ export interface SendOptions {
   id?: string;
   /** Approval metadata from an agent's tool call. */
   approval?: { ttl_minutes?: number; purpose?: string };
+  /** Called when the router holds this call for the owner's answer for a little while (the fast path of an approval), with the time (Unix ms) it will hold until at most. */
+  waiting?: (until: number) => void;
 }
 
 /** A reply, the id of the request, and the id of the response message when the ledger recorded it. */

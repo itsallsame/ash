@@ -39,7 +39,7 @@ export function fakeRegistry(list: FakeMember[] = members()) {
 }
 
 /** The options the router takes from the tool surface: `approval` is T4's addition to the kernel type. */
-export interface SendOpts { signal?: AbortSignal; approval?: { ttl_minutes?: number; purpose?: string } }
+export interface SendOpts { signal?: AbortSignal; approval?: { ttl_minutes?: number; purpose?: string }; waiting?: (until: number) => void }
 export type Replied = Reply & { ref?: string };
 export interface Sent { msg: Outgoing; caller: Caller; opts: SendOpts }
 export type RouterScript = (msg: Outgoing, caller: Caller, opts: SendOpts) => Replied | Promise<Replied>;

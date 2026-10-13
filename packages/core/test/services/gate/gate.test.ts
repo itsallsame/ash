@@ -487,3 +487,85 @@ test("a member that has a cardDetail adds that to the card, and a cardDetail tha
   assert.ok(!(s.owner.cards[1]!.msg.body as any).detail.includes("\n"));
   assert.equal(s.errors.length, 1);
 });
+
+test("fast path: answered in time, the call goes on in the same breath: it runs, its result is the call's result, nobody is spoken to, no redeem", async () => {
+  const s = setup({ fastWaitMs: 5_000 });
+  let seen: string | undefined;
+  const call = s.ask("quick", {}, { waiting: () => { seen = "held"; } });
+  await flush();
+  assert.equal(seen, "held", "the tool surface is told the call is held");
+  assert.equal(s.owner.cards.length, 1, "the card is the usual one");
+  assert.equal(s.phone.calls.length, 0, "nothing ran before the answer");
+  s.owner.answer("once");
+  const reply = await call;
+  assert.deepEqual(success(reply), { sent: "quick" });
+  assert.equal(s.phone.calls.length, 1);
+  assert.equal(s.main.inbox.length, 0, "no word to the agent, no background tell");
+  const id = s.phone.calls[0]!.msg.id;
+  assert.equal(s.store.getPending(id)?.state, "redeemed", "the approval is used up by the call itself");
+  assert.equal(s.store.evidence(id)?.decision, "once");
+  assert.ok(s.store.evidence(id)?.executed);
+  assert.equal(failure(await s.gateCall("pending.redeem", { id })).code, "conflict");
+  assert.equal(s.ledger.request(id)?.state, "done");
+});
+
+test("fast path: 「以后都可以」 in time still writes the rule", async () => {
+  const s = setup({ fastWaitMs: 5_000 });
+  const call = s.ask("again");
+  await flush();
+  s.owner.answer("always");
+  assert.deepEqual(success(await call), { sent: "again" });
+  assert.equal(s.main.inbox.length, 0);
+  assert.equal(success(await s.ask("third")).sent, "third", "the rule lets the next one through without a card");
+});
+
+test("fast path: refused in time, the call is refused at once with a reason, nobody is spoken to", async () => {
+  const s = setup({ fastWaitMs: 5_000 });
+  const call = s.ask("no");
+  await flush();
+  s.owner.answer("deny");
+  const error = failure(await call);
+  assert.equal(error.code, "denied");
+  assert.equal(s.phone.calls.length, 0);
+  assert.equal(s.main.inbox.length, 0);
+});
+
+test("fast path: not answered in time, the receipt comes as before; a later answer takes the slow way (the owner's message), once", async () => {
+  const s = setup({ fastWaitMs: 40 });
+  const waiting = success(await s.ask("slow"));
+  assert.equal(waiting.status, "waiting_owner");
+  await flush();
+  s.owner.answer("once");
+  await flush();
+  assert.equal(s.store.getPending(waiting.pending_id)?.state, "approved", "waiting to be redeemed");
+  assert.deepEqual(s.main.inbox.map((m) => m.word), ["say"]);
+  assert.deepEqual(success(await s.gateCall("pending.redeem", { id: waiting.pending_id })), { result: { sent: "slow" } });
+  assert.equal(s.phone.calls.length, 1);
+});
+
+test("fast path: the answer and the time meet: only one way is taken", async () => {
+  const s = setup({ fastWaitMs: 30 });
+  const call = s.ask("edge");
+  await flush();
+  // The answer comes just after the time: the call has its receipt, and the answer is an ordinary one.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const waiting = success(await call);
+  assert.equal(waiting.status, "waiting_owner");
+  s.owner.answer("once");
+  await flush();
+  assert.equal(s.main.inbox.filter((m) => m.word === "say").length, 1);
+  assert.equal(s.phone.calls.length, 0, "it did not run by itself");
+  assert.equal(s.store.getPending(waiting.pending_id)?.state, "approved");
+});
+
+test("fast path: only an agent's call is held; a cancelled call is cancelled and its card stays an ordinary question", async () => {
+  const s = setup({ fastWaitMs: 5_000 });
+  const stop = new AbortController();
+  const call = s.ask("cut", {}, { signal: stop.signal });
+  await flush();
+  stop.abort();
+  assert.equal(failure(await call).code, "cancelled");
+  s.owner.answer("once");
+  await flush();
+  assert.deepEqual(s.main.inbox.map((m) => m.word), ["say"], "the answer after it is spoken to the agent in the conversation");
+});
