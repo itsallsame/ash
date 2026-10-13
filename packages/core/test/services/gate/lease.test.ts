@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Message } from "../../../../sdk/src/message";
 import { agent, DEVICE, failure, fake, flush, owner, success, word, world } from "../../kernel/router/world";
 
 const TAP = word(DEVICE, "screen.tap", { effect: "act", risk: "outward", foreground: true, label: { doing: "在点屏幕" } });
@@ -155,4 +156,25 @@ test("an old asking lease with no answer ends at the next request, which then st
   const second = success(await s.gate("lease.request", { goal: "y" }));
   assert.notEqual(second.lease_id, first.lease_id);
   assert.equal(s.store.getLease(first.lease_id)?.state, "ended");
+});
+
+test("a screen word an agent sends under its lease tells the owner's screens it is operating, at most once a second; a read does not", async () => {
+  const s = setup();
+  await s.grant("h1");
+  const states = () => s.owner.calls.filter((c) => c.msg.word === "lease.state");
+  const sent = (word: string): Message => ({ seq: 0, id: `x${word}`, ts: 1, from: "agent:main", to: DEVICE, kind: "request", word, body: {} });
+  assert.equal(success(await s.gate("lease.list", {}, owner)).leases[0].last_action_at, null);
+  s.svc.observe(sent("screen.read"));
+  await flush();
+  assert.equal(success(await s.gate("lease.list", {}, owner)).leases[0].last_action_at, null, "reading is not operating");
+  s.clock.now += 1_500;
+  const n = states().length;
+  s.svc.observe(sent("screen.tap"));
+  await flush();
+  assert.equal(states().length, n + 1);
+  assert.equal((states().at(-1)!.msg.body as any).leases[0].last_action_at, s.clock.now);
+  s.svc.observe(sent("screen.tap"));
+  await flush();
+  assert.equal(states().length, n + 1, "not again within the second");
+  s.svc.stop();
 });

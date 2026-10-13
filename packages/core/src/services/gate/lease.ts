@@ -27,7 +27,7 @@ const OPTIONS = [
   { id: "task", label: "本次任务（最长 30 分钟）" }, { id: "m15", label: "15 分钟" }, { id: "h1", label: "1 小时" }, { id: "deny", label: "不行" },
 ];
 
-export interface LeaseView { id: string; agent: string; name: string; kind: LeaseKind; purpose: string; granted_at: number; expires_at: number }
+export interface LeaseView { id: string; agent: string; name: string; kind: LeaseKind; purpose: string; granted_at: number; expires_at: number; last_action_at: number | null }
 
 export interface LeaseDeps {
   store: GateStore;
@@ -50,6 +50,8 @@ export interface Leases {
   /** The owner takes one lease (by id), or all, back. */
   revoke(id?: string): number;
   list(): LeaseView[];
+  /** The agent's screen word went out under its lease just now: the phone shows it is operating (told at most once a second). */
+  acted(agent: string): void;
   /** An agent's turn began or ended (`turn.started` / `turn.ended`). */
   turnStarted(agent: string, turn: string): void;
   turnEnded(agent: string, turn: string): void;
@@ -70,10 +72,12 @@ export function createLeases(deps: LeaseDeps): Leases {
   const cards = new Map<string, AbortController>();
 
   const view = (l: LeaseRecord): LeaseView => ({ id: l.id, agent: l.agent, name: deps.nameOf(l.agent), kind: l.kind ?? "timed", purpose: l.purpose,
-    granted_at: l.granted_at ?? l.requested_at, expires_at: l.expires_at ?? l.requested_at });
+    granted_at: l.granted_at ?? l.requested_at, expires_at: l.expires_at ?? l.requested_at, last_action_at: l.last_action_at ?? null });
 
   const tell = (agent: string, text: string) => { void deps.send({ to: agent, kind: "request", word: "tell", body: { text } }, SELF).catch(oops("tell")); };
-  const publish = () => { void deps.send({ to: OWNER_ID, kind: "event", word: "lease.state", body: { leases: store.activeLeases().map(view) } }, SELF).catch(oops("lease.state")); };
+  let lastPublished = 0;
+  let trailing: ReturnType<typeof setTimeout> | undefined;
+  const publish = () => { lastPublished = deps.now(); void deps.send({ to: OWNER_ID, kind: "event", word: "lease.state", body: { leases: store.activeLeases().map(view) } }, SELF).catch(oops("lease.state")); };
   const clear = (id: string) => { for (const t of timers.get(id) ?? []) clearTimeout(t); timers.delete(id); };
   const clock = (ms: number) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
@@ -194,6 +198,14 @@ export function createLeases(deps: LeaseDeps): Leases {
       return leases.length;
     },
     list: () => store.activeLeases().map(view),
+    acted(agent) {
+      const lease = store.activeLease(agent);
+      if (!lease) return;
+      store.noteLeaseAction(lease.id, deps.now());
+      const wait = 1_000 - (deps.now() - lastPublished);
+      if (wait <= 0) publish();
+      else if (!trailing) { trailing = setTimeout(() => { trailing = undefined; publish(); }, wait); trailing.unref(); }
+    },
     turnStarted(agent, turn) {
       let set = running.get(agent);
       if (!set) running.set(agent, set = new Set());
@@ -212,6 +224,6 @@ export function createLeases(deps: LeaseDeps): Leases {
       for (const l of store.dueLeases()) finish(l, "expired");
       for (const l of store.activeLeases()) arm(l);
     },
-    stop() { for (const id of [...timers.keys()]) clear(id); for (const c of cards.values()) c.abort(); cards.clear(); carded.clear(); },
+    stop() { if (trailing) { clearTimeout(trailing); trailing = undefined; } for (const id of [...timers.keys()]) clear(id); for (const c of cards.values()) c.abort(); cards.clear(); carded.clear(); },
   };
 }

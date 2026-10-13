@@ -93,6 +93,8 @@ export interface LeaseRecord {
   requested_at: number;
   granted_at?: number;
   expires_at?: number;
+  /** When the agent last did something on the screen under this lease (the phone shows its floating ball for a few seconds after). */
+  last_action_at?: number;
   ended_at?: number;
   ended_reason?: string;
 }
@@ -118,7 +120,7 @@ export class GateStore {
       CREATE INDEX IF NOT EXISTS gate_pending_originator ON gate_pending(originator, state);
       CREATE TABLE IF NOT EXISTS gate_leases (
         id TEXT PRIMARY KEY, agent TEXT NOT NULL, turn TEXT, purpose TEXT NOT NULL, asked_minutes INTEGER NOT NULL, kind TEXT, state TEXT NOT NULL,
-        requested_at INTEGER NOT NULL, granted_at INTEGER, expires_at INTEGER, ended_at INTEGER, ended_reason TEXT);
+        requested_at INTEGER NOT NULL, granted_at INTEGER, expires_at INTEGER, last_action_at INTEGER, ended_at INTEGER, ended_reason TEXT);
       CREATE INDEX IF NOT EXISTS gate_leases_agent ON gate_leases(agent, state);`);
   }
 
@@ -169,7 +171,7 @@ export class GateStore {
     return { id: String(row.id), agent: String(row.agent), ...(row.turn ? { turn: String(row.turn) } : {}), purpose: String(row.purpose),
       asked_minutes: Number(row.asked_minutes), ...(row.kind ? { kind: row.kind as LeaseKind } : {}), state: row.state as LeaseState,
       requested_at: Number(row.requested_at), ...(n(row.granted_at) !== undefined ? { granted_at: n(row.granted_at)! } : {}),
-      ...(n(row.expires_at) !== undefined ? { expires_at: n(row.expires_at)! } : {}),
+      ...(n(row.expires_at) !== undefined ? { expires_at: n(row.expires_at)! } : {}), ...(n(row.last_action_at) !== undefined ? { last_action_at: n(row.last_action_at)! } : {}),
       ...(n(row.ended_at) !== undefined ? { ended_at: n(row.ended_at)! } : {}), ...(row.ended_reason ? { ended_reason: String(row.ended_reason) } : {}) };
   }
   askLease(agent: string, purpose: string, minutes: number, turn?: string): LeaseRecord {
@@ -219,6 +221,9 @@ export class GateStore {
   endLease(id: string, reason: string): LeaseRecord | null {
     const done = Number(this.db.prepare("UPDATE gate_leases SET state='ended',ended_at=?,ended_reason=? WHERE id=? AND state IN ('asking','active')").run(this.now(), reason, id).changes) > 0;
     return done ? this.getLease(id) : null;
+  }
+  noteLeaseAction(id: string, at: number): void {
+    this.db.prepare("UPDATE gate_leases SET last_action_at=? WHERE id=? AND state='active'").run(at, id);
   }
   bindLeaseTurn(id: string, turn: string): void {
     this.db.prepare("UPDATE gate_leases SET turn=? WHERE id=? AND state='active'").run(turn, id);

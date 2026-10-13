@@ -24,17 +24,22 @@ import org.json.JSONObject
  * operate the real screen and until when. The hub is the only judge of time and recall; this only shows what it says and sends
  * the owner's 「收回」.
  *
- * While a lease is in force one of three things shows it: a small floating ball over other apps ([LeaseOrb], when Ash may draw over
- * them), else an ongoing notification with a 「收回权限」 button; and when Ash is itself in front, the chat shows a thin bar instead
- * ([ChatScreen]), so the ball steps aside.
+ * The lease itself (it exists, until when, one button to end it) is shown on the island: the resident pill's right end, or the foot of a
+ * task's card ([IslandPresentation]); when the island cannot be shown, an ongoing notification with a 「收回权限」 button stands in; and
+ * when Ash is itself in front, the chat shows a thin bar ([ChatScreen]). The floating ball ([LeaseOrb]) is not that: it shows only
+ * while the agent is really operating the screen (the hub says when it last did, [Lease.lastActionAt]) and for a few seconds after.
  */
 object LeaseState {
     private const val TAG = "ash.lease"
     private const val NOTE = "screen-lease"
     private const val ID = 8
+    /** How long the ball stays after the agent's last action on the screen. */
+    const val OPERATING_MS = 5_000L
 
     data class Lease(val id: String, val agent: String, val name: String, val kind: String, val purpose: String, val grantedAt: Long,
-        val expiresAt: Long) {
+        val expiresAt: Long, val lastActionAt: Long? = null) {
+        /** The agent did something on the screen a moment ago: the floating ball is up. */
+        fun operating(now: Long = System.currentTimeMillis()): Boolean = lastActionAt != null && now - lastActionAt < OPERATING_MS
         fun remaining(now: Long = System.currentTimeMillis()): Long = (expiresAt - now).coerceAtLeast(0)
         fun clock(now: Long = System.currentTimeMillis()): String = remaining(now).let { ms -> "%d:%02d".format(ms / 60_000, ms / 1000 % 60) }
     }
@@ -55,16 +60,21 @@ object LeaseState {
         for (i in 0 until a.length()) {
             val o = a.optJSONObject(i) ?: continue
             next.add(Lease(o.optString("id"), o.optString("agent"), o.optString("name").ifBlank { o.optString("agent") }.take(40), o.optString("kind"),
-                o.optString("purpose").take(120), o.optLong("granted_at"), o.optLong("expires_at")))
+                o.optString("purpose").take(120), o.optLong("granted_at"), o.optLong("expires_at"), if (o.isNull("last_action_at")) null else o.optLong("last_action_at")))
         }
         main.post {
             app = ctx.applicationContext
             leases = next.sortedBy { it.expiresAt }
             main.removeCallbacks(tick)
             if (leases.isNotEmpty()) main.post(tick) else changed()
+            // The island carries the lease's state: it draws it again now (its own clock keeps it going).
+            TaskStatus.refresh()
         }
         return true
     }
+
+    /** What the island prints for the lease: the time left as m:ss of the one that ends first, "" when there is none. */
+    fun islandClock(): String = leases.firstOrNull { it.expiresAt > System.currentTimeMillis() }?.clock() ?: ""
 
     /** Ash came to the front or left it: the ball and the bar swap. */
     fun refresh() { main.post { changed() } }
@@ -75,8 +85,12 @@ object LeaseState {
         // The hub ends a lease on its own clock; one that only looks over here is dropped until its next push.
         val live = leases.filter { it.expiresAt > now - 2_000 }
         val canDraw = Settings.canDrawOverlays(ctx)
-        if (live.isNotEmpty() && canDraw && !AppState.inFront) LeaseOrb.show(ctx, live) else LeaseOrb.hide()
-        if (live.isNotEmpty() && !canDraw) notice(ctx, live) else clearNotice(ctx)
+        // The ball: only while the agent is really operating the screen (and a moment after), never for the lease alone.
+        if (live.any { it.operating(now) } && canDraw && !AppState.inFront) LeaseOrb.show(ctx, live, operating = true)
+        else if (!LeaseOrb.isOpen()) LeaseOrb.hide()
+        else if (live.isEmpty()) LeaseOrb.hide()
+        // The island shows the lease; when it cannot (no way to draw it, or the owner turned the resident entry off), a notice does.
+        if (live.isNotEmpty() && !(TaskCapsule.ready() && TaskCapsule.residentKept(ctx))) notice(ctx, live) else clearNotice(ctx)
         listeners.toList().forEach { it() }
     }
 

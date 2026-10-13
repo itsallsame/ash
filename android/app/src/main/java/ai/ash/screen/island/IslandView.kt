@@ -46,6 +46,8 @@ internal data class IslandModel(
     val busy: Boolean = false,
     /** There is an agent to talk to (or a question waiting for its answer); without one the composer is not offered. */
     val canSend: Boolean = true,
+    /** The screen lease's time left as m:ss, "" when the owner has lent no screen: shown with a button that ends it. */
+    val lease: String = "",
 )
 
 /** The reference's KIND table (island.html), one row per card type. */
@@ -84,7 +86,7 @@ internal class IslandKind(val label: String?, val title: String, val face: Strin
  */
 internal class IslandView(ctx: Context, private val actions: Actions) {
     interface Actions {
-        fun tap(); fun collapse(); fun close(); fun open(); fun stop(); fun send(text: String); fun focus(editing: Boolean)
+        fun tap(); fun collapse(); fun close(); fun open(); fun stop(); fun revokeLease(); fun send(text: String); fun focus(editing: Boolean)
         fun choose(index: Int); fun allow(); fun deny(); fun toggleOriginal(); fun page(delta: Int)
         /** The pill was held: open Ash. */
         fun longPress()
@@ -133,10 +135,17 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
         IslandSpec.text(this, IslandTokens.TYPE_COMPACT_TIME_SIZE, IslandTokens.COLOR_TEXT_SECONDARY, cjk = false); fontFeatureSettings = "tnum"; isSingleLine = true
     }
     private val compactDot = IslandDot(ctx)
+    /** The resident pill's right end while the screen is lent: the time left and a button that ends it (its own click, not the pill's). */
+    private val leaseChip = TextView(ctx).apply {
+        IslandSpec.text(this, IslandTokens.TYPE_COMPACT_TIME_SIZE, IslandTokens.COLOR_NEEDS_YOU, 600f, cjk = true); fontFeatureSettings = "tnum"; isSingleLine = true
+        gravity = Gravity.CENTER; visibility = View.GONE; contentDescription = "结束屏幕授权"
+        setOnClickListener { actions.revokeLease() }
+    }
     init {
         val gap = px(IslandTokens.SIZE_PILL_GAP)
         leftSegment.addView(compactAvatar, LinearLayout.LayoutParams(px(IslandTokens.AVATAR_PILL), px(IslandTokens.AVATAR_PILL)))
         leftSegment.addView(compactLabel, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = gap })
+        rightSegment.addView(leaseChip, LinearLayout.LayoutParams(-2, -1))
         rightSegment.addView(compactTime, LinearLayout.LayoutParams(-2, -2))
         rightSegment.addView(compactDot, LinearLayout.LayoutParams(px(IslandTokens.SIZE_PILL_DOT), px(IslandTokens.SIZE_PILL_DOT)).apply { leftMargin = gap })
         compact.addView(leftSegment, FrameLayout.LayoutParams(segment, -1))
@@ -283,6 +292,9 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
     }
     private fun context() = shell.context
     private val openLink = link("回到 Ash", IslandSpec.ICON_BUTTON_INK, px(IslandSpec.LINK_PAD), px(IslandSpec.LINK_PAD)).apply { setOnClickListener { actions.open() } }
+    private val leaseLink = link("结束授权", IslandTokens.COLOR_NEEDS_YOU, px(IslandSpec.LINK_PAD), px(IslandSpec.LINK_PAD)).apply {
+        fontFeatureSettings = "tnum"; contentDescription = "结束屏幕授权"; setOnClickListener { actions.revokeLease() }
+    }
     private val closeLink = link("关闭", IslandSpec.ICON_BUTTON_INK, px(IslandSpec.LINK_PAD), px(IslandSpec.CLOSE_PAD_RIGHT)).apply { setOnClickListener { actions.close() } }
     private val linksRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
 
@@ -340,6 +352,7 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
         foot.addView(notice, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(IslandSpec.FOOT_GAP) })
         foot.addView(inputRow)
         linksRow.addView(stopLink, LinearLayout.LayoutParams(-2, px(IslandSpec.LINK_HEIGHT)))
+        linksRow.addView(leaseLink, LinearLayout.LayoutParams(-2, px(IslandSpec.LINK_HEIGHT)))
         linksRow.addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
         linksRow.addView(openLink, LinearLayout.LayoutParams(-2, px(IslandSpec.LINK_HEIGHT)))
         linksRow.addView(closeLink, LinearLayout.LayoutParams(-2, px(IslandSpec.LINK_HEIGHT)))
@@ -432,8 +445,16 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
         compactDot.tone = tone; compactDot.pulsing = tone == IslandTokens.COLOR_NEEDS_YOU && !reduceMotion
         // Resident: the face alone, against the camera; otherwise it leads the verb from the pill's outer end.
         leftSegment.gravity = Gravity.CENTER_VERTICAL or (if (resident) Gravity.END else Gravity.START)
-        rightSegment.visibility = if (resident) View.INVISIBLE else View.VISIBLE
-        segment = if (resident) IslandPill.resident(pill, d) else IslandPill.segment(maxOf(
+        // Resident with a lease: the right end is the lease's chip (time and end button); otherwise it is empty.
+        val leased = next.lease.isNotEmpty()
+        val chipText = "结束 ${next.lease}"
+        leaseChip.visibility = if (resident && leased) View.VISIBLE else View.GONE
+        leaseChip.text = chipText
+        if (resident && leased) { compactTime.visibility = View.GONE; compactDot.visibility = View.GONE } else compactDot.visibility = View.VISIBLE
+        rightSegment.visibility = if (resident && !leased) View.INVISIBLE else View.VISIBLE
+        segment = if (resident && leased) IslandPill.segment(
+            px(IslandTokens.SIZE_PILL_PAD_INNER + IslandTokens.SIZE_PILL_PAD_OUTER) + Math.ceil(leaseChip.paint.measureText(chipText).toDouble()).toInt(), pill, d)
+        else if (resident) IslandPill.resident(pill, d) else IslandPill.segment(maxOf(
             px(IslandTokens.SIZE_PILL_PAD_OUTER + IslandTokens.AVATAR_PILL + IslandTokens.SIZE_PILL_GAP + IslandTokens.SIZE_PILL_PAD_INNER) +
                 Math.ceil(compactLabel.current.paint.measureText(label).toDouble()).toInt(),
             px(IslandTokens.SIZE_PILL_PAD_INNER + IslandTokens.SIZE_PILL_DOT + IslandTokens.SIZE_PILL_PAD_OUTER) +
@@ -494,6 +515,9 @@ internal class IslandView(ctx: Context, private val actions: Actions) {
         notice.text = next.notice
         stopLink.visibility = if (k.run && next.canStop) View.VISIBLE else View.GONE
         usable(stopLink, next.interactive)
+        // In the card's foot, always in the same place: the lease's time left and the button that ends it.
+        leaseLink.visibility = if (next.lease.isNotEmpty()) View.VISIBLE else View.GONE
+        leaseLink.text = "结束授权 ${next.lease}"
         inputRow.visibility = if (next.canSend) View.VISIBLE else View.GONE
         input.isEnabled = !next.busy; usable(sendButton, !next.busy)
         input.hint = next.placeholder

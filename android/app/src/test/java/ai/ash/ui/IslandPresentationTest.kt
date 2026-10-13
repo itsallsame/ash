@@ -62,4 +62,10 @@ class IslandPresentationTest {
         assertEquals("", value.getString("turn")); assertEquals("", value.getString("reply")); assertEquals("", value.getString("activity"))
         assertEquals(0, value.getJSONArray("cards").length()); assertFalse(value.getBoolean("canStop"))
     }
+    @Test fun theScreenLeaseRidesOnBothTheTaskAndTheResidentEntry() {
+        assertEquals("", IslandPresentation.project(frame, 5, false, true, false, null, emptyMap(), 2000).getString("lease"))
+        assertEquals("14:39", IslandPresentation.project(frame, 5, false, true, false, null, emptyMap(), 2000, lease = "14:39").getString("lease"))
+        assertEquals("", IslandPresentation.resident(true).getString("lease"))
+        assertEquals("0:59", IslandPresentation.resident(true, "0:59").getString("lease"))
+    }
 }

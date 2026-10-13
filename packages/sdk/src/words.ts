@@ -193,7 +193,7 @@ add("service:gate", "pending.withdraw", "request", obj({ id }, ["id"]), obj({ wi
   { ...ORIGINATOR, effect: "write", label: "在撤回问题", description: "Withdraw a question or approval request you made, while it is still waiting; the owner's card is taken down." });
 
 // ---- screen leases: the owner lends the real screen for a while ---------------------------------------------------------------
-const leaseView = obj({ id, agent: nonempty, name: str, kind: choice("task", "timed"), purpose: str, granted_at: nonnegativeSafe, expires_at: nonnegativeSafe },
+const leaseView = obj({ id, agent: nonempty, name: str, kind: choice("task", "timed"), purpose: str, granted_at: nonnegativeSafe, expires_at: nonnegativeSafe, last_action_at: nullable(nonnegativeSafe) },
   ["id", "agent", "kind", "granted_at", "expires_at"]);
 add("service:gate", "lease.request", "request", obj({ minutes: { type: "integer", minimum: 1, maximum: 120 }, goal: { type: "string", minLength: 1, maxLength: 200 } }, ["goal"]),
   obj({ status: choice("waiting_owner", "active"), lease_id: id, expires_at: nonnegativeSafe }, ["status", "lease_id"]),
@@ -208,7 +208,7 @@ add("service:gate", "lease.revoke", "request", obj({ id }), obj({ revoked: { typ
 add("service:gate", "lease.list", "request", empty, obj({ leases: array(leaseView) }, ["leases"]),
   { callers: OWNER, label: "在看屏幕授权", description: "The screen leases in force now." });
 add("service:gate", "lease.state", "event", obj({ leases: array(leaseView) }, ["leases"]), undefined,
-  { callers: KERNEL, direction: "out", label: "在转达屏幕授权", description: "The screen leases changed: the whole list for the owner's screens (the human edge pushes it as present{status/lease}; a channel that just connected gets service:gate/lease.list)." });
+  { callers: KERNEL, direction: "out", label: "在转达屏幕授权", description: "The screen leases changed (or, at most once a second, the agent just operated the screen: last_action_at): the whole list for the owner's screens (the human edge pushes it as present{status/lease}; a channel that just connected gets service:gate/lease.list)." });
 
 // ===================================================================================================================
 // service:vault: credentials. An agent may look, never touch.

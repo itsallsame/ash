@@ -246,6 +246,12 @@ export function createGateService(deps: GateServiceDeps): GateService {
     issueCard,
     sweep() { store.expireDue(); leases.sweep(); },
     observe(m) {
+      // A screen word an agent sent has passed the gate (the router announces a request when it goes out): it is operating the screen now.
+      if (m.kind === "request" && isAgentId(m.from) && m.to) {
+        const contract = deps.contractOf(m.to, m.word);
+        if (contract && needsLease(contract)) leases.acted(m.from);
+        return;
+      }
       if (m.kind !== "event" || !isAgentId(m.from)) return;
       const turn = (m.body as { turn?: unknown } | null)?.turn;
       if (typeof turn !== "string") return;

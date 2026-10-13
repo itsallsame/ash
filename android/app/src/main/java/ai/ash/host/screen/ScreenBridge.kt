@@ -83,6 +83,7 @@ object ScreenBridge : NativeIsland.Ash {
 
     override fun dismiss(turn: String) { main.post { TaskStatus.dismiss(turn) } }
     override fun stop(turn: String) { main.post { TaskStatus.stop(turn) } }
+    override fun revokeLease() { main.post { app?.let { ai.ash.ui.LeaseState.revoke(it) } } }
     override fun open() { main.post { app?.let { it.startActivity(Intent(it, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) } } }
     override fun answer(id: String, choice: String, text: String?, done: (Boolean, String) -> Unit) { main.post { TaskStatus.answerCard(id, choice, text, done) } }
     override fun send(text: String, clientId: String, done: (Boolean, String) -> Unit) { main.post { TaskStatus.sendInput(text, clientId, done) } }

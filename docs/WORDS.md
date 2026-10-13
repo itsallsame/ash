@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `2bf5b32aaa4c9508`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `3607412b285e3bb9`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -97,7 +97,7 @@
 | `lease.release` | agent | write / none | - | - | 在交还屏幕 | Hand the screen back when your work on it is done, so the owner's lease ends at once. |
 | `lease.revoke` | owner | write / none | - | id | 在收回屏幕授权 | The owner takes the screen lease back (one by id, else every one): the agent is stopped and told. |
 | `lease.list` | owner | read / none | - | - | 在看屏幕授权 | The screen leases in force now. |
-| `lease.state` | kernel | read / none | event out | leases* | 在转达屏幕授权 | The screen leases changed: the whole list for the owner's screens (the human edge pushes it as present{status/lease}; a channel that just connected gets service:gate/lease.list). |
+| `lease.state` | kernel | read / none | event out | leases* | 在转达屏幕授权 | The screen leases changed (or, at most once a second, the agent just operated the screen: last_action_at): the whole list for the owner's screens (the human edge pushes it as present{status/lease}; a channel that just connected gets service:gate/lease.list). |
 
 ## `service:vault`
 

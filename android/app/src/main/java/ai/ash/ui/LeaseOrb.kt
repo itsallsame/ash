@@ -45,8 +45,10 @@ object LeaseOrb {
     private var statusView: TextView? = null
     private var doingView: TextView? = null
 
+    fun isOpen(): Boolean = open && root != null
+
     /** Shows the ball, or brings what it says up to date. Main thread. */
-    fun show(ctx: Context, live: List<LeaseState.Lease>) {
+    fun show(ctx: Context, live: List<LeaseState.Lease>, operating: Boolean = true) {
         val c = ctx.applicationContext
         leases = live
         try {
@@ -115,7 +117,7 @@ object LeaseOrb {
     private fun paint() {
         val c = app ?: return
         val r = root ?: return
-        val first = leases.firstOrNull() ?: return
+        val first = leases.firstOrNull { it.operating() } ?: leases.firstOrNull() ?: return
         val now = System.currentTimeMillis()
         val urgent = first.remaining(now) <= 60_000
         val ring = if (urgent) RED else AMBER

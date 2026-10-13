@@ -42,6 +42,8 @@ internal object NativeIsland : IslandView.Actions {
     interface Ash {
         fun dismiss(turn: String)
         fun stop(turn: String)
+        /** The owner ended the screen lease from the island. */
+        fun revokeLease()
         fun open()
         fun answer(id: String, choice: String, text: String?, done: (Boolean, String) -> Unit)
         fun send(text: String, clientId: String, done: (Boolean, String) -> Unit)
@@ -371,7 +373,7 @@ internal object NativeIsland : IslandView.Actions {
         val base = IslandModel(kind = model.optString("kind"), form = form, elapsedSec = model.optLong("elapsed"), activity = model.optString("activity"),
             body = IslandText.plain(model.optString("reply")), canStop = model.optBoolean("canStop"), interactive = interactive,
             pager = pager, notice = notice.ifEmpty { model.optString("notice") }, busy = sending,
-            canSend = model.optBoolean("canSend", true) || answering() != null,
+            canSend = model.optBoolean("canSend", true) || answering() != null, lease = model.optString("lease"),
             placeholder = if (answering() != null) IslandKind.of("ask").placeholder.orEmpty()
                 else if (resident()) IslandKind.of("resident").placeholder.orEmpty() else "回复 Ash…")
         val shown = when {
@@ -551,6 +553,7 @@ internal object NativeIsland : IslandView.Actions {
         val view = island
         if (attached && view != null) view.leave { if (!allowed()) detach() } else detach()
     }
+    override fun revokeLease() { ash?.revokeLease() }
     override fun stop() {
         val model = snapshot ?: return
         if (model.optBoolean("canStop") && model.optBoolean("interactive")) ash?.stop(model.getString("turn"))
