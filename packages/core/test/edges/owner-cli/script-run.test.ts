@@ -31,8 +31,10 @@ test("steps are judged by id or position: ok, error code, status, data, time", (
     { step: "a1", status: "accepted" },
     { step: "zz", ok: true },
     { step: 1, max_ms: 5 },
+    { step: 1, error_message: "no" },
+    { step: 1, error_message: "yes" },
   ], reports, []);
-  assert.deepEqual(out.map((o) => o.pass), [true, true, false, false, false]);
+  assert.deepEqual(out.map((o) => o.pass), [true, true, false, false, false, true, false]);
   assert.match(out[2]!.detail!, /status is waiting_owner, wanted accepted/);
   assert.match(out[3]!.detail!, /no such step/);
 });

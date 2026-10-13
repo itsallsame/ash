@@ -11,7 +11,7 @@ export type Action =
   | { answer: string; text?: string }
   | { exec: string[]; name?: string; expect?: { exit?: number; stdout?: string; not_stdout?: string }; within_ms?: number }
   | { say: string; to?: string }
-  | { call: { member: string; word: string; body?: Record<string, unknown> } }
+  | { call: { member: string; word: string; body?: Record<string, unknown> }; name?: string; expect?: { ok?: boolean; data?: unknown } }
   | { sleep_ms: number };
 
 export interface Reaction {
@@ -28,7 +28,7 @@ export interface Reaction {
   do?: Action[];
 }
 
-export interface StepExpect { step: string | number; ok?: boolean; error?: string; status?: string; data?: unknown; min_ms?: number; max_ms?: number; min_images?: number }
+export interface StepExpect { step: string | number; ok?: boolean; error?: string; error_message?: string; status?: string; data?: unknown; min_ms?: number; max_ms?: number; min_images?: number }
 export interface MessageExpect { messages: MessageFilter; count?: number | { min?: number; max?: number } }
 export type Expect = StepExpect | MessageExpect;
 
@@ -98,6 +98,7 @@ export function judge(expects: Expect[], reports: Report[], seen: Seen[]): Outco
     const bad: string[] = [];
     if (e.ok !== undefined && step.ok !== e.ok) bad.push(`ok is ${step.ok}${step.error ? ` (${step.error.code}: ${step.error.message ?? ""})` : ""}, wanted ${e.ok}`);
     if (e.error !== undefined && step.error?.code !== e.error) bad.push(`error is ${step.error?.code ?? "none"}, wanted ${e.error}`);
+    if (e.error_message !== undefined && !(step.error?.message ?? "").includes(e.error_message)) bad.push(`error message ${JSON.stringify(step.error?.message ?? "")} lacks ${JSON.stringify(e.error_message)}`);
     if (e.status !== undefined && step.status !== e.status) bad.push(`status is ${step.status ?? "none"}, wanted ${e.status}`);
     if (e.data !== undefined && !subset(step.data, e.data)) bad.push(`data ${JSON.stringify(step.data)} lacks ${JSON.stringify(e.data)}`);
     if (e.min_ms !== undefined && !((step.ms ?? 0) >= e.min_ms)) bad.push(`took ${step.ms} ms, wanted at least ${e.min_ms}`);

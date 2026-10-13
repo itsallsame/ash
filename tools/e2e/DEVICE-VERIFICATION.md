@@ -68,13 +68,16 @@ node tools/e2e/owner.mjs --link-file link.json script tools/e2e/scripts/approval
 | `{"checkpoint":"名字"}` | agent 到了这个检查点；`do` 做完自动放行（`hold` 则不放） |
 | `{"message":{"from","to","word","text"}}` | 出现一条符合的账本消息 |
 
-`do` 里：`{"answer":"once\|always\|deny"}`、`{"exec":["adb","-s","${env.ANDROID_SERIAL}","shell","dumpsys",...],"expect":{"stdout":"正则","not_stdout":"正则","exit":0}}`
-（在本机跑一个程序并断言输出，看手机用）、`{"say":"..."}`、`{"call":{"member","word","body"}}`、`{"sleep_ms":N}`。`delay_ms` 是先等多久。
+`do` 里：`{"answer":"once\|always\|deny"}`（授权卡的选项是 `task`/`m15`/`h1`/`deny`）、
+`{"exec":["adb","-s","${env.ANDROID_SERIAL}","shell","dumpsys",...],"expect":{"stdout":"正则","not_stdout":"正则","exit":0},"within_ms":8000}`
+（在本机跑一个程序并断言输出，看手机用；`within_ms` 内每半秒重跑一次，等通知这类要一会儿才出现的东西；参数里 `${env.NAME}` 是环境变量，`${run}` 是这次运行的编号）、
+`{"say":"..."}`、`{"call":{"member","word","body"},"expect":{"ok":true,"data":{子集}}}`（以主人身份调一个词并断言结果）、`{"sleep_ms":N}`。`delay_ms` 是先等多久。
+顶层 `cleanup` 是一串同样的动作，不管成败最后都做（把手机上改过的设置放回去）。
 一条不是 `optional` 的反应如果从没触发，整个用例失败。
 
 **断言**（`expect`）
 
-- `{"step":"a1" 或 序号,"ok":true,"error":"denied","status":"waiting_owner","data":{子集},"min_ms":N,"max_ms":N,"min_images":N}`
+- `{"step":"a1" 或 序号,"ok":true,"error":"denied","error_message":"子串","status":"waiting_owner","data":{子集},"min_ms":N,"max_ms":N,"min_images":N}`
 - `{"messages":{"from","to","word","text"},"count":0 或 {"min":1}}`：运行期间账本里符合条件的消息有几条
   （“没有发过『批准：』消息”“没有 `pending.redeem`”“同一轮：`turn.started` 只有 1 条”都这样写）。
 
@@ -92,8 +95,8 @@ node tools/e2e/owner.mjs --link-file link.json script tools/e2e/scripts/approval
 | `approval-fast-deny.json` | 快路径：2 秒内拒绝，同一调用被拒绝 |
 | `approval-slow.json` | 阈值临时设 3 秒，7 秒后批准：调用拿到回执，批准以主人消息到来，agent 在新一轮 redeem |
 | `vscreen.json` | 虚拟屏：create → launch 设置 → see → close |
-| `notifications.json` | 强通知（重要通道）和普通通知（普通通道、不响不振），读 `dumpsys notification` 断言 |
-| `screen-lease.TODO.md` | 屏幕限时授权（等它合进 main 再补） |
+| `notifications.json` | 普通通知（普通通道）和强通知（重要通道），读 `dumpsys notification` 断言所在通道，以及两个通道的响铃/振动配置。验之前先让灵动岛不在屏上（关无障碍和悬浮窗权限），否则中枢认为主人正看着、不发通知；脚本里做并在 `cleanup` 里放回 |
+| `screen-lease.json` | 屏幕限时授权：没有授权被拒；主人借 15 分钟；agent 操作；主人收回，agent 被拦下并收到通知（到期那一支要等授权时长可以调短再补） |
 
 ## 写新用例时
 

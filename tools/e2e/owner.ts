@@ -17,7 +17,7 @@ import type { Message } from "../../packages/sdk/src/message";
 import { createNodeClient } from "../../packages/link/src/client";
 import type { HandClient } from "../../packages/link/src/hand";
 import { spawn } from "node:child_process";
-import { allSteps, judge, judgeExec, matches, parseScript, reportOf, type Action, type Outcome, type Reaction, type Report, type ScriptFile, type Seen } from "./script-run";
+import { allSteps, judge, judgeExec, matches, parseScript, reportOf, subset, type Action, type Outcome, type Reaction, type Report, type ScriptFile, type Seen } from "./script-run";
 
 const VERSION = "0.1.0";
 const OWNER = "person:owner";
@@ -515,7 +515,16 @@ async function script(o: Options): Promise<number> {
     } else if ("say" in a) {
       await owner.send({ to: a.to ?? agent, kind: "request", word: "say", body: { text: a.say } });
     } else if ("call" in a) {
-      await call(a.call.member, a.call.word, a.call.body ?? {});
+      const label = a.name ?? `${a.call.member}/${a.call.word}`;
+      const sent = await owner.send({ to: a.call.member, kind: "request", word: a.call.word, body: a.call.body ?? {}, wait: true });
+      const reply = sent.ok ? asRecord(sent.response) : { ok: false, error: sent.error };
+      const want = a.expect;
+      if (!want) { if (reply.ok === false) throw new Failure(`${label} failed: ${reply.error?.code}: ${reply.error?.message}`, 3); return; }
+      const data = reply.ok === false ? undefined : reply.result?.data;
+      const okWanted = want.ok ?? true;
+      const pass = (reply.ok !== false) === okWanted && (want.data === undefined || subset(data, want.data));
+      outcomes.push({ pass, what: `${label}`, detail: pass ? JSON.stringify(data)?.slice(0, 160) : `got ${reply.ok === false ? `${reply.error?.code}: ${reply.error?.message}` : JSON.stringify(data)}, wanted ${okWanted ? "ok" : "an error"}${want.data === undefined ? "" : ` with ${JSON.stringify(want.data)}`}` });
+      line("check", { pass, what: label, detail: outcomes[outcomes.length - 1]!.detail });
     } else if ("sleep_ms" in a) {
       await sleepMs(a.sleep_ms);
     }

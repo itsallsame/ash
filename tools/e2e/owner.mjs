@@ -12149,6 +12149,7 @@ function judge(expects, reports, seen) {
     const bad = [];
     if (e.ok !== void 0 && step.ok !== e.ok) bad.push(`ok is ${step.ok}${step.error ? ` (${step.error.code}: ${step.error.message ?? ""})` : ""}, wanted ${e.ok}`);
     if (e.error !== void 0 && step.error?.code !== e.error) bad.push(`error is ${step.error?.code ?? "none"}, wanted ${e.error}`);
+    if (e.error_message !== void 0 && !(step.error?.message ?? "").includes(e.error_message)) bad.push(`error message ${JSON.stringify(step.error?.message ?? "")} lacks ${JSON.stringify(e.error_message)}`);
     if (e.status !== void 0 && step.status !== e.status) bad.push(`status is ${step.status ?? "none"}, wanted ${e.status}`);
     if (e.data !== void 0 && !subset(step.data, e.data)) bad.push(`data ${JSON.stringify(step.data)} lacks ${JSON.stringify(e.data)}`);
     if (e.min_ms !== void 0 && !((step.ms ?? 0) >= e.min_ms)) bad.push(`took ${step.ms} ms, wanted at least ${e.min_ms}`);
@@ -12710,7 +12711,19 @@ async function script(o) {
     } else if ("say" in a) {
       await owner.send({ to: a.to ?? agent2, kind: "request", word: "say", body: { text: a.say } });
     } else if ("call" in a) {
-      await call2(a.call.member, a.call.word, a.call.body ?? {});
+      const label = a.name ?? `${a.call.member}/${a.call.word}`;
+      const sent = await owner.send({ to: a.call.member, kind: "request", word: a.call.word, body: a.call.body ?? {}, wait: true });
+      const reply = sent.ok ? asRecord(sent.response) : { ok: false, error: sent.error };
+      const want = a.expect;
+      if (!want) {
+        if (reply.ok === false) throw new Failure(`${label} failed: ${reply.error?.code}: ${reply.error?.message}`, 3);
+        return;
+      }
+      const data = reply.ok === false ? void 0 : reply.result?.data;
+      const okWanted = want.ok ?? true;
+      const pass = reply.ok !== false === okWanted && (want.data === void 0 || subset(data, want.data));
+      outcomes.push({ pass, what: `${label}`, detail: pass ? JSON.stringify(data)?.slice(0, 160) : `got ${reply.ok === false ? `${reply.error?.code}: ${reply.error?.message}` : JSON.stringify(data)}, wanted ${okWanted ? "ok" : "an error"}${want.data === void 0 ? "" : ` with ${JSON.stringify(want.data)}`}` });
+      line("check", { pass, what: label, detail: outcomes[outcomes.length - 1].detail });
     } else if ("sleep_ms" in a) {
       await sleepMs(a.sleep_ms);
     }

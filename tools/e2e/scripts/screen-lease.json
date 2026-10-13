@@ -1,0 +1,194 @@
+{
+  "name": "screen lease: refused without it; the owner lends it for 15 min; the agent acts; the owner takes it back; the agent is stopped and told",
+  "timeout_s": 120,
+  "reports": 3,
+  "steps": [
+    {
+      "id": "tap1",
+      "call": {
+        "member": "service:host",
+        "word": "input.key",
+        "body": {
+          "key": "play_pause"
+        },
+        "purpose": "device verification: screen lease"
+      }
+    },
+    {
+      "id": "req",
+      "call": {
+        "member": "service:gate",
+        "word": "lease.request",
+        "body": {
+          "minutes": 15,
+          "goal": "device verification: screen lease"
+        }
+      }
+    }
+  ],
+  "on_message": [
+    {
+      "match": "授权操作屏幕",
+      "steps": [
+        {
+          "id": "tap2",
+          "call": {
+            "member": "service:host",
+            "word": "input.key",
+            "body": {
+              "key": "play_pause"
+            },
+            "purpose": "device verification: screen lease"
+          }
+        },
+        {
+          "id": "st",
+          "call": {
+            "member": "service:gate",
+            "word": "lease.status",
+            "body": {}
+          }
+        },
+        {
+          "checkpoint": "granted"
+        },
+        {
+          "id": "tap3",
+          "call": {
+            "member": "service:host",
+            "word": "input.key",
+            "body": {
+              "key": "play_pause"
+            },
+            "purpose": "device verification: screen lease"
+          }
+        }
+      ]
+    },
+    {
+      "match": "收回了屏幕操作权限",
+      "steps": [
+        {
+          "id": "after",
+          "call": {
+            "member": "service:gate",
+            "word": "lease.status",
+            "body": {}
+          }
+        }
+      ]
+    }
+  ],
+  "owner": [
+    {
+      "name": "lend the screen for 15 minutes",
+      "when": {
+        "approval": {}
+      },
+      "delay_ms": 1500,
+      "do": [
+        {
+          "answer": "m15"
+        }
+      ]
+    },
+    {
+      "name": "the lease is in force; take it back",
+      "when": {
+        "checkpoint": "granted"
+      },
+      "do": [
+        {
+          "name": "lease.list shows the agent's lease",
+          "call": {
+            "member": "service:gate",
+            "word": "lease.list",
+            "body": {}
+          },
+          "expect": {
+            "data": {
+              "leases": [
+                {
+                  "agent": "agent:script",
+                  "kind": "timed"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "lease.revoke ends it",
+          "call": {
+            "member": "service:gate",
+            "word": "lease.revoke",
+            "body": {}
+          },
+          "expect": {
+            "data": {
+              "revoked": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expect": [
+    {
+      "step": "tap1",
+      "ok": false,
+      "error": "denied",
+      "error_message": "屏幕授权"
+    },
+    {
+      "step": "req",
+      "ok": true,
+      "status": "waiting_owner"
+    },
+    {
+      "step": "tap2",
+      "ok": true
+    },
+    {
+      "step": "st",
+      "ok": true,
+      "data": {
+        "lease": {
+          "agent": "agent:script",
+          "kind": "timed"
+        },
+        "asking": false
+      }
+    },
+    {
+      "step": "tap3",
+      "ok": false,
+      "error": "denied",
+      "error_message": "收回"
+    },
+    {
+      "step": "after",
+      "ok": true,
+      "data": {
+        "lease": null,
+        "asking": false
+      }
+    },
+    {
+      "messages": {
+        "from": "person:owner",
+        "to": "agent:script",
+        "text": "授权操作屏幕"
+      },
+      "count": 1
+    },
+    {
+      "messages": {
+        "from": "service:gate",
+        "to": "agent:script",
+        "word": "tell",
+        "text": "收回了屏幕操作权限"
+      },
+      "count": 1
+    }
+  ]
+}
