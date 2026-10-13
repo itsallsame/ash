@@ -177,7 +177,7 @@
       "messages": {
         "from": "person:owner",
         "to": "agent:script",
-        "text": "授权操作屏幕"
+        "text": "授权操作屏幕 15 分钟"
       },
       "count": 1
     },
