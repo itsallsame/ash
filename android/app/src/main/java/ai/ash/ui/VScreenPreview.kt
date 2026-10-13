@@ -19,15 +19,16 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import ai.ash.human.HumanSend
 import ai.ash.link.Link
 import org.json.JSONObject
@@ -42,7 +43,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * ledger). The window itself is only touched on the main thread.
  *
  * The kernel tells when the virtual screen is made or closed ([screenState]); the window comes and goes
- * with it. Draggable, pinch to resize, ✕ hides it (the virtual screen keeps running). Polling stops while
+ * with it. Draggable, pinch to resize, double-tap to switch between small and large, ⤢ for a full-screen view
+ * (✕ there goes back to the window), ● to record the virtual screen (the video comes back as a file card in the chat),
+ * ✕ hides the window (the virtual screen keeps running). Polling stops while
  * the window is hidden or the screen is off. If the virtual screen goes away or the answers keep failing,
  * the window disappears. While frames are being watched the kernel is told ([watching], presence), which
  * is use, not idling. Nothing here may crash the app: every failure just hides the window.
@@ -55,6 +58,8 @@ object VScreenPreview {
     private const val MAX_LOST = 30
     /** Longest wait between asks while the screen has no frame to show (a fresh, blank virtual screen): each failed ask is an error the health check counts. */
     private const val SLOW_MS = 5000L
+    /** The longest side asked of the kernel for a frame (the full-screen view and a large window). */
+    private const val MAX_SIDE = 1280
 
     enum class Shown { OK, NO_SCREEN, NO_PERMISSION }
 
@@ -70,6 +75,13 @@ object VScreenPreview {
     /** Window width in px (kept across hide/show); height follows the virtual screen's aspect. */
     private var widthPx = 0
     private var aspect = 16f / 9f
+    private var fullscreen = false
+    private var closeBtn: TextView? = null
+    private var recBtn: TextView? = null
+    /** uptimeMillis when the recording began; 0 when the virtual screen is not being recorded. */
+    private var recordSince = 0L
+    private var recBusy = false
+    private val framesSeen = AtomicInteger()
 
     /** The owner is looking at the live frames now (window up, screen on): told to the kernel as presence. */
     @Volatile var watching = false; private set
@@ -77,6 +89,8 @@ object VScreenPreview {
     /** Bumped to stop the current polling loop (hide, screen off). Read on the worker. */
     private val loop = AtomicInteger()
     @Volatile private var maxSide = 480
+    /** Longest recording the owner's button asks for, in seconds. */
+    private const val RECORD_SECONDS = 300
 
     /**
      * Shows the window if a virtual screen exists and ash may draw overlays; [done] hears how it went (on the main thread).
@@ -161,7 +175,19 @@ object VScreenPreview {
             text = "✕"; textSize = 13f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x99000000.toInt()) }
             contentDescription = "隐藏虚拟屏预览"
-            setOnClickListener { hide() }
+            setOnClickListener { if (fullscreen) setFull(false) else hide() }
+        }
+        val enlarge = TextView(c).apply {
+            text = "⤢"; textSize = 13f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x99000000.toInt()) }
+            contentDescription = "全屏查看虚拟屏"
+            setOnClickListener { setFull(true) }
+        }
+        val rec = TextView(c).apply {
+            textSize = 11f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            setPadding(dp(8), dp(3), dp(8), dp(3))
+            contentDescription = "录制虚拟屏"
+            setOnClickListener { toggleRecord() }
         }
         val frame = FrameLayout(c).apply {
             background = GradientDrawable().apply {
@@ -173,6 +199,8 @@ object VScreenPreview {
             addView(img, FrameLayout.LayoutParams(-1, -1))
             addView(label, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(4), dp(4), 0, 0) })
             addView(close, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(4), dp(4), 0) })
+            addView(enlarge, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(4), dp(32), 0) })
+            addView(rec, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(4), 0, 0, dp(4)) })
         }
 
         @Suppress("DEPRECATION")
@@ -187,18 +215,20 @@ object VScreenPreview {
             y = dp(72)
         }
         wm(c).addView(frame, params)
-        root = frame; image = img; lp = params
-        maxSide = maxOf(params.width, params.height).coerceIn(160, 720)
+        root = frame; image = img; lp = params; closeBtn = close; recBtn = rec
+        maxSide = maxOf(params.width, params.height).coerceIn(160, MAX_SIDE)
+        refreshRec()
         frame.setOnTouchListener(DragResize(c))
         registerScreen(c)
         startLoop()
+        worker.post { recordingState(c) }
     }
 
     private fun detach() {
         loop.incrementAndGet()
         val c = app
         val r = root
-        root = null; image = null; lp = null
+        root = null; image = null; lp = null; closeBtn = null; recBtn = null; fullscreen = false
         if (c != null) {
             setWatching(c, false)
             screenReceiver?.let { try { c.unregisterReceiver(it) } catch (_: Throwable) {} }
@@ -215,7 +245,7 @@ object VScreenPreview {
         val dm = c.resources.displayMetrics
         val min = (80 * dm.density).toInt()
         // Tall enough to fit on screen, never wider than most of the short side.
-        val max = minOf((minOf(dm.widthPixels, dm.heightPixels) * 0.8f).toInt(), (dm.heightPixels * 0.8f / aspect).toInt())
+        val max = minOf((dm.widthPixels * 0.96f).toInt(), (dm.heightPixels * 0.88f / aspect).toInt())
         return w.coerceIn(min, maxOf(min, max))
     }
 
@@ -225,13 +255,99 @@ object VScreenPreview {
         val r = root ?: return
         val p = lp ?: return
         val dm = c.resources.displayMetrics
-        widthPx = clampWidth(c, widthPx)
-        p.width = widthPx
-        p.height = heightFor(widthPx)
-        p.x = p.x.coerceIn(0, maxOf(0, dm.widthPixels - p.width))
-        p.y = p.y.coerceIn(0, maxOf(0, dm.heightPixels - p.height))
-        maxSide = (maxOf(p.width, p.height)).coerceIn(160, 720)
+        if (fullscreen) {
+            p.width = dm.widthPixels; p.height = dm.heightPixels; p.x = 0; p.y = 0
+            maxSide = MAX_SIDE
+        } else {
+            widthPx = clampWidth(c, widthPx)
+            p.width = widthPx
+            p.height = heightFor(widthPx)
+            p.x = p.x.coerceIn(0, maxOf(0, dm.widthPixels - p.width))
+            p.y = p.y.coerceIn(0, maxOf(0, dm.heightPixels - p.height))
+            maxSide = (maxOf(p.width, p.height)).coerceIn(160, MAX_SIDE)
+        }
         try { wm(c).updateViewLayout(r, p) } catch (e: Throwable) { Log.w(TAG, "relayout", e) }
+    }
+
+    /** Switches between the small window and the full-screen view (the same window, so frames and the loop carry on). */
+    private fun setFull(on: Boolean) {
+        val r = root ?: return
+        val p = lp ?: return
+        val c = app ?: return
+        fullscreen = on
+        image?.scaleType = if (on) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.FIT_XY
+        (r.background as? GradientDrawable)?.apply { cornerRadius = if (on) 0f else 10 * c.resources.displayMetrics.density; setStroke(if (on) 0 else c.resources.displayMetrics.density.toInt().coerceAtLeast(1), 0x66FFFFFF) }
+        r.invalidateOutline()
+        p.flags = if (on) p.flags or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS else p.flags and WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS.inv()
+        closeBtn?.contentDescription = if (on) "回到小窗" else "隐藏虚拟屏预览"
+        relayout()
+    }
+
+    /** Double tap: the window goes between small and almost as wide as the screen. */
+    private fun toggleSize() {
+        val c = app ?: return
+        val dm = c.resources.displayMetrics
+        widthPx = if (widthPx > dm.widthPixels * 0.6f) (minOf(dm.widthPixels, dm.heightPixels) * 0.3f).toInt() else Int.MAX_VALUE
+        relayout()
+    }
+
+    // ───────────────────────────── recording ─────────────────────────────
+
+    private fun toast(text: String) { app?.let { Toast.makeText(it, text, Toast.LENGTH_LONG).show() } }
+
+    private fun mmss(ms: Long) = (ms / 1000).let { "%02d:%02d".format(it / 60, it % 60) }
+
+    /** Draws the record button: ● 录制 when idle, ■ and the elapsed time while recording; ticks every second. */
+    private fun refreshRec() {
+        val b = recBtn ?: return
+        val on = recordSince != 0L
+        b.text = if (recBusy) "…" else if (on) "■ " + mmss(SystemClock.uptimeMillis() - recordSince) else "● 录制"
+        b.background = GradientDrawable().apply {
+            cornerRadius = 100f; setColor(if (on) 0xDDD32F2F.toInt() else 0x99000000.toInt())
+        }
+        if (on) main.postDelayed({ if (recordSince != 0L && root != null) refreshRec() }, 1000L)
+    }
+
+    /** Starts or stops recording as the owner (the video comes back as a file card in the chat). */
+    private fun toggleRecord() {
+        val c = app ?: return
+        if (recBusy) return
+        val stopping = recordSince != 0L
+        recBusy = true
+        refreshRec()
+        worker.post {
+            var error: String? = null
+            var saved = false
+            try {
+                val word = if (stopping) "vscreen.record.stop" else "vscreen.record.start"
+                val body = if (stopping) JSONObject() else JSONObject().put("max_seconds", RECORD_SECONDS)
+                HumanSend.send(Link.get(c).client, ask(word, body))
+                saved = stopping
+            } catch (e: HumanSend.Refused) {
+                error = e.message ?: e.code
+            } catch (e: Throwable) {
+                error = e.message ?: e.javaClass.simpleName
+            }
+            val failed = error
+            main.post {
+                recBusy = false
+                if (failed == null) recordSince = if (stopping) 0L else SystemClock.uptimeMillis()
+                else if (stopping && failed.contains("not recording")) recordSince = 0L
+                refreshRec()
+                if (saved) toast("录像已保存，见对话里的文件卡")
+                else if (failed != null) toast((if (stopping) "停止录像失败：" else "开始录像失败：") + failed)
+            }
+        }
+    }
+
+    /** Asks the kernel whether the virtual screen is being recorded (an agent may have started it, or it ran out): worker thread. */
+    private fun recordingState(c: Context) {
+        try {
+            val data = HumanSend.data(HumanSend.send(Link.get(c).client, ask("vscreen.status", JSONObject()))) ?: return
+            val on = data.optBoolean("recording")
+            val ms = data.optLong("recordMs")
+            main.post { if (!recBusy) { recordSince = if (on) SystemClock.uptimeMillis() - ms else 0L; refreshRec() } }
+        } catch (e: Throwable) { /* the next ask will say */ }
     }
 
     private fun onFrame(bmp: Bitmap) {
@@ -244,7 +360,7 @@ object VScreenPreview {
         }
     }
 
-    /** One finger drags, two fingers pinch to resize. */
+    /** One finger drags, two fingers pinch to resize, a double tap switches small / large. Pinch is measured on raw (screen) positions: the window changes size under the fingers. */
     private class DragResize(c: Context) : View.OnTouchListener {
         private var downX = 0f
         private var downY = 0f
@@ -252,24 +368,32 @@ object VScreenPreview {
         private var startY = 0
         private var dragging = false
         private var scaling = false
-        private val scale = ScaleGestureDetector(c, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScaleBegin(d: ScaleGestureDetector): Boolean { scaling = true; return true }
-            override fun onScale(d: ScaleGestureDetector): Boolean {
-                widthPx = (widthPx * d.scaleFactor).toInt()
-                relayout()
-                return true
-            }
+        private var pinchSpan = 0f
+        private var pinchWidth = 0
+        private val taps = GestureDetector(c, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+            override fun onDoubleTap(e: MotionEvent): Boolean { toggleSize(); return true }
         })
 
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             val p = lp ?: return false
-            scale.onTouchEvent(e)
+            if (fullscreen) return true
+            taps.onTouchEvent(e)
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = e.rawX; downY = e.rawY; startX = p.x; startY = p.y
                     dragging = false; scaling = false
                 }
-                MotionEvent.ACTION_MOVE -> if (!scaling && e.pointerCount == 1) {
+                MotionEvent.ACTION_POINTER_DOWN -> if (e.pointerCount == 2) {
+                    scaling = true; dragging = false
+                    pinchSpan = span(e); pinchWidth = widthPx
+                }
+                MotionEvent.ACTION_MOVE -> if (scaling) {
+                    if (e.pointerCount >= 2 && pinchSpan > 0f) {
+                        widthPx = (pinchWidth * span(e) / pinchSpan).toInt()
+                        relayout()
+                    }
+                } else if (e.pointerCount == 1) {
                     val dx = e.rawX - downX
                     val dy = e.rawY - downY
                     if (dragging || dx * dx + dy * dy > 64f) {
@@ -278,15 +402,19 @@ object VScreenPreview {
                         relayout()
                     }
                 }
-                MotionEvent.ACTION_POINTER_UP -> {
+                MotionEvent.ACTION_POINTER_UP -> if (e.pointerCount <= 2) {
                     // Re-anchor the drag after a pinch so the window does not jump.
                     val rest = if (e.actionIndex == 0) 1 else 0
                     downX = e.getRawXCompat(rest); downY = e.getRawYCompat(rest); startX = p.x; startY = p.y
+                    scaling = false; dragging = true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { dragging = false; scaling = false }
             }
             return true
         }
+
+        private fun span(e: MotionEvent): Float =
+            kotlin.math.hypot(e.getRawXCompat(0) - e.getRawXCompat(1), e.getRawYCompat(0) - e.getRawYCompat(1))
 
         private fun MotionEvent.getRawXCompat(i: Int) = if (Build.VERSION.SDK_INT >= 29) getRawX(i) else rawX - getX(0) + getX(i)
         private fun MotionEvent.getRawYCompat(i: Int) = if (Build.VERSION.SDK_INT >= 29) getRawY(i) else rawY - getY(0) + getY(i)
@@ -326,6 +454,7 @@ object VScreenPreview {
             if (gen != loop.get()) return
             val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
             if (bmp != null) { main.post { if (gen == loop.get()) safely { onFrame(bmp) } }; fails = 0; lost = 0 } else fails++
+            if (framesSeen.incrementAndGet() % 40 == 0) recordingState(c)
         } catch (e: HumanSend.Refused) {
             // The virtual screen is gone (closed, or the host lost it): the preview has nothing left to show.
             if (e.message.orEmpty().contains("no virtual screen") || e.code == "unavailable" || e.code == "forbidden" || e.code == "not_found") {

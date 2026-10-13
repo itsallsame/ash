@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "3607412b285e3bb9c55beb00bd9b5aa238cf8be991556531e71038a61290bc2f",
+ "hash": "6a638d309cf3b147394b89a93b81e3e8352466abc9cefe047097239a6354f1a3",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -14937,6 +14937,93 @@
    ],
    "label": {
     "doing": "在看虚拟屏"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.record.start",
+   "kind": "request",
+   "direction": "in",
+   "description": "Start recording the virtual screen to a video (mp4). Call it when the owner asks you to record (\"录下来\"); do the work on the virtual screen as usual, then vscreen.record.stop. It stops by itself at max_seconds (default 120, at most 600) or when the virtual screen closes. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+     "max_seconds": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 600,
+      "description": "Longest recording in seconds (10-600, default 120)."
+     }
+    }
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [],
+    "properties": {
+     "startedAt": {
+      "type": "integer"
+     },
+     "maxSeconds": {
+      "type": "integer"
+     }
+    }
+   },
+   "effect": "act",
+   "risk": "structure",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在录虚拟屏"
+   }
+  },
+  {
+   "member": "service:host",
+   "word": "vscreen.record.stop",
+   "kind": "request",
+   "direction": "in",
+   "description": "Stop the recording and save it in your workspace (/root/work/recordings/vscreen-<time>.mp4); the reply gives the path, length and size. Show it to the owner with human_show as a file card (workspace body:main, mime video/mp4). Also hands over a recording that stopped by itself. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+).",
+   "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {}
+   },
+   "result_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+     "path"
+    ],
+    "properties": {
+     "path": {
+      "type": "string"
+     },
+     "seconds": {
+      "type": "number"
+     },
+     "bytes": {
+      "type": "integer"
+     },
+     "reason": {
+      "type": "string"
+     }
+    }
+   },
+   "effect": "act",
+   "risk": "structure",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在停止录虚拟屏"
    }
   },
   {

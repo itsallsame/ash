@@ -1,6 +1,6 @@
 # 词清单
 
-> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `3607412b285e3bb9`。
+> 由 `tools/gen-words.mjs` 从 `packages/sdk/src/words.ts` 和 `namespaces.ts` 生成，不要手改。词契约 v4，ash-api/3，ASH_SDK 4，内容哈希 `6a638d309cf3b147`。
 > 机器可读的完整契约（输入输出 JSON Schema）在 `packages/sdk/schema/words.json`。
 
 表头：调用方 = 契约里的 `callers`（owner 主人、agent、app 应用、kernel 中枢自己）；effect / risk 见 SPEC-01 §6.2；输入里 `*` 是必填。`agent:*` 是每个已声明的 agent，`device:*`、`body:*` 是手和身体上的标准能力，`app:*` 是每个应用。
@@ -26,7 +26,7 @@
 - [`service:directory`](#servicedirectory) (2)
 - [`service:history`](#servicehistory) (9)
 - [`service:blobs`](#serviceblobs) (2)
-- [`service:host`](#servicehost) (21)
+- [`service:host`](#servicehost) (23)
 - [`service:bodies`](#servicebodies) (4)
 - [`person:owner`](#personowner) (8)
 - [`agent:*`](#agent) (8)
@@ -348,6 +348,8 @@
 | `vscreen.close` | owner, agent, app | act / structure | - | - | 在关闭虚拟屏 | Destroy the virtual screen (apps running on it are closed or moved) and stop its server. Call it when the task is done. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.status` | owner, agent, app | read / none | - | - | 在看虚拟屏状态 | Report whether the virtual screen exists, its display id, size and dpi, and whether it has rendered a frame. |
 | `vscreen.see` | owner, agent, app | read / none | - | max_side, quality | 在看虚拟屏 | Screenshot of the virtual screen (JPEG, long side at most 1280 px); the caption gives the factor from image pixels to the screen coordinates vscreen.tap uses. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.record.start` | owner, agent, app | act / structure | - | max_seconds | 在录虚拟屏 | Start recording the virtual screen to a video (mp4). Call it when the owner asks you to record ("录下来"); do the work on the virtual screen as usual, then vscreen.record.stop. It stops by itself at max_seconds (default 120, at most 600) or when the virtual screen closes. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
+| `vscreen.record.stop` | owner, agent, app | act / structure | - | - | 在停止录虚拟屏 | Stop the recording and save it in your workspace (/root/work/recordings/vscreen-<time>.mp4); the reply gives the path, length and size. Show it to the owner with human_show as a file card (workspace body:main, mime video/mp4). Also hands over a recording that stopped by itself. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.launch` | owner, agent, app | act / outward | - | app* | 在虚拟屏里打开应用 | Launch an app onto the virtual screen for delegated work (use apps.open to show an app to the owner). Wait a moment, then vscreen.see. Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.tap` | owner, agent, app | act / outward | - | x*, y* | 在点虚拟屏 | Tap on the virtual screen at (x, y) in virtual-screen pixels (see vscreen.see for the scale). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |
 | `vscreen.swipe` | owner, agent, app | act / outward | - | x1*, y1*, x2*, y2*, duration_ms | 在滑动虚拟屏 | Swipe on the virtual screen from (x1, y1) to (x2, y2) in virtual-screen pixels, e.g. to scroll (drag upwards to scroll down). Needs the phone's debug identity (「后台也能动手」), which the owner connects (Android 10+). |

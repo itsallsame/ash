@@ -147,6 +147,7 @@ class HostApi(
             "vscreen.create" to "vscreen", "vscreen.status" to "vscreen", "vscreen.launch" to "vscreen",
             "vscreen.see" to "vscreen", "vscreen.tap" to "vscreen", "vscreen.swipe" to "vscreen",
             "vscreen.key" to "vscreen", "vscreen.type" to "vscreen", "vscreen.close" to "vscreen",
+            "vscreen.record.start" to "vscreen", "vscreen.record.stop" to "vscreen",
             "input.key" to "input",
             "apps.open" to "apps",
         )

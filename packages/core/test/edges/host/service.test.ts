@@ -158,3 +158,35 @@ test("service:host: the virtual screen being made or closed is told to the owner
     ["service:host", "person:owner", "event", "vscreen.state", { open: false }],
   ]);
 });
+
+test("vscreen.record.stop: the host's video is copied into the main body's work directory; the owner's stop also shows a file card, an agent's does not", async () => {
+  const { mkdtemp, writeFile, readFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "rec-"));
+  const video = join(dir, "host.mp4");
+  await writeFile(video, "not really a video");
+  const sent: Outgoing[] = [];
+  const client = {
+    wakeAt: async () => ({ supported: false as const }), wakeClear: async () => ({ supported: false as const }), powerHold: async () => ({ supported: false as const }),
+    powerRelease: async () => ({ supported: false as const }), handsHandoff: async () => ({ supported: false as const }), updateInstall: async () => ({ supported: false as const }),
+    lifecycleRestart: async () => ({}), has: (cap: string) => cap === "vscreen",
+    phone: async (method: string): Promise<any> => ({ supported: true as const, result: method === "vscreen.record.stop" ? { path: video, seconds: 4.5, bytes: 18, reason: "stopped" } : { message: "ok" } }),
+  };
+  const router = { send: async (msg: Outgoing): Promise<Reply> => { sent.push(msg); return { ok: true }; } };
+  const service = createHostService({ client, router, registry: { findByWord: () => [] }, virtual: createVirtualScreen(client), recordings: { hostDir: join(dir, "work", "recordings"), bodyDir: "/root/work/recordings" }, onStop: () => {} });
+  const agent = { ...ctx, caller: { member: "agent:main", via: "service" as const, local: true } };
+  const owner = { ...ctx, caller: { member: "person:owner", via: "service" as const, local: true } };
+
+  const byAgent = await service.member.handle(msg("vscreen.record.stop", {}), agent) as { data: { path: string; name: string; seconds: number; reason: string } };
+  assert.match(byAgent.data.path, /^\/root\/work\/recordings\/vscreen-\d{8}T\d{6}\.mp4$/);
+  assert.equal(byAgent.data.seconds, 4.5);
+  assert.equal(await readFile(join(dir, "work", "recordings", byAgent.data.name), "utf8"), "not really a video");
+  assert.equal(sent.filter((m) => m.word === "show").length, 0);
+
+  await service.member.handle(msg("vscreen.record.stop", {}), owner);
+  const shows = sent.filter((m) => m.word === "show");
+  assert.equal(shows.length, 1);
+  assert.deepEqual((shows[0]!.body as { card: Record<string, unknown> }).card, { type: "file", workspace: "body:main", path: shows[0] && (shows[0].body as any).card.path, name: (shows[0]!.body as any).card.name, mime_type: "video/mp4", size: 18 });
+  assert.equal(shows[0]!.to, "person:owner");
+});

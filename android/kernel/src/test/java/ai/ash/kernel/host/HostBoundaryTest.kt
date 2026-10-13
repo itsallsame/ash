@@ -17,11 +17,11 @@ class HostBoundaryTest {
     private val sources = File("src/main/java").walk().filter { it.extension == "kt" || it.extension == "java" }.toList()
     private val manifest = File("src/main/AndroidManifest.xml").readText()
     private fun src(path: String) = File("src/main/java/ai/ash/kernel/$path").readText()
-    private fun actions(text: String) = Regex("""^\s*"([a-z_]+\.[a-z_]+)" ->""", RegexOption.MULTILINE).findAll(text.substringAfter("override fun call(").substringBefore("\n    }\n"))
+    private fun actions(text: String) = Regex("""^\s*"([a-z_]+(?:\.[a-z_]+)+)" ->""", RegexOption.MULTILINE).findAll(text.substringAfter("override fun call(").substringBefore("\n    }\n"))
         .map { it.groupValues[1] }.toSet()
 
     @Test fun theShellHostOffersOnlyItsShortList() {
-        val vscreen = setOf("create", "status", "launch", "see", "tap", "swipe", "key", "type", "close").map { "vscreen.$it" }
+        val vscreen = setOf("create", "status", "launch", "see", "tap", "swipe", "key", "type", "close", "record.start", "record.stop").map { "vscreen.$it" }
         assertEquals((vscreen + "input.key" + "apps.open").toSet(), actions(src("host/ShellPhone.kt")))
     }
 

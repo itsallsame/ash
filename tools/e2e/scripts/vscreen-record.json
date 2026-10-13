@@ -1,0 +1,220 @@
+{
+  "name": "virtual screen recording: record while acting, the agent stops it, the owner stops a second one and gets a file card",
+  "timeout_s": 180,
+  "steps": [
+    {
+      "id": "create",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.create",
+        "body": {},
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "id": "launch",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.launch",
+        "body": {
+          "app": "com.android.settings"
+        },
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "id": "see",
+      "until": {
+        "call": {
+          "member": "service:host",
+          "word": "vscreen.see",
+          "body": {
+            "max_side": 480
+          },
+          "purpose": "device verification: virtual screen recording"
+        },
+        "path": "ok",
+        "equals": true
+      },
+      "timeout_ms": 20000,
+      "every_ms": 500
+    },
+    {
+      "id": "rec1",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.record.start",
+        "body": {
+          "max_seconds": 30
+        },
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "id": "tap1",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.tap",
+        "body": {
+          "x": 360,
+          "y": 400
+        },
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "sleep_ms": 1200
+    },
+    {
+      "id": "swipe1",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.swipe",
+        "body": {
+          "x1": 360,
+          "y1": 900,
+          "x2": 360,
+          "y2": 300,
+          "duration_ms": 400
+        },
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "sleep_ms": 1200
+    },
+    {
+      "id": "stop1",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.record.stop",
+        "body": {},
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "id": "rec2",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.record.start",
+        "body": {
+          "max_seconds": 30
+        },
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "id": "tap2",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.tap",
+        "body": {
+          "x": 360,
+          "y": 400
+        },
+        "purpose": "device verification: virtual screen recording"
+      }
+    },
+    {
+      "sleep_ms": 1500
+    },
+    {
+      "checkpoint": "owner-stops"
+    },
+    {
+      "id": "close",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.close",
+        "body": {},
+        "purpose": "device verification: virtual screen recording"
+      }
+    }
+  ],
+  "owner": [
+    {
+      "name": "approve what asks",
+      "when": {
+        "approval": {}
+      },
+      "repeat": true,
+      "optional": true,
+      "delay_ms": 500,
+      "do": [
+        {
+          "answer": "once"
+        }
+      ]
+    },
+    {
+      "name": "the owner stops the second recording",
+      "when": {
+        "checkpoint": "owner-stops"
+      },
+      "do": [
+        {
+          "call": {
+            "member": "service:host",
+            "word": "vscreen.record.stop",
+            "body": {}
+          },
+          "expect": {
+            "ok": true,
+            "data": {
+              "reason": "stopped"
+            }
+          }
+        },
+        {
+          "exec": [
+            "adb",
+            "-s",
+            "${env.ANDROID_SERIAL}",
+            "shell",
+            "run-as",
+            "ai.ash.kernel",
+            "ls",
+            "-l",
+            "files/container/main/ubuntu/root/work/recordings"
+          ],
+          "expect": {
+            "stdout": "[1-9][0-9]{4,} .*vscreen-.*\\.mp4",
+            "exit": 0
+          },
+          "within_ms": 5000
+        }
+      ]
+    }
+  ],
+  "expect": [
+    {
+      "step": "rec1",
+      "ok": true
+    },
+    {
+      "step": "stop1",
+      "ok": true,
+      "data": {
+        "reason": "stopped"
+      }
+    },
+    {
+      "step": "rec2",
+      "ok": true
+    },
+    {
+      "step": "close",
+      "ok": true
+    },
+    {
+      "messages": {
+        "from": "service:host",
+        "to": "person:owner",
+        "word": "show"
+      },
+      "count": {
+        "min": 1
+      }
+    }
+  ]
+}

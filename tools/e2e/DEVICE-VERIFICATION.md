@@ -95,6 +95,7 @@ node tools/e2e/owner.mjs --link-file link.json script tools/e2e/scripts/approval
 | `approval-fast-deny.json` | 快路径：2 秒内拒绝，同一调用被拒绝 |
 | `approval-slow.json` | 阈值临时设 3 秒，7 秒后批准：调用拿到回执，批准以主人消息到来，agent 在新一轮 redeem |
 | `vscreen.json` | 虚拟屏：create → launch 设置 → see → close |
+| `vscreen-record.json` | 虚拟屏录像：边操作边录，agent 停一次、主人停一次（主人那次对话里出现文件卡），录好的 mp4 在工作区 recordings 里 |
 | `notifications.json` | 普通通知（普通通道）和强通知（重要通道），读 `dumpsys notification` 断言所在通道，以及两个通道的响铃/振动配置。验之前先让灵动岛不在屏上（关无障碍和悬浮窗权限），否则中枢认为主人正看着、不发通知；脚本里做并在 `cleanup` 里放回 |
 | `screen-lease.json` | 屏幕限时授权：没有授权被拒；主人借 15 分钟；agent 操作；主人收回，agent 被拦下并收到通知（到期那一支要等授权时长可以调短再补） |
 

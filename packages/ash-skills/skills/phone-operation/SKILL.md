@@ -59,6 +59,10 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 
 主人说「帮我打开设置里的电池页」：`foreground_handoff`，`settings.open {page: …}` 成功后就结束，一句话告诉他已经打开，不再操作。
 
+## 录屏
+
+主人说「录下来」「录个屏」时，在虚拟屏里做事之前先 `vscreen.record.start`，做完 `vscreen.record.stop`：视频（mp4）存在你工作区的 `/root/work/recordings/`，回复里有路径和时长，再用 `human_show` 发一张文件卡给主人（workspace `body:main`，mime `video/mp4`）。默认最长 120 秒，到时间或虚拟屏关闭会自己停并存好，之后 `vscreen.record.stop` 照样能取。主人自己点预览小窗上的「● 录制」时，视频会直接以文件卡出现在对话里，不用你再发。
+
 ## 常见错误
 
 - 不看屏幕就凭记忆点坐标。

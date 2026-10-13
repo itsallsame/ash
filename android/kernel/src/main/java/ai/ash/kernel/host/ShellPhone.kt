@@ -39,6 +39,8 @@ class ShellPhone(private val ctx: Context, private val kernelApk: String, privat
         "vscreen.key" -> vscreen.key(vscreenKeycode(a.str("key")), a.optBoolean("long_press"))
         "vscreen.type" -> vscreen.type(a.str("text"))
         "vscreen.close" -> vscreen.close()
+        "vscreen.record.start" -> vscreen.recordStart(a.optInt("max_seconds", 120).coerceIn(10, 600))
+        "vscreen.record.stop" -> vscreen.recordStop()
         "input.key" -> inputKey(a.str("key"), a.optBoolean("long_press"))
         "apps.open" -> appsOpen(resolveApp(a.str("app")))
         else -> throw PhoneBadRequest("unknown phone action $method")
@@ -253,9 +255,34 @@ class ShellPhone(private val ctx: Context, private val kernelApk: String, privat
             return msg("Pasted ${text.length} characters (through the clipboard).")
         }
 
+        /** A finished recording nobody has taken yet: the one the screen's closing finished (the server is gone by then). */
+        @Volatile private var unclaimed: JSONObject? = null
+
+        fun recordStart(maxSeconds: Int): JSONObject {
+            needScreen()
+            unclaimed = null
+            val r = send("record_start", JSONObject().put("maxSeconds", maxSeconds), 15_000)
+            return JSONObject().put("startedAt", r.optLong("startedAt")).put("maxSeconds", r.optInt("maxSeconds"))
+                .put("message", "Recording the virtual screen (at most ${r.optInt("maxSeconds")} s). Call vscreen.record.stop when done.")
+        }
+
+        fun recordStop(): JSONObject {
+            if (running()) {
+                val r = try { send("record_stop", JSONObject(), 25_000, start = false) } catch (e: IllegalStateException) { null }
+                if (r != null) return recordingInfo(r)
+            }
+            val u = unclaimed ?: throw PhoneBadRequest("not recording: call vscreen.record.start first")
+            unclaimed = null
+            return recordingInfo(u)
+        }
+
+        private fun recordingInfo(r: JSONObject): JSONObject =
+            JSONObject().put("path", r.optString("path")).put("seconds", r.optDouble("seconds")).put("bytes", r.optLong("bytes")).put("reason", r.optString("reason", "stopped"))
+
         fun close(): JSONObject {
             if (!running()) return msg("No virtual screen was open.")
             val r = runCatching { send("close", JSONObject(), 8_000, start = false) }.getOrNull()
+            r?.optJSONObject("recording")?.let { unclaimed = it }
             stop()
             return msg(if (r?.optBoolean("ok") == true) "Virtual screen closed." else "Virtual screen closed.")
         }

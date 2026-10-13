@@ -81,7 +81,7 @@ test("the namespaces of SPEC-02 §4.3 are all there with the actions the phone a
   const expected: Record<string, string[]> = {
     screen: ["read", "see", "screenshot", "touch_status", "tap", "type", "scroll", "swipe", "hold", "touch", "gesture", "global_action"],
     input: ["key"],
-    vscreen: ["create", "close", "status", "see", "launch", "tap", "swipe", "key", "type"],
+    vscreen: ["create", "close", "status", "see", "record.start", "record.stop", "launch", "tap", "swipe", "key", "type"],
     apps: ["list", "info", "usage", "open", "open_direct", "open_url"],
     settings: ["get", "put", "open"],
     clipboard: ["get", "set"],
@@ -140,6 +140,7 @@ test("effect and risk follow the phone's CapabilityPolicy and the computer's wor
     "screen.hold": ["act", "outward"], "screen.touch": ["act", "outward"], "screen.gesture": ["act", "outward"], "screen.global_action": ["act", "outward"],
     "vscreen.create": ["act", "structure"], "vscreen.status": ["read", "none"], "vscreen.launch": ["act", "outward"], "vscreen.see": ["read", "none"],
     "vscreen.tap": ["act", "outward"], "vscreen.swipe": ["act", "outward"], "vscreen.key": ["act", "outward"], "vscreen.type": ["act", "outward"], "vscreen.close": ["act", "structure"],
+    "vscreen.record.start": ["act", "structure"], "vscreen.record.stop": ["act", "structure"],
     "calendar.search": ["read", "none"], "calendar.list": ["read", "none"], "calendar.create": ["write", "outward"],
     "media.list": ["read", "none"], "media.albums": ["read", "none"], "media.read": ["read", "none"], "media.save": ["write", "none"], "camera.capture": ["act", "none"],
     "location.get": ["read", "none"], "location.history": ["read", "none"], "location.track": ["write", "none"],

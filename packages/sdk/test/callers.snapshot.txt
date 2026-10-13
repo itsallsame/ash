@@ -230,6 +230,8 @@
   service:host/vscreen.close  owner,agent,app
   service:host/vscreen.status  owner,agent,app
   service:host/vscreen.see  owner,agent,app
+  service:host/vscreen.record.start  owner,agent,app
+  service:host/vscreen.record.stop  owner,agent,app
   service:host/vscreen.launch  owner,agent,app
   service:host/vscreen.tap  owner,agent,app
   service:host/vscreen.swipe  owner,agent,app

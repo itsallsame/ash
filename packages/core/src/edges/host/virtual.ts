@@ -58,7 +58,8 @@ export function createVirtualScreen(client: Pick<HostClient, "phone" | "has">): 
         tell(true);
         break;
       case "vscreen.close": closed(); break;
-      case "vscreen.status": case "vscreen.see": break;
+      // Recording takes nothing from the screen: it changes neither what the reflex compares nor who owns the screen.
+      case "vscreen.status": case "vscreen.see": case "vscreen.record.start": case "vscreen.record.stop": break;
       default: s.generation++; if (s.owner !== t) s.owner = "";
     }
     return r;

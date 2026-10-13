@@ -118,7 +118,7 @@ export interface HostMethods {
   // returns structured data (plus a short `message` for the reply, and the JPEG for vscreen.see); the kernel builds the
   // word's content. Absent when the host cannot do them (unpaired: only `input`, media and volume keys).
   "vscreen.create": { req: { orientation?: string; short_edge?: number; dpi?: number }; res: { displayId: number; width: number; height: number; dpi: number; reused: boolean; message: string } };
-  "vscreen.status": { req: Record<string, never>; res: { running: boolean; displayId?: number; width?: number; height?: number; dpi?: number } };
+  "vscreen.status": { req: Record<string, never>; res: { running: boolean; displayId?: number; width?: number; height?: number; dpi?: number; recording?: boolean; recordMs?: number } };
   "vscreen.launch": { req: { app: string }; res: { package: string; component: string; message: string } };
   "vscreen.see": { req: { max_side?: number; quality?: number }; res: { jpeg: string; displayId: number; screenW: number; screenH: number; imageW: number; imageH: number } };
   "vscreen.tap": { req: { x: number; y: number }; res: { message: string } };
@@ -126,6 +126,9 @@ export interface HostMethods {
   "vscreen.key": { req: { key: string; long_press?: boolean }; res: { message: string } };
   "vscreen.type": { req: { text: string }; res: { message: string } };
   "vscreen.close": { req: Record<string, never>; res: { message: string } };
+  /** Records the virtual screen to a video file on the phone (a path the core can read); `vscreen.record.stop` hands it over. */
+  "vscreen.record.start": { req: { max_seconds?: number }; res: { startedAt: number; maxSeconds: number; message: string } };
+  "vscreen.record.stop": { req: Record<string, never>; res: { path: string; seconds: number; bytes: number; reason: string } };
   "input.key": { req: { key: string; long_press?: boolean }; res: { message: string } };
   "apps.open": { req: { app: string }; res: { package: string; opened: boolean; message: string } };
 }
@@ -153,6 +156,8 @@ export const HOST_METHOD_CAPABILITY: { readonly [M in HostMethod]: HostCapabilit
   "vscreen.key": "vscreen",
   "vscreen.type": "vscreen",
   "vscreen.close": "vscreen",
+  "vscreen.record.start": "vscreen",
+  "vscreen.record.stop": "vscreen",
   "input.key": "input",
   "apps.open": "apps",
 };

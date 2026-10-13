@@ -36,7 +36,7 @@ const labels: Record<string, string> = {
   "screen.global_action": "切换页面", "apps.open": "打开应用", "browser.open": "打开网页", "browser.read": "读取网页",
   "browser.click": "点击网页控件", "browser.type": "填写网页内容", "browser.run": "执行网页操作",
   "vscreen.create": "创建后台屏幕", "vscreen.launch": "在后台打开应用", "vscreen.see": "查看后台页面",
-  "vscreen.tap": "操作后台页面", "vscreen.type": "填写后台页面", "vscreen.close": "关闭后台屏幕",
+  "vscreen.tap": "操作后台页面", "vscreen.record.start": "开始录后台屏幕", "vscreen.record.stop": "停止录屏", "vscreen.type": "填写后台页面", "vscreen.close": "关闭后台屏幕",
   bash: "执行命令（未提供用途）", read: "读取文件", write: "写入文件",
   edit: "修改文件", glob: "查找文件", grep: "搜索文件内容", web_search: "搜索资料", web_fetch: "读取网页", subagent: "委派子任务",
 };

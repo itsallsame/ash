@@ -4,6 +4,12 @@ import ai.ash.kernel.host.FakeContext;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Rect;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaFormat;
+import android.media.MediaMuxer;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
@@ -206,6 +212,10 @@ public class Main {
                 return input("keyevent", String.valueOf(q.optInt("keycode", 0)));
             case "text":
                 return input("text", q.optString("text", "").replace(" ", "%s"));
+            case "record_start":
+                return recordStart(q.optInt("maxSeconds", 120));
+            case "record_stop":
+                return recordStop();
             case "close":
                 return closeDisplay();
             default:
@@ -404,6 +414,10 @@ public class Main {
             sCurrentDisplayId = -1;
             Session old = sSessions.remove(cur.displayId);
             if (old != null) {
+                Recorder rec = sRec;
+                if (rec != null && rec.session == old) {
+                    rec.finish("closed");
+                }
                 old.release();
             }
         }
@@ -465,11 +479,23 @@ public class Main {
         int id = sCurrentDisplayId;
         sCurrentDisplayId = -1;
         Session s = id >= 0 ? sSessions.remove(id) : null;
+        JSONObject recording = null;
+        Recorder rec = sRec;
+        if (rec != null && (s == null || rec.session == s)) {
+            // The screen goes: the video is finished and handed over in this reply (the server may exit right after).
+            rec.finish("closed");
+            recording = rec.info();
+            sRec = null;
+        }
         if (s != null) {
             s.release();
             log("released displayId=" + id, null);
         }
-        return ok().put("closed", id);
+        JSONObject res = ok().put("closed", id);
+        if (recording != null) {
+            res.put("recording", recording);
+        }
+        return res;
     }
 
     private static Session currentSession() {
@@ -619,7 +645,278 @@ public class Main {
         if (s == null) {
             return ok().put("displayId", -1).put("running", false).put("build", BUILD);
         }
-        return describe(s).put("running", true).put("build", BUILD);
+        Recorder rec = sRec;
+        JSONObject res = describe(s).put("running", true).put("build", BUILD);
+        boolean recording = rec != null && rec.running();
+        res.put("recording", recording);
+        if (recording) {
+            res.put("recordMs", System.currentTimeMillis() - rec.startedAt);
+        }
+        return res;
+    }
+
+    // ==================== recording ====================
+
+    /** Where finished videos wait for the kernel to take them (world-readable: the kernel is another uid). */
+    private static final String REC_DIR = "/data/local/tmp/ash-vscreen-rec";
+    private static final int REC_FPS = 10;
+    private static final int REC_MAX_SIDE = 1280;
+    /** The latest recording, running or finished and not yet taken. */
+    private static volatile Recorder sRec;
+
+    private static JSONObject recordStart(int maxSeconds) throws Exception {
+        Session s = currentSession();
+        if (s == null) {
+            return err("no virtual screen: call create first");
+        }
+        synchronized (Main.class) {
+            Recorder old = sRec;
+            if (old != null && old.running()) {
+                return err("already recording");
+            }
+            if (old != null) {
+                old.finish("stopped");
+                new File(old.path).delete();
+            }
+            File dir = new File(REC_DIR);
+            dir.mkdirs();
+            dir.setReadable(true, false);
+            dir.setExecutable(true, false);
+            File[] stale = dir.listFiles();
+            if (stale != null) {
+                for (File f : stale) {
+                    f.delete();
+                }
+            }
+            String name = "vscreen-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date()) + ".mp4";
+            Recorder rec = new Recorder(s, new File(dir, name).getPath(), Math.max(10, Math.min(600, maxSeconds)));
+            rec.begin();
+            sRec = rec;
+            return ok().put("startedAt", rec.startedAt).put("maxSeconds", rec.maxSeconds);
+        }
+    }
+
+    private static JSONObject recordStop() throws Exception {
+        Recorder rec;
+        synchronized (Main.class) {
+            rec = sRec;
+            sRec = null;
+        }
+        if (rec == null) {
+            return err("not recording");
+        }
+        rec.finish("stopped");
+        JSONObject info = rec.info();
+        if (info.optLong("bytes") <= 0) {
+            return err("the recording has no frames");
+        }
+        return info.put("ok", true);
+    }
+
+    /**
+     * Encodes the virtual screen's latest frame to H.264/mp4 at a steady rate. The display itself is untouched (the
+     * frame pump keeps feeding vscreen.see): this only reads the pump's newest bitmap, draws it onto the encoder's input
+     * surface, and drains the encoder into the muxer. A static screen is just repeated frames.
+     */
+    private static final class Recorder implements Runnable {
+        final Session session;
+        final String path;
+        final int maxSeconds;
+        final long startedAt = System.currentTimeMillis();
+        private final int outW;
+        private final int outH;
+        private MediaCodec codec;
+        private MediaMuxer muxer;
+        private Surface input;
+        private int track = -1;
+        private boolean muxing;
+        private long basePtsUs = -1;
+        private int frames;
+        private volatile boolean stopFlag;
+        private volatile boolean done;
+        private volatile String reason;
+        private long endedAt;
+        private Thread thread;
+
+        Recorder(Session session, String path, int maxSeconds) {
+            this.session = session;
+            this.path = path;
+            this.maxSeconds = maxSeconds;
+            float k = Math.min(1f, REC_MAX_SIDE / (float) Math.max(session.width, session.height));
+            this.outW = Math.max(16, Math.round(session.width * k / 16f) * 16);
+            this.outH = Math.max(16, Math.round(session.height * k / 16f) * 16);
+        }
+
+        void begin() throws Exception {
+            MediaFormat fmt = MediaFormat.createVideoFormat("video/avc", outW, outH);
+            fmt.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+            fmt.setInteger(MediaFormat.KEY_BIT_RATE, 2_000_000);
+            fmt.setInteger(MediaFormat.KEY_FRAME_RATE, REC_FPS);
+            fmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+            codec = MediaCodec.createEncoderByType("video/avc");
+            codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            input = codec.createInputSurface();
+            codec.start();
+            muxer = new MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            thread = new Thread(this, "vscreen-rec");
+            thread.setDaemon(true);
+            thread.start();
+            log("recording to " + path + " " + outW + "x" + outH + " max " + maxSeconds + "s", null);
+        }
+
+        boolean running() {
+            return !done;
+        }
+
+        /** Stops and waits for the file to be complete; the first reason given stays. */
+        void finish(String why) {
+            if (reason == null) {
+                reason = why;
+            }
+            stopFlag = true;
+            Thread t = thread;
+            if (t != null && Thread.currentThread() != t) {
+                try {
+                    t.join(8_000);
+                } catch (InterruptedException ignored) {
+                }
+            }
+        }
+
+        JSONObject info() throws Exception {
+            File f = new File(path);
+            f.setReadable(true, false);
+            long end = endedAt > 0 ? endedAt : System.currentTimeMillis();
+            return new JSONObject().put("path", path).put("bytes", frames > 0 ? f.length() : 0)
+                    .put("seconds", (end - startedAt) / 1000.0).put("reason", reason == null ? "stopped" : reason);
+        }
+
+        @Override
+        public void run() {
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            Rect dst = new Rect(0, 0, outW, outH);
+            long period = 1000L / REC_FPS;
+            long next = System.currentTimeMillis();
+            try {
+                while (!stopFlag && session.pumping) {
+                    long now = System.currentTimeMillis();
+                    if (now - startedAt >= maxSeconds * 1000L) {
+                        if (reason == null) {
+                            reason = "limit";
+                        }
+                        break;
+                    }
+                    if (now >= next) {
+                        next += period;
+                        if (next < now) {
+                            next = now + period;
+                        }
+                        drawFrame(dst);
+                    }
+                    drain(info, false);
+                    Thread.sleep(8);
+                }
+                if (reason == null) {
+                    reason = "closed";
+                }
+                codec.signalEndOfInputStream();
+                drain(info, true);
+            } catch (Throwable t) {
+                log("recording failed", t);
+                if (reason == null || "stopped".equals(reason)) {
+                    reason = "error: " + t.getMessage();
+                }
+            } finally {
+                try {
+                    codec.stop();
+                } catch (Throwable ignored) {
+                }
+                try {
+                    codec.release();
+                } catch (Throwable ignored) {
+                }
+                try {
+                    input.release();
+                } catch (Throwable ignored) {
+                }
+                try {
+                    if (muxing) {
+                        muxer.stop();
+                    }
+                    muxer.release();
+                } catch (Throwable t) {
+                    log("muxer stop failed", t);
+                    frames = 0;
+                }
+                endedAt = System.currentTimeMillis();
+                done = true;
+                log("recording done: " + frames + " frames, reason " + reason, null);
+            }
+        }
+
+        private void drawFrame(Rect dst) {
+            Canvas c = null;
+            try {
+                c = input.lockCanvas(null);
+                synchronized (session.frameLock) {
+                    Bitmap b = session.frame;
+                    if (b != null && !b.isRecycled()) {
+                        c.drawBitmap(b, null, dst, null);
+                    } else {
+                        c.drawColor(0xFF000000);
+                    }
+                }
+            } catch (Throwable t) {
+                log("recording draw failed: " + t.getMessage(), null);
+            } finally {
+                if (c != null) {
+                    try {
+                        input.unlockCanvasAndPost(c);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }
+
+        private void drain(MediaCodec.BufferInfo info, boolean untilEnd) {
+            int idle = 0;
+            while (true) {
+                int i = codec.dequeueOutputBuffer(info, untilEnd ? 10_000 : 0);
+                if (i == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    if (!untilEnd || ++idle > 300) {
+                        return;
+                    }
+                    continue;
+                }
+                if (i == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    track = muxer.addTrack(codec.getOutputFormat());
+                    muxer.start();
+                    muxing = true;
+                    continue;
+                }
+                if (i < 0) {
+                    continue;
+                }
+                ByteBuffer buf = codec.getOutputBuffer(i);
+                if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                    info.size = 0;
+                }
+                if (info.size > 0 && muxing && buf != null) {
+                    if (basePtsUs < 0) {
+                        basePtsUs = info.presentationTimeUs;
+                    }
+                    info.presentationTimeUs = Math.max(0, info.presentationTimeUs - basePtsUs);
+                    buf.position(info.offset);
+                    buf.limit(info.offset + info.size);
+                    muxer.writeSampleData(track, buf, info);
+                    frames++;
+                }
+                codec.releaseOutputBuffer(i, false);
+                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                    return;
+                }
+            }
+        }
     }
 
     // ==================== helpers ====================
