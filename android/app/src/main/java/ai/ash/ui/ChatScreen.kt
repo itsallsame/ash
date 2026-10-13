@@ -61,8 +61,22 @@ class ChatScreen(
     }
     private val list = AshUi.vstack(ctx, 8).apply { setPadding(dp(14), dp(8), dp(14), dp(12)) }
     private val scroll = object : ScrollView(ctx) {
-        override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) { super.onScrollChanged(l, t, oldl, oldt); if (t < dp(200)) loadOlder() }
+        override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) { super.onScrollChanged(l, t, oldl, oldt); if (t < dp(200)) loadOlder(); paintToBottom() }
     }.apply { isFillViewport = true; addView(list) }
+    /** Ids of the long messages the owner opened; kept here so a repaint or a page of older messages does not fold them again. */
+    private val unfolded = HashSet<String>()
+    /** New rows that came while the owner was reading further up: the 「回到底部」 button wears a dot until the bottom is reached. */
+    private var unseenBelow = false
+    private val toBottomDot = View(ctx).apply { background = AshUi.rounded(0xFFFF3B30.toInt(), AshUi.dpF(ctx, 5f)); visibility = View.GONE }
+    private val toBottom = FrameLayout(ctx).apply {
+        val s = dp(44)
+        background = AshUi.rounded(c.surface, s / 2f, c.line, dp(1)); AshUi.cardShadow(this)
+        isClickable = true; contentDescription = "回到最新消息"; alpha = 0f; visibility = View.GONE
+        addView(View(ctx).apply { background = ctx.getDrawable(R.drawable.ash_ic_down)!!.mutate().apply { setTint(c.text) } }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        addView(toBottomDot, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(8), 0) })
+        setOnClickListener { scroll.smoothScrollBy(0, list.height - scroll.scrollY - scroll.height) }
+    }
+    private val scrollHost = FrameLayout(ctx)
     /** While the owner has lent the screen: who, how long is left, and a tap takes it back. */
     private val leaseBar = AshUi.text(ctx, "", AshType(12.5f, 16f, 500, Role.TEXT)).apply {
         gravity = Gravity.CENTER; visibility = View.GONE; setPadding(dp(12), dp(7), dp(12), dp(7)); contentDescription = "屏幕授权中，点这里收回"
@@ -101,6 +115,7 @@ class ChatScreen(
     private var loadingOlder = false
     private val rows = HashMap<String, Pair<String, View>>()
     private val seen = HashSet<String>()
+    private val FOLD_LINES = 4
     private var firstPaint = true
     private var current: JSONObject? = null
     private var refreshQueued = false
@@ -120,7 +135,9 @@ class ChatScreen(
         view.addView(banner, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(4)) })
         view.addView(leaseBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(4)) })
         LeaseState.onChange(onLease)
-        view.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        scrollHost.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        scrollHost.addView(toBottom, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(10)) })
+        view.addView(scrollHost, LinearLayout.LayoutParams(-1, 0, 1f))
         view.addView(pillSlot, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(6) })
         view.addView(composer(), LinearLayout.LayoutParams(-1, -2))
         port.onChange(onChange)
@@ -416,6 +433,19 @@ class ChatScreen(
         AlertDialog.Builder(ctx).setTitle("她在做的事").setMessage(lines).setPositiveButton("好", null).show()
     }
 
+    /** The round 「回到底部」 button: up once the owner has scrolled more than a screen away from the newest message; its dot says something new came meanwhile. */
+    private fun paintToBottom() {
+        val away = list.height - (scroll.scrollY + scroll.height)
+        val show = away > scroll.height
+        if (away <= dp(24)) unseenBelow = false
+        toBottomDot.visibility = if (unseenBelow) View.VISIBLE else View.GONE
+        val up = toBottom.visibility == View.VISIBLE && toBottom.tag == true
+        if (show == up) return
+        toBottom.tag = show
+        if (show) { toBottom.visibility = View.VISIBLE; toBottom.animate().alpha(1f).setDuration(150).start() }
+        else toBottom.animate().alpha(0f).setDuration(150).withEndAction { if (toBottom.tag != true) toBottom.visibility = View.GONE }.start()
+    }
+
     private fun paintList() {
         val atBottom = !scroll.canScrollVertically(1)
         val wanted = ArrayList<Pair<String, () -> View?>>()
@@ -435,11 +465,12 @@ class ChatScreen(
             next[id] = key to v
             (v.parent as? android.view.ViewGroup)?.removeView(v)
             list.addView(v)
-            if (seen.add(id) && !firstPaint) enter(v)
+            if (seen.add(id) && !firstPaint) { enter(v); if (!atBottom) unseenBelow = true }
         }
         rows.clear(); rows.putAll(next)
         firstPaint = false
         if (atBottom) scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        scroll.post { paintToBottom() }
     }
 
     /** A new row rises in (once; the system's "remove animations" turns it off). */
@@ -468,13 +499,40 @@ class ChatScreen(
             (files.attachment(item, a, mine) ?: AshUi.text(ctx, "📎 ${a.optString("name").ifEmpty { "附件" }}", AshTokens.Type.callout, c.text2))
                 .let { box.addView(it, LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START }) }
         }
-        if (text.isNotBlank()) box.addView(AshUi.bubbleText(ctx, if (mine) text else Md.render(text, c.surface2, c.her) { files.openLink(it) }, mine).apply {
-            setTextIsSelectable(true); movementMethod = LinkMovementMethod.getInstance()
-        }, LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START })
+        if (text.isNotBlank()) {
+            val bubble = AshUi.bubbleText(ctx, if (mine) text else Md.render(text, c.surface2, c.her) { files.openLink(it) }, mine).apply {
+                setTextIsSelectable(true); movementMethod = LinkMovementMethod.getInstance()
+            }
+            val side = LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START }
+            box.addView(bubble, side)
+            foldable(bubble, item.optString("id"), box, side)
+        }
         val reactions = item.optJSONArray("reactions") ?: JSONArray()
         if (reactions.length() > 0) box.addView(AshUi.text(ctx, (0 until reactions.length()).joinToString(" ") { reactions.optJSONObject(it)?.optString("emoji").orEmpty() }, AshTokens.Type.callout),
             LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START })
         return box
+    }
+
+    /** A bubble longer than four lines shows four and 「…」 with a 「展开」 under it (a tap on the bubble does the same); open, it has 「收起」. */
+    private fun foldable(bubble: TextView, id: String, box: LinearLayout, side: LinearLayout.LayoutParams) {
+        val toggle = AshUi.text(ctx, "展开", AshTokens.Type.callout, c.her).apply { visibility = View.GONE; setPadding(dp(6), dp(2), dp(6), dp(2)) }
+        box.addView(toggle, LinearLayout.LayoutParams(-2, -2).apply { gravity = side.gravity })
+        fun apply() {
+            val open = id.isNotEmpty() && id in unfolded
+            bubble.maxLines = if (open) Int.MAX_VALUE else FOLD_LINES
+            bubble.ellipsize = if (open) null else android.text.TextUtils.TruncateAt.END
+            toggle.text = if (open) "收起" else "展开"
+        }
+        fun flip() { if (id.isEmpty()) return; if (!unfolded.add(id)) unfolded.remove(id); apply() }
+        apply()
+        bubble.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val l = bubble.layout ?: return@addOnLayoutChangeListener
+            val open = id in unfolded
+            val long = if (open) l.lineCount > FOLD_LINES else l.lineCount >= FOLD_LINES && l.getEllipsisCount(l.lineCount - 1) > 0
+            val want = if (long) View.VISIBLE else View.GONE
+            if (toggle.visibility != want) { toggle.visibility = want; bubble.setOnClickListener(if (long) View.OnClickListener { flip() } else null); bubble.isClickable = long }
+        }
+        toggle.setOnClickListener { flip() }
     }
 
     private fun pending(o: JSONObject): View {
