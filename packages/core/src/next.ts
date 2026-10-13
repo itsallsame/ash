@@ -177,6 +177,7 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
   // A long attachment goes back to the channel that asked for it, as a stream on that connection (the human edge is made below).
   const blobs = createBlobsService(ledger, { openStream: (bytes, mime, ctx) => late.human!.openStream(ctx.caller.client, bytes, mime) });
   const gateService = late.gateService = createGateService({
+    ownerSay: (askId, to, body) => late.human!.sayAfterAnswer(askId, to, body),
     store, gate, send: (msg, caller, o) => router.send(msg, caller, o), redeem: (id, caller, o) => router.redeem(id, caller, o),
     contractOf: (member, word) => registry.find(member, word)?.contract ?? null, nameOf: createNameOf({
       memberName: (id) => registry.get(id)?.name, handName: (hand) => late.hands?.get(hand)?.name,

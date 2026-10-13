@@ -116,3 +116,30 @@ test("the router giving up on an ask closes its card", async (t) => {
   await phone.present((f) => f.surface === "notification" && f.op === "hide", "the notification taken down");
   await quiet(20);
 });
+
+test("after the owner answered an approval, the hub says it to the agent as that owner on that channel, once; an approval that ended by its time has no such say", async (t) => {
+  const hub = await startHumanHub(); t.after(() => hub.stop());
+  const phone = await Channel.open(hub, { surfaces: ["chat"] }); phone.follow();
+  const web = await Channel.open(hub, { surfaces: ["chat"], kind: "browser" }); web.follow();
+
+  const asking = hub.mini.send(approvalCard(), GATE);
+  const card = await phone.seen((m) => m.kind === "request" && m.word === "ask", "the card");
+  assert.ok((await web.answer(card, "once")).ok);
+  await asking;
+  const body = { text: "批准：发邮件", in_reply_to: "m_pending", option_id: "once" };
+  assert.equal(await hub.human.sayAfterAnswer(card.id, "agent:main", body), true);
+  const said = hub.mini.sent.filter((s) => s.msg.word === "say");
+  assert.equal(said.length, 1);
+  assert.deepEqual(said[0]!.msg.body, body);
+  assert.equal(said[0]!.caller.member, "person:owner");
+  assert.equal(said[0]!.caller.via, "human");
+  assert.equal(said[0]!.caller.origin?.channel, "web", "on the channel that answered, stamped like a typed message");
+  assert.equal(await hub.human.sayAfterAnswer(card.id, "agent:main", body), false, "one approval, one say");
+  assert.equal(hub.mini.sent.filter((s) => s.msg.word === "say").length, 1);
+
+  const ended = await hub.mini.send(approvalCard({ expires_at: Date.now() + 50 }), GATE);
+  assert.deepEqual(ended, { ok: true, result: { data: { choice: "deny" } } });
+  const timedOut = hub.ledger.page({ limit: 20 }).filter((m) => m.word === "ask" && m.kind === "request").at(-1)!;
+  assert.equal(await hub.human.sayAfterAnswer(timedOut.id, "agent:main", body), false, "nobody answered it");
+  assert.equal(hub.mini.sent.filter((s) => s.msg.word === "say").length, 1);
+});

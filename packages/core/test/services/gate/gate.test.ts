@@ -40,10 +40,12 @@ test("ask: the agent gets waiting_owner at once, the owner gets a card, the answ
   s.owner.answer("once");
   await flush();
   assert.equal(s.store.getPending(waiting.pending_id)?.state, "approved");
+  // The answer is the owner's own say to the agent (a front turn), with the pending id and the choice in it; no background tell.
   const note = s.main.inbox.at(-1)!;
-  assert.equal(note.word, "tell");
-  assert.match((note.body as any).text, new RegExp(`批准.*message\\.send.*${waiting.pending_id}.*pending\\.redeem`));
-  assert.equal(note.reply_to, waiting.pending_id);
+  assert.equal(note.word, "say");
+  assert.equal(note.from, "person:owner");
+  assert.deepEqual(note.body, { text: "批准：发消息", in_reply_to: waiting.pending_id, option_id: "once" });
+  assert.equal(s.main.inbox.filter((m) => m.word === "tell").length, 0);
 
   const listed = success(await s.gateCall("pending.list", {}));
   assert.deepEqual(listed.pending.map((p: any) => [p.id, p.state]), [[waiting.pending_id, "approved"]]);
@@ -71,12 +73,32 @@ test("ask: a refusal tells the agent and cannot be redeemed", async () => {
   await flush();
   s.owner.answer("deny");
   await flush();
-  assert.match((s.main.inbox.at(-1)!.body as any).text, /拒绝/);
+  assert.equal(s.main.inbox.at(-1)!.word, "say");
+  assert.deepEqual(s.main.inbox.at(-1)!.body, { text: "拒绝：发消息", in_reply_to: id, option_id: "deny" });
   assert.equal(failure(await s.gateCall("pending.redeem", { id })).code, "conflict");
   assert.equal(s.phone.calls.length, 0);
   assert.equal(s.store.evidence(id)?.decision, "deny");
   assert.equal(success(await s.gateCall("pending.skip", { id, reason: "no" })).skipped, true);
   assert.equal(s.owner.said.length, 1, "the owner is told it was skipped");
+});
+
+test("ask: a card that ended by its time was no word of the owner's: the agent is told in the background; a failed say falls back to that too", async () => {
+  const none = setup({ ownerSay: "none" });
+  const first = success(await none.ask()).pending_id;
+  await flush();
+  none.owner.answer("deny");
+  await flush();
+  assert.deepEqual(none.main.inbox.map((m) => m.word), ["tell"]);
+  assert.match((none.main.inbox[0]!.body as any).text, new RegExp(`${first}.*超时`));
+
+  const broken = setup({ ownerSay: "fails" });
+  const id = success(await broken.ask()).pending_id;
+  await flush();
+  broken.owner.answer("once");
+  await flush();
+  assert.equal(broken.main.inbox.at(-1)!.word, "tell");
+  assert.match((broken.main.inbox.at(-1)!.body as any).text, new RegExp(`批准.*${id}.*pending\\.redeem`));
+  assert.equal(broken.store.getPending(id)?.state, "approved", "the approval stands");
 });
 
 test("ask: no answer by the deadline is a refusal; a late answer changes nothing", async () => {

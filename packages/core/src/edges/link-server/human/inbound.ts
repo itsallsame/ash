@@ -101,7 +101,7 @@ export class Inbound {
   }
 
   private async deliver(c: LiveClient, req: Request): Promise<SendOutcome> {
-    if (req.kind === "response") return this.answer(req);
+    if (req.kind === "response") return this.answer(c, req);
     const out: Outgoing = { to: req.to, kind: req.kind, word: req.word, body: req.body, ...(req.reply_to ? { reply_to: req.reply_to } : {}) };
     const id = `m_${randomBytes(9).toString("base64url")}`;
     const seen = this.d.recorded.expect((m) => m.id === id);
@@ -120,7 +120,7 @@ export class Inbound {
     return { ok: true, message: ref, response: response as Record<string, unknown> };
   }
 
-  private async answer(req: Request): Promise<SendOutcome> {
+  private async answer(c: LiveClient, req: Request): Promise<SendOutcome> {
     const id = req.reply_to;
     if (req.word !== "ask" || !id) return fail(errorBody("bad_request", "a response from the owner is the answer to an ask: word ask, with reply_to"));
     if (!this.d.asks.has(id)) {
@@ -128,7 +128,7 @@ export class Inbound {
       return fail(known?.word === "ask" ? errorBody("conflict", "this question was already answered or has ended") : errorBody("not_found", "no such question"));
     }
     const recorded = this.d.recorded.expect((m) => m.kind === "response" && m.reply_to === id);
-    const answered = this.d.asks.answer(id, req.body);
+    const answered = this.d.asks.answer(id, req.body, c);
     if (!answered.ok) { recorded.cancel(); return fail(answered.error); }
     const message = await Promise.race([recorded.promise, later(this.d.recordMs)]);
     recorded.cancel();

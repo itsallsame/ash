@@ -1,23 +1,23 @@
 /**
  * REGRESSION-0.3 §2: approvals. A request that needs the owner is answered `waiting_owner` at once; the owner answers the
- * card; the one who asked is told by a background message and carries the request out with `pending.redeem`.
+ * card; the one who asked is told by the owner's own message in the conversation (a front turn) and carries the request out with `pending.redeem`.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MAIN, accepted, byOwnerText, errorCode, extensionCapability, fromGate, isApprovalAsk, quiet, resultOf,
+  MAIN, accepted, byOwnerText, errorCode, extensionCapability, ownerApproval, isApprovalAsk, quiet, resultOf,
   startScenario, type Hand, type Scenario, type TurnScript, type ToolResult, dataOf } from "./harness";
 import { eventually } from "../fixtures/wait";
 
 interface Flow { pendingId: string; first?: ToolResult; redeemed?: ToolResult; again?: ToolResult }
 
 /**
- * The agent's side of an approval: ask for something that needs the owner; when the gate's background message comes,
+ * The agent's side of an approval: ask for something that needs the owner; when the owner's answer comes in the conversation,
  * redeem the pending request (and try once more, which must not work: a redeem is good once).
  */
 function approvalScript(phone: Hand, flow: Flow, app = "com.example.notes"): TurnScript {
   return async (turn) => {
-    if (turn.messages.some(fromGate)) {
+    if (turn.messages.some(ownerApproval)) {
       flow.redeemed = await turn.tool("human_pending_redeem", { id: flow.pendingId });
       flow.again = await turn.tool("human_pending_redeem", { id: flow.pendingId });
       return;
@@ -50,11 +50,13 @@ test("S032, S039, S033: an outward action waits for the owner; once approved the
 
   accepted(await owner.answer(card, "once"));
 
-  const { delivery, message } = await s.driver.delivery(fromGate, "the background message about the answer");
-  assert.equal(message.word, "tell", "the answer reaches the asker as agent:<x>/tell");
+  const { delivery, message } = await s.driver.delivery(ownerApproval, "the owner's message about the answer");
+  assert.equal(message.word, "say", "the answer reaches the asker as the owner's say");
   assert.equal(delivery.agent, MAIN, "and only the agent that asked");
-  assert.equal(message.lane, "back", "on the back lane, not into the owner's conversation");
+  assert.equal(message.lane, "front", "on the front lane, in the owner's conversation");
   assert.ok(message.text.includes(flow.pendingId), "naming the pending request");
+  assert.ok(message.text.includes("option once") && message.text.includes("批准："), "with the choice, in words");
+  assert.equal(s.driver.deliveries.some((d) => d.messages.some((m) => m.word === "tell" && m.from === "service:gate")), false, "no background tell from the gate");
   await eventually(() => flow.again, "the redeem results");
   assert.equal(flow.redeemed!.isError, false);
   assert.equal(phone.calls.length, 1, "the hand ran it once");
@@ -73,9 +75,9 @@ test("S032: the owner says no: the asker is told, redeeming does nothing", async
   const card = await owner.seen(isApprovalAsk, "the approval card");
   accepted(await owner.answer(card, "deny"));
 
-  const refusal = await s.driver.delivery(fromGate, "the background message about the refusal");
+  const refusal = await s.driver.delivery(ownerApproval, "the owner's message about the refusal");
   assert.equal(refusal.delivery.agent, MAIN);
-  assert.ok(refusal.message.text.includes(flow.pendingId));
+  assert.ok(refusal.message.text.includes(flow.pendingId) && refusal.message.text.includes("拒绝："));
   await eventually(() => flow.again, "the redeem results");
   assert.equal(flow.redeemed!.isError, true);
   assert.equal(phone.calls.length, 0);
@@ -137,7 +139,7 @@ test("S040: the hub restarts while the card waits: the question is asked again a
   const again = await owner.seen((m) => isApprovalAsk(m) && m.id !== first.id, "the approval card after the restart");
   assert.equal(phone.calls.length, 0);
   accepted(await owner.answer(again, "once"));
-  await s.driver.delivery(fromGate, "the background message after the restart");
+  await s.driver.delivery(ownerApproval, "the owner's message after the restart");
   await eventually(() => flow.redeemed, "the redeem after the restart");
   assert.equal(flow.redeemed!.isError, false);
   assert.equal(phone.calls.length, 1, "run once, not replayed");

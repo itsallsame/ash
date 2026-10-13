@@ -4,7 +4,8 @@
  * request: the owner's answer reaches it as a message, and it carries the request out with `pending.redeem`.
  *
  * It also does what the router cannot: when a request is parked it sends the owner the card (`person:owner/ask`),
- * turns the answer into the gate's `answered`, and tells the originator.
+ * turns the answer into the gate's `answered`, and has the owner's answer said to the originator in the conversation
+ * (a front turn, with the pending id and the choice in it; the agent redeems or skips by itself).
  */
 import { isAgentId, OWNER_ID } from "../../../../sdk/src/ids";
 import { WordError, type Caller, type HandleContext, type Message, type Outgoing, type Reply, type WordResult } from "../../../../sdk/src/message";
@@ -34,6 +35,11 @@ export interface GateServiceDeps {
   onError?(where: string, error: unknown): void;
   /** How often waiting questions are checked for their time (ms). Default 30 s. */
   sweepMs?: number;
+  /**
+   * After the owner answered the card [askId], says [body] to the agent [to] as the owner (once). Resolves false when the owner did not
+   * answer it (it ended by its time); a refusal rejects. Absent: the agent is not spoken to.
+   */
+  ownerSay?(askId: string, to: string, body: Record<string, unknown>): Promise<boolean>;
 }
 
 export interface GateService extends Member {
@@ -70,7 +76,7 @@ export function createGateService(deps: GateServiceDeps): GateService {
   }
   const what = (p: PendingRecord) => `「${p.label ?? p.word}」请求（${p.to}/${p.word}，pending ${p.id}）`;
 
-  function answered(id: string, reply: Reply): void {
+  function answered(id: string, reply: Reply & { id?: string }): void {
     const current = store.getPending(id);
     cards.delete(id);
     if (!current || current.state !== "waiting" || !reply.ok) return;     // expired, withdrawn, or the card itself failed: it stays as it is
@@ -79,9 +85,27 @@ export function createGateService(deps: GateServiceDeps): GateService {
     const record = store.setState(id, ["waiting"], choice === "deny" ? "denied" : "approved", { choice, at: now() });
     if (!record) return;
     try { gate.answered(original(record), choice); } catch (error) { oops("answered")(error); }
-    tellOriginator(record, choice === "deny"
-      ? `主人拒绝了你的${what(record)}。不要原样重复这个请求；需要的话先和主人说明。`
-      : `主人批准了你的${what(record)}。如果现在仍然需要做，调 service:gate/pending.redeem {"id":"${record.id}"} 执行（只能用一次）；不需要了就调 service:gate/pending.skip。`);
+    speak(record, choice, reply.id);
+  }
+
+  /**
+   * The owner's click is the approval itself; what follows is the owner saying so to the agent, in the conversation, so that it
+   * takes a front turn and goes on by itself: `[answers <pending id>, option <choice>] 批准：创建虚拟屏`. An approval that ended
+   * by its time was no word of the owner's: the agent is told in the background, as for an expired one.
+   */
+  function speak(p: PendingRecord, choice: string, askId: string | undefined): void {
+    if (!isAgentId(p.originator)) return;
+    const timedOut = () => tellOriginator(p, `你的${what(p)}超时没有得到主人回答，按拒绝处理。需要的话请重新提出。`);
+    if (!deps.ownerSay || !askId) return;
+    const doing = (p.label ?? p.word).replace(/^在/, "");
+    const text = `${choice === "deny" ? "拒绝" : choice === "always" ? "以后都可以" : "批准"}：${doing}`;
+    deps.ownerSay(askId, p.originator, { text, in_reply_to: p.id, option_id: choice }).then(
+      (said) => { if (!said) timedOut(); },
+      (error) => {
+        oops("ownerSay")(error);
+        tellOriginator(p, `主人${choice === "deny" ? "拒绝" : "批准"}了你的${what(p)}。${choice === "deny" ? "不要原样重复这个请求。" : `需要的话调 service:gate/pending.redeem {"id":"${p.id}"}，不需要就调 pending.skip。`}`);
+      },
+    );
   }
 
   store.onExpired = (p) => {

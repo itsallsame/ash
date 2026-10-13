@@ -78,6 +78,8 @@ export interface WorldOptions {
   mayTalkToOwner?: (caller: Caller, word: string) => boolean;
   mayAnswer?: (caller: Caller, body: unknown) => boolean;
   tap?: (traffic: Traffic) => void;
+  /** What the hub does after the owner answered a card: the default says it to the agent as the owner, as the human edge does; false: the owner did not answer (the card ended by its time). */
+  ownerSay?: "owner" | "none" | "fails";
 }
 
 export function world(options: WorldOptions = {}) {
@@ -116,6 +118,13 @@ export function world(options: WorldOptions = {}) {
       memberName: (id) => registry.get(id)?.name, handName: (hand) => options.handNames?.[hand],
       mainAgentName: () => registry.get("agent:main")?.name,
     }), onError: (where, error) => errors.push({ where, error }),
+    ownerSay: async (_askId, to, body) => {
+      if (options.ownerSay === "none") return false;
+      if (options.ownerSay === "fails") throw new Error("the owner's channel is gone");
+      const sent = await router.send({ to, kind: "request", word: "say", body }, { member: "person:owner", via: "human", local: true });
+      if (!sent.ok) throw new WordError(sent.error.code, sent.error.message);
+      return true;
+    },
   });
   services.push(svc);
   const ownerMember = fakeOwner();

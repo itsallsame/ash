@@ -7,6 +7,7 @@
  * A question that did not say when it ends ends after 24 hours; none lives longer than 7 days.
  */
 import { errorBody, WordError, type ErrorBody, type Message, type WordResult } from "../../../../../sdk/src/message";
+import type { LiveClient } from "./clients";
 
 export interface AskOption { id: string; label: string }
 /** A confirmation without options of its own gets these. They are not the approval card's `once` / `deny`. */
@@ -14,6 +15,7 @@ export const YES_NO: readonly AskOption[] = [{ id: "yes", label: "是" }, { id: 
 export const DEFAULT_EXPIRY_MS = 24 * 3600_000;
 export const MAX_EXPIRY_MS = 7 * 24 * 3600_000;
 export const APPROVAL_SENDER = "service:gate";
+const MAX_ANSWERERS = 100;
 
 export interface PendingAsk {
   id: string;
@@ -41,6 +43,8 @@ export type AnswerResult = { ok: true } | { ok: false; error: ErrorBody };
 
 export class Asks {
   private readonly entries = new Map<string, Entry>();
+  /** The channel an approval was answered on, until the gate asks for it (an approval that ended by its time has none). */
+  private readonly answerers = new Map<string, LiveClient>();
 
   constructor(private readonly o: { now(): number; ended(ask: PendingAsk, notified: Set<string>): void; changed(): void }) {}
 
@@ -74,8 +78,8 @@ export class Asks {
     return { ask: entry, done };
   }
 
-  /** The owner answered on some channel: `body` is the response body `{ok:true, result:{data:{choice, text?}}}`. */
-  answer(id: string, body: unknown): AnswerResult {
+  /** The owner answered on [by]: `body` is the response body `{ok:true, result:{data:{choice, text?}}}`. */
+  answer(id: string, body: unknown, by?: LiveClient): AnswerResult {
     const entry = this.entries.get(id);
     if (!entry) return { ok: false, error: errorBody("conflict", "this question is no longer open") };
     const data = (body as { ok?: unknown; result?: { data?: { choice?: unknown; text?: unknown } } } | null);
@@ -85,8 +89,19 @@ export class Asks {
       return { ok: false, error: errorBody("bad_request", "an answer is {ok: true, result: {data: {choice, text?}}}") };
     if (!entry.options.some((option) => option.id === choice) && !entry.allow_custom)
       return { ok: false, error: errorBody("bad_request", `${choice} is not one of the options: ${entry.options.map((option) => option.id).join(", ")}`) };
+    if (by && entry.kind === "approval") {
+      this.answerers.set(id, by);
+      for (const old of this.answerers.keys()) { if (this.answerers.size <= MAX_ANSWERERS) break; this.answerers.delete(old); }
+    }
     entry.settle({ data: { choice, ...(text !== undefined ? { text } : {}) } });
     return { ok: true };
+  }
+
+  /** Who answered the approval [id], once: null when the owner did not (it ended by its time) or it was taken already. */
+  takeAnswerer(id: string): LiveClient | null {
+    const by = this.answerers.get(id) ?? null;
+    this.answerers.delete(id);
+    return by;
   }
 
   /** The router gave up on the request (cancelled, or its own time ran out). */

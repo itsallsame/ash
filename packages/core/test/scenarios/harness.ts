@@ -65,7 +65,8 @@ export const isApprovalAsk = (m: Message): boolean => m.kind === "request" && m.
 
 export const ownerMessage = (text: string) => (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && m.text === text;
 /** The gate telling the agent that asked: an `agent:<x>/tell` from `service:gate` (BUILD-PROGRESS §7, decision 4). */
-export const fromGate = (m: DriverMessage): boolean => m.from === GATE && m.word === "tell";
+/** The owner's answer to an approval, said to the agent in the conversation: `[answers <pending id>, option once] 批准：…`. */
+export const ownerApproval = (m: DriverMessage): boolean => m.from === OWNER && m.word === "say" && m.text.startsWith("[answers ");
 /** A background `tell` whose text names this id (a `pending_id`, a `setup_id`). */
 export const tellAbout = (id: string) => (m: DriverMessage): boolean => m.word === "tell" && m.text.includes(id);
 

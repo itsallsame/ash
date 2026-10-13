@@ -68,6 +68,11 @@ export interface HumanEdge {
    * (`service:blobs/get`). [client] is the channel the word came in through; throws `offline` when it is not connected.
    */
   openStream(client: string | undefined, bytes: Uint8Array, mime: string): string;
+  /**
+   * The owner's words after they answered the approval [askId]: sends [body] as a `say` to [to], as the owner, on the channel the
+   * answer came from (counted once for one approval, however many times it is asked). False when the owner did not answer it (it ended by its time).
+   */
+  sayAfterAnswer(askId: string, to: string, body: Record<string, unknown>): Promise<boolean>;
   /** Brings a channel (default: the one the owner is on) to the front, e.g. after an authorization page. */
   focus(client?: string): Promise<PresentResult>;
   close(): void;
@@ -257,6 +262,13 @@ export function createHuman(deps: HumanDeps): HumanEdge {
       const c = client ? clients.get(client) : undefined;
       if (!c) throw new WordError("unavailable", "this connection cannot receive a stream");
       return c.session.sendStream("human", bytes, { mime });
+    },
+    async sayAfterAnswer(askId, to, body) {
+      const c = asks.takeAnswerer(askId);
+      if (!c) return false;
+      const sent = await inbound.send(c, { to, kind: "request", word: "say", body, client_id: `approval:${askId}` } as Parameters<Inbound["send"]>[1]);
+      if (!sent.ok) throw new WordError(sent.error.code, sent.error.message);
+      return true;
     },
     clients: () => clients.info(),
     viewing: () => clients.viewing(),
