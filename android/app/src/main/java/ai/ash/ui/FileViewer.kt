@@ -2,6 +2,7 @@ package ai.ash.ui
 
 import ai.ash.R
 import ai.ash.apps.Ui
+import ai.ash.caps.camera.CaptureProvider
 import ai.ash.ui.design.AshPage
 import ai.ash.ui.design.AshTokens
 import ai.ash.ui.design.AshType
@@ -12,6 +13,9 @@ import ai.ash.widget.Mark
 import ai.ash.widget.Markdown
 import android.app.Activity
 import android.app.Dialog
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.Intent
 import android.graphics.Typeface
 import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.ColorDrawable
@@ -26,6 +30,7 @@ import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.MimeTypeMap
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
@@ -33,14 +38,17 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.view.WindowCompat
+import java.io.File
 import java.nio.ByteBuffer
 import java.text.Collator
 
 /**
  * The file viewer over the chat (what the web page's files.js was): open one file of a body, a file's folder, the folders of a
- * body, or a link in a message; bytes that are already at hand (an attachment of a message) too. It reads through [access], shows
- * images, text, Markdown and web pages (a page as its text only — nothing in it runs or loads), and puts a file where the owner
- * chooses through [save]. Everything it shows is drawn natively; there is no web view.
+ * body, or a link in a message; bytes that are already at hand (an attachment of a message) too. It reads through [access] and shows
+ * what it can with what the system has: images, PDF (page by page), sound and video (the system's players), tables (CSV / TSV), JSON,
+ * text and code, Markdown, and web pages (a page as its text only — nothing in it runs or loads). Every file also has two ways out:
+ * to another application on the phone, and to where the owner chooses through [save]. Everything it shows is drawn natively;
+ * there is no web view. A file above [FileLinks.MAX_READ_BYTES] is not shown, only handed on.
  */
 class FileViewer(
     private val activity: Activity,
@@ -54,20 +62,37 @@ class FileViewer(
     private var actions: LinearLayout? = null
     private var note: TextView? = null
     private var body: LinearLayout? = null
+    private var scroll: ScrollView? = null
     /** Every shell() starts a new generation: what an earlier one was still waiting for is dropped when it arrives. */
     private var gen = 0
+    /** What this shell has read (so a save or a hand-over does not read again), the file in the app's cache a player, the PDF or another app reads, and what is playing. */
+    private var loaded: FileAccess.Bytes? = null
+    private var staged: File? = null
+    private var handedOut = false
+    private var playing: FilePreviews.Playing? = null
+    private var pdf: PdfPages? = null
 
     // ---------- the shell ----------
 
-    private fun shell(title: String): Int {
+    /** Lets go of what the shell held: players and the PDF stop, the cache file goes (unless another application was given it: a day's time clears that). */
+    private fun release() {
         gen++
+        playing?.release(); playing = null
+        pdf?.release(); pdf = null
+        loaded = null
+        if (!handedOut) staged?.delete()
+        staged = null; handedOut = false
+    }
+
+    private fun shell(title: String): Int {
+        release()
         val d = dialog ?: AshDialogs.make(activity, opaque = true).also { (made, frame) ->
             dialog = made
             val p = AshUi.vstack(ctx).apply { setBackgroundColor(AshUi.p(ctx).bg) }
             frame.addView(p, FrameLayout.LayoutParams(-1, -1))
             Ui.insets(frame)
             page = p
-            made.setOnDismissListener { gen++; body?.removeAllViews(); page?.removeAllViews() }
+            made.setOnDismissListener { release(); body?.removeAllViews(); page?.removeAllViews() }
         }.first
         val p = page!!
         p.removeAllViews()
@@ -82,7 +107,8 @@ class FileViewer(
         }
         p.addView(note)
         body = AshUi.vstack(ctx, 8).apply { setPadding(AshUi.dp(ctx, AshTokens.Space.pageX), AshUi.dp(ctx, 8), AshUi.dp(ctx, AshTokens.Space.pageX), AshUi.dp(ctx, 24)) }
-        p.addView(ScrollView(ctx).apply { isFillViewport = true; addView(body, ViewGroup.LayoutParams(-1, -2)) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll = ScrollView(ctx).apply { isFillViewport = true; addView(body, ViewGroup.LayoutParams(-1, -2)) }
+        p.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         if (!d.isShowing) d.show()
         return gen
     }
@@ -112,60 +138,114 @@ class FileViewer(
         if (valid == null) { say("文件路径无效"); return }
         val bodyId = valid.body ?: run { say("打不开：不知道这个文件在哪台设备上"); return }
         say("")
+        val name = valid.path.substringAfterLast('/')
         action("所在文件夹") { browse(bodyId, valid.directory) }
         action("下载") { b ->
             busy(b, true)
-            fetch(bodyId, valid.path, g, always = true) { bytes ->
-                if (bytes == null) { busy(b, false); return@fetch }
-                val name = valid.path.substringAfterLast('/')
+            read(bodyId, valid.path, g) { bytes ->
+                if (bytes == null) { busy(b, false); return@read }
                 save(name, bytes.mime ?: "application/octet-stream", bytes.data) { ok ->
                     busy(b, false)
                     if (g == gen) say(when (ok) { true -> "文件已保存"; null -> "已取消保存"; false -> "保存失败" })
                 }
             }
         }
-        val ext = FileLinks.extension(valid.path)
-        if (ext !in FileLinks.HTML && ext !in FileLinks.TEXTS && ext !in FileLinks.IMAGES) { muted("这种格式暂未接入内置阅读器，请下载后打开。"); return }
-        fetch(bodyId, valid.path, g) { bytes -> if (bytes != null) render(ext, bytes.mime, bytes.data, valid.path, valid) }
+        action("用其它应用打开") { b ->
+            busy(b, true)
+            read(bodyId, valid.path, g) { bytes -> busy(b, false); if (bytes != null && g == gen) openWith(name, bytes) }
+        }
+        // A file whose ending says it needs another application is not read just to be looked at.
+        if (FileFormats.kindOfName(FileLinks.extension(valid.path)) == FileFormats.Kind.OTHER) { muted(NO_READER); return }
+        read(bodyId, valid.path, g) { bytes -> if (bytes != null && g == gen) present(name, bytes, valid) }
     }
 
-    /** Bytes that are already here (an attachment): shown by the name's ending or the type, and saved from the bar. */
+    /** Bytes that are already here (an attachment): shown by the name's ending, the type or the bytes, and handed on or saved from the bar. */
     fun show(name: String, mime: String, bytes: ByteArray) {
         val g = shell(name)
         say("")
+        val have = FileAccess.Bytes(bytes, mime).also { loaded = it }
         action("保存") { b ->
             busy(b, true)
             save(name, mime, bytes) { ok -> busy(b, false); if (g == gen) say(when (ok) { true -> "文件已保存"; null -> "已取消保存"; false -> "保存失败" }) }
         }
-        val ext = FileLinks.extension(name).ifEmpty { if (mime.startsWith("image/")) mime.substringAfter('/') else "" }
-        if (ext in FileLinks.IMAGES || ext in FileLinks.TEXTS || ext in FileLinks.HTML) render(ext, mime, bytes, name, null) else muted("这种格式暂未接入内置阅读器，请保存后打开。")
+        action("用其它应用打开") { openWith(name, have) }
+        present(name, have, null)
     }
 
-    /** Reads a file for the shell [g]; [onBytes] gets null (and the note says why) when it could not be had. [always]: also when the shell has moved on. */
-    private fun fetch(bodyId: String, path: String, g: Int, always: Boolean = false, onBytes: (FileAccess.Bytes?) -> Unit) {
+    /**
+     * Reads a file for the shell [g] (once: what the shell has read is kept until it closes); [onBytes] gets null (and the note says
+     * why) when it could not be had. It is called also when the shell has moved on, with what was read.
+     */
+    private fun read(bodyId: String, path: String, g: Int, onBytes: (FileAccess.Bytes?) -> Unit) {
+        loaded?.let { return onBytes(it) }
         access.read(bodyId, path) { bytes, why ->
-            if (g != gen && !always) return@read
-            when {
-                bytes == null -> { if (g == gen) say(why?.message?.ifEmpty { null } ?: "文件无法打开"); onBytes(null) }
-                bytes.data.size > FileLinks.MAX_READ_BYTES -> { if (g == gen) say("文件超过当前 20 MiB 的限制"); onBytes(null) }
-                else -> onBytes(bytes)
-            }
+            if (bytes != null && g == gen) loaded = bytes
+            if (bytes == null && g == gen) say(when {
+                why?.code == "too_large" -> "文件太大（超过 64 MiB），读不进来，无法预览或保存"
+                else -> why?.message?.ifEmpty { null } ?: "文件无法打开"
+            })
+            onBytes(bytes)
         }
     }
 
-    private fun render(ext: String, mime: String?, data: ByteArray, label: String, base: FileRef?) {
+    /** The file in the app's cache, made once for this shell: what the players and the PDF read, and what another application is given. */
+    private fun stage(name: String, data: ByteArray): File = staged ?: CaptureProvider.newNamedFile(ctx, name).also { it.writeBytes(data); staged = it }
+
+    /** Gives the file to the system's chooser of applications that can show it. */
+    private fun openWith(name: String, bytes: FileAccess.Bytes) {
+        val uri = CaptureProvider.uriFor(ctx, stage(name, bytes.data))
+        handedOut = true
+        val type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(FileLinks.extension(name)) ?: bytes.mime?.takeIf { it != "application/octet-stream" } ?: "*/*"
+        val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, type).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        view.clipData = ClipData.newRawUri(name, uri)
+        try { activity.startActivity(Intent.createChooser(view, "用其它应用打开")) }
+        catch (e: ActivityNotFoundException) { say("手机上没有能打开这种文件的应用") }
+        catch (e: SecurityException) { say("没能交给其它应用") }
+    }
+
+    /** Shows [bytes] the way its kind says; a file too big, or of no kind this viewer knows, is left to the two buttons. */
+    private fun present(name: String, bytes: FileAccess.Bytes, base: FileRef?) {
         val box = body ?: return
-        when {
-            ext in FileLinks.IMAGES -> {
-                val view = Pictures.view(ctx, data, label) ?: run { say("图片无法显示"); return }
+        val data = bytes.data
+        if (data.size > FileLinks.MAX_READ_BYTES) { muted("文件超过 20 MiB，不在这里预览。可以用其它应用打开，或保存。"); return }
+        val kind = FileFormats.kind(FileLinks.extension(name), bytes.mime, data)
+        val (text, cut) = if (kind in TEXTUAL) FileFormats.preview(data) else "" to false
+        val tail = if (cut) "文件较大，只显示了前 1 MiB" else ""
+        when (kind) {
+            FileFormats.Kind.IMAGE -> {
+                val view = Pictures.view(ctx, data, name) ?: run { say("图片无法显示。可以用其它应用打开，或保存。"); return }
                 box.addView(view, LinearLayout.LayoutParams(-1, -2))
             }
-            ext in FileLinks.HTML -> {
-                say("网页阅读模式（不运行脚本，不加载其中的图片和样式表）")
-                box.addView(readable(Html.fromHtml(Pictures.stripHtml(String(data, Charsets.UTF_8)), Html.FROM_HTML_MODE_COMPACT)))
+            FileFormats.Kind.PDF -> {
+                val pages = PdfPages(ctx, stage(name, data), scroll ?: return) { say("这个 PDF 打不开（可能有密码或已损坏）。可以用其它应用打开，或保存。") }
+                pdf = pages
+                box.addView(pages.view, LinearLayout.LayoutParams(-1, -2))
             }
-            ext == "md" || ext == "markdown" -> box.addView(readable(markdown(String(data, Charsets.UTF_8), base)))
-            else -> box.addView(readable(String(data, Charsets.UTF_8), mono = true))
+            FileFormats.Kind.AUDIO, FileFormats.Kind.VIDEO -> {
+                val file = stage(name, data)
+                val fail = { say("系统播放不了这种编码。可以用其它应用打开，或保存。") }
+                val p = if (kind == FileFormats.Kind.AUDIO) FilePreviews.audio(ctx, file, fail) else FilePreviews.video(ctx, file, fail)
+                playing = p
+                box.addView(p.view, LinearLayout.LayoutParams(-1, -2))
+            }
+            FileFormats.Kind.TABLE -> {
+                val table = FileFormats.parseDelimited(text, if (FileLinks.extension(name) == "tsv") '\t' else ',', TABLE_ROWS, TABLE_COLUMNS)
+                if (table.rows.isEmpty()) { muted("表格是空的"); return }
+                say(listOfNotNull(if (table.moreRows) "只显示了前 $TABLE_ROWS 行" else tail.ifEmpty { null }, "只显示了前 $TABLE_COLUMNS 列".takeIf { table.moreColumns }).joinToString("；"))
+                box.addView(FilePreviews.table(ctx, table), LinearLayout.LayoutParams(-1, -2))
+            }
+            FileFormats.Kind.JSON -> {
+                val pretty = if (cut) null else FileFormats.prettyJson(text)
+                say(if (cut) "$tail，没有排版" else "")
+                box.addView(readable(pretty ?: text, mono = true))
+            }
+            FileFormats.Kind.HTML -> {
+                say("网页阅读模式（不运行脚本，不加载其中的图片和样式表）" + if (cut) "；$tail" else "")
+                box.addView(readable(Html.fromHtml(Pictures.stripHtml(text), Html.FROM_HTML_MODE_COMPACT)))
+            }
+            FileFormats.Kind.MARKDOWN -> { say(tail); box.addView(readable(markdown(text, base))) }
+            FileFormats.Kind.TEXT -> { say(tail); box.addView(readable(text, mono = true)) }
+            FileFormats.Kind.OTHER -> muted(NO_READER)
         }
     }
 
@@ -238,6 +318,10 @@ class FileViewer(
     fun dismiss() { dialog?.dismiss() }
 
     companion object {
+        private const val NO_READER = "这种格式暂无内置阅读器。可以用其它应用打开，或保存。"
+        private const val TABLE_ROWS = 300
+        private const val TABLE_COLUMNS = 20
+        private val TEXTUAL = setOf(FileFormats.Kind.TABLE, FileFormats.Kind.JSON, FileFormats.Kind.HTML, FileFormats.Kind.MARKDOWN, FileFormats.Kind.TEXT)
         private val LINK = Regex("\\[([^\\]]*)]\\(([^)\\s]*)[^)]*\\)")
 
         /** The `[label](href)` pairs of a Markdown text outside code fences, by label (the first one of a label wins). */

@@ -49,27 +49,42 @@ class FileAccess(private val port: HumanPort) {
             done(Listing(data.optString("path").ifEmpty { path }, entries, data.optBoolean("truncated")), null)
         }
 
-    /** The bytes and type of a file: text as it is, an image from its part, a large or binary file from its stream. */
+    /**
+     * The bytes and type of a file: text as it is (a long one is read on, part after part, until its end), an image from its part, a
+     * large or binary file from its stream.
+     */
     fun read(body: String, path: String, done: (Bytes?, HumanPort.Failure?) -> Unit) =
-        call(body, "workspace.read", JSONObject().put("path", path).put("limit", 100_000)) { result, f ->
+        call(body, "workspace.read", JSONObject().put("path", path).put("limit", TEXT_LINES)) { result, f ->
             if (result == null) return@call done(null, f)
             val parts = result.optJSONArray("content")
             val list = (0 until (parts?.length() ?: 0)).mapNotNull { parts?.optJSONObject(it) }
             val resource = list.firstOrNull { it.optString("type") == "resource" }
             val image = list.firstOrNull { it.optString("type") == "image" }
-            val text = result.optJSONObject("data")?.takeIf { it.has("text") }?.optString("text")
+            val data = result.optJSONObject("data")?.takeIf { it.has("text") }
             when {
-                resource != null -> port.stream(resource.optString("stream")) { mime, data, why ->
-                    if (data != null) done(Bytes(data, mime?.ifEmpty { null } ?: resource.optString("mime").ifEmpty { null }), null) else done(null, why)
+                resource != null -> port.stream(resource.optString("stream")) { mime, bytes, why ->
+                    if (bytes != null) done(Bytes(bytes, mime?.ifEmpty { null } ?: resource.optString("mime").ifEmpty { null }), null) else done(null, why)
                 }
                 image != null -> {
-                    val data = runCatching { Base64.decode(image.optString("b64"), Base64.DEFAULT) }.getOrNull()
-                    if (data != null) done(Bytes(data, image.optString("mime").ifEmpty { null }), null) else done(null, HumanPort.Failure("failed", "文件无法读取"))
+                    val bytes = runCatching { Base64.decode(image.optString("b64"), Base64.DEFAULT) }.getOrNull()
+                    if (bytes != null) done(Bytes(bytes, image.optString("mime").ifEmpty { null }), null) else done(null, HumanPort.Failure("failed", "文件无法读取"))
                 }
-                text != null -> done(Bytes(text.toByteArray(Charsets.UTF_8), "text/plain"), null)
+                data != null -> moreText(body, path, StringBuilder(data.optString("text")), data, done)
                 else -> done(null, HumanPort.Failure("failed", "文件无法读取"))
             }
         }
+
+    /** A text file the body cut short (its line or size limit for one read) is read on from where it stopped, so it is whole. */
+    private fun moreText(body: String, path: String, text: StringBuilder, last: JSONObject, done: (Bytes?, HumanPort.Failure?) -> Unit) {
+        val from = last.optInt("offset")
+        val next = last.optInt("next_offset")
+        if (!last.optBoolean("truncated") || next <= from || text.length > MAX_TEXT_CHARS) return done(Bytes(text.toString().toByteArray(Charsets.UTF_8), "text/plain"), null)
+        call(body, "workspace.read", JSONObject().put("path", path).put("offset", next).put("limit", TEXT_LINES)) { result, f ->
+            val data = result?.optJSONObject("data")?.takeIf { it.has("text") }
+            if (data == null) return@call done(null, f ?: HumanPort.Failure("failed", "文件无法读取"))
+            moreText(body, path, text.append('\n').append(data.optString("text")), data, done)
+        }
+    }
 
     /**
      * One inline attachment of a message, from the ledger's original record (the display copy of a message never carries its bytes):
@@ -101,5 +116,10 @@ class FileAccess(private val port: HumanPort) {
         }
     }
 
-    companion object { const val MAIN = "body:main" }
+    companion object {
+        const val MAIN = "body:main"
+        private const val TEXT_LINES = 100_000
+        /** About the most a body streams (64 MiB): a longer text is not read to its end. */
+        private const val MAX_TEXT_CHARS = 64 * 1024 * 1024
+    }
 }

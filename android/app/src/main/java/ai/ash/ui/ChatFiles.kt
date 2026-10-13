@@ -45,7 +45,7 @@ import java.io.File
  *  - 「+」: a sheet of four ways to attach (camera, video, gallery, files); what is chosen is read, shrunk if it is a still picture,
  *    and handed back as the `attachments` of a `say` ([Uploads] has the rules);
  *  - an attachment in a message: a chip that opens the file on its body, or reads an inline one from the ledger when tapped
- *    (a picture shows right under its chip, tap it to see it large; anything else is saved);
+ *    (a picture shows right under its chip, tap it to see it large; anything else opens in the viewer);
  *  - a file / image card;
  *  - the viewer ([viewer]) and the system's file picker to save a file ([save]).
  * Reads go through [port]; every callback is on the main thread. The host forwards [onActivityResult].
@@ -361,7 +361,7 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
         }
     }
 
-    /** A chip that reads the file from the ledger when tapped: a picture appears under it, anything else goes to the picker to be saved. */
+    /** A chip that reads the file from the ledger when tapped: a picture appears under it, anything else opens in the viewer. */
     private fun inlineAttachment(item: JSONObject, attachment: JSONObject, name: String, index: Int): View {
         val messageId = attachment.optString("message_id").ifEmpty { item.optString("id") }
         val key = "$messageId:$index"
@@ -386,7 +386,7 @@ class ChatFiles(private val activity: Activity, private val port: HumanPort) : C
                     val o = Opened(read.name, read.mime, decoded.bytes, Pictures.bitmap(decoded.bytes, THUMB_PX))
                     if (o.thumb == null) { toast("附件无法打开"); return@inline }
                     opened.put(key, o); showPicture(o, fresh = true)
-                } else save(read.name, read.mime, decoded.bytes) { ok -> toast(when (ok) { true -> "文件已保存"; null -> "已取消保存"; false -> "保存失败" }) }
+                } else viewer.show(read.name, read.mime, decoded.bytes)
             }
         }
         box.addView(chip)

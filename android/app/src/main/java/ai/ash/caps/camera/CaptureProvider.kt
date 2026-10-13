@@ -13,8 +13,9 @@ import java.io.File
 import java.io.FileNotFoundException
 
 /**
- * Where the system camera writes a photo or video Ash asked for (targetSdk 28 forbids file:// URIs and this app has
- * no AndroidX FileProvider). Not exported: the camera app reaches a single file only through the grant on its intent.
+ * Where the system camera writes a photo or video Ash asked for, and where a file is put to be played or handed to another
+ * app (targetSdk 28 forbids file:// URIs and this app has no AndroidX FileProvider). Not exported: another app reaches a single
+ * file only through the grant on its intent.
  * Flat names under cache/capture/; the chat reads the same URI back as the chosen file.
  */
 class CaptureProvider : ContentProvider() {
@@ -54,13 +55,22 @@ class CaptureProvider : ContentProvider() {
 
         /** A new empty file for one capture; captures older than a day are cleared on the way. */
         fun newFile(ctx: Context, prefix: String, extension: String): File {
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+            return fresh(ctx, "$prefix-$stamp.$extension")
+        }
+
+        /** A new empty file called [name] (its last segment, made safe) for a file the viewer plays or hands to another app; same clearing. */
+        fun newNamedFile(ctx: Context, name: String): File =
+            fresh(ctx, name.substringAfterLast('/').filter { it.code >= 32 && it !in "\\:*?\"<>|" }.trimStart('.').take(100).ifEmpty { "file" })
+
+        private fun fresh(ctx: Context, name: String): File {
             val d = dir(ctx)
             val now = System.currentTimeMillis()
             d.listFiles()?.forEach { if (now - it.lastModified() > KEEP_MS) it.delete() }
-            val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date(now))
-            var f = File(d, "$prefix-$stamp.$extension")
+            val dot = name.lastIndexOf('.').takeIf { it > 0 }
+            var f = File(d, name)
             var n = 1
-            while (f.exists()) f = File(d, "$prefix-$stamp-${n++}.$extension")
+            while (f.exists()) f = File(d, if (dot != null) "${name.substring(0, dot)}-${n++}${name.substring(dot)}" else "$name-${n++}")
             f.createNewFile()
             return f
         }

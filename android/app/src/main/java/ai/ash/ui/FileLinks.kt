@@ -15,9 +15,6 @@ data class FileRef(val workspace: String, val path: String, val name: String? = 
 
 object FileLinks {
     const val MAX_READ_BYTES = 20 * 1024 * 1024
-    val IMAGES = setOf("png", "jpg", "jpeg", "gif", "webp")
-    val TEXTS = setOf("md", "markdown", "txt", "json", "csv", "log", "js", "ts", "css", "py", "yaml", "yml", "xml")
-    val HTML = setOf("html", "htm")
 
     private val WORKSPACE = Regex("[A-Za-z0-9:_-]+")
     private val BODY_ID = Regex("body:(main|[A-Za-z0-9_-]{22})")
@@ -36,7 +33,8 @@ object FileLinks {
         else -> null
     }
 
-    fun extension(path: String): String = path.substringAfterLast('.', "").lowercase()
+    /** The ending of the file's name (the last part of [path]), in lower case; empty when it has none. */
+    fun extension(path: String): String = path.substringAfterLast('/').substringAfterLast('.', "").lowercase()
 
     /**
      * Where a link in a message points: a path on a body, resolved against the file the link is in. A path that climbs out of the
