@@ -21,7 +21,7 @@ class LeaseStateTest {
         assertFalse(idle.operating(now = 10_000))
         val acting = LeaseState.Lease("ls_1", "agent:main", "ash", "timed", "x", 0, 900_000L, lastActionAt = 10_000L)
         assertTrue(acting.operating(now = 12_000))
-        assertTrue(acting.operating(now = 14_999))
-        assertFalse(acting.operating(now = 15_000))
+        assertTrue(acting.operating(now = 69_999))
+        assertFalse(acting.operating(now = 70_000))
     }
 }

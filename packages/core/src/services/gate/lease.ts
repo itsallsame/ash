@@ -24,7 +24,7 @@ export const WARN_MS = 90_000;
 export const DEFAULT_MINUTES = 15;
 
 const OPTIONS = [
-  { id: "task", label: "本次任务（最长 30 分钟）" }, { id: "m15", label: "15 分钟" }, { id: "h1", label: "1 小时" }, { id: "deny", label: "不行" },
+  { id: "task", label: "本次任务" }, { id: "m15", label: "15 分钟" }, { id: "h1", label: "1 小时" }, { id: "deny", label: "不行" },
 ];
 
 export interface LeaseView { id: string; agent: string; name: string; kind: LeaseKind; purpose: string; granted_at: number; expires_at: number; last_action_at: number | null }
@@ -123,7 +123,7 @@ export function createLeases(deps: LeaseDeps): Leases {
     const name = deps.nameOf(lease.agent);
     const body = {
       title: `${name} 想操作你的手机屏幕`,
-      detail: `目的：${lease.purpose}\n批准后 ${name} 可以点按、输入、打开应用和按键，直到到期或你收回。付款类的事仍然每次问你。`,
+      detail: `目的：${lease.purpose}\n批准后 ${name} 可以点按、输入、打开应用和按键，直到到期或你收回（「本次任务」在这一轮做完时结束，最长 30 分钟）。付款类的事仍然每次问你。`,
       human_kind: "question", options: OPTIONS, expires_at: deps.now() + left,
     };
     const controller = new AbortController();

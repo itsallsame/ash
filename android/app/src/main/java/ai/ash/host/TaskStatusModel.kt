@@ -60,7 +60,11 @@ internal data class TaskFrame(val session: String, val revision: Long, val turn:
  * resurrects an old task or stop button, and never shows the owner again what they already saw or closed.
  */
 internal class TaskStatusModel {
-    companion object { const val STALE_MS = 100_000L; const val NOTICED_MAX = 500 }
+    companion object {
+        const val STALE_MS = 100_000L; const val NOTICED_MAX = 500
+        /** States in which no new frame is expected (the turn is over, or it waits on the owner): their age says nothing about the link. */
+        private val QUIET = setOf("done", "waiting_you")
+    }
     var frame: TaskFrame? = null; private set
     private var received = 0L
     private var finished = 0L
@@ -86,7 +90,7 @@ internal class TaskStatusModel {
         return true
     }
     /** A turn under way that has sent no status for this long shows as disconnected. */
-    fun stale(now: Long): Boolean = frame?.state != "done" && now - received > STALE_MS
+    fun stale(now: Long): Boolean = frame?.state !in QUIET && now - received > STALE_MS
     private fun running(f: TaskFrame) = f.canStop && f.state !in setOf("done", "waiting_you")
     /** What in this frame the owner could still be told about: the ended turn's result and each open question. */
     private fun items(f: TaskFrame): List<String> {

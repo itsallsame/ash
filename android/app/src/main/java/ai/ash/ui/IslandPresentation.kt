@@ -6,6 +6,9 @@ import org.json.JSONObject
 
 /** UI projection only. A completed turn is not evidence of successful delivery. */
 internal object IslandPresentation {
+    /** The answers of a plain approval: what the island's allow / deny pair sends. */
+    private val APPROVAL_CHOICES = setOf("once", "always", "deny")
+
     fun project(frame: TaskFrame, elapsed: Long, stale: Boolean, interactive: Boolean, canStop: Boolean, notice: String?,
         submitted: Map<String, String>, now: Long, lease: String = ""): JSONObject {
         val kind = when {
@@ -26,7 +29,10 @@ internal object IslandPresentation {
             val state = if (card.state == "waiting" && card.expiresAt <= now) "expired" else card.state
             val options = JSONArray()
             for ((id, label) in card.options) options.put(JSONObject().put("id", id).put("label", label))
-            cards.put(JSONObject().put("id", card.id).put("kind", if (card.kind == "approval") "approval" else "ask")
+            // The island's allow/deny pair answers only a plain approval; any other card from the gate (a screen lease: its own
+            // durations) shows its own options, as the chat does.
+            val plainApproval = card.kind == "approval" && card.options.isNotEmpty() && card.options.all { it.first in APPROVAL_CHOICES }
+            cards.put(JSONObject().put("id", card.id).put("kind", if (plainApproval) "approval" else "ask")
                 .put("state", state).put("title", card.title).put("detail", card.detail).put("original", card.original)
                 .put("options", options).put("allow_custom", card.allowCustom)
                 .put("localState", if (state == "waiting") submitted[card.id] ?: "" else ""))

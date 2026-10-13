@@ -33,8 +33,8 @@ object LeaseState {
     private const val TAG = "ash.lease"
     private const val NOTE = "screen-lease"
     private const val ID = 8
-    /** How long the ball stays after the agent's last action on the screen. */
-    const val OPERATING_MS = 5_000L
+    /** How long the ball stays after the agent's last action on the screen: longer than the agent thinks between two actions. */
+    const val OPERATING_MS = 60_000L
 
     data class Lease(val id: String, val agent: String, val name: String, val kind: String, val purpose: String, val grantedAt: Long,
         val expiresAt: Long, val lastActionAt: Long? = null) {

@@ -143,6 +143,9 @@ object AshUi {
         val shape = rounded(bg, h / 2f)
         return style(TextView(ctx), if (size == BtnSize.SM) AshTokens.Type.buttonSm else AshTokens.Type.button, fg).apply {
             text = label; gravity = Gravity.CENTER; isClickable = true; isFocusable = true
+            // One line: a long label shrinks to fit (down to 11sp) before it is cut.
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            setAutoSizeTextTypeUniformWithConfiguration(11, maxOf(12, Math.round(textSize / resources.displayMetrics.scaledDensity)), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
             minHeight = maxOf(h, if (size == BtnSize.SM) 0 else dp(ctx, AshTokens.Size.touch)); minimumHeight = minHeight
             setPadding(dp(ctx, size.padXDp), 0, dp(ctx, size.padXDp), 0)
             background = ripple(ctx, shape, rounded(Color.WHITE, h / 2f))
