@@ -237,23 +237,41 @@ class HmKeys(env: HomeEnv, arg: String?) : HomePage(env, arg) {
     }
 }
 
-/** The main model: what she runs now, and a place to change it. */
+/**
+ * 模型: what her brain is (the runtime, DSH or pi, and the model) and a place to change it. An agent does this with the same words
+ * (`runtime.catalog`, `update`, `configure {login}`); this page is the owner's fallback for it. Under DSH the model stays DSH's own
+ * setting (free text, as before); under pi the providers and models come from the catalog.
+ */
 class HmModel(env: HomeEnv, arg: String?) : HomePage(env, arg) {
     override val title = "模型"
     private val provider = Hk.field(ctx, "Provider（比如 deepseek）")
     private val model = Hk.field(ctx, "Model")
     private val status = Hk.note(ctx, "")
-    private val save = AshUi.button(ctx, "保存模型", Kind.PRIMARY, block = true) { save() }
+    private val save = AshUi.button(ctx, "保存模型", Kind.PRIMARY, block = true) { saveDsh() }
+    private val dsh = AshUi.vstack(ctx, 10)
+    private val pi = AshUi.vstack(ctx, 12)
+    private val switcher = AshUi.vstack(ctx)
+
+    private var agent: String? = null
+    private var kind = "dsh"
+    private var saved: JSONObject? = null
+    private var catalog: JSONObject? = null
+    private var pick: String? = null
+    private var effort: String? = null
+    private var loginCard: JSONObject? = null
 
     init {
-        body.addView(Hk.note(ctx, "她现在用的主模型。改错了可能让她无法正常工作。"))
-        body.addView(AshUi.card(ctx).apply { setPadding(dp(16), dp(16), dp(16), dp(16)); addView(provider); addView(model) })
-        body.addView(save); body.addView(status)
+        body.addView(Hk.note(ctx, "她的脑子由运行时和模型决定。她自己也能改，这里是你想亲自动手时用的。改错了可能让她无法正常工作。"))
+        body.addView(switcher)
+        dsh.addView(Hk.note(ctx, "她现在用的主模型。"))
+        dsh.addView(AshUi.card(ctx).apply { setPadding(dp(16), dp(16), dp(16), dp(16)); addView(provider); addView(model) })
+        dsh.addView(save)
+        body.addView(dsh); body.addView(pi); body.addView(status)
     }
 
     private fun enable(on: Boolean) { listOf(provider, model).forEach { it.isEnabled = on }; save.isEnabled = on; save.alpha = if (on) 1f else 0.4f }
 
-    private fun save() {
+    private fun saveDsh() {
         val p = provider.text.toString().trim(); val m = model.text.toString().trim()
         if (p.isEmpty() || m.isEmpty()) { status.text = "Provider 和 Model 都要填。"; return }
         status.text = "正在保存…"
@@ -262,14 +280,103 @@ class HmModel(env: HomeEnv, arg: String?) : HomePage(env, arg) {
         }
     }
 
+    private fun drawSwitcher(): Unit = redraw(switcher) {
+        addView(AshUi.text(ctx, "运行时", AshTokens.Type.sub).apply { setPadding(dp(6), 0, dp(6), dp(6)) })
+        addView(AshUi.segmented(ctx, listOf("DSH", "pi"), if (kind == "pi") 1 else 0) { i ->
+            val to = if (i == 1) "pi" else "dsh"
+            val a = agent ?: return@segmented
+            if (to == kind) return@segmented
+            status.text = "正在切换…"
+            call("service:agents", "update", HomeCatalog.switchBody(a, to)) { r -> if (r.ok) { status.text = "已切换，下一条消息起用新的。"; refresh() } else status.text = r.failure?.message ?: "切换没有成功，请重试。" }
+        })
+    }
+
+    private fun drawPi(): Unit = redraw(pi) {
+        val cat = catalog ?: return@redraw
+        val current = saved?.str("model")
+        val currentEffort = current?.let { HomeCatalog.savedEffort(saved, it) }
+        val effective = cat.optJSONObject("effective")
+        addView(Hk.note(ctx, "现在：${current ?: "默认（DeepSeek Flash）"}${currentEffort?.let { " · 思考${HomeCatalog.effortLabel(it)}" } ?: ""}" +
+            (effective?.str("fallback")?.let { "\n暂时在用 DeepSeek 顶替（${when (it) { "network" -> "连不上"; "login" -> "没登录"; else -> "没配密钥" }}）。" } ?: "")))
+        for (p in HomeCatalog.providers(cat)) {
+            addView(AshUi.card(ctx).apply {
+                setPadding(dp(16), dp(16), dp(16), dp(16))
+                addView(AshUi.hstack(ctx, 8).apply {
+                    addView(AshUi.text(ctx, p.name, AshType(18f, 26f, 700, Role.INK)), LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(Hk.value(ctx, p.status, p.tone))
+                })
+                when (p.action) {
+                    HomeCatalog.Action.KEY -> addView(AshUi.button(ctx, "去配密钥", Kind.NEUTRAL, AshUi.BtnSize.SM) { env.nav.go("keys") })
+                    HomeCatalog.Action.LOGIN -> addView(AshUi.button(ctx, "登录", Kind.PRIMARY, AshUi.BtnSize.SM) { login() })
+                    null -> {}
+                }
+                if (p.id == "openai-codex" && loginCard != null) {
+                    addView(Hk.pre(ctx, HomeCatalog.loginText(loginCard!!)))
+                    addView(AshUi.button(ctx, "打开登录页", Kind.PRIMARY, AshUi.BtnSize.SM) { loginCard?.str("verification_uri")?.let { open(it) } })
+                }
+                p.hidden?.let { addView(AshUi.text(ctx, "模型很多，没有在这里列出；让她帮你选，或者写在对话里。", AshTokens.Type.sub)) }
+                for (m in p.models) {
+                    val on = m.id == (pick ?: current)
+                    addView(Hk.row(ctx, null, m.name, m.info.ifEmpty { null }, trailing = if (on) Hk.value(ctx, "✓", "ok") else null, chev = false) { pick = m.id; effort = HomeCatalog.savedEffort(saved, m.id); drawPi() })
+                    if (on && m.efforts.isNotEmpty() && m.id == pick) {
+                        val labels = m.efforts.map(HomeCatalog::effortLabel)
+                        addView(AshUi.text(ctx, "思考强度", AshTokens.Type.sub).apply { setPadding(dp(6), dp(6), dp(6), 0) })
+                        addView(AshUi.segmented(ctx, labels, m.efforts.indexOf(effort).coerceAtLeast(0)) { i -> effort = m.efforts[i]; drawPi() })
+                    }
+                }
+            })
+        }
+        if (pick != null && pick != current || pick != null && effort != HomeCatalog.savedEffort(saved, pick!!)) {
+            addView(AshUi.button(ctx, "保存", Kind.PRIMARY, block = true) { savePi() })
+        }
+    }
+
+    private fun savePi() {
+        val a = agent ?: return; val m = pick ?: return
+        status.text = "正在保存…"
+        call("service:agents", "update", HomeCatalog.updateBody(a, m, effort)) { r ->
+            if (!r.ok) { status.text = r.failure?.message ?: "保存没有成功，请重试。"; return@call }
+            val notes = r.data.optJSONArray("notes")
+            status.text = if (notes != null && notes.length() > 0) "已保存。${notes.optString(0)}" else "已保存，下一条消息起就用它。"
+            pick = null; refresh()
+        }
+    }
+
+    private fun login() {
+        val a = agent ?: return
+        status.text = "正在申请登录码…"
+        call("service:agents", "configure", JSONObject().put("agent", a).put("config", JSONObject().put("login", "openai-codex"))) { r ->
+            val card = r.data.optJSONObject("config")
+            if (!r.ok || card?.str("user_code") == null) { status.text = r.failure?.message ?: "没能申请到登录码，请确认手机的 VPN 开了，再试。"; return@call }
+            loginCard = card; status.text = ""; drawPi()
+        }
+    }
+
+    private fun open(url: String): Unit = try { env.activity.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) { status.text = "打不开浏览器，请手动打开：$url" }
+
     override fun refresh() {
         status.text = "正在读取…"; enable(false)
         call("service:agents", "list") { r ->
             enable(true)
             if (!r.ok) { status.text = "读取失败，请返回后重试。"; return@call }
-            val m = r.data.list("agents").firstOrNull { it.optBoolean("primary") }?.optJSONObject("runtime")?.str("model") ?: ""
-            model.setText(m)
-            status.text = if (m.isNotEmpty()) "" else "没有读到现在用的模型，请直接填写。"
+            val primary = r.data.list("agents").firstOrNull { it.optBoolean("primary") }
+            agent = primary?.str("id")
+            saved = primary?.optJSONObject("runtime")
+            kind = saved?.str("kind") ?: "dsh"
+            drawSwitcher()
+            dsh.visibility = if (kind == "pi") View.GONE else View.VISIBLE
+            pi.visibility = if (kind == "pi") View.VISIBLE else View.GONE
+            if (kind != "pi") {
+                val m = saved?.str("model") ?: ""
+                model.setText(m)
+                status.text = if (m.isNotEmpty()) "" else "没有读到现在用的模型，请直接填写。"
+                return@call
+            }
+            val a = agent ?: return@call
+            call("service:agents", "runtime.catalog", JSONObject().put("agent", a)) { c ->
+                if (!c.ok) { status.text = c.failure?.message ?: "没读到可用的模型，请返回后重试。"; return@call }
+                catalog = c.data; status.text = ""; drawPi()
+            }
         }
     }
 }

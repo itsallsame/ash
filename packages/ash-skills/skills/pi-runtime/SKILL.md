@@ -1,56 +1,51 @@
 ---
 name: pi-runtime
-description: 把帮手换到 pi 运行时（和 DSH 并列的另一个 agent 运行时），连上 Codex（ChatGPT 订阅）、配代理 v2rayA，并看懂连不上时自动切到 DeepSeek 的提示。
-whenToUse: 主人想让某个帮手改用 pi 或 Codex 模型、要登录 Codex、问为什么模型被切到 DeepSeek、或要配 v2rayA 代理；用 service:agents/update、service:agents/configure、service:agents/runtimes 之前。
+description: 给帮手换模型、调思考强度、换到 pi 运行时；看哪些供应商和模型现在能用、不能用时怎么补齐（密钥、Codex 登录、代理 v2rayA），并看懂连不上时自动切到 DeepSeek 的提示。
+whenToUse: 主人想换模型或换运行时、要用 Codex、问为什么被切到 DeepSeek、或你判断当前模型不合适（要看图、上下文太长、要更强的推理、想省钱）；用 service:agents 的 runtime.catalog、update、configure 之前。
 ---
 
-# pi 运行时与 Codex
+# 模型与运行时
 
-pi 是和 DSH 并列的另一个 agent 运行时。同样的帮手、同样的工具和审批，只是脑子换了。默认用 DeepSeek（密钥和 DSH 用的是同一把），什么都不用配，不走代理。Codex（主人的 ChatGPT 订阅）是可选的：主人登录之后才启用。
+帮手的「脑子」由运行时（DSH 或 pi）和模型决定。你和主人用的是同一套词：**先看目录，再用 `update` 长期保存，需要临时试一下才用 `configure`**。主人在 App「幕后 → 模型」里改的也是这几个词；那一页只是兜底，改模型主要是你的事。
 
-## 切到 pi
+## 做法
 
-1. `service:agents/runtimes {}` 看有没有 `pi`。
-2. `service:agents/update {agent, runtime: {kind: "pi", model: "openai-codex/gpt-5.5"}}`。`model` 写 `提供方/模型`；只写 `deepseek-flash` 这样的名字就是 DeepSeek 的，没写模型默认 `deepseek/deepseek-flash`。选了 Codex 模型但主人还没登录，这一轮先用 DeepSeek 并告诉他一声。改完这个帮手会自己重启，会话接着用。
-3. 换回 DSH：`runtime: {kind: "dsh"}`。
-4. 只改模型、不换运行时：`service:agents/configure {agent, config: {model: "deepseek/deepseek-v4-pro"}}`，思考强度是 `effort`。不带 `config` 就是读回现状：现在用哪个模型、期望哪个模型、走的是代理还是直连（`route`）、是不是因为连不上在用 DeepSeek（`fallback`）、Codex 登录了没有（`codex_login`）。
+1. **看现状和能用的**：`capability_call {member: "service:agents", word: "runtime.catalog", body: {agent}}`。返回：
+   - `saved`：声明里长期保存的（`kind`、`model`、`effort`、每个模型自己的 `models`）；`effective`：现在真正生效的（可能因为临时改过、或连不上被换成 DeepSeek 而不同）。
+   - `providers[]`：每个供应商有 `ready`（现在能不能用）、`auth`（要密钥还是要登录）、`how`（不能用时怎么补齐）、`needs_proxy`、`models[]`。模型有 `id`（写成 `提供方/模型`）、`context_window`、`images`（能不能看图）、`reasoning`、`efforts`（它接受的思考强度，`off` 是不思考；空表示不思考，不能设）。
+   - 模型很多的供应商（OpenRouter）不列模型：加 `provider: "openrouter"`，再用 `search` 按名字找。
+2. **选**：只在 `ready` 的供应商里挑；要看图的任务别选 `images: false` 的；资料特别长看 `context_window`；简单日常用 `deepseek/deepseek-flash` 配低强度，难的推理再升到 `high` 或 `max`；`effort` 只能取该模型 `efforts` 里的值，写错会被拒绝并告诉你可选项。
+3. **长期保存**：`service:agents/update {agent, runtime: {...}}`。`runtime` 是补丁，可以不写 `kind`，`models` 按模型合并（写 `null` 忘掉某个模型的设置）：
+   - 换模型：`runtime: {model: "openai-codex/gpt-5.5"}`
+   - 每个模型各有各的强度，切换时自动套用：`runtime: {model: "openai-codex/gpt-5.5", models: {"openai-codex/gpt-5.5": {effort: "high"}, "deepseek/deepseek-flash": {effort: "low"}}}`
+   - 换到 pi：`runtime: {kind: "pi", model: "deepseek/deepseek-flash"}`；换回 DSH：`runtime: {kind: "dsh"}`。
+   - pi 运行时改模型和强度，下一轮就生效，不用重启；换运行时种类会重启这个帮手（会话接着用）。返回的 `notes` 说这个选择还缺什么（密钥、登录）。
+4. **临时试一下**：`service:agents/configure {agent, config: {model: "deepseek/deepseek-v4-pro", effort: "max"}}`，只管现在，中枢重启就忘。不带 `config` 是读回，里面有 `effective`（现在生效）和 `saved`（长期）。
+5. **别的运行时**没有目录时，目录会给一份它自己报的模型清单；DSH 的模型仍在 DSH 自己那里，你照 `runtime.catalog` 返回的为准。
 
-## 登录 Codex（要主人配合，约一分钟）
+## 供应商不能用时，引导主人
 
-Codex 要登录 ChatGPT 账号。手机上没有终端，所以用设备码：
+- **要密钥**（DeepSeek、OpenRouter）：`ready: false` 且 `auth.kind` 是 `key`。密钥只有主人能存，你代存不了，也不要让他把密钥发给你：告诉他「请打开 App 的 幕后 → 密钥，粘贴 XX 的 Key」。他说好了，再读一次目录确认 `ready`。
+- **要登录**（Codex，用 ChatGPT 订阅）：`auth.kind` 是 `login`。先请主人**临时打开手机的全局 VPN**（他的浏览器要能打开 OpenAI 的页面，你开不了），然后 `configure {agent, config: {login: "openai-codex"}}`，返回 `verification_uri` 和 `user_code`（`expires_in` 秒内有效）。用 `human_say` 把链接和码一起发给他（码单独成一行），请他点链接、输码。不要轮询，登录好了你会收到一条「Codex 登录成功」，那时才告诉他可以关 VPN。返回 `unavailable` 说明现在到不了 OpenAI（VPN 没开，或 v2rayA 没配）。
+- **日常出去的路 v2rayA**（只有用 Codex 才需要，DeepSeek 不用）：容器里的代理。主人在手机浏览器打开 `http://127.0.0.1:2017`，第一次建账号，导入订阅、选节点、启动，HTTP 端口保持 20171。订阅是主人的私有东西，不要问他要。
 
-1. 先让主人**临时打开手机的全局 VPN**：他手机的浏览器要能打开 OpenAI 的登录页。登录完就能关，平时用不着。VPN 你开不了，只能请他开。
-2. `service:agents/configure {agent, config: {login: "openai-codex"}}`。返回 `verification_uri` 和 `user_code`（有效期 `expires_in` 秒）。
-3. 用 `human_say` 把链接和码一起发给主人（码单独成一行，方便复制），请他点链接，在页面里输码、登录。
-4. 不要轮询。登录好了你会收到一条「Codex 登录成功」；码过期或失败也会有一条话。想主动看就 `configure` 不带 `config`，`codex_login` 是 `ready` 就好了。
-5. 返回说连不上 OpenAI（`unavailable`）：多半是 VPN 没开，也可能 v2rayA 没配好（下一节）。
+## 自动切到 DeepSeek
 
-## 平时怎么出去：v2rayA
-
-日常不开全局 VPN。容器里有 v2rayA（代理），Codex 的请求走它；DeepSeek 一直直连，不走代理。主人自己配一次：
-
-- 在手机浏览器打开 `http://127.0.0.1:2017`（v2rayA 的管理页，和 Ash 在同一台手机上）。第一次要建一个账号，然后导入订阅、选一个节点、点启动。HTTP 代理端口保持默认 20171。
-- 订阅是主人的私有东西，只放在 v2rayA 里，不用给你，你也不要问他要。
-- v2rayA 只在用到 Codex（选了 Codex 模型、或发起 Codex 登录）时才会起来。只用 DeepSeek 的 pi 帮手不会起它。
-
-Codex 登录后，出去的路每次开工前都会自己选：v2rayA 通就走它；不通但直连通（主人开着全局 VPN）就直连；都不通，这一轮改用 DeepSeek。
-
-## 连不上时：自动切到 DeepSeek
-
-Codex 中途连不上、或登录失效，pi 会在**同一个会话**里改用 DeepSeek 接着做（历史都在），并给主人发一句话。你不用管；之后每分钟试一次，通了自动切回 Codex，再发一句话。登录失效的情况要重新登录才会切回（见上）。主人问起来，用 `configure` 读回的 `fallback`（`network` 或 `login`）和 `route` 回答。
+Codex 中途连不上、没登录、登录失效，或选了 OpenRouter 却没存密钥，pi 会在**同一个会话**里改用 DeepSeek 接着做（历史都在），并给主人发一句话；连不上的情况每分钟试一次，通了自动切回。这是设计，不是出错，不用重试。主人问起来，用读回的 `effective.fallback`（`network`、`login`、`key`）和 `effective.route` 解释。
 
 ## 好的样子
 
-主人说：「让小助手改用 Codex。」你先 `runtimes` 确认有 `pi`，`update` 把它的运行时换成 `pi`、模型 `openai-codex/gpt-5.5`；再 `configure` 读回，看到 `codex_login` 是 `none`，就对主人说一句：「已经换成 pi 了，Codex 还没登录。你先打开手机的 VPN，我给你一个登录链接和一个码，输进去就行。」发出 `login` 后，用 `human_say` 把链接和码发给他。登录成功的话到了，才告诉他可以关 VPN。
+主人说：「这个任务要看图，而且很难，用最强的。」你 `runtime.catalog` 看到 Codex 的 `gpt-5.5` 能看图、`efforts` 有 `xhigh`，但 Codex 的 `ready` 是 `false`、登录是 `none`。你不会硬换，而是说：「Codex 还没登录。你先打开手机的 VPN，我给你一个链接和码，输进去就能用。」`configure` 发起登录，`human_say` 把链接和码发出去；收到「登录成功」后 `update` 保存 `{model: "openai-codex/gpt-5.5", models: {"openai-codex/gpt-5.5": {effort: "xhigh"}}}`，再读一次目录，看到 `effective.model` 是它，才告诉主人好了，顺便说可以关 VPN。
 
 ## 常见错误
 
-- 没让主人开 VPN 就发起登录：返回 `unavailable`，或者他点开的页面打不开。
-- 把码、订阅链接、令牌写进文件或回给别的 agent：它们只给主人本人。
-- 反复轮询 `configure` 等登录：等通知就行。
-- 看到被切到 DeepSeek 就当出错重试：这是设计，通了会自己切回。
-- 以为换运行时会丢记忆：会话接着用，只是脑子换了。
+- 不看目录就猜模型名或强度：会被拒绝；`efforts` 空的模型不能设强度。
+- 选了 `ready: false` 的供应商还以为生效：看 `update` 返回的 `notes` 和读回的 `effective.model`。
+- 让主人把密钥发给你、或自己去找密钥：密钥只能主人在 幕后 → 密钥 里存。
+- 没让主人开 VPN 就发起 Codex 登录；或者不停地读状态等登录，等通知就行。
+- 把「被切到 DeepSeek」当成故障去重试；或者以为换模型会丢记忆（会话是接着的）。
+- 用 `configure` 当长期设置：中枢重启就没了，长期的要用 `update`。
 
 ## 怎么核对
 
-`service:agents/configure {agent}` 不带 `config`：`model` 是 `openai-codex/…` 且 `fallback` 是 `null`、`codex_login` 是 `ready`，才算 Codex 用上了。再让这个帮手回一句话，确认真的在回。
+`service:agents/runtime.catalog {agent}`：`saved` 是你要的，`effective.model` 和 `effective.effort` 也是，`effective.fallback` 是空；`providers` 里它所在的供应商 `ready: true`。再让这个帮手回一句话确认真的在回。

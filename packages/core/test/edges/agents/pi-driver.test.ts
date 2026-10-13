@@ -373,17 +373,106 @@ test("a login with no way to OpenAI is refused with what to do; a login that fai
   await waitFor(() => bad.of("notice").some((n) => /登录没成功：expired/.test(n.text)), "the failure notice");
 });
 
-test("configure reads back the state, and the helper's status says whether a Codex login is there", async () => {
+test("configure reads back the state: for a DeepSeek agent nothing is probed; for a Codex one the helper's status says whether a login is there", async () => {
   const t = setup({ env: { FAKE_LOGIN_READY: "1" } });
   await t.driver.start("agent:main", spec());
   const state = await t.driver.configure("agent:main", undefined);
-  assert.equal(state.codex_login, "ready");
+  assert.equal(state.codex_login, "unknown", "nobody asked about Codex");
   assert.equal(state.model, "deepseek/deepseek-flash");
   assert.equal(state.proxy, "http://127.0.0.1:20171");
+  assert.deepEqual(t.probed, []);
+  await t.driver.configure("agent:main", undefined, { model: "openai-codex/gpt-5.5" });
+  t.open.proxy = true;
+  assert.equal((await t.driver.configure("agent:main", undefined)).codex_login, "ready");
   await t.driver.configure("agent:main", undefined, { effort: "high" });
   await t.driver.send("agent:main", "front", [msg("hi")]);
   await waitFor(() => t.ended().length === 1);
   assert.ok(t.log().some((l) => l.cmd === "set_thinking_level" && l.level === "high"));
+});
+
+test("settings per model: each model has its own effort, applied whenever it is the one in use (the fallback model too); the read-back tells what is in force and what is saved", async () => {
+  const t = setup({ env: { FAKE_CODEX: "fail" }, probe: async () => false });
+  const runtime = { kind: "pi", model: "deepseek/deepseek-flash", effort: "low", models: { "deepseek/deepseek-flash": { effort: "max" }, "openai-codex/gpt-5.5": { effort: "xhigh" } } };
+  await t.driver.start("agent:main", spec({ runtime }));
+  const first = await t.driver.configure("agent:main", undefined);
+  assert.deepEqual(first.effective, { model: "deepseek/deepseek-flash", effort: "max", wanted: "deepseek/deepseek-flash", fallback: null, route: "unknown" }, "the model's own entry wins over the declaration's effort");
+  assert.deepEqual(first.saved, runtime);
+  await t.driver.send("agent:main", "front", [msg("one")]);
+  await waitFor(() => t.ended().length === 1);
+  assert.deepEqual(t.log().filter((l) => l.cmd === "set_thinking_level").map((l) => l.level), ["max"]);
+  // a temporary choice of model takes that model's settings; the way is shut, so it falls back, and the fallback model's own effort applies
+  await t.driver.configure("agent:main", undefined, { model: "openai-codex/gpt-5.5", effort: "minimal" });
+  const temp = await t.driver.configure("agent:main", undefined);
+  assert.deepEqual(temp.temporary, { model: "openai-codex/gpt-5.5", efforts: { "openai-codex/gpt-5.5": "minimal" } });
+  assert.deepEqual(temp.saved, runtime, "a temporary change leaves the lasting settings alone");
+});
+
+test("a declaration changed live (configure {runtime}): the next turn runs on the new model and effort in the same process, a temporary choice is let go", async () => {
+  const t = setup();
+  await t.driver.start("agent:main", spec());
+  await t.driver.configure("agent:main", undefined, { model: "deepseek/deepseek-v4-pro" });
+  await t.driver.send("agent:main", "front", [msg("one")]);
+  await waitFor(() => t.ended().length === 1);
+  assert.equal(t.of("output")[0]!.text.startsWith("echo[deepseek/deepseek-v4-pro]"), true, "the temporary choice");
+  const runtime = { kind: "pi", model: "deepseek/deepseek-flash", models: { "deepseek/deepseek-flash": { effort: "high" } } };
+  const back = await t.driver.configure("agent:main", undefined, { runtime });
+  assert.equal(back.temporary, undefined);
+  assert.deepEqual((back.effective as any).model, "deepseek/deepseek-flash");
+  await t.driver.send("agent:main", "front", [msg("two")]);
+  await waitFor(() => t.ended().length === 2);
+  assert.equal(t.of("output")[1]!.text.startsWith("echo[deepseek/deepseek-flash]"), true);
+  assert.equal(t.starts().length, 1, "no new process: the model was switched in the warm one");
+  assert.deepEqual(t.log().filter((l) => l.cmd === "set_model").map((l) => l.modelId), ["deepseek-flash"]);
+  assert.ok(t.log().some((l) => l.cmd === "set_thinking_level" && l.level === "high"));
+});
+
+test("DSH's model pair and a bare model name are understood by configure", async () => {
+  const t = setup();
+  await t.driver.start("agent:main", spec());
+  assert.equal((await t.driver.configure("agent:main", undefined, { model: '["deepseek","deepseek-v4-pro"]' })).model, "deepseek/deepseek-v4-pro");
+});
+
+test("a provider that needs a key (OpenRouter): without the key the turn goes to DeepSeek, told once; with the key it runs there", async () => {
+  const t = setup();
+  await t.driver.start("agent:main", spec({ runtime: { kind: "pi", model: "openrouter/vendor/model-1" } }));
+  await t.driver.send("agent:main", "front", [msg("one")]);
+  await waitFor(() => t.ended().length === 1);
+  assert.equal(t.of("output")[0]!.text.startsWith("echo[deepseek/"), true);
+  assert.match(t.of("notice")[0]!.text, /OpenRouter 的密钥还没配好/);
+  assert.deepEqual(t.probed, [], "OpenRouter is reached directly: nothing is probed");
+  await t.driver.credentialsSet!("agent:main", "OPENROUTER_API_KEY", "sk-or");
+  await t.driver.send("agent:main", "front", [msg("two")]);
+  await waitFor(() => t.ended().length === 2);
+  assert.equal(t.of("output")[1]!.text.startsWith("echo[openrouter/vendor/model-1"), true);
+  assert.match(t.of("notice")[1]!.text, /密钥有了/);
+  const s = t.starts().at(-1)!;
+  assert.deepEqual(s.argv.slice(-4), ["--provider", "openrouter", "--model", "vendor/model-1"]);
+});
+
+test("the catalog: the providers Ash offers with pi's own model tables, what each needs, and what is in force", async () => {
+  const t = setup({ env: { FAKE_LOGIN_READY: "0" } });
+  await t.driver.start("agent:main", spec());
+  const c = await t.driver.catalog!("agent:main", { kind: "pi" });
+  assert.deepEqual(c.providers.map((p) => p.id), ["deepseek", "openai-codex", "openrouter"]);
+  const by = Object.fromEntries(c.providers.map((p) => [p.id, p]));
+  assert.deepEqual(by.deepseek!.auth, { kind: "key", ref: "DEEPSEEK_API_KEY" });
+  assert.equal(by.deepseek!.needs_proxy, false);
+  assert.deepEqual(by.deepseek!.models.map((m) => m.id), ["deepseek/deepseek-flash", "deepseek/deepseek-v4-pro"]);
+  assert.deepEqual(by.deepseek!.models[0]!.efforts, ["off", "low", "high", "max"]);
+  assert.equal(by["openai-codex"]!.needs_proxy, true);
+  assert.equal(by["openai-codex"]!.auth.kind, "login");
+  assert.equal((by["openai-codex"]!.auth as any).state, "none");
+  assert.match((by["openai-codex"]!.auth as any).how, /human_say/);
+  assert.deepEqual(by.openrouter!.auth, { kind: "key", ref: "OPENROUTER_API_KEY" });
+  assert.equal(by.openrouter!.models.length, 25);
+  assert.equal((c.effective as any).model, "deepseek/deepseek-flash");
+  assert.equal(t.log().filter((l) => l.login_helper === "catalog").length, 1);
+  await t.driver.catalog!("agent:main", { kind: "pi" });
+  assert.equal(t.log().filter((l) => l.login_helper === "catalog").length, 1, "the tables are read once");
+  const ready = setup({ env: { FAKE_LOGIN_READY: "1" } });
+  const c2 = await ready.driver.catalog!("agent:w", { kind: "pi" });
+  assert.equal((c2.providers.find((p) => p.id === "openai-codex")!.auth as any).state, "ready", "also for an agent that has not been started");
+  assert.equal(c2.effective, undefined);
 });
 
 test("the agents module passes a notice on to the owner as a heads-up that does not ring", async () => {

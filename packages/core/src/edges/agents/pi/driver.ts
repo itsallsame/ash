@@ -29,7 +29,7 @@
 import { randomBytes } from "node:crypto";
 import { localStamp } from "../../../../../sdk/src/time";
 import { WordError } from "../../../../../sdk/src/message";
-import type { AgentDriver, AgentEvent, AgentStartSpec, AgentStatus, DriverMessage, PromptModule, RuntimeInfo } from "../../../../../sdk/src/driver";
+import type { AgentDriver, AgentEvent, AgentStartSpec, AgentStatus, CatalogModel, CatalogOptions, CatalogProvider, DriverMessage, PromptModule, RuntimeCatalog, RuntimeInfo, RuntimeSettings } from "../../../../../sdk/src/driver";
 import type { DriverProcess, SpawnFn } from "../dsh/acp";
 import { toolSummary } from "../dsh/tool-label";
 import { PiRpc, type PiRecord } from "./rpc";
@@ -44,8 +44,15 @@ export const BASELINE_FILE = "AGENTS.md";
 /** The model of a fresh pi agent, and where a Codex model goes when the way to it is shut. */
 export const DEFAULT_MODEL = "deepseek/deepseek-flash";
 export const CODEX_PROVIDER = "openai-codex";
-/** Providers that are reached directly, from anywhere the phone is. */
-const DIRECT_PROVIDERS = new Set(["deepseek"]);
+/**
+ * The providers Ash offers on pi. `key`: the vault key the provider needs; `login`: it needs the owner's login (Codex); `proxy`: it is
+ * reached through v2rayA or the phone's VPN. The others are reached directly. The models of each come from pi's own tables (`packages/pi-login`).
+ */
+const PROVIDERS: Record<string, { name: string; key?: string; login?: boolean; proxy?: boolean }> = {
+  deepseek: { name: "DeepSeek", key: "DEEPSEEK_API_KEY" },
+  openrouter: { name: "OpenRouter", key: "OPENROUTER_API_KEY" },
+  [CODEX_PROVIDER]: { name: "OpenAI Codex（ChatGPT 订阅）", login: true, proxy: true },
+};
 const DIRECT_HOSTS = "api.deepseek.com,.deepseek.com";
 const LOOPBACK = "127.0.0.1,localhost,::1";
 const IMAGE = /^image\/(png|jpeg|webp|gif)$/;
@@ -54,7 +61,7 @@ const KEY_ENV: Record<string, string> = { DEEPSEEK_API_KEY: "DEEPSEEK_API_KEY", 
 export const PI_INFO: RuntimeInfo = {
   kind: "pi", version: "1",
   models: [{ id: "deepseek/deepseek-flash" }, { id: "deepseek/deepseek-v4-pro" }, { id: "openai-codex/gpt-5.5" }, { id: "openai-codex/gpt-6-sol" }],
-  abilities: { resume: true, steer: true, inject_live: false, images: true, compact: true, configure: ["model", "effort", "login", "*"], plugins: false, mcp: true, system_prompt: "file", credentials: true, usage: false },
+  abilities: { resume: true, steer: true, inject_live: false, images: true, compact: true, configure: ["model", "effort", "login", "runtime", "*"], plugins: false, mcp: true, system_prompt: "file", credentials: true, usage: false, runtime_live: true },
 };
 
 export interface PiDriverDeps {
@@ -85,12 +92,15 @@ export interface PiDriverDeps {
   routeTtlMs?: number;
 }
 
-type Fallback = { reason: "network" | "login" };
+type Fallback = { reason: "network" | "login" | "key" };
 interface Lane { key: string; session: string; turn?: Turn; followups: DriverMessage[]; held: string[] }
 interface Agent {
   id: string; spec: AgentStartSpec; cwd: string; lanes: Map<string, Lane>;
-  /** The model the declaration or `configure` asked for: `provider/id`. */
-  model: string; effort?: string; fallback: Fallback | null; recover?: NodeJS.Timeout;
+  /** The declaration's runtime settings: what is lasting. */
+  saved: RuntimeSettings;
+  /** What a temporary `configure` changed (forgotten when the declaration is changed): the model, and efforts by model. */
+  temp: { model?: string; efforts: Record<string, string> };
+  fallback: Fallback | null; recover?: NodeJS.Timeout;
 }
 interface Turn {
   id: string; ag: Agent; lane: Lane; batch: DriverMessage[]; state: "queued" | "running"; cancelled: boolean; dropped: boolean;
@@ -105,15 +115,21 @@ const errorText = (error: unknown) => String((error as { message?: unknown } | n
 const dirOf = (cwd: string) => cwd.replace(/\/+$/, "");
 const sessionId = () => `s_${randomBytes(9).toString("base64url").replace(/[^A-Za-z0-9]/g, "x")}`;
 
-/** `provider/id`, or a bare id: deepseek-* is DeepSeek, anything else Codex. */
+/** `provider/id`, or a bare id (deepseek-* is DeepSeek, anything else Codex), or DSH's JSON pair `["provider","model"]`. */
 export function normalizeModel(model?: string): string {
   const m = (model ?? "").trim();
   if (!m) return DEFAULT_MODEL;
+  if (m.startsWith("[")) {
+    try { const pair = JSON.parse(m); if (Array.isArray(pair) && typeof pair[0] === "string" && typeof pair[1] === "string") return `${pair[0]}/${pair[1]}`; } catch { /* not a pair */ }
+  }
   if (m.includes("/")) return m;
   return /^deepseek/i.test(m) ? `deepseek/${m}` : `${CODEX_PROVIDER}/${m}`;
 }
 const split = (model: string): { provider: string; id: string } => { const i = model.indexOf("/"); return { provider: model.slice(0, i), id: model.slice(i + 1) }; };
-const needsRoute = (model: string): boolean => !DIRECT_PROVIDERS.has(split(model).provider);
+const providerOf = (model: string) => PROVIDERS[split(model).provider];
+const needsRoute = (model: string): boolean => providerOf(model)?.proxy === true;
+/** The generic list of thinking levels, for when pi\'s own tables cannot be read. */
+const ALL_EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function createPiDriver(deps: PiDriverDeps): AgentDriver {
   const log = deps.log ?? (() => {});
@@ -147,14 +163,23 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
     return routeProbe;
   }
 
+  /** The model asked for: a temporary choice, else the declaration's. */
+  const wantedModel = (ag: Agent): string => ag.temp.model ?? normalizeModel(ag.saved.model);
+  /** The effort for a model: a temporary choice, else the model's own entry in the declaration, else the declaration's effort when it is for this model. */
+  const effortFor = (ag: Agent, model: string): string | undefined =>
+    ag.temp.efforts[model] ?? ag.saved.models?.[model]?.effort ?? (model === normalizeModel(ag.saved.model) ? ag.saved.effort : undefined);
+
   function notice(ag: Agent, words: string, key?: string): void { report({ event: "notice", agent: ag.id, ...(key ? { key } : {}), text: words }); }
 
   function enterFallback(ag: Agent, reason: Fallback["reason"]): void {
     if (ag.fallback?.reason === reason) return;
     ag.fallback = { reason };
+    const name = providerOf(wantedModel(ag))?.name ?? "这个模型";
     if (reason === "network") {
-      notice(ag, `连不上 ${split(ag.model).provider === CODEX_PROVIDER ? "Codex" : "模型服务"}（代理或网络不通），先用 DeepSeek 接着做；通了会自动切回来。`);
+      notice(ag, `连不上 ${split(wantedModel(ag)).provider === CODEX_PROVIDER ? "Codex" : name}（代理或网络不通），先用 DeepSeek 接着做；通了会自动切回来。`);
       watchRecovery(ag);
+    } else if (reason === "key") {
+      notice(ag, `${name} 的密钥还没配好，或者不对，先用 DeepSeek 接着做。在 幕后 → 密钥 里保存后会自动用上。`);
     } else {
       notice(ag, "Codex 还没登录，或登录已失效，先用 DeepSeek 接着做。要用 Codex 的话，让我帮你登录。");
     }
@@ -183,9 +208,10 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
    * From then on the way is chosen as above, and a shut way sends the turn to DeepSeek.
    */
   async function plan(ag: Agent): Promise<{ model: string; route: Route }> {
-    let model = ag.model;
+    let model = wantedModel(ag);
     let route: Route = "none";
-    if (needsRoute(model)) {
+    const info = providerOf(model);
+    if (info?.login) {
       if (!ag.fallback) {
         const state = login.state === "ready" ? "ready" : await loginStatus(ag);
         if (state === "none" || state === "pending") enterFallback(ag, "login");
@@ -199,8 +225,12 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
         route = await routeNow();
         if (route !== "none") leaveFallback(ag, "Codex 又连上了，已切回。");
       }
-      if (ag.fallback) { model = fallbackModel; route = "none"; }
+    } else if (info?.key && split(model).provider !== split(fallbackModel).provider) {
+      // A provider that needs a key the owner has not saved (OpenRouter): this turn goes to the fallback, told once; the key arriving ends it.
+      if (!keys.has(info.key)) enterFallback(ag, "key");
+      else if (ag.fallback?.reason === "key") leaveFallback(ag, `${info.name} 的密钥有了，已切回。`);
     }
+    if (ag.fallback) { model = fallbackModel; route = "none"; }
     return { model, route };
   }
 
@@ -244,7 +274,7 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
     });
     try {
       await rpc.request({ type: "get_state" }, 90_000);
-      if (ag.effort) await rpc.request({ type: "set_thinking_level", level: ag.effort }).then(() => { p.effort = ag.effort; }).catch((e) => log(`pi: effort ${ag.effort}: ${errorText(e)}`));
+      await applyEffort(p, ag, model);
     } catch (error) {
       rpc.close();
       if (slot.proc === p) slot.proc = undefined;
@@ -265,9 +295,16 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
     p.busy = true;
     try {
       if (p.model !== model) await switchModel(p, model);
-      if (ag.effort && p.effort !== ag.effort) await p.rpc.request({ type: "set_thinking_level", level: ag.effort }).then(() => { p.effort = ag.effort; }).catch(() => {});
+      await applyEffort(p, ag, model);
     } catch (error) { p.busy = false; throw error; }
     return p;
+  }
+
+  /** The thinking effort of the model in use, from the settings of that model; nothing to set means the model's own default stays. */
+  async function applyEffort(p: Proc, ag: Agent, model: string): Promise<void> {
+    const effort = effortFor(ag, model);
+    if (!effort || p.effort === effort) return;
+    await p.rpc.request({ type: "set_thinking_level", level: effort }).then(() => { p.effort = effort; }).catch((e) => log(`pi: effort ${effort}: ${errorText(e)}`));
   }
 
   async function switchModel(p: Proc, model: string): Promise<void> {
@@ -373,13 +410,13 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
       // Which kind of failure was it? Only a Codex model's own trouble is answered with a switch.
       const reason = run.error ?? "";
       const model = p.model;
-      if (!needsRoute(model) || model === fallbackModel) return run;
+      if (model === fallbackModel || !providerOf(model)) return run;
       const login = AUTH_ERROR.test(reason);
-      const net = !login && NETWORK_ERROR.test(reason);
+      const net = !login && needsRoute(model) && NETWORK_ERROR.test(reason);
       if (!login && !net) return run;
       if (net && (await routeNow(true)) !== "none") return run; // the way is open: this was something else
-      enterFallback(ag, login ? "login" : "network");
-      try { await switchModel(p, fallbackModel); } catch (e) { return { outcome: "error", error: errorText(e) }; }
+      enterFallback(ag, login ? (providerOf(model)!.login ? "login" : "key") : "network");
+      try { await switchModel(p, fallbackModel); await applyEffort(p, ag, fallbackModel); } catch (e) { return { outcome: "error", error: errorText(e) }; }
       switched = true;
       message = `[ash] The model you were using could not be reached, so this session now runs on ${fallbackModel}. Carry on with the message above where it stopped.`;
       images = [];
@@ -500,9 +537,9 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
     });
   }
 
-  async function loginStatus(ag: Agent): Promise<"none" | "pending" | "ready" | "unknown"> {
+  async function loginStatus(ag?: Agent): Promise<"none" | "pending" | "ready" | "unknown"> {
     if (login.state === "pending") return "pending";
-    const got = await runHelper(["status"], envFor(ag, "front", "none"), ag.cwd, 20_000);
+    const got = await runHelper(["status"], ag ? envFor(ag, "front", "none") : { PI_OFFLINE: "1", PI_CODING_AGENT_DIR: runtimeDir() }, ag?.cwd ?? "/root", 20_000);
     if (got && typeof got.ready === "boolean") login.state = got.ready ? "ready" : "none";
     else login.state = "unknown";
     return login.state;
@@ -557,14 +594,43 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
     });
   }
 
+  /** `effective`: what is in force now (the model that runs, the effort set for it, a fallback and why, the route); `saved`: the declaration's lasting settings. */
   function readBack(ag: Agent): Record<string, unknown> {
     const current = [slots.front.proc, slots.shared.proc].find((p) => p?.agentId === ag.id)?.model;
+    const wanted = wantedModel(ag);
+    const model = ag.fallback ? fallbackModel : wanted;
+    const effort = effortFor(ag, model);
+    const route = routeCache?.route ?? "unknown";
+    const temporary = ag.temp.model || Object.keys(ag.temp.efforts).length ? { ...(ag.temp.model ? { model: ag.temp.model } : {}), ...(Object.keys(ag.temp.efforts).length ? { efforts: ag.temp.efforts } : {}) } : undefined;
     return {
-      model: ag.fallback ? fallbackModel : ag.model, model_wanted: ag.model, ...(current ? { model_running: current } : {}),
-      ...(ag.effort ? { effort: ag.effort } : {}),
-      route: routeCache?.route ?? "unknown", fallback: ag.fallback?.reason ?? null,
+      effective: { model, ...(effort ? { effort } : {}), wanted, fallback: ag.fallback?.reason ?? null, route, ...(current ? { running: current } : {}) },
+      saved: ag.saved, ...(temporary ? { temporary } : {}),
+      model, model_wanted: wanted, ...(current ? { model_running: current } : {}), ...(effort ? { effort } : {}),
+      route, fallback: ag.fallback?.reason ?? null,
       codex_login: login.state, ...(login.info ? { login: login.info } : {}), proxy: proxyUrl,
     };
+  }
+
+  // -- the catalog -------------------------------------------------------------------------------------------------
+
+  const LOGIN_HOW = "Codex needs the owner's login (ChatGPT subscription). Ask the owner to turn on the phone's VPN for a minute, then call service:agents/configure {agent, config: {login: \"openai-codex\"}}: it returns a link and a code. Send both to the owner with human_say and ask them to open the link in the phone's browser and type the code. You are told when it is done; do not poll. The VPN can be turned off afterwards.";
+  let tables: Promise<Array<{ id: string; name: string; models: CatalogModel[] }>> | null = null;
+
+  /** pi's own model tables, read once by the helper in the container; a short built-in list when that cannot be done. */
+  function modelTables(): Promise<Array<{ id: string; name: string; models: CatalogModel[] }>> {
+    tables ??= runHelper(["catalog"], { PI_OFFLINE: "1", PI_CODING_AGENT_DIR: runtimeDir() }, "/root", 90_000).then((got) => {
+      const providers = Array.isArray(got?.providers) ? (got!.providers as Array<{ id: string; name: string; models: CatalogModel[] }>) : null;
+      if (providers && providers.length) return providers;
+      tables = null; // try again next time
+      log("pi: the model tables could not be read; a short list is used");
+      const byProvider = new Map<string, CatalogModel[]>();
+      for (const m of PI_INFO.models) {
+        const provider = split(m.id).provider;
+        byProvider.set(provider, [...(byProvider.get(provider) ?? []), { id: m.id, name: m.id, images: false, reasoning: true, efforts: ALL_EFFORTS }]);
+      }
+      return [...byProvider].map(([id, models]) => ({ id, name: PROVIDERS[id]?.name ?? id, models }));
+    });
+    return tables;
   }
 
   // -- the driver --------------------------------------------------------------------------------------------------
@@ -575,7 +641,7 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
     async start(id, spec) {
       if (agents.has(id)) return;
       const cwd = spec.native?.cwd ?? `/root/agents/${id.slice("agent:".length)}`;
-      const ag: Agent = { id, spec, cwd, lanes: new Map(), model: normalizeModel(spec.runtime.model), ...(spec.runtime.effort ? { effort: spec.runtime.effort } : {}), fallback: null };
+      const ag: Agent = { id, spec, cwd, lanes: new Map(), saved: spec.runtime, temp: { efforts: {} }, fallback: null };
       for (const key of spec.lanes) ag.lanes.set(key, { key, session: spec.sessions[key] ?? sessionId(), followups: [], held: [] });
       agents.set(id, ag);
       try { await writeConfig(ag); } catch (error) { agents.delete(id); throw new WordError("failed", `${id} did not start: ${errorText(error)}`); }
@@ -587,7 +653,7 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
       const ag = agents.get(id);
       if (!ag) throw new WordError("not_found", `${id} was never started`);
       await halt(id);
-      const live: Agent = { ...ag, lanes: new Map([...ag.lanes].map(([k, l]) => [k, { ...l, turn: undefined, followups: [] }])), fallback: null, recover: undefined };
+      const live: Agent = { ...ag, lanes: new Map([...ag.lanes].map(([k, l]) => [k, { ...l, turn: undefined, followups: [] }])), temp: { efforts: {} }, fallback: null, recover: undefined };
       agents.set(id, live);
       await writeConfig(live);
     },
@@ -668,13 +734,34 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
       }
     },
 
+    async catalog(id, _saved, _options?: CatalogOptions): Promise<RuntimeCatalog> {
+      const ag = agents.get(id);
+      const loginState = await loginStatus(ag);
+      const providers: CatalogProvider[] = (await modelTables()).filter((t) => PROVIDERS[t.id]).map((t) => {
+        const info = PROVIDERS[t.id]!;
+        return {
+          id: t.id, name: info.name, needs_proxy: info.proxy === true, models: t.models,
+          auth: info.login ? { kind: "login", method: "device_code", state: loginState, how: loginState === "pending" ? "A login is under way: wait for the owner to finish it (the link and code were given when it started)." : LOGIN_HOW } : { kind: "key", ref: info.key! },
+        } as CatalogProvider;
+      });
+      return { providers, ...(ag ? { effective: readBack(ag).effective as Record<string, unknown> } : {}) };
+    },
+
     async configure(id, _key, config) {
       const ag = agentOf(id);
+      const clearFallback = () => { ag.fallback = null; if (ag.recover) { clearInterval(ag.recover); ag.recover = undefined; } };
       if (config && Object.keys(config).length) {
-        if (typeof config.model === "string" && config.model) { ag.model = normalizeModel(config.model); ag.fallback = null; if (ag.recover) { clearInterval(ag.recover); ag.recover = undefined; } }
-        if (typeof config.effort === "string" && config.effort) ag.effort = config.effort;
+        if (config.runtime && typeof config.runtime === "object") {
+          // The declaration changed (service:agents/update): its settings are the lasting ones again, and a temporary choice is let go.
+          const before = wantedModel(ag);
+          ag.saved = config.runtime as RuntimeSettings;
+          ag.temp = { efforts: {} };
+          if (wantedModel(ag) !== before) clearFallback();
+        }
+        if (typeof config.model === "string" && config.model) { ag.temp.model = normalizeModel(config.model); clearFallback(); }
+        if (typeof config.effort === "string" && config.effort) ag.temp.efforts[wantedModel(ag)] = config.effort;
         if (typeof config.login === "string" && config.login) { const card = await startLogin(ag, config.login); return { ...readBack(ag), ...card }; }
-      } else {
+      } else if (providerOf(wantedModel(ag))?.login) {
         await loginStatus(ag);
         if (!routeCache) await routeNow().catch(() => {});
       }

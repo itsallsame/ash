@@ -72,9 +72,21 @@ export interface DriverMessage {
   origin?: HumanOrigin;
 }
 
+/** What an agent's declaration says about its runtime (the long-lived settings): the kind, the model it uses now, and a settings entry per model. */
+export interface RuntimeSettings {
+  kind: string;
+  /** The model in use, as `provider/model`. */
+  model?: string;
+  /** The thinking effort of the model in use (a model's own entry in `models` wins). */
+  effort?: string;
+  /** Settings by model (`provider/model`): applied whenever that model is the one in use, the fallback model included. */
+  models?: Record<string, ModelSettings>;
+}
+export interface ModelSettings { effort?: string }
+
 /** What `start` is given (SPEC-08 §1.4 `agent.start`). */
 export interface AgentStartSpec {
-  runtime: { kind: string; model?: string; effort?: string };
+  runtime: RuntimeSettings;
   /** Where the agent lives (SPEC-08 §2.2). `cwd` is a path on that body. */
   native?: { on: string; cwd?: string; env?: Record<string, string> };
   /**
@@ -109,12 +121,53 @@ export interface RuntimeAbilities {
   /** Can hold a key for itself (`credentials.has/set`) and report usage (`usage`). */
   credentials: boolean;
   usage: boolean;
+  /** A change of the declaration's runtime settings (model, effort, models) is taken by `configure {runtime}` between turns, without restarting the agent. */
+  runtime_live?: boolean;
 }
 export interface RuntimeInfo {
   kind: string;
   version?: string;
   models: { id: string; efforts?: string[] }[];
   abilities: RuntimeAbilities;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the catalog: which providers and models a runtime can use, and what each needs (service:agents/runtime.catalog)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface CatalogModel {
+  /** `provider/model`: what `runtime.model` and the keys of `runtime.models` are written as. */
+  id: string;
+  name: string;
+  context_window?: number;
+  max_output?: number;
+  images: boolean;
+  reasoning: boolean;
+  /** The thinking efforts the model takes, weakest first; empty when it does not think. Leaving `effort` out means the model's own default. */
+  efforts: string[];
+}
+/** What a provider needs before its models can be used: a key in the vault (the hub knows whether it is there), or a login the runtime holds. */
+export type CatalogAuth =
+  | { kind: "key"; ref: string }
+  | { kind: "login"; method: string; state: "ready" | "none" | "pending" | "unknown"; how: string }
+  | { kind: "none" };
+export interface CatalogProvider {
+  id: string;
+  name: string;
+  /** Needs the proxy (v2rayA) or a VPN on the phone to be reached. */
+  needs_proxy: boolean;
+  auth: CatalogAuth;
+  models: CatalogModel[];
+}
+export interface CatalogOptions {
+  /** Every model of every provider, for checking a declaration. */
+  full?: boolean;
+}
+/** What a driver knows of the runtime now (its live choices), and what it can use. */
+export interface RuntimeCatalog {
+  providers: CatalogProvider[];
+  /** What is in force now, which may differ from the declaration (a temporary `configure`, a fallback). */
+  effective?: Record<string, unknown>;
 }
 
 export type TurnOutcome = "completed" | "cancelled" | "error" | "interrupted";
@@ -178,6 +231,9 @@ export interface AgentDriver {
   inject(agent: string, key: string, content: { modules?: PromptModule[]; text?: string }): Promise<void>;
   /** Stop the running turn. */
   interrupt(agent: string, key: string): Promise<void>;
+
+  /** The providers and models this runtime can use, with what each needs. Absent: the hub builds a plain list from `info.models`. `saved` is the declaration's runtime settings. */
+  catalog?(agent: string, saved: RuntimeSettings, options?: CatalogOptions): Promise<RuntimeCatalog>;
 
   /** Set the runtime's own configuration, or read it back with no `config`. The runtime keeps the truth. */
   configure(agent: string, key: string | undefined, config?: Record<string, unknown>): Promise<Record<string, unknown>>;
