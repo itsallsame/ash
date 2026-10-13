@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CONTAINER_PACKAGES = ["dsh-ash-control", "ash-cost", "ash-skills"];
+export const CONTAINER_PACKAGES = ["dsh-ash-control", "ash-cost", "ash-skills", "pi-login"];
 
 /** DeepSeek's current Flash model, which reads images; the model a fresh install starts with. */
 export const CONTAINER_DEFAULT_MODEL = { provider: "deepseek-official", model: "deepseek-flash" };
@@ -54,6 +54,14 @@ export const CONTAINER_REQUIRED_FILES = [
   "ubuntu/opt/node/bin/node",
   "ubuntu/opt/node/bin/npm",
   "ubuntu/opt/dsh/node_modules/.bin/dsh",
+  "ubuntu/opt/pi/node_modules/.bin/pi",
+  "ubuntu/opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/index.js",
+  "ubuntu/opt/v2/v2raya",
+  "ubuntu/opt/v2/v2raya_core",
+  "ubuntu/opt/v2/assets/geoip.dat",
+  "ubuntu/opt/v2/assets/geosite.dat",
+  "ubuntu/opt/ash/pi-login/index.mjs",
+  "ubuntu/opt/ash/pi-login/package.json",
   "ubuntu/opt/ash/patch.yml",
   "ubuntu/opt/ash/dsh-ash-control/index.mjs",
   "ubuntu/opt/ash/dsh-ash-control/package.json",

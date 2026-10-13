@@ -134,6 +134,8 @@ export type AgentEvent =
   | { event: "tool"; agent: string; key: string; turn: string; phase: "start" | "end"; name: string; summary?: string; ok?: boolean }
   | { event: "handle.updated"; agent: string; key: string; handle: string }
   | { event: "error"; agent: string; message: string }
+  /** A line for the owner from the runtime itself (a model change, a login done): the hub passes it on as a heads-up that never rings. */
+  | { event: "notice"; agent: string; key?: string; text: string }
   /** The process is gone (not asked to stop): the hub starts the agent again and resumes its sessions. */
   | { event: "ended"; agent: string; reason?: string };
 export type AgentEventName = AgentEvent["event"];

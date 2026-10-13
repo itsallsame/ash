@@ -16,6 +16,8 @@
 //   ubuntu/                          ubuntu-base 24.04 arm64, plus
 //     opt/node/                      node 22 linux-arm64
 //     opt/dsh/                       `npm install @deepseek-ai/dsh` for linux-arm64 (glibc)
+//     opt/pi/                        `npm install @earendil-works/pi-coding-agent` for linux-arm64 (the pi runtime)
+//     opt/v2/                        v2rayA (--lite) and its core, with the geo data: the proxy pi reaches OpenAI through
 //     opt/ash/dsh-ash-control/       ash's DSH plugin (packages/dsh-ash-control)
 //     opt/ash/ash-cost/              the cost collector plugin (packages/ash-cost)
 //     opt/ash/ash-skills/            ash's skills plugin and persona templates (packages/ash-skills)
@@ -30,7 +32,7 @@
 // re-extracts whenever any byte, link or mode differs. Hard links become plain files (app storage
 // refuses hard links); symlinks and modes are kept; owners are numeric 0.
 //
-// Needs: node ≥ 22, npm, ar, GNU tar, xz, gzip (pigz is used when present).
+// Needs: node ≥ 22, npm, ar, GNU tar, xz, gzip, unzip (pigz is used when present).
 
 import { createHash } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -63,6 +65,16 @@ const INPUTS = {
     },
   },
   dsh: { package: "@deepseek-ai/dsh", version: "0.2.0-rc.2" },
+  // pi, the second agent runtime (MIT; https://github.com/earendil-works/pi). Pure JavaScript and WebAssembly: its only natives are the
+  // terminal UI's, which RPC mode never loads, so the platforms of other machines are pruned.
+  pi: { package: "@earendil-works/pi-coding-agent", version: "1.2.0" },
+  // v2rayA (GPL-3.0; https://github.com/v2rayA/v2rayA) and its own core, which must be the same version; the geo data are Xray's (MPL-2.0).
+  v2raya: {
+    version: "2.5.10",
+    bin: { url: "https://github.com/v2rayA/v2rayA/releases/download/v2.5.10/v2raya_linux_arm64_2.5.10", sha256: "9ba45cf9ac3d145155f55191fb2cd91cd9368147314cd2d79b48f2f6a2c8ac29" },
+    core: { url: "https://github.com/v2rayA/v2rayA/releases/download/v2.5.10/v2raya_core_linux_arm64_2.5.10", sha256: "dd14a7f2e27b546089e94bd64fd34c6971df5157ab15b3c16e4485909d5d3e3b" },
+    geo: { url: "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-arm64-v8a.zip", sha256: "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c" },
+  },
 };
 
 // arm64 natives DSH must carry (relative to opt/dsh/node_modules); a missing one fails the build.
@@ -247,6 +259,44 @@ async function build() {
   }
   verifyDsh(nm, prune);
 
+  // 4b. pi and v2rayA, the second agent runtime and the proxy it reaches OpenAI through (the pi driver starts both).
+  const piDir = path.join(ubuntu, "opt/pi");
+  const piSpec = `${INPUTS.pi.package}@${INPUTS.pi.version}`;
+  const piCache = fs.mkdtempSync(path.join(os.tmpdir(), "ash-container-npm-"));
+  log("npm install", piSpec, "for linux-arm64 from", registry);
+  sh(
+    "npm",
+    ["install", "--prefix", piDir, piSpec, "--os=linux", "--cpu=arm64", "--libc=glibc", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", "--update-notifier=false", `--registry=${registry}`, `--cache=${piCache}`],
+    { stdio: "inherit" },
+  );
+  fs.rmSync(piCache, { recursive: true, force: true });
+  const piNm = path.join(piDir, "node_modules");
+  for (const rel of ["@earendil-works/pi-tui/native/darwin", "@earendil-works/pi-tui/native/win32", "@earendil-works/pi-tui/native/linux/prebuilds/linux-x64"]) {
+    const abs = path.join(piNm, rel);
+    if (!fs.existsSync(abs)) continue;
+    const size = duBytes(abs);
+    fs.rmSync(abs, { recursive: true, force: true });
+    log("pruned (pi)", rel, mb(size));
+  }
+  const piForeign = [];
+  for (const [rel, e] of walk(piNm)) {
+    if (!e.isFile()) continue;
+    const kind = binaryKind(path.join(piNm, rel));
+    if (kind && kind !== "aarch64") piForeign.push(`${rel} (${kind})`);
+  }
+  if (piForeign.length) throw new Error(`pi carries natives for other machines:\n  ${piForeign.join("\n  ")}`);
+  if (!fs.existsSync(path.join(piNm, ".bin/pi"))) throw new Error("opt/pi/node_modules/.bin/pi missing");
+  const v2 = path.join(ubuntu, "opt/v2");
+  fs.mkdirSync(path.join(v2, "assets"), { recursive: true });
+  for (const [name, input] of [["v2raya", INPUTS.v2raya.bin], ["v2raya_core", INPUTS.v2raya.core]]) {
+    const dst = path.join(v2, name);
+    fs.copyFileSync(await fetchVerified(input.url, input.sha256, cache), dst);
+    fs.chmodSync(dst, 0o755);
+    if (binaryKind(dst) !== "aarch64") throw new Error(`opt/v2/${name} is not an aarch64 ELF`);
+  }
+  sh("unzip", ["-o", "-q", await fetchVerified(INPUTS.v2raya.geo.url, INPUTS.v2raya.geo.sha256, cache), "geoip.dat", "geosite.dat", "-d", path.join(v2, "assets")]);
+  log("v2raya", INPUTS.v2raya.version, mb(duBytes(v2)));
+
   // 5. ash's DSH plugins (the ACP control bridge, the cost collector, ash's own skills with the persona templates) and the
   //    patch that loads them: DSH is started with `--patch /opt/ash/patch.yml` and refuses to start without the file.
   for (const pkg of CONTAINER_PACKAGES) {
@@ -283,10 +333,11 @@ async function build() {
   fs.writeFileSync(path.join(out, "SOURCES"), containerSourcesDigest(ROOT) + "\n");
   const compressed = fs.statSync(path.join(out, name)).size;
   const dshBytes = duBytes(dsh);
+  const piBytes = duBytes(piDir);
   if (!flag("--keep-work")) fs.rmSync(work, { recursive: true, force: true });
   log(`done: ${path.join(out, name)}`);
   log(`  VERSION ${version}`);
-  log(`  uncompressed ${mb(uncompressed)} (of which /opt/dsh ${mb(dshBytes)}), compressed ${mb(compressed)}`);
+  log(`  uncompressed ${mb(uncompressed)} (of which /opt/dsh ${mb(dshBytes)}, /opt/pi ${mb(piBytes)}), compressed ${mb(compressed)}`);
 }
 
 /** sha256 and length of a tar stream, without holding it in memory. */

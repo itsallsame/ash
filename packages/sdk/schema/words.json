@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "6a638d309cf3b147394b89a93b81e3e8352466abc9cefe047097239a6354f1a3",
+ "hash": "27ab1a595865bc41fc5a9ca1f06db30bad80c10da00956716f254fb4bc25190f",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -7473,7 +7473,7 @@
    "word": "configure",
    "kind": "request",
    "direction": "in",
-   "description": "Set the runtime's own configuration for an agent (model, effort level, other options the runtime reports it supports), or read it when config is left out. The runtime keeps the truth; the hub stores no copy.",
+   "description": "Set the runtime's own configuration for an agent (model, effort level, other options the runtime reports it supports), or read it when config is left out. The runtime keeps the truth; the hub stores no copy. On the pi runtime `config: {login: \"openai-codex\"}` starts Codex's device-code login and returns {verification_uri, user_code, expires_in}; the owner opens the link and types the code. Read-back also tells the route to the model, whether it fell back to DeepSeek, and the login state.",
    "input_schema": {
     "type": "object",
     "properties": {

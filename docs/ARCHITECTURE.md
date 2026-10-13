@@ -10,7 +10,7 @@ Everything that crosses into it becomes a typed word, goes through the router an
 kernel/     ledger, registry, router, gate, redact, vault          (imports only sdk)
 edges/      each one turns an outside thing into members:
             link-server (the /link port: human, hands, remote drivers, web page) · tools (MCP for agents) ·
-            agents (DSH driver, remote driver) · body (the main body) · apps · host · llm
+            agents (DSH driver, pi driver, remote driver) · body (the main body) · apps · host · llm
 services/   in-process members: clock, semantic, history, blobs, directory, gate, vault, widgets, admin, cost,
             senses, reflex
 prompts/    rules (prompts/rules/*.md) and the generated modules built from them
@@ -23,7 +23,7 @@ The import rules (kernel imports sdk only; edges and services import kernel and 
 
 Other packages: `sdk` (the contracts), `link` (`ash-link/1`), `workspace` (file and shell operations), `web` (the page the
 hub serves), `device` (the computer program), `ash-skills` (rules, skills, persona templates), `dsh-ash-control` and
-`ash-cost` (DSH plugins), `apps` (first-party apps), `android-compat` (the Node preload the Android host starts core with).
+`ash-cost` (DSH plugins), `pi-login` (Codex's device-code login for the pi runtime), `apps` (first-party apps), `android-compat` (the Node preload the Android host starts core with).
 
 ## Guidance for the main agent: two layers
 
@@ -39,7 +39,7 @@ Rules about how the world works (approvals, data versus instructions, voice, the
 `npm run build:core` bundles `main.ts` into `packages/core/dist/ash-core.mjs`. `npm run build:payload` assembles the payload
 (Node and tools, the bundle with `ash-skills/` and the bundled first-party apps `ash-apps/` beside it, and the relay program `ash-gateway.mjs` that the
 gateway repository builds with `npm run build:bundle`). DSH is not in the payload: it runs in the agent container, which `npm run build:container`
-builds (an arm64 Ubuntu root with Node, DSH as published and Ash's DSH plugins, plus proot, into `build/container/`). The Android Gradle build embeds the payload and the container in the APK.
+builds (an arm64 Ubuntu root with Node, DSH as published and Ash's DSH plugins, pi (the second agent runtime) and v2rayA (the proxy it reaches OpenAI through), plus proot, into `build/container/`). The Android Gradle build embeds the payload and the container in the APK.
 
 `npm run typecheck` and `npm test` run everything; `npm run test:smoke` runs the unit tests of every package and the hub's
 modules; `npm run test:scenarios` starts the whole hub through `startHub` and plays the acceptance scenarios against its port.
