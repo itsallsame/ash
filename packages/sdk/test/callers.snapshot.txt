@@ -95,6 +95,7 @@
 * service:agents/answer  agent
   service:agents/declare  owner,agent,app
   service:agents/update  owner,agent,app
+  service:agents/runtime.catalog  owner,agent,app
   service:agents/start  owner,agent,app
   service:agents/stop  owner,agent,app
   service:agents/restart  owner,agent,app

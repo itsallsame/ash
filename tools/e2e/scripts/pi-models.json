@@ -1,0 +1,294 @@
+{
+  "name": "pi models: an agent reads the catalog, is refused a wrong model and effort, saves a model with an effort per model, reads back what is in force and what is saved, and tries an effort temporarily",
+  "timeout_s": 120,
+  "steps": [
+    {
+      "id": "declare",
+      "call": {
+        "member": "service:agents",
+        "word": "declare",
+        "body": {
+          "id": "agent:pi-models",
+          "name": "pi-models",
+          "summary": "a test agent on the pi runtime",
+          "brief": "Test agent: it never takes a turn.",
+          "runtime": {
+            "kind": "pi",
+            "model": "deepseek/deepseek-flash"
+          }
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "catalog",
+      "call": {
+        "member": "service:agents",
+        "word": "runtime.catalog",
+        "body": {
+          "agent": "agent:pi-models",
+          "provider": "deepseek"
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "bad_model",
+      "call": {
+        "member": "service:agents",
+        "word": "update",
+        "body": {
+          "agent": "agent:pi-models",
+          "runtime": {
+            "model": "nope/x"
+          }
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "bad_effort",
+      "call": {
+        "member": "service:agents",
+        "word": "update",
+        "body": {
+          "agent": "agent:pi-models",
+          "runtime": {
+            "model": "deepseek/deepseek-flash",
+            "effort": "ultra"
+          }
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "set",
+      "call": {
+        "member": "service:agents",
+        "word": "update",
+        "body": {
+          "agent": "agent:pi-models",
+          "runtime": {
+            "model": "deepseek/deepseek-v4-pro",
+            "models": {
+              "deepseek/deepseek-v4-pro": {
+                "effort": "high"
+              },
+              "deepseek/deepseek-flash": {
+                "effort": "low"
+              }
+            }
+          }
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "read_pro",
+      "call": {
+        "member": "service:agents",
+        "word": "configure",
+        "body": {
+          "agent": "agent:pi-models"
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "back",
+      "call": {
+        "member": "service:agents",
+        "word": "update",
+        "body": {
+          "agent": "agent:pi-models",
+          "runtime": {
+            "model": "deepseek/deepseek-flash"
+          }
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "read_flash",
+      "call": {
+        "member": "service:agents",
+        "word": "configure",
+        "body": {
+          "agent": "agent:pi-models"
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "temp",
+      "call": {
+        "member": "service:agents",
+        "word": "configure",
+        "body": {
+          "agent": "agent:pi-models",
+          "config": {
+            "effort": "max"
+          }
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "describe",
+      "call": {
+        "member": "service:agents",
+        "word": "describe",
+        "body": {
+          "agent": "agent:pi-models"
+        },
+        "purpose": "device verification: model catalog"
+      }
+    },
+    {
+      "id": "remove",
+      "call": {
+        "member": "service:agents",
+        "word": "remove",
+        "body": {
+          "agent": "agent:pi-models"
+        },
+        "purpose": "device verification: model catalog"
+      }
+    }
+  ],
+  "owner": [
+    {
+      "name": "approve what asks",
+      "when": {
+        "approval": {}
+      },
+      "repeat": true,
+      "optional": true,
+      "delay_ms": 300,
+      "do": [
+        {
+          "answer": "once"
+        }
+      ]
+    }
+  ],
+  "expect": [
+    {
+      "step": "declare",
+      "ok": true
+    },
+    {
+      "step": "catalog",
+      "ok": true,
+      "data": {
+        "agent": "agent:pi-models",
+        "runtime": "pi",
+        "saved": {
+          "kind": "pi",
+          "model": "deepseek/deepseek-flash"
+        }
+      }
+    },
+    {
+      "step": "bad_model",
+      "ok": false,
+      "error": "bad_request",
+      "error_message": "runtime.catalog"
+    },
+    {
+      "step": "bad_effort",
+      "ok": false,
+      "error": "bad_request",
+      "error_message": "choose one of off, low, high, max"
+    },
+    {
+      "step": "set",
+      "ok": true,
+      "data": {
+        "runtime": {
+          "kind": "pi",
+          "model": "deepseek/deepseek-v4-pro"
+        }
+      }
+    },
+    {
+      "step": "read_pro",
+      "ok": true,
+      "data": {
+        "config": {
+          "effective": {
+            "model": "deepseek/deepseek-v4-pro",
+            "effort": "high"
+          },
+          "saved": {
+            "model": "deepseek/deepseek-v4-pro"
+          }
+        }
+      }
+    },
+    {
+      "step": "back",
+      "ok": true
+    },
+    {
+      "step": "read_flash",
+      "ok": true,
+      "data": {
+        "config": {
+          "effective": {
+            "model": "deepseek/deepseek-flash",
+            "effort": "low"
+          },
+          "saved": {
+            "model": "deepseek/deepseek-flash",
+            "models": {
+              "deepseek/deepseek-flash": {
+                "effort": "low"
+              },
+              "deepseek/deepseek-v4-pro": {
+                "effort": "high"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "temp",
+      "ok": true,
+      "data": {
+        "config": {
+          "effective": {
+            "effort": "max"
+          },
+          "saved": {
+            "model": "deepseek/deepseek-flash"
+          },
+          "temporary": {
+            "efforts": {
+              "deepseek/deepseek-flash": "max"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "describe",
+      "ok": true,
+      "data": {
+        "runtime": {
+          "kind": "pi",
+          "models": {
+            "deepseek/deepseek-flash": {
+              "effort": "low"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "remove",
+      "ok": true
+    }
+  ]
+}

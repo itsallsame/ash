@@ -3,7 +3,7 @@
  "sdk": 4,
  "word_contract": 4,
  "api": "ash-api/3",
- "hash": "6a638d309cf3b147394b89a93b81e3e8352466abc9cefe047097239a6354f1a3",
+ "hash": "d1312e13be0407e41552768bdc32b32055a5b4eda1f3b5966e1c5757136f9c33",
  "error_codes": [
   "bad_request",
   "unauthorized",
@@ -4617,6 +4617,12 @@
       "items": {
        "type": "object",
        "properties": {
+        "notes": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        },
         "id": {
          "type": "string",
          "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -4666,6 +4672,20 @@
           "effort": {
            "type": "string",
            "minLength": 1
+          },
+          "models": {
+           "type": "object",
+           "additionalProperties": {
+            "type": "object",
+            "properties": {
+             "effort": {
+              "type": "string",
+              "minLength": 1
+             }
+            },
+            "required": [],
+            "additionalProperties": false
+           }
           }
          },
          "required": [
@@ -4943,6 +4963,12 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
      "id": {
       "type": "string",
       "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -4992,6 +5018,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -5309,6 +5349,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -5408,6 +5462,12 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
      "id": {
       "type": "string",
       "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -5457,6 +5517,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -5590,7 +5664,7 @@
    "word": "update",
    "kind": "request",
    "direction": "in",
-   "description": "Change an agent's declaration; it applies from its next turn. `primary` can be handed to another agent only through primary.set. Delegation rule: when the caller is not the owner, the tools and words you give the agent must be a subset of the tools and words you have yourself; anything beyond that is refused with forbidden. This is not a question to the owner. Delegation goes at most three levels deep.",
+   "description": "Change an agent's declaration; it applies from its next turn. `primary` can be handed to another agent only through primary.set. The lasting way to choose an agent's model: `runtime` is a patch laid over the declared one: `kind` may be left out, `model` is `provider/model` (see runtime.catalog), `effort` is the thinking effort of that model, and `models` holds settings per model that apply whenever that model is in use (merged model by model; null forgets one). Examples: `runtime: {kind: \"pi\", model: \"deepseek/deepseek-flash\"}` switches the agent to the pi runtime; `runtime: {model: \"openai-codex/gpt-5.5\", models: {\"openai-codex/gpt-5.5\": {effort: \"high\"}, \"deepseek/deepseek-flash\": {effort: \"low\"}}}` changes the model and gives each model its own effort. A model or effort the runtime does not know is refused with the list to choose from. The result's `notes` say what is still missing for the choice to work (a key, a login). On the pi runtime a change of model or settings is taken from the next turn without a restart; a change of runtime kind restarts the agent. Delegation rule: when the caller is not the owner, the tools and words you give the agent must be a subset of the tools and words you have yourself; anything beyond that is refused with forbidden. This is not a question to the owner. Delegation goes at most three levels deep.",
    "input_schema": {
     "type": "object",
     "properties": {
@@ -5624,11 +5698,30 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "anyOf": [
+          {
+           "type": "object",
+           "properties": {
+            "effort": {
+             "type": "string",
+             "minLength": 1
+            }
+           },
+           "required": [],
+           "additionalProperties": false
+          },
+          {
+           "type": "null"
+          }
+         ]
+        }
        }
       },
-      "required": [
-       "kind"
-      ],
+      "required": [],
       "additionalProperties": false
      },
      "native": {
@@ -5720,6 +5813,12 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
      "id": {
       "type": "string",
       "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -5769,6 +5868,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -5899,6 +6012,94 @@
   },
   {
    "member": "service:agents",
+   "word": "runtime.catalog",
+   "kind": "request",
+   "direction": "in",
+   "description": "Which providers and models an agent's runtime can use, and whether each is usable now: for every provider its `ready` flag, what it needs (`auth`: a key in the vault, or a login), `how` to make it ready when it is not (including what to ask the owner), and its models with context length, image and reasoning support and the `efforts` each takes. Also `saved` (the lasting settings in the declaration) and `effective` (what is in force now, which a temporary configure or a fallback can make differ). A provider with many models lists none until you ask for it with `provider`; `search` keeps the models whose id or name contains the text. Read this before choosing a model with update, and again after the owner has logged in or saved a key.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "agent": {
+      "type": "string",
+      "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
+     },
+     "provider": {
+      "type": "string",
+      "minLength": 1
+     },
+     "search": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "agent"
+    ],
+    "additionalProperties": false
+   },
+   "result_schema": {
+    "type": "object",
+    "properties": {
+     "agent": {
+      "type": "string",
+      "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
+     },
+     "runtime": {
+      "type": "string",
+      "minLength": 1
+     },
+     "saved": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": true
+     },
+     "effective": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": true
+     },
+     "providers": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {},
+       "required": [],
+       "additionalProperties": true
+      }
+     },
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "usage": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "agent",
+     "runtime",
+     "saved",
+     "providers"
+    ],
+    "additionalProperties": false
+   },
+   "effect": "read",
+   "risk": "none",
+   "callers": [
+    "owner",
+    "agent",
+    "app"
+   ],
+   "label": {
+    "doing": "在查能用的模型"
+   }
+  },
+  {
+   "member": "service:agents",
    "word": "start",
    "kind": "request",
    "direction": "in",
@@ -5919,6 +6120,12 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
      "id": {
       "type": "string",
       "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -5968,6 +6175,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -6118,6 +6339,12 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
      "id": {
       "type": "string",
       "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -6167,6 +6394,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -6317,6 +6558,12 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
      "id": {
       "type": "string",
       "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -6366,6 +6613,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -6558,6 +6819,12 @@
    "result_schema": {
     "type": "object",
     "properties": {
+     "notes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
      "id": {
       "type": "string",
       "pattern": "^agent:[a-z][a-z0-9_-]{0,31}$"
@@ -6607,6 +6874,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -6764,6 +7045,20 @@
        "effort": {
         "type": "string",
         "minLength": 1
+       },
+       "models": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "effort": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [],
+         "additionalProperties": false
+        }
        }
       },
       "required": [
@@ -7473,7 +7768,7 @@
    "word": "configure",
    "kind": "request",
    "direction": "in",
-   "description": "Set the runtime's own configuration for an agent (model, effort level, other options the runtime reports it supports), or read it when config is left out. The runtime keeps the truth; the hub stores no copy.",
+   "description": "Set the runtime's own configuration for an agent (model, effort level, other options the runtime reports it supports), or read it when config is left out. This is the temporary way: it changes what is in force now and is forgotten when the hub restarts; the lasting way is `update` with `runtime`. On the pi runtime: `config: {model: \"deepseek/deepseek-flash\", effort: \"high\"}` takes effect from the next turn; `config: {login: \"openai-codex\"}` starts Codex's device-code login and returns {verification_uri, user_code, expires_in} (the owner opens the link in the phone's browser, with the phone's VPN on, and types the code; you are told when it is done). The read-back gives `effective` (in force now: model, effort, whether it fell back to DeepSeek and why, the route to the model, the login state) and `saved` (the declaration's lasting settings).",
    "input_schema": {
     "type": "object",
     "properties": {

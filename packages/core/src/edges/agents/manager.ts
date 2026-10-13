@@ -805,6 +805,7 @@ export class AgentManager {
         if (this.runs.get(ev.agent)) this.runs.patch(ev.agent, (spec) => { spec.sessions[ev.key] = ev.handle; });
         return;
       case "error": this.log(`agents: ${ev.agent}: ${ev.message}`); return;
+      case "notice": this.tellOwner(ev.text); return;
       case "ended": this.onEnded(ev.agent, ev.reason); return;
       default:
     }

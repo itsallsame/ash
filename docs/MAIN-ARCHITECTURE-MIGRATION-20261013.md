@@ -1,6 +1,6 @@
 # coworker 主分支架构迁移
 
-采用 origin/main b8b475cd（0.4.25）作为基础。旧实现快照位于 backup/coworker-before-main-20261013，5b958f84；旧 APK 不代表新版验收结果。
+采用 origin/main e7372448（0.4.27）作为基础。迁移完成时上游又增加5个提交，已继续合入；新增pi运行时与会话路由38项检查通过，类型检查和Core构建再次通过。旧实现快照位于 backup/coworker-before-main-20261013，5b958f84；旧 APK 不代表新版验收结果。
 
 ## 运行方式
 

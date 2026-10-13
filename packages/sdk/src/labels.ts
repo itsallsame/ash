@@ -65,6 +65,7 @@ const serviceLabels: Readonly<Record<string, string>> = Object.freeze({
   "service:agents/answer": "在回答",
   "service:agents/declare": "在新建帮手",
   "service:agents/update": "在调整帮手",
+  "service:agents/runtime.catalog": "在查能用的模型",
   "service:agents/start": "在启动帮手",
   "service:agents/stop": "在停下帮手",
   "service:agents/restart": "在重启帮手",

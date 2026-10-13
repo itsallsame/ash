@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { WordError } from "../../../../sdk/src/message";
-import type { ModuleId } from "../../../../sdk/src/driver";
+import type { ModelSettings, ModuleId, RuntimeSettings } from "../../../../sdk/src/driver";
 import { AGENT_ID } from "../../../../sdk/src/ids";
 import type { Ledger } from "../../kernel/ledger";
 
@@ -29,7 +29,7 @@ export interface AgentDecl {
   name: string;
   summary: string;
   brief: string;
-  runtime: { kind: string; model?: string; effort?: string };
+  runtime: RuntimeSettings;
   native?: { on: string; cwd?: string; env?: Record<string, string> };
   tools?: string[];
   words?: string[];
@@ -45,6 +45,61 @@ export interface AgentDecl {
 }
 
 export const DEFAULT_RUNTIME = "dsh";
+
+const SETTING_KEYS = ["effort"] as const;
+/** The settings of one model out of free JSON (`{effort}`); `null` (in a patch) means to forget the model's entry. */
+function readModelSettings(raw: unknown, where: string, patch: boolean): ModelSettings | null {
+  if (raw === null && patch) return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new WordError("bad_request", `${where} needs an object such as {"effort": "high"}`);
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(SETTING_KEYS as readonly string[]).includes(key)) throw new WordError("bad_request", `${where}: ${key} is not a setting of a model (${SETTING_KEYS.join(", ")})`);
+    if (typeof value !== "string" || !value) throw new WordError("bad_request", `${where}.${key} must be a non-empty string`);
+    out[key] = value;
+  }
+  return out;
+}
+
+/** What an `update` says about the runtime: like the settings, but `kind` may be left out and a model's entry may be `null` (forget it). */
+export type RuntimePatch = Omit<Partial<RuntimeSettings>, "models"> & { models?: Record<string, ModelSettings | null> };
+
+function parseRuntime(raw: unknown, patch: boolean): RuntimePatch {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new WordError("bad_request", 'runtime must be an object such as {"kind": "pi", "model": "deepseek/deepseek-flash"}');
+  const r = raw as Record<string, any>;
+  if (!patch && (typeof r.kind !== "string" || !r.kind)) throw new WordError("bad_request", "runtime needs a kind");
+  if (r.kind !== undefined && (typeof r.kind !== "string" || !r.kind)) throw new WordError("bad_request", "runtime.kind must be a non-empty string");
+  for (const k of ["model", "effort"]) if (r[k] !== undefined && (typeof r[k] !== "string" || !r[k])) throw new WordError("bad_request", `runtime.${k} must be a non-empty string`);
+  let models: Record<string, ModelSettings | null> | undefined;
+  if (r.models !== undefined) {
+    if (!r.models || typeof r.models !== "object" || Array.isArray(r.models)) throw new WordError("bad_request", 'runtime.models must be an object keyed by model, such as {"deepseek/deepseek-flash": {"effort": "high"}}');
+    models = {};
+    for (const [model, value] of Object.entries(r.models)) models[model] = readModelSettings(value, `runtime.models[${model}]`, patch);
+  }
+  return { ...(r.kind ? { kind: r.kind } : {}), ...(r.model ? { model: r.model } : {}), ...(r.effort ? { effort: r.effort } : {}), ...(models ? { models } : {}) };
+}
+/** The runtime settings out of free JSON (a declaration), or a `bad_request`: `{kind, model?, effort?, models?}`. */
+export const readRuntime = (raw: unknown): RuntimeSettings => parseRuntime(raw, false) as RuntimeSettings;
+/** The runtime part of an `update`. */
+export const readRuntimePatch = (raw: unknown): RuntimePatch => parseRuntime(raw, true);
+
+/**
+ * An `update`'s runtime patch laid over the declared one. The same kind (or no kind): `model` and `effort` replace, and `models` is merged
+ * model by model (an entry is merged with the model's earlier one; `null` forgets it). Another kind: the patch is the whole new runtime.
+ */
+export function mergeRuntime(before: RuntimeSettings, patch: RuntimePatch): RuntimeSettings {
+  if (patch.kind && patch.kind !== before.kind) return readRuntime({ ...patch, models: Object.fromEntries(Object.entries(patch.models ?? {}).filter(([, v]) => v !== null)) });
+  const models: Record<string, ModelSettings> = { ...(before.models ?? {}) };
+  for (const [model, value] of Object.entries(patch.models ?? {})) {
+    if (value === null) delete models[model];
+    else models[model] = { ...(models[model] ?? {}), ...value };
+  }
+  return {
+    kind: before.kind,
+    ...((patch.model ?? before.model) ? { model: patch.model ?? before.model } : {}),
+    ...((patch.effort ?? before.effort) ? { effort: patch.effort ?? before.effort } : {}),
+    ...(Object.keys(models).length ? { models } : {}),
+  };
+}
 export const DEFAULT_LANES: Readonly<Record<string, LaneDecl>> = Object.freeze({
   front: { from: ["person:owner"] },
   back: { from: ["wake", "event"] },
@@ -86,13 +141,12 @@ export function fileTemplates(dir: string): Templates {
 export function readDecl(raw: unknown, createdBy: string, depth: number): AgentDecl {
   const r = (raw ?? {}) as Record<string, any>;
   if (typeof r.id !== "string" || !AGENT_ID.test(r.id)) throw new WordError("bad_request", "a declaration needs an id such as agent:name");
-  if (r.runtime !== undefined && (typeof r.runtime?.kind !== "string" || !r.runtime.kind)) throw new WordError("bad_request", "runtime needs a kind");
-  const runtime = r.runtime ?? { kind: DEFAULT_RUNTIME };
+  const runtime = r.runtime === undefined ? { kind: DEFAULT_RUNTIME } : readRuntime(r.runtime);
   const text = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
   const list = (value: unknown) => (Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : undefined);
   return {
     id: r.id, name: text(r.name, r.id.slice(6)), summary: text(r.summary), brief: text(r.brief),
-    runtime: { kind: runtime.kind, ...(runtime.model ? { model: String(runtime.model) } : {}), ...(runtime.effort ? { effort: String(runtime.effort) } : {}) },
+    runtime,
     ...(r.native ? { native: r.native } : {}),
     ...(list(r.tools) ? { tools: list(r.tools) } : {}), ...(list(r.words) ? { words: list(r.words) } : {}),
     ...(r.lanes && typeof r.lanes === "object" ? { lanes: r.lanes } : {}),

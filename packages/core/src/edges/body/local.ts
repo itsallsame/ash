@@ -25,6 +25,8 @@ import { startProvision, type ProvisionState } from "./provision";
 
 /** Where DSH and its patch file are inside the container; the agent runtime only says `dsh --patch <that file>`. */
 const PROOT_DSH = "/opt/dsh/node_modules/.bin/dsh";
+/** Where pi (the other agent runtime) is inside the container; the driver only says `pi`. */
+const PROOT_PI = "/opt/pi/node_modules/.bin/pi";
 const PROOT_PATCH = "/opt/ash/patch.yml";
 
 /**
@@ -172,7 +174,8 @@ export function createLocalBody(o: LocalBodyOptions): LocalBody {
       if (isolation.kind === "proot") {
         writeResolvConf(isolation.proot);
         const runtime = argv[0] === "dsh";
-        return runProot(isolation.proot, runtime ? [PROOT_DSH, ...argv.slice(1)] : argv, {
+        const program = runtime ? [PROOT_DSH, ...argv.slice(1)] : argv[0] === "pi" ? [PROOT_PI, ...argv.slice(1)] : argv;
+        return runProot(isolation.proot, program, {
           // Its own process group: stopping it reaches what runs under proot too (proot does not pass a signal on).
           ...(opts.cwd ? { workdir: opts.cwd } : {}), env: { ...proxyEnv(network), ...(runtime ? PROOT_DSH_ENV : {}), ...opts.env }, stdio: ["pipe", "pipe", "pipe"], detached: true,
         }) as ChildProcessWithoutNullStreams;

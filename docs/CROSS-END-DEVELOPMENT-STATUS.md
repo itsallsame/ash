@@ -1,6 +1,6 @@
 ## 2026-10-13：新架构迁移本地收尾
 
-origin/main b8b475cd 已纳入coworker工作树，采用新kernel/edges/services、ash-link/1和原生电脑会话页面。读、新建、发送/追加、主动图片、链接草稿和结果stream已接通，原CLI项目授权保留。旧Core/HTTP桥已移除；共享协议归SDK。相关本地验证通过，全量测试的剩余上游/平台限制如实列于 [迁移记录](MAIN-ARCHITECTURE-MIGRATION-20261013.md)。新版正式APK与完整模拟器/真机验收尚未完成；旧安装包与以下旧版验收记录不得代用。
+origin/main e7372448 已纳入coworker工作树（含迁移期间新增5个上游提交），采用新kernel/edges/services、ash-link/1和原生电脑会话页面。读、新建、发送/追加、主动图片、链接草稿和结果stream已接通，原CLI项目授权保留。旧Core/HTTP桥已移除；共享协议归SDK。相关本地验证通过，全量测试的剩余上游/平台限制如实列于 [迁移记录](MAIN-ARCHITECTURE-MIGRATION-20261013.md)。新版正式APK与完整模拟器/真机验收尚未完成；旧安装包与以下旧版验收记录不得代用。
 
 ## 2026-10-13：主分支新架构迁移进行中
 

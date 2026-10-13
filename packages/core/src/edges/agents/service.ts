@@ -10,7 +10,8 @@ import { wordsOf } from "../../../../sdk/src/words";
 import { agentCaller, SPAWN_TIMEOUT_S, staticHash, type AgentManager } from "./manager";
 import { SERVICE_CALLER } from "./modules";
 import { callerPower, MAX_DEPTH, withinPower } from "./policy";
-import { DEFAULT_RUNTIME, lanesOf, readDecl, type AgentDecl, type Run } from "./runs";
+import { DEFAULT_RUNTIME, lanesOf, mergeRuntime, readDecl, readRuntimePatch, type AgentDecl, type Run } from "./runs";
+import type { CatalogModel, CatalogProvider, RuntimeCatalog, RuntimeSettings } from "../../../../sdk/src/driver";
 
 export const AGENTS_ID = "service:agents";
 const WORKER_MODULES: ModuleId[] = ["rules", "skills", "environment", "lane"];
@@ -57,6 +58,7 @@ export function createAgentsService(manager: AgentManager): Member {
     if (decl.primary && !isOwner(ctx)) throw new WordError("forbidden", "only the owner makes an agent primary");
     if (decl.primary && runs.primary()) throw new WordError("conflict", "there is a primary agent already; use primary.set to hand it over");
     checkPower(ctx, decl);
+    await checkRuntime(decl.id, decl.runtime);
     runs.put({ id: decl.id, spec: { decl, sessions: {}, static_hash: {}, usage_since: 0 } });
     await manager.startAgent(decl.id, "新建").catch((e) => manager.deps.log?.("agents: start after declare:", e));
     return data(info(runs.get(decl.id)!));
@@ -66,13 +68,113 @@ export function createAgentsService(manager: AgentManager): Member {
     const run = manager.run(body.agent);
     if (body.primary !== undefined && !!body.primary !== !!run.spec.decl.primary) throw new WordError("bad_request", "primary is handed over with primary.set");
     const before = run.spec.decl;
-    const decl: AgentDecl = { ...before, ...pick(body) };
+    const { runtime: _asked, ...rest } = pick(body);
+    const decl: AgentDecl = { ...before, ...rest };
+    let notes: string[] = [];
+    if (body.runtime !== undefined) {
+      decl.runtime = mergeRuntime(before.runtime, readRuntimePatch(body.runtime));
+      notes = await checkRuntime(run.id, decl.runtime);
+    }
     if (before.primary) decl.primary = true; else delete decl.primary;
     checkPower(ctx, decl);
     runs.put({ id: run.id, spec: { ...run.spec, decl }, desired: run.desired });
-    const moved = JSON.stringify([before.runtime, before.native, Object.keys(lanesOf(before))]) !== JSON.stringify([decl.runtime, decl.native, Object.keys(lanesOf(decl))]);
-    if (moved && manager.liveOf(run.id)) await manager.restartAgent(run.id);
-    return data(info(runs.get(run.id)!));
+    const sameKind = before.runtime.kind === decl.runtime.kind;
+    const placeMoved = JSON.stringify([before.native, Object.keys(lanesOf(before))]) !== JSON.stringify([decl.native, Object.keys(lanesOf(decl))]);
+    const runtimeChanged = JSON.stringify(before.runtime) !== JSON.stringify(decl.runtime);
+    const live = manager.liveOf(run.id);
+    if (live && (placeMoved || !sameKind)) await manager.restartAgent(run.id);
+    else if (live && runtimeChanged) {
+      // A runtime that takes its settings between turns is told; any other starts again with them.
+      if (live.driver.info.abilities.runtime_live) await live.driver.configure(live.id, undefined, { runtime: decl.runtime });
+      else await manager.restartAgent(run.id);
+    }
+    return data({ ...info(runs.get(run.id)!), ...(notes.length ? { notes } : {}) });
+  }
+
+  // -- what a runtime can use --------------------------------------------------------------------------------------
+
+  const BIG_LIST = 20;
+  const KEY_HOW = (ref: string) => `No key is saved (vault ${ref}). Only the owner can save it: ask them to open 幕后 → 密钥 in the Ash app and paste it there. You cannot save it for them and it never passes through you. Read this catalog again after they say it is done.`;
+
+  /** The catalog of a runtime kind: the driver's own, or a plain list built from the models the runtime reports. */
+  async function catalogOf(agent: string, saved: RuntimeSettings, full: boolean): Promise<RuntimeCatalog> {
+    const driver = manager.driver(saved.kind);
+    if (driver.catalog) return driver.catalog(agent, saved, { full });
+    const models: CatalogModel[] = driver.info.models.map((m) => ({ id: m.id, name: m.id, images: false, reasoning: (m.efforts ?? []).length > 0, efforts: m.efforts ?? [] }));
+    return { providers: [{ id: saved.kind, name: saved.kind, needs_proxy: false, auth: { kind: "none" }, models }] };
+  }
+
+  function providerReady(p: CatalogProvider): { ready: boolean; auth: Record<string, unknown>; how?: string } {
+    const a = p.auth;
+    if (a.kind === "key") {
+      const configured = !!manager.deps.vault.use(a.ref);
+      return { ready: configured, auth: { kind: "key", ref: a.ref, configured }, ...(configured ? {} : { how: KEY_HOW(a.ref) }) };
+    }
+    if (a.kind === "login") return { ready: a.state === "ready", auth: { kind: "login", method: a.method, state: a.state }, ...(a.state === "ready" ? {} : { how: a.how }) };
+    return { ready: true, auth: { kind: "none" } };
+  }
+
+  /** Mistakes in a declaration's runtime that the runtime's catalog can tell (an unknown model, an effort the model does not take), and what is still missing for it to work. */
+  async function checkRuntime(agent: string, runtime: RuntimeSettings): Promise<string[]> {
+    if (!manager.kinds().includes(runtime.kind)) return [];
+    const driver = manager.driver(runtime.kind);
+    if (!driver.catalog) return [];
+    const catalog = await driver.catalog(agent, runtime, { full: true });
+    const byId = new Map<string, CatalogModel>();
+    for (const p of catalog.providers) for (const m of p.models) byId.set(m.id, m);
+    const providerIds = catalog.providers.map((p) => p.id);
+    const problems: string[] = [];
+    const notes: string[] = [];
+    const check = (model: string, effort: string | undefined, where: string) => {
+      const provider = model.includes("/") ? model.slice(0, model.indexOf("/")) : "";
+      const known = byId.get(model);
+      if (!known) {
+        if (provider === "openrouter") notes.push(`${model}: not in the catalog's list of OpenRouter models; it is tried as given.`);
+        else problems.push(`${where}: ${JSON.stringify(model)} is not a model of the ${runtime.kind} runtime. Models are written provider/model; providers: ${providerIds.join(", ")}. Read service:agents/runtime.catalog for the list.`);
+        return;
+      }
+      if (effort !== undefined) {
+        if (!known.efforts.length) problems.push(`${where}: ${model} does not take an effort (it does not think).`);
+        else if (!known.efforts.includes(effort)) problems.push(`${where}: effort ${JSON.stringify(effort)} is not one ${model} takes; choose one of ${known.efforts.join(", ")}.`);
+      }
+    };
+    if (runtime.model) check(runtime.model, runtime.effort, "runtime.model");
+    else if (runtime.effort) problems.push("runtime.effort needs runtime.model (the effort belongs to a model).");
+    for (const [model, settings] of Object.entries(runtime.models ?? {})) check(model, settings.effort, `runtime.models[${model}]`);
+    if (problems.length) throw new WordError("bad_request", problems.join(" "));
+    for (const model of new Set([runtime.model, ...Object.keys(runtime.models ?? {})].filter((m): m is string => !!m))) {
+      const provider = catalog.providers.find((p) => p.models.some((m) => m.id === model) || model.startsWith(`${p.id}/`));
+      if (!provider) continue;
+      const state = providerReady(provider);
+      if (!state.ready && model === runtime.model) notes.push(`${provider.name} is not ready: ${state.how ?? "not available"} Until then the agent runs on the fallback model.`);
+    }
+    return notes;
+  }
+
+  async function runtimeCatalog(body: Record<string, any>): Promise<WordResult> {
+    const run = manager.run(body.agent);
+    const saved = run.spec.decl.runtime;
+    const catalog = await catalogOf(run.id, saved, false);
+    const search = typeof body.search === "string" ? body.search.toLowerCase() : "";
+    const only = typeof body.provider === "string" ? body.provider : "";
+    const providers = catalog.providers.filter((p) => !only || p.id === only).map((p) => {
+      const state = providerReady(p);
+      const asked = only === p.id;
+      let models = p.models.filter((m) => !search || m.id.toLowerCase().includes(search) || m.name.toLowerCase().includes(search));
+      const hidden = models.length > BIG_LIST && !asked && !search;
+      if (hidden) models = [];
+      return {
+        id: p.id, name: p.name, ready: state.ready, needs_proxy: p.needs_proxy, auth: state.auth, ...(state.how ? { how: state.how } : {}),
+        models_total: p.models.length, ...(hidden ? { models_hidden: `${p.models.length} models: ask with provider: ${JSON.stringify(p.id)} (and search) to list them` } : {}),
+        models,
+      };
+    });
+    if (only && !providers.length) throw new WordError("bad_request", `${saved.kind} has no provider ${only}; providers: ${catalog.providers.map((p) => p.id).join(", ")}`);
+    const notes = providers.filter((p) => !p.ready).map((p) => `${p.name}: ${p.how ?? "not ready"}`);
+    return data({
+      agent: run.id, runtime: saved.kind, saved, ...(catalog.effective ? { effective: catalog.effective } : {}), providers, ...(notes.length ? { notes } : {}),
+      usage: 'Choose with service:agents/update {agent, runtime: {model: "provider/model", models: {"provider/model": {effort: "<one of the model\'s efforts>"}}}}; only ready providers work now.',
+    });
   }
 
   async function remove(id: string): Promise<WordResult> {
@@ -180,6 +282,7 @@ export function createAgentsService(manager: AgentManager): Member {
       case "list": return data({ agents: runs.list().map(info) });
       case "runtimes": return data({ runtimes: manager.kinds().map((k) => manager.driver(k).info) });
       case "describe": return data(info(manager.run(body.agent)));
+      case "runtime.catalog": return runtimeCatalog(body);
       case "declare": return declare(body, ctx);
       case "update": return update(body, ctx);
       case "start": manager.run(body.agent); manager.runs.setDesired(body.agent, "on"); await manager.startAgent(body.agent, "启动"); return data(info(manager.run(body.agent)));
