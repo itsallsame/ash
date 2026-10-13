@@ -509,8 +509,7 @@ class ChatScreen(
                 setTextIsSelectable(true); movementMethod = LinkMovementMethod.getInstance()
             }
             val side = LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START }
-            box.addView(bubble, side)
-            foldable(bubble, item.optString("id"), box, side)
+            box.addView(foldable(bubble, item.optString("id")), side)
         }
         val reactions = item.optJSONArray("reactions") ?: JSONArray()
         if (reactions.length() > 0) box.addView(AshUi.text(ctx, (0 until reactions.length()).joinToString(" ") { reactions.optJSONObject(it)?.optString("emoji").orEmpty() }, AshTokens.Type.callout),
@@ -524,9 +523,19 @@ class ChatScreen(
      * maxLines only cuts what is drawn): a selectable bubble with links never ellipsizes. The fade is a gradient on the text's paint, so it
      * works on any bubble colour. The bubble keeps its taps for selecting text and following links.
      */
-    private fun foldable(bubble: TextView, id: String, box: LinearLayout, side: LinearLayout.LayoutParams) {
-        val toggle = AshUi.button(ctx, "展开全文 ⌄", AshUi.Kind.SECONDARY, AshUi.BtnSize.SM).apply { visibility = View.GONE }
-        box.addView(toggle, LinearLayout.LayoutParams(-2, dp(AshTokens.Size.buttonSm)).apply { gravity = side.gravity; topMargin = dp(4) })
+    private fun foldable(bubble: TextView, id: String): View {
+        // The bubble's face moves to a frame that holds the text and, under it inside the bubble, the 「展开全文 ⌄」 / 「收起 ⌃」 link.
+        val frame = AshUi.vstack(ctx, 2).apply {
+            background = bubble.background
+            setPadding(bubble.paddingLeft, bubble.paddingTop, bubble.paddingRight, bubble.paddingBottom)
+        }
+        bubble.background = null
+        bubble.setPadding(0, 0, 0, 0)
+        frame.addView(bubble, LinearLayout.LayoutParams(-2, -2))
+        val toggle = AshUi.text(ctx, "展开全文 ⌄", AshTokens.Type.callout, bubble.currentTextColor).apply {
+            visibility = View.GONE; alpha = 0.75f; setPadding(0, dp(4), 0, 0); isClickable = true
+        }
+        frame.addView(toggle, LinearLayout.LayoutParams(-2, -2))
         val ink = bubble.currentTextColor
         fun open() = id.isNotEmpty() && id in unfolded
         fun fade() {
@@ -540,8 +549,14 @@ class ChatScreen(
             bubble.invalidate()
         }
         fun apply() {
-            bubble.maxLines = if (open()) Int.MAX_VALUE else FOLD_LINES
-            toggle.text = if (open()) "收起 ⌃" else "展开全文 ⌄"
+            val open = open()
+            bubble.maxLines = if (open) Int.MAX_VALUE else FOLD_LINES
+            // A folded bubble is a preview: no selecting and no links, or the text view scrolls its cut-off lines inside itself.
+            // Open, it gets both back.
+            bubble.setTextIsSelectable(open)
+            bubble.movementMethod = if (open) LinkMovementMethod.getInstance() else null
+            if (!open) bubble.scrollTo(0, 0)
+            toggle.text = if (open) "收起 ⌃" else "展开全文 ⌄"
             fade()
         }
         apply()
@@ -552,6 +567,7 @@ class ChatScreen(
             fade()
         }
         toggle.setOnClickListener { if (id.isEmpty()) return@setOnClickListener; if (!unfolded.add(id)) unfolded.remove(id); apply() }
+        return frame
     }
 
     private fun pending(o: JSONObject): View {
