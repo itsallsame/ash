@@ -37,6 +37,8 @@ export interface AgentsDeps {
   vault: Pick<Vault, "use">;
   /** One driver factory per runtime kind (`dsh`...). */
   drivers: Record<string, AgentDriverFactory>;
+  /** Declarations this build adds to the table after the first start has planted the primary agent (the debug build's script agent). */
+  declare?: (runs: Runs) => void;
   /** `ash-skills/agents`: the `main` template that plants the first declaration, and the templates for `spawn`. */
   templates: Templates;
   /** The agent's own address on the tool surface and one token for each of its lanes (a new set on every call; the one before stops working); `allowed` is its declared tool list (already narrowed by delegation). */
@@ -217,6 +219,7 @@ export class AgentManager {
   async startAll(): Promise<void> {
     this.closing = false;
     this.runs.seed(this.deps.templates);
+    this.deps.declare?.(this.runs);
     this.inbox.prune(this.now() - 7 * 86_400_000);
     // From here on the declared agents are members. A kind with no driver here is not: nothing would ever start it.
     const on = this.runs.list().filter((run) => run.desired === "on" && this.deps.drivers[run.spec.decl.runtime.kind]);

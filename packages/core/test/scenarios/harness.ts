@@ -661,6 +661,8 @@ export interface ScenarioOptions {
   firstMeeting?: boolean;
   /** Keep the hub's fast path of approvals (an agent's call waits for the owner's answer for a while). By default the scenario turns it off: its approvals take the slow way, where the answer comes as a message. */
   fastApproval?: boolean;
+  /** A debug hub: host.json says `dev.script_agent`, so `agent:script` is declared and its program runs on this machine. */
+  scriptAgent?: boolean;
 }
 
 /** A clock the test moves. Starts at 2026-10-10 07:00 UTC. */
@@ -687,7 +689,7 @@ interface ConnectOptions {
 }
 
 export class Scenario {
-  readonly host = new FakeHost();
+  readonly host: FakeHost;
   readonly driver: ScriptedDriver;
   readonly clock = new ManualNow();
   readonly dataDir = mkdtempSync(join(tmpdir(), "ash-scenario-"));
@@ -701,6 +703,7 @@ export class Scenario {
   private pipe: FakeHostConnection | undefined;
 
   constructor(private readonly options: ScenarioOptions = {}) {
+    this.host = new FakeHost(options.scriptAgent ? { dev: { owner_token: false, script_agent: true } } : {});
     this.driver = scriptedDriver(["dsh", ...(options.runtimes ?? [])]);
   }
 

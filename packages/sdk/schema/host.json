@@ -272,6 +272,9 @@
       "properties": {
         "owner_token": {
           "type": "boolean"
+        },
+        "script_agent": {
+          "type": "boolean"
         }
       }
     }

@@ -17,6 +17,7 @@ import { WordError, type Caller } from "../../sdk/src/message";
 import { createAgents, bodyFileWriter } from "./edges/agents";
 import { DEFAULT_CREDENTIAL_REFS } from "./edges/agents/manager";
 import { createDshDriver, type DriverProcess } from "./edges/agents/dsh";
+import { declareScriptAgent, SCRIPT_RUNTIME, scriptDriver } from "./edges/agents/script";
 import { createRemoteDrivers } from "./edges/agents/remote";
 import { createApps, installBuiltinOrgans, installContractDoc, newBuiltinReport } from "./edges/apps";
 import { createLocalBody, mainBodyKind } from "./edges/body/local";
@@ -251,12 +252,15 @@ export async function startHub(opts: HubOptions): Promise<Hub> {
     turnActive: (id, turn) => late.agents?.turnActive(id, turn) ?? false });
   const drivers: Record<string, AgentDriverFactory> = {
     dsh: (report) => createDshDriver({ report, spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), runtimePath: (cwd) => body.runtimePath(cwd), readBlob: (ref) => ledger.blob.get(ref) }),
+    // The script agent exists only for a host that says it is a debug build (host.json `dev.script_agent`).
+    ...(spec.dev?.script_agent === true ? { [SCRIPT_RUNTIME]: scriptDriver({ spawn: (argv, o) => body.spawn(argv, o) as DriverProcess, writeFile: bodyFileWriter(router), runtimePath: (cwd) => body.runtimePath(cwd), readBlob: (ref) => ledger.blob.get(ref) }) } : {}),
     ...remote.factories,
     ...opts.drivers,
   };
   let provisioned = false;
   const agents = late.agents = createAgents({
     router, registry, ledger, vault: { use: (ref) => vault.use(ref) }, drivers, now, log,
+    ...(spec.dev?.script_agent === true ? { declare: declareScriptAgent } : {}),
     templatesDir: join(SKILLS, "agents"),
     rules: (decl) => (decl.primary ? MAIN_RULES : AGENT_RULES),
     channels: () => late.human?.channels() ?? [],

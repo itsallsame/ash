@@ -6480,11 +6480,11 @@ var require_validate = __commonJS({
         jsonPointer = $data;
         data = names_1.default.rootData;
       } else {
-        const matches = RELATIVE_JSON_POINTER.exec($data);
-        if (!matches)
+        const matches2 = RELATIVE_JSON_POINTER.exec($data);
+        if (!matches2)
           throw new Error(`Invalid JSON-pointer: ${$data}`);
-        const up = +matches[1];
-        jsonPointer = matches[2];
+        const up = +matches2[1];
+        jsonPointer = matches2[2];
         if (jsonPointer === "#") {
           if (up >= dataLevel)
             throw new Error(errorMsg("property/index", up));
@@ -7371,11 +7371,11 @@ var require_schemes = __commonJS({
         urnComponent.error = "URN can not be parsed";
         return urnComponent;
       }
-      const matches = urnComponent.path.match(URN_REG);
-      if (matches && matches[0] === urnComponent.path) {
+      const matches2 = urnComponent.path.match(URN_REG);
+      if (matches2 && matches2[0] === urnComponent.path) {
         const scheme = options.scheme || urnComponent.scheme || "urn";
-        urnComponent.nid = matches[1].toLowerCase();
-        urnComponent.nss = matches[2];
+        urnComponent.nid = matches2[1].toLowerCase();
+        urnComponent.nss = matches2[2];
         const urnScheme = `${scheme}:${options.nid || urnComponent.nid}`;
         const schemeHandler = getSchemeHandler(urnScheme);
         urnComponent.path = void 0;
@@ -7689,8 +7689,8 @@ var require_fast_uri = __commonJS({
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
     var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
     var AUTHORITY_INTRODUCER_REGION = /^(?:[^#/:?]+:)?([/\\\t\n\r]*)/;
-    function getParseError(parsed, matches) {
-      if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
+    function getParseError(parsed, matches2) {
+      if (matches2[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
         return 'URI path must start with "/" when authority is present.';
       }
       if (typeof parsed.port === "number" && (parsed.port < 0 || parsed.port > 65535)) {
@@ -7712,9 +7712,9 @@ var require_fast_uri = __commonJS({
     function isIPLiteral(host) {
       return host[0] === "[" && host[host.length - 1] === "]";
     }
-    function hasMalformedComponentPercentEncoding(matches) {
-      const host = matches[4];
-      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
+    function hasMalformedComponentPercentEncoding(matches2) {
+      const host = matches2[4];
+      return hasMalformedPercentEncoding(matches2[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches2[6]) || hasMalformedPercentEncoding(matches2[7]) || hasMalformedPercentEncoding(matches2[8]);
     }
     function canonicalizeHost(parsed, options, schemeHandler, isIP) {
       if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed.host && !isIPLiteral(parsed.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
@@ -7771,15 +7771,15 @@ var require_fast_uri = __commonJS({
           }
         }
       }
-      const matches = uri.match(URI_PARSE);
-      if (matches) {
-        parsed.scheme = matches[1];
-        parsed.userinfo = matches[3];
-        parsed.host = matches[4];
-        parsed.port = parseInt(matches[5], 10);
-        parsed.path = matches[6] || "";
-        parsed.query = matches[7];
-        parsed.fragment = matches[8];
+      const matches2 = uri.match(URI_PARSE);
+      if (matches2) {
+        parsed.scheme = matches2[1];
+        parsed.userinfo = matches2[3];
+        parsed.host = matches2[4];
+        parsed.port = parseInt(matches2[5], 10);
+        parsed.path = matches2[6] || "";
+        parsed.query = matches2[7];
+        parsed.fragment = matches2[8];
         if (parsed.scheme !== void 0) {
           const decodedScheme = unescape(parsed.scheme);
           if (VALID_SCHEME.test(decodedScheme)) {
@@ -7789,14 +7789,14 @@ var require_fast_uri = __commonJS({
             malformedScheme = true;
           }
         }
-        malformedPercentEncoding = hasMalformedComponentPercentEncoding(matches);
+        malformedPercentEncoding = hasMalformedComponentPercentEncoding(matches2);
         if (malformedPercentEncoding) {
           parsed.error = parsed.error || "URI contains malformed percent-encoding.";
         }
         if (isNaN(parsed.port)) {
-          parsed.port = matches[5];
+          parsed.port = matches2[5];
         }
-        const parseError = getParseError(parsed, matches);
+        const parseError = getParseError(parsed, matches2);
         if (parseError !== void 0) {
           parsed.error = parsed.error || parseError;
           malformedAuthorityOrPort = true;
@@ -12105,6 +12105,75 @@ function createNodeClient(options) {
 }
 
 // tools/e2e/owner.ts
+import { spawn } from "node:child_process";
+
+// tools/e2e/script-run.ts
+function parseScript(text) {
+  let v;
+  try {
+    v = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`not JSON: ${e.message}`);
+  }
+  const s = v;
+  if (!s || typeof s !== "object" || !Array.isArray(s.steps)) throw new Error('a script is {"steps": [...], ...}');
+  for (const r of s.owner ?? []) if (!r || typeof r !== "object" || !r.when || !(r.when.start || r.when.approval || r.when.checkpoint || r.when.message)) throw new Error("a reaction of `owner` needs `when`: start, approval, checkpoint or message");
+  return s;
+}
+function subset(have, want) {
+  if (want === null || typeof want !== "object") return have === want;
+  if (Array.isArray(want)) return Array.isArray(have) && have.length === want.length && want.every((w, i) => subset(have[i], w));
+  if (have === null || typeof have !== "object") return false;
+  return Object.entries(want).every(([k, w]) => subset(have[k], w));
+}
+var textOf = (body) => {
+  const t = body?.text;
+  return typeof t === "string" ? t : JSON.stringify(body ?? null);
+};
+function matches(m, f) {
+  return (f.from === void 0 || m.from === f.from) && (f.to === void 0 || m.to === f.to) && (f.word === void 0 || m.word === f.word) && (f.text === void 0 || textOf(m.body).includes(f.text));
+}
+var countOk = (n, want) => typeof want === "number" ? n === want : n >= (want?.min ?? 1) && n <= (want?.max ?? Infinity);
+var countText = (want) => typeof want === "number" ? `exactly ${want}` : want ? `${want.min ?? 1}..${want.max ?? "\u221E"}` : "at least 1";
+var allSteps = (reports) => reports.flatMap((r) => r.steps);
+function judge(expects, reports, seen) {
+  const steps = allSteps(reports);
+  return expects.map((e) => {
+    if ("messages" in e) {
+      const hits = seen.filter((m) => matches(m, e.messages)).length;
+      return { pass: countOk(hits, e.count), what: `messages ${JSON.stringify(e.messages)} ${countText(e.count)}`, detail: `${hits} found` };
+    }
+    const step = typeof e.step === "number" ? steps[e.step] : steps.find((s) => s.id === e.step);
+    const what = `step ${e.step}`;
+    if (!step) return { pass: false, what, detail: "there is no such step in the reports" };
+    const bad = [];
+    if (e.ok !== void 0 && step.ok !== e.ok) bad.push(`ok is ${step.ok}${step.error ? ` (${step.error.code}: ${step.error.message ?? ""})` : ""}, wanted ${e.ok}`);
+    if (e.error !== void 0 && step.error?.code !== e.error) bad.push(`error is ${step.error?.code ?? "none"}, wanted ${e.error}`);
+    if (e.status !== void 0 && step.status !== e.status) bad.push(`status is ${step.status ?? "none"}, wanted ${e.status}`);
+    if (e.data !== void 0 && !subset(step.data, e.data)) bad.push(`data ${JSON.stringify(step.data)} lacks ${JSON.stringify(e.data)}`);
+    if (e.min_ms !== void 0 && !((step.ms ?? 0) >= e.min_ms)) bad.push(`took ${step.ms} ms, wanted at least ${e.min_ms}`);
+    if (e.min_images !== void 0 && !((step.images ?? 0) >= e.min_images)) bad.push(`has ${step.images ?? 0} images, wanted at least ${e.min_images}`);
+    if (e.max_ms !== void 0 && !((step.ms ?? Infinity) <= e.max_ms)) bad.push(`took ${step.ms} ms, wanted at most ${e.max_ms}`);
+    return { pass: bad.length === 0, what: `${what}${step.ok ? " ok" : ""}`, ...bad.length ? { detail: bad.join("; ") } : { detail: `${step.kind}${step.status ? ` ${step.status}` : ""} ${step.ms ?? "?"} ms` } };
+  });
+}
+function reportOf(text) {
+  if (!text.startsWith('{"script_report"')) return null;
+  try {
+    return JSON.parse(text).script_report;
+  } catch {
+    return null;
+  }
+}
+function judgeExec(want, exit2, stdout) {
+  const out = [];
+  out.push({ pass: exit2 === (want?.exit ?? 0), what: `exit code ${want?.exit ?? 0}`, detail: `got ${exit2}` });
+  if (want?.stdout !== void 0) out.push({ pass: new RegExp(want.stdout, "s").test(stdout), what: `output matches /${want.stdout}/`, detail: stdout.length > 300 ? `${stdout.slice(0, 300)}\u2026` : stdout });
+  if (want?.not_stdout !== void 0) out.push({ pass: !new RegExp(want.not_stdout, "s").test(stdout), what: `output does not match /${want.not_stdout}/` });
+  return out;
+}
+
+// tools/e2e/owner.ts
 var VERSION = "0.1.0";
 var OWNER = "person:owner";
 var MAIN = "agent:main";
@@ -12115,6 +12184,8 @@ var USAGE = `owner.mjs: the owner of an Ash hub, from a command line.
   owner.mjs [options] answer <card id> <option> [text]   answer an approval card or a question (ask), or pick on an option card (show)
   owner.mjs [options] call <member> <word> ['<json>' | - | @file]   call a word as the owner; the JSON body from the argument, standard input (-) or a file
   owner.mjs [options] set-key [REF]                save a model key in the vault (service:vault/set); the key comes from --key-file or standard input
+  owner.mjs [options] script <file.json>           a debug hub only: run a script through agent:script (no model), act as the owner while it runs, and
+                                                   check what must hold; exit 0 all held, 4 something did not (see "Device verification" in README.md)
 
 Connection (the hub's local link, SPEC-03 \xA72.2):
   --port N | --url ws://127.0.0.1:N/link     where the hub listens (env ASH_OWNER_PORT)
@@ -12132,7 +12203,7 @@ Options:
   --key-file PATH   set-key: read the key from a file instead of standard input
   --label TEXT      set-key: the label shown for a ref the hub does not know
 
-Exit codes: 0 done, 1 error (cannot connect, refused token), 2 say got no reply in time, 3 a word was refused or failed, 64 usage.
+Exit codes: 0 done, 1 error (cannot connect, refused token), 2 say or script got no reply in time, 3 a word was refused or failed, 4 a script's expectation did not hold, 64 usage.
 `;
 var VALUE_FLAGS = /* @__PURE__ */ new Set(["port", "url", "token-file", "link-file", "state", "name", "timeout", "settle", "history", "surfaces", "key-file", "label", "to"]);
 var BOOL_FLAGS = /* @__PURE__ */ new Set(["json", "token-stdin", "help", "all"]);
@@ -12550,6 +12621,180 @@ async function setKey(o) {
   const label = o.flags.get("label");
   return callWord(o, "service:vault", "set", { ref, value, ...label ? { label } : {} }, true);
 }
+var sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+var QUIET = /^(app:|service:(widgets|apps|reflex))/;
+function runProgram(argv, timeoutMs = 3e4) {
+  return new Promise((done) => {
+    const child = spawn(argv[0], argv.slice(1), { stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    let stdout = "";
+    child.stdout.on("data", (d) => {
+      if (stdout.length < 1e6) stdout += d.toString("utf8");
+    });
+    child.stderr.on("data", (d) => {
+      if (stdout.length < 1e6) stdout += d.toString("utf8");
+    });
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      done({ exit: code, stdout });
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      done({ exit: -1, stdout: String(e.message) });
+    });
+  });
+}
+var expandEnv = (arg, run) => arg.replace(/\$\{env\.([A-Za-z0-9_]+)\}/g, (_, name) => process.env[name] ?? "").replace(/\$\{run\}/g, run);
+async function script(o) {
+  const file = o.rest[1];
+  if (!file) throw new UsageError("script needs a file: owner.mjs script <file.json>");
+  let sc;
+  try {
+    sc = parseScript(readFileSync(resolve(file), "utf8"));
+  } catch (e) {
+    throw new UsageError(`${file}: ${e.message}`);
+  }
+  const agent2 = o.flags.get("to") ?? "agent:script";
+  const run = sc.run ?? `run-${Date.now().toString(36)}`;
+  const name = sc.name ?? file;
+  const owner = await connect(o, surfacesOf(o, "chat"));
+  const started = Date.now();
+  const seen = [];
+  const reports = [];
+  const outcomes = [];
+  const fired = /* @__PURE__ */ new Map();
+  let sentSeq = 0;
+  const ok = (what, detail) => {
+    outcomes.push({ pass: true, what, ...detail ? { detail } : {} });
+    line("check", { pass: true, what, detail });
+  };
+  const bad = (what, detail) => {
+    outcomes.push({ pass: false, what, ...detail ? { detail } : {} });
+    line("check", { pass: false, what, detail });
+  };
+  const call2 = async (to, word, body) => {
+    const sent = await owner.send({ to, kind: "request", word, body, wait: true });
+    if (!sent.ok) throw new Failure(`${to}/${word} was refused: ${sendError(sent)}`, 3);
+    const reply = asRecord(sent.response);
+    if (reply.ok === false) throw new Failure(`${to}/${word} failed: ${reply.error?.code}: ${reply.error?.message}`, 3);
+    return asRecord(reply.result?.data);
+  };
+  const release = async (checkpoint) => {
+    await call2("body:main", "workspace.write", { path: `/root/work/.script/${run}/${checkpoint}.release`, content: "1" });
+    line("released", { checkpoint });
+  };
+  const doAction = async (a, ctx) => {
+    if ("answer" in a) {
+      if (!ctx.card) throw new Failure("an `answer` action needs an approval card to answer", 3);
+      const sent = await owner.send({ to: ctx.card.from, kind: "response", word: "ask", reply_to: ctx.card.id, body: { ok: true, result: { data: { choice: a.answer, ...a.text ? { text: a.text } : {} } } } });
+      if (!sent.ok) {
+        bad(`answer ${a.answer}`, sendError(sent));
+        return;
+      }
+      line("answered", { card: ctx.card.id, choice: a.answer, after_ms: Date.now() - started });
+    } else if ("exec" in a) {
+      const argv = a.exec.map((x) => expandEnv(x, run));
+      const label = a.name ?? argv.slice(0, 3).join(" ");
+      const until = Date.now() + (a.within_ms ?? 0);
+      let result2 = await runProgram(argv);
+      let judged = judgeExec(a.expect, result2.exit, result2.stdout);
+      while (judged.some((x) => !x.pass) && Date.now() < until) {
+        await sleepMs(500);
+        result2 = await runProgram(argv);
+        judged = judgeExec(a.expect, result2.exit, result2.stdout);
+      }
+      for (const outcome of judged) {
+        outcomes.push({ ...outcome, what: `${label}: ${outcome.what}` });
+        line("check", { pass: outcome.pass, what: `${label}: ${outcome.what}`, detail: outcome.detail });
+      }
+    } else if ("say" in a) {
+      await owner.send({ to: a.to ?? agent2, kind: "request", word: "say", body: { text: a.say } });
+    } else if ("call" in a) {
+      await call2(a.call.member, a.call.word, a.call.body ?? {});
+    } else if ("sleep_ms" in a) {
+      await sleepMs(a.sleep_ms);
+    }
+  };
+  const react = (r, ctx) => {
+    fired.set(r, (fired.get(r) ?? 0) + 1);
+    void (async () => {
+      if (r.delay_ms) await sleepMs(r.delay_ms);
+      for (const a of r.do ?? []) await doAction(a, ctx);
+      if (ctx.checkpoint && !r.hold) await release(ctx.checkpoint);
+    })().catch((e) => bad(`reaction ${r.name ?? JSON.stringify(r.when)}`, e instanceof Error ? e.message : String(e)));
+  };
+  const previous = {};
+  const settingKeys = Object.keys(sc.settings ?? {});
+  try {
+    if (settingKeys.length) {
+      Object.assign(previous, asRecord((await call2("service:admin", "settings.get", { keys: settingKeys })).settings));
+      await call2("service:admin", "settings.set", sc.settings);
+      line("settings", { set: sc.settings });
+    }
+    owner.onMessage = (m, backlog) => {
+      if (backlog) return;
+      const b = asRecord(m.body);
+      seen.push({ seq: m.seq, from: m.from, to: m.to, word: m.word, kind: m.kind, body: m.body });
+      if (m.from === agent2 && m.to === OWNER && m.word === "say") {
+        const r = reportOf(String(b.text ?? ""));
+        if (r) {
+          reports.push(r);
+          line("report", { run: r.run, trigger: r.trigger, steps: r.steps.length });
+          return;
+        }
+      }
+      if (!QUIET.test(m.from) && !QUIET.test(m.to ?? "")) describeMessage(m, "event");
+      for (const r of sc.owner ?? []) {
+        if (fired.get(r) && !r.repeat) continue;
+        const w = r.when;
+        if (w.approval && m.word === "ask" && m.kind === "request" && m.from === "service:gate" && (!w.approval.word || asRecord(b.source).word === w.approval.word)) react(r, { card: m });
+        else if (w.checkpoint && m.from === agent2 && m.word === "agent.tool" && b.phase === "start" && b.name === `script.checkpoint:${w.checkpoint}`) react(r, { checkpoint: w.checkpoint });
+        else if (w.message && matches({ seq: m.seq, from: m.from, to: m.to, word: m.word, kind: m.kind, body: m.body }, w.message)) react(r, {});
+      }
+    };
+    for (const r of (sc.owner ?? []).filter((x) => x.when.start)) {
+      fired.set(r, 1);
+      if (r.delay_ms) await sleepMs(r.delay_ms);
+      for (const a of r.do ?? []) await doAction(a, {});
+    }
+    const text = JSON.stringify({ run, steps: sc.steps, ...sc.on_message ? { on_message: sc.on_message.map((h) => ({ ...h, run })) } : {} });
+    const sent = await owner.send({ to: agent2, kind: "request", word: "say", body: { text } });
+    if (!sent.ok) throw new Failure(`the hub refused the script: ${sendError(sent)}${sent.error.code === "offline" ? " (agent:script is there only in a debug build)" : ""}`, 3);
+    sentSeq = sent.message.seq;
+    line("sent", { run, name, seq: sent.message.seq, to: agent2 });
+    const expected = sc.reports ?? 1;
+    const limit = (sc.timeout_s ?? 120) * 1e3;
+    let timedOut = false;
+    for (; ; ) {
+      await Promise.race([sleepMs(100), owner.lost()]);
+      if (reports.length >= expected) break;
+      if (Date.now() - started > limit) {
+        timedOut = true;
+        line("timeout", { waited_s: Math.round((Date.now() - started) / 1e3), reports: reports.length, expected });
+        break;
+      }
+    }
+    await sleepMs(timedOut ? 0 : 300);
+    const mine = seen.filter((m) => m.seq >= sentSeq);
+    for (const [i, s] of allSteps(reports).entries()) line("step", { i, id: s.id, kind: s.kind, ok: s.ok, status: s.status, ms: s.ms, error: s.error?.code, data: s.data === void 0 ? void 0 : JSON.stringify(s.data).slice(0, 160) });
+    for (const outcome of judge(sc.expect ?? [], reports, mine)) {
+      outcomes.push(outcome);
+      line("expect", { pass: outcome.pass, what: outcome.what, detail: outcome.detail });
+    }
+    for (const r of sc.owner ?? []) if (!r.optional && !fired.get(r)) bad(`reaction ${r.name ?? JSON.stringify(r.when)}`, "never fired");
+    const failed = outcomes.filter((x) => !x.pass).length;
+    line("script", { name, result: failed === 0 && !timedOut ? "PASS" : "FAIL", total_ms: Date.now() - started, steps: allSteps(reports).length, checks: outcomes.length, failed });
+    if (timedOut) return 2;
+    return failed === 0 ? 0 : 4;
+  } finally {
+    for (const a of sc.cleanup ?? []) await doAction(a, {}).catch((e) => line("error", { message: `cleanup: ${e instanceof Error ? e.message : String(e)}` }));
+    for (const key of settingKeys) {
+      const back = Object.hasOwn(previous, key) ? previous[key] : null;
+      await call2("service:admin", "settings.set", { [key]: back }).catch((e) => line("error", { message: `could not put back the setting ${key}: ${e.message}` }));
+    }
+    owner.close();
+  }
+}
 async function main(argv) {
   const o = parse(argv);
   asJson = o.flags.has("json");
@@ -12572,6 +12817,8 @@ async function main(argv) {
     }
     case "set-key":
       return setKey(o);
+    case "script":
+      return script(o);
     default:
       throw new UsageError(`unknown command ${command}`);
   }

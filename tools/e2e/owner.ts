@@ -16,6 +16,8 @@ import type { PresentFrame, SendResultFrame } from "../../packages/sdk/src/link"
 import type { Message } from "../../packages/sdk/src/message";
 import { createNodeClient } from "../../packages/link/src/client";
 import type { HandClient } from "../../packages/link/src/hand";
+import { spawn } from "node:child_process";
+import { allSteps, judge, judgeExec, matches, parseScript, reportOf, type Action, type Outcome, type Reaction, type Report, type ScriptFile, type Seen } from "./script-run";
 
 const VERSION = "0.1.0";
 const OWNER = "person:owner";
@@ -27,6 +29,8 @@ const USAGE = `owner.mjs: the owner of an Ash hub, from a command line.
   owner.mjs [options] answer <card id> <option> [text]   answer an approval card or a question (ask), or pick on an option card (show)
   owner.mjs [options] call <member> <word> ['<json>' | - | @file]   call a word as the owner; the JSON body from the argument, standard input (-) or a file
   owner.mjs [options] set-key [REF]                save a model key in the vault (service:vault/set); the key comes from --key-file or standard input
+  owner.mjs [options] script <file.json>           a debug hub only: run a script through agent:script (no model), act as the owner while it runs, and
+                                                   check what must hold; exit 0 all held, 4 something did not (see "Device verification" in README.md)
 
 Connection (the hub's local link, SPEC-03 §2.2):
   --port N | --url ws://127.0.0.1:N/link     where the hub listens (env ASH_OWNER_PORT)
@@ -44,7 +48,7 @@ Options:
   --key-file PATH   set-key: read the key from a file instead of standard input
   --label TEXT      set-key: the label shown for a ref the hub does not know
 
-Exit codes: 0 done, 1 error (cannot connect, refused token), 2 say got no reply in time, 3 a word was refused or failed, 64 usage.
+Exit codes: 0 done, 1 error (cannot connect, refused token), 2 say or script got no reply in time, 3 a word was refused or failed, 4 a script's expectation did not hold, 64 usage.
 `;
 
 // --- arguments -------------------------------------------------------------------------------------------------------------
@@ -440,6 +444,154 @@ async function setKey(o: Options): Promise<number> {
   return callWord(o, "service:vault", "set", { ref, value, ...(label ? { label } : {}) }, true);
 }
 
+
+// --- script ----------------------------------------------------------------------------------------------------------------
+
+const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Traffic a script's timeline leaves out: the apps', the widgets' and the reflex service's own. */
+const QUIET = /^(app:|service:(widgets|apps|reflex))/;
+
+function runProgram(argv: string[], timeoutMs = 30_000): Promise<{ exit: number | null; stdout: string }> {
+  return new Promise((done) => {
+    const child = spawn(argv[0]!, argv.slice(1), { stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    let stdout = "";
+    child.stdout.on("data", (d: Buffer) => { if (stdout.length < 1_000_000) stdout += d.toString("utf8"); });
+    child.stderr.on("data", (d: Buffer) => { if (stdout.length < 1_000_000) stdout += d.toString("utf8"); });
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    child.on("close", (code) => { clearTimeout(timer); done({ exit: code, stdout }); });
+    child.on("error", (e) => { clearTimeout(timer); done({ exit: -1, stdout: String(e.message) }); });
+  });
+}
+
+/** `${env.NAME}` in an argument of a script's `exec` is that environment variable; `${run}` is the run's id (for a file of the run's own). */
+const expandEnv = (arg: string, run: string): string => arg.replace(/\$\{env\.([A-Za-z0-9_]+)\}/g, (_, name: string) => process.env[name] ?? "").replace(/\$\{run\}/g, run);
+
+async function script(o: Options): Promise<number> {
+  const file = o.rest[1];
+  if (!file) throw new UsageError("script needs a file: owner.mjs script <file.json>");
+  let sc: ScriptFile;
+  try { sc = parseScript(readFileSync(resolve(file), "utf8")); } catch (e) { throw new UsageError(`${file}: ${(e as Error).message}`); }
+  const agent = (o.flags.get("to") as string | undefined) ?? "agent:script";
+  const run = sc.run ?? `run-${Date.now().toString(36)}`;
+  const name = sc.name ?? file;
+  const owner = await connect(o, surfacesOf(o, "chat"));
+  const started = Date.now();
+  const seen: Seen[] = [];
+  const reports: Report[] = [];
+  const outcomes: Outcome[] = [];
+  const fired = new Map<Reaction, number>();
+  let sentSeq = 0;
+  const ok = (what: string, detail?: string) => { outcomes.push({ pass: true, what, ...(detail ? { detail } : {}) }); line("check", { pass: true, what, detail }); };
+  const bad = (what: string, detail?: string) => { outcomes.push({ pass: false, what, ...(detail ? { detail } : {}) }); line("check", { pass: false, what, detail }); };
+
+  const call = async (to: string, word: string, body: Record<string, unknown>): Promise<Record<string, any>> => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const sent = await owner.send({ to, kind: "request", word, body, wait: true });
+    if (!sent.ok) throw new Failure(`${to}/${word} was refused: ${sendError(sent)}`, 3);
+    const reply = asRecord(sent.response);
+    if (reply.ok === false) throw new Failure(`${to}/${word} failed: ${reply.error?.code}: ${reply.error?.message}`, 3);
+    return asRecord(reply.result?.data);
+  };
+
+  const release = async (checkpoint: string) => {
+    await call("body:main", "workspace.write", { path: `/root/work/.script/${run}/${checkpoint}.release`, content: "1" });
+    line("released", { checkpoint });
+  };
+
+  const doAction = async (a: Action, ctx: { card?: Message }) => {
+    if ("answer" in a) {
+      if (!ctx.card) throw new Failure("an `answer` action needs an approval card to answer", 3);
+      const sent = await owner.send({ to: ctx.card.from, kind: "response", word: "ask", reply_to: ctx.card.id, body: { ok: true, result: { data: { choice: a.answer, ...(a.text ? { text: a.text } : {}) } } } });
+      if (!sent.ok) { bad(`answer ${a.answer}`, sendError(sent)); return; }
+      line("answered", { card: ctx.card.id, choice: a.answer, after_ms: Date.now() - started });
+    } else if ("exec" in a) {
+      const argv = a.exec.map((x) => expandEnv(x, run));
+      const label = a.name ?? argv.slice(0, 3).join(" ");
+      // With `within_ms` the program is run again every half second until what it must print is there (a notification takes a moment to appear).
+      const until = Date.now() + (a.within_ms ?? 0);
+      let result = await runProgram(argv);
+      let judged = judgeExec(a.expect, result.exit, result.stdout);
+      while (judged.some((x) => !x.pass) && Date.now() < until) { await sleepMs(500); result = await runProgram(argv); judged = judgeExec(a.expect, result.exit, result.stdout); }
+      for (const outcome of judged) { outcomes.push({ ...outcome, what: `${label}: ${outcome.what}` }); line("check", { pass: outcome.pass, what: `${label}: ${outcome.what}`, detail: outcome.detail }); }
+    } else if ("say" in a) {
+      await owner.send({ to: a.to ?? agent, kind: "request", word: "say", body: { text: a.say } });
+    } else if ("call" in a) {
+      await call(a.call.member, a.call.word, a.call.body ?? {});
+    } else if ("sleep_ms" in a) {
+      await sleepMs(a.sleep_ms);
+    }
+  };
+
+  const react = (r: Reaction, ctx: { card?: Message; checkpoint?: string }) => {
+    fired.set(r, (fired.get(r) ?? 0) + 1);
+    void (async () => {
+      if (r.delay_ms) await sleepMs(r.delay_ms);
+      for (const a of r.do ?? []) await doAction(a, ctx);
+      if (ctx.checkpoint && !r.hold) await release(ctx.checkpoint);
+    })().catch((e) => bad(`reaction ${r.name ?? JSON.stringify(r.when)}`, e instanceof Error ? e.message : String(e)));
+  };
+
+  const previous: Record<string, unknown> = {};
+  const settingKeys = Object.keys(sc.settings ?? {});
+  try {
+    if (settingKeys.length) {
+      Object.assign(previous, asRecord((await call("service:admin", "settings.get", { keys: settingKeys })).settings));
+      await call("service:admin", "settings.set", sc.settings!);
+      line("settings", { set: sc.settings });
+    }
+    owner.onMessage = (m, backlog) => {
+      if (backlog) return;
+      const b = asRecord(m.body);
+      seen.push({ seq: m.seq, from: m.from, to: m.to, word: m.word, kind: m.kind, body: m.body });
+      if (m.from === agent && m.to === OWNER && m.word === "say") { const r = reportOf(String(b.text ?? "")); if (r) { reports.push(r); line("report", { run: r.run, trigger: r.trigger, steps: r.steps.length }); return; } }
+      // The conversation, the cards, the agent's turns and calls: not the apps' and widgets' own traffic.
+      if (!QUIET.test(m.from) && !QUIET.test(m.to ?? "")) describeMessage(m, "event");
+      for (const r of sc.owner ?? []) {
+        if (fired.get(r) && !r.repeat) continue;
+        const w = r.when;
+        if (w.approval && m.word === "ask" && m.kind === "request" && m.from === "service:gate" && (!w.approval.word || asRecord(b.source).word === w.approval.word)) react(r, { card: m });
+        else if (w.checkpoint && m.from === agent && m.word === "agent.tool" && b.phase === "start" && b.name === `script.checkpoint:${w.checkpoint}`) react(r, { checkpoint: w.checkpoint });
+        else if (w.message && matches({ seq: m.seq, from: m.from, to: m.to, word: m.word, kind: m.kind, body: m.body }, w.message)) react(r, {});
+      }
+    };
+    for (const r of (sc.owner ?? []).filter((x) => x.when.start)) {
+      fired.set(r, 1);
+      if (r.delay_ms) await sleepMs(r.delay_ms);
+      for (const a of r.do ?? []) await doAction(a, {});
+    }
+    const text = JSON.stringify({ run, steps: sc.steps, ...(sc.on_message ? { on_message: sc.on_message.map((h) => ({ ...h, run })) } : {}) });
+    const sent = await owner.send({ to: agent, kind: "request", word: "say", body: { text } });
+    if (!sent.ok) throw new Failure(`the hub refused the script: ${sendError(sent)}${sent.error.code === "offline" ? " (agent:script is there only in a debug build)" : ""}`, 3);
+    sentSeq = sent.message.seq;
+    line("sent", { run, name, seq: sent.message.seq, to: agent });
+
+    const expected = sc.reports ?? 1;
+    const limit = (sc.timeout_s ?? 120) * 1000;
+    let timedOut = false;
+    for (;;) {
+      await Promise.race([sleepMs(100), owner.lost()]);
+      if (reports.length >= expected) break;
+      if (Date.now() - started > limit) { timedOut = true; line("timeout", { waited_s: Math.round((Date.now() - started) / 1000), reports: reports.length, expected }); break; }
+    }
+    // Let the reactions that were started finish (an `exec` after a release, for one).
+    await sleepMs(timedOut ? 0 : 300);
+    const mine = seen.filter((m) => m.seq >= sentSeq);
+    for (const [i, s] of allSteps(reports).entries()) line("step", { i, id: s.id, kind: s.kind, ok: s.ok, status: s.status, ms: s.ms, error: s.error?.code, data: s.data === undefined ? undefined : JSON.stringify(s.data).slice(0, 160) });
+    for (const outcome of judge(sc.expect ?? [], reports, mine)) { outcomes.push(outcome); line("expect", { pass: outcome.pass, what: outcome.what, detail: outcome.detail }); }
+    for (const r of sc.owner ?? []) if (!r.optional && !fired.get(r)) bad(`reaction ${r.name ?? JSON.stringify(r.when)}`, "never fired");
+    const failed = outcomes.filter((x) => !x.pass).length;
+    line("script", { name, result: failed === 0 && !timedOut ? "PASS" : "FAIL", total_ms: Date.now() - started, steps: allSteps(reports).length, checks: outcomes.length, failed });
+    if (timedOut) return 2;
+    return failed === 0 ? 0 : 4;
+  } finally {
+    for (const a of sc.cleanup ?? []) await doAction(a, {}).catch((e) => line("error", { message: `cleanup: ${e instanceof Error ? e.message : String(e)}` }));
+    for (const key of settingKeys) {
+      const back = Object.hasOwn(previous, key) ? previous[key] : null;
+      await call("service:admin", "settings.set", { [key]: back }).catch((e) => line("error", { message: `could not put back the setting ${key}: ${(e as Error).message}` }));
+    }
+    owner.close();
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
   const o = parse(argv);
   asJson = o.flags.has("json");
@@ -455,6 +607,7 @@ async function main(argv: string[]): Promise<number> {
       return callWord(o, member, word, await jsonBody(json), false);
     }
     case "set-key": return setKey(o);
+    case "script": return script(o);
     default: throw new UsageError(`unknown command ${command}`);
   }
 }

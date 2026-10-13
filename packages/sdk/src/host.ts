@@ -83,7 +83,8 @@ export interface HostSpec {
   /** Capability groups the host has. Names this kernel does not know are ignored (new optional ones keep `ash-host/1`). */
   capabilities: string[];
   secure_storage: HostSecureStorage;
-  dev?: { owner_token?: boolean };
+  /** Only a debug build of the host sets these: `owner_token` lets a host without secure storage run; `script_agent` declares the script agent (`agent:script`), which does what a message says instead of thinking. */
+  dev?: { owner_token?: boolean; script_agent?: boolean };
 }
 
 // ---- the pipe ------------------------------------------------------------------------------------------------------
@@ -236,6 +237,6 @@ export const HOST_SPEC_SCHEMA = {
     network: { type: "object", required: ["proxy"], properties: { proxy: { oneOf: [{ type: "null" }, proxy] } } },
     capabilities: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
     secure_storage: { enum: [...HOST_SECURE_STORAGE] },
-    dev: { type: "object", properties: { owner_token: { type: "boolean" } } },
+    dev: { type: "object", properties: { owner_token: { type: "boolean" }, script_agent: { type: "boolean" } } },
   },
 } as const;

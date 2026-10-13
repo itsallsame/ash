@@ -259,3 +259,58 @@ test("the channel keeps its identity between runs: one hand, not one per run", a
   const other = await owner(s, ["call", "service:admin", "status"], { state: join(work, "other-state") });
   assert.notEqual(fields(other.out, "conn").hand, fields(first.out, "conn").hand);
 });
+
+// ---- script: a debug hub's agent:script, and the owner's side of a scripted run ----------------------------------------------
+
+const scriptFile = (body: unknown): string => { const f = join(work, `script-${Math.random().toString(36).slice(2)}.json`); writeFileSync(f, JSON.stringify(body)); return f; };
+
+test("script: the agent makes the calls, the owner answers the card as the script says, and every expectation is judged; the settings are put back", async (t: TestContext) => {
+  const s = await startScenario(t, { scriptAgent: true, fastApproval: true });
+  const human = await s.human();
+  await eventually(async () => { const r = await human.call("service:agents", "list"); return r.ok && JSON.stringify(r.result?.data).includes('"agent:script"') && JSON.stringify(r.result?.data).includes('"idle"'); }, "agent:script up");
+  const file = scriptFile({
+    name: "approval, in time", settings: { "approval.fast_seconds": 20 },
+    steps: [{ id: "a1", call: { member: "service:gate", word: "mode.set", body: { mode: "auto" }, purpose: "test" } }],
+    owner: [{ when: { approval: { word: "mode.set" } }, delay_ms: 300, do: [{ answer: "once" }] }],
+    expect: [
+      { step: "a1", ok: true, data: { mode: "auto" }, min_ms: 250 },
+      { messages: { from: OWNER, to: "agent:script", text: "批准" }, count: 0 },
+      { messages: { word: "pending.redeem" }, count: 0 },
+    ],
+  });
+
+  const run = await owner(s, ["script", file]);
+
+  assert.equal(run.code, 0, run.err + run.out);
+  assert.equal(fields(run.out, "script").result, "PASS");
+  assert.equal(fields(run.out, "answered").choice, "once");
+  assert.equal(fields(run.out, "step").ok, "true");
+  const settings = await human.call("service:admin", "settings.get", { keys: ["approval.fast_seconds"] });
+  assert.deepEqual((settings.ok && settings.result?.data) as unknown, { settings: {} }, "what the run set is removed again");
+});
+
+test("script: an expectation that does not hold ends with exit 4 and says which", async (t: TestContext) => {
+  const s = await startScenario(t, { scriptAgent: true, fastApproval: true });
+  const human = await s.human();
+  await eventually(async () => { const r = await human.call("service:agents", "list"); return r.ok && JSON.stringify(r.result?.data).includes('"agent:script"') && JSON.stringify(r.result?.data).includes('"idle"'); }, "agent:script up");
+  const file = scriptFile({
+    steps: [{ id: "a1", call: { member: "service:gate", word: "mode.set", body: { mode: "auto" }, purpose: "test" } }],
+    owner: [{ when: { approval: {} }, do: [{ answer: "once" }] }, { name: "never", when: { checkpoint: "nowhere" } }],
+    expect: [{ step: "a1", error: "denied" }],
+  });
+
+  const run = await owner(s, ["script", file]);
+
+  assert.equal(run.code, 4, run.err + run.out);
+  assert.equal(fields(run.out, "expect").pass, "false");
+  assert.match(fields(run.out, "expect").detail ?? "", /error is none, wanted denied/);
+  assert.equal(fields(run.out, "script").result, "FAIL");
+  assert.ok(run.out.includes("never fired"), "a reaction that never fired is a failure");
+});
+
+test("script: a hub that is not a debug one has no agent:script, and the command says so", async (t: TestContext) => {
+  const s = await startScenario(t);
+  const run = await owner(s, ["script", scriptFile({ steps: [] })]);
+  assert.equal(run.code, 3, run.err + run.out);
+  assert.match(run.out, /debug build/);
+});

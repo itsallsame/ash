@@ -135,8 +135,11 @@ export function answerOnCard(ms, cardId) {
   const r = ms.find((m) => m.kind === "response" && m.reply_to === cardId && m.from === OWNER);
   return r ? (r.body?.result?.data?.choice ?? null) : null;
 }
-/** The gate's background messages to the agent that asked (`tell` from service:gate). */
+/** The gate's background messages to the agent that asked (`tell` from service:gate): what an approval that ended by its time gets. */
 export const gateTells = (ms, agent = MAIN) => ms.filter((m) => m.kind === "request" && m.from === GATE && m.to === agent && m.word === "tell");
+/** What the asker gets when the owner answers a card: the owner's own message, `[answers <pending id>, option once] 批准：…`, in the conversation. */
+export const answerMessages = (ms, agent = MAIN) => ms.filter((m) => m.kind === "request" && m.from === "person:owner" && m.to === agent && m.word === "say"
+  && typeof m.body?.in_reply_to === "string" && ["once", "always", "deny"].includes(m.body?.option_id));
 /** An option card an agent showed. `{id, seq, options[]}`. */
 export function optionCards(ms, agent = MAIN) {
   return ms.filter((m) => toOwner(m, "show", agent) && m.body?.card?.type === "options")
@@ -866,7 +869,7 @@ defineScenario({
     await ctx.settle(8000);
     const ms = await ctx.since(base);
     check(clipboardEffects(ms, device).length === 1, `the action ran ${clipboardEffects(ms, device).length} times`);
-    check(gateTells(ms).length >= 1, "the asker was not told the answer");
+    check(answerMessages(ms).length >= 1, "the asker was not told the answer");
     return `card ${card.id} -> once -> clipboard.set ran once on ${device}`;
   },
 });
@@ -878,7 +881,7 @@ defineScenario({
     const { device, card } = await clipboardCard(ctx, base, ctx.marker("deny"));
     const ans = await ctx.owner.answer(card.id, "deny");
     check(ans.ok, `the answer was refused: ${ans.message}`);
-    await ctx.expect(base, (ms) => gateTells(ms).length >= 1, "the asker was not told about the refusal", { ms: 60_000 });
+    await ctx.expect(base, (ms) => answerMessages(ms).length >= 1, "the asker was not told about the refusal", { ms: 60_000 });
     await ctx.settle(15_000);
     const ms = await ctx.since(base);
     check(clipboardEffects(ms, device).length === 0, "the refused action ran anyway");

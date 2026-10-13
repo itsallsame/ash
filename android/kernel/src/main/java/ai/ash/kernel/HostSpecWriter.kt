@@ -16,6 +16,8 @@ data class HostSpecInput(
     val dns: List<String>,
     val capabilities: List<String>,
     val storageBinds: List<String> = listOf("/sdcard:/sdcard", "/storage/emulated/0:/storage/emulated/0"),
+    /** A debug build of this package: the core then declares the script agent (`agent:script`) used for device verification. Never true in a release build. */
+    val debuggable: Boolean = BuildConfig.DEBUG,
 )
 
 /** Writes the launch description of `ash-host/1` (packages/sdk/schema/host.json). */
@@ -49,7 +51,7 @@ object HostSpecWriter {
             .put("network", networkJson(i.proxy))
             .put("capabilities", JSONArray(i.capabilities))
             .put("secure_storage", "keystore")
-            .put("dev", JSONObject().put("owner_token", false))
+            .put("dev", JSONObject().put("owner_token", false).put("script_agent", i.debuggable))
     }
 
     /** Writes host.json readable by this user only (0600), through a temporary file so a reader never sees half of it. */

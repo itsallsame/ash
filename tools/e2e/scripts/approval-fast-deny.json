@@ -1,0 +1,60 @@
+{
+  "name": "approval fast path: the owner refuses in 2 s, the same call is refused in the same turn",
+  "settings": {
+    "approval.fast_seconds": 30
+  },
+  "timeout_s": 90,
+  "steps": [
+    {
+      "id": "a1",
+      "call": {
+        "member": "service:gate",
+        "word": "mode.set",
+        "body": {
+          "mode": "auto"
+        },
+        "purpose": "device verification: approval fast path, refused"
+      }
+    }
+  ],
+  "owner": [
+    {
+      "name": "refuse",
+      "when": {
+        "approval": {
+          "word": "mode.set"
+        }
+      },
+      "delay_ms": 2000,
+      "do": [
+        {
+          "answer": "deny"
+        }
+      ]
+    }
+  ],
+  "expect": [
+    {
+      "step": "a1",
+      "ok": false,
+      "error": "denied",
+      "min_ms": 1500,
+      "max_ms": 15000
+    },
+    {
+      "messages": {
+        "from": "person:owner",
+        "to": "agent:script",
+        "text": "拒绝"
+      },
+      "count": 0
+    },
+    {
+      "messages": {
+        "from": "agent:script",
+        "word": "turn.started"
+      },
+      "count": 1
+    }
+  ]
+}

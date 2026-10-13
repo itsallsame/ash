@@ -16,8 +16,8 @@ class HostSpecWriterTest {
 
     @After fun cleanup() { dir.deleteRecursively() }
 
-    private fun input(proxy: Proxy? = null, capabilities: List<String> = HostApi.CAPABILITIES) =
-        HostSpecInput(paths, "0.4.0", platform, proxy, listOf("223.5.5.5", "119.29.29.29"), capabilities)
+    private fun input(proxy: Proxy? = null, capabilities: List<String> = HostApi.CAPABILITIES, debuggable: Boolean = false) =
+        HostSpecInput(paths, "0.4.0", platform, proxy, listOf("223.5.5.5", "119.29.29.29"), capabilities, debuggable = debuggable)
 
     private fun problems(spec: JSONObject) = MiniSchema.validate(MiniSchema.load(), spec)
 
@@ -25,6 +25,13 @@ class HostSpecWriterTest {
         assertEquals(emptyList<String>(), problems(HostSpecWriter.build(input())))
         val proxy = Proxy.of("192.168.1.2:7890")
         assertEquals(emptyList<String>(), problems(HostSpecWriter.build(input(proxy))))
+    }
+
+    @Test fun theScriptAgentIsAskedForOnlyByADebugBuild() {
+        assertFalse(HostSpecWriter.build(input(debuggable = false)).getJSONObject("dev").getBoolean("script_agent"))
+        val debug = HostSpecWriter.build(input(debuggable = true))
+        assertTrue(debug.getJSONObject("dev").getBoolean("script_agent"))
+        assertEquals(emptyList<String>(), problems(debug))
     }
 
     @Test fun theValidatorCatchesBrokenSpecs() {

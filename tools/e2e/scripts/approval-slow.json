@@ -1,0 +1,94 @@
+{
+  "name": "approval slow path: past the threshold (3 s) the call gets the receipt; the owner's later answer comes as a message and the agent redeems it",
+  "settings": {
+    "approval.fast_seconds": 3
+  },
+  "timeout_s": 120,
+  "reports": 2,
+  "steps": [
+    {
+      "id": "a1",
+      "call": {
+        "member": "service:gate",
+        "word": "mode.set",
+        "body": {
+          "mode": "auto"
+        },
+        "purpose": "device verification: approval slow path"
+      }
+    }
+  ],
+  "on_message": [
+    {
+      "match": "[answers ",
+      "steps": [
+        {
+          "id": "r",
+          "call": {
+            "member": "service:gate",
+            "word": "pending.redeem",
+            "body": {
+              "id": "${msg.pending}"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "owner": [
+    {
+      "name": "approve late",
+      "when": {
+        "approval": {
+          "word": "mode.set"
+        }
+      },
+      "delay_ms": 7000,
+      "do": [
+        {
+          "answer": "once"
+        }
+      ]
+    }
+  ],
+  "expect": [
+    {
+      "step": "a1",
+      "ok": true,
+      "status": "waiting_owner",
+      "min_ms": 2500,
+      "max_ms": 8000
+    },
+    {
+      "step": "r",
+      "ok": true,
+      "data": {
+        "result": {
+          "mode": "auto"
+        }
+      }
+    },
+    {
+      "messages": {
+        "from": "person:owner",
+        "to": "agent:script",
+        "text": "批准："
+      },
+      "count": 1
+    },
+    {
+      "messages": {
+        "from": "agent:script",
+        "word": "pending.redeem"
+      },
+      "count": 1
+    },
+    {
+      "messages": {
+        "from": "agent:script",
+        "word": "turn.started"
+      },
+      "count": 2
+    }
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "name": "notifications: an ordinary one (normal channel, silent) and a strong one (important channel, rings and vibrates)",
+  "settings": {
+    "delivery.quiet_hours": "",
+    "delivery.dedupe_minutes": 0
+  },
+  "timeout_s": 120,
+  "steps": [
+    {
+      "id": "ordinary",
+      "say": "ordinary notification test",
+      "kind": "reply"
+    },
+    {
+      "checkpoint": "ordinary"
+    },
+    {
+      "id": "strong",
+      "say": "strong notification test",
+      "kind": "due"
+    },
+    {
+      "checkpoint": "strong"
+    }
+  ],
+  "owner": [
+    {
+      "name": "owner is away from Ash: no task island, phone on the home screen",
+      "when": {
+        "start": true
+      },
+      "do": [
+        {
+          "exec": [
+            "sh",
+            "-c",
+            "adb -s ${env.ANDROID_SERIAL} shell settings get secure enabled_accessibility_services > /tmp/ash-script-${run}.a11y; adb -s ${env.ANDROID_SERIAL} shell appops get ai.ash.agent SYSTEM_ALERT_WINDOW | sed -E 's/^SYSTEM_ALERT_WINDOW: ([a-z]+).*/\\1/' > /tmp/ash-script-${run}.overlay"
+          ]
+        },
+        {
+          "exec": [
+            "sh",
+            "-c",
+            "adb -s ${env.ANDROID_SERIAL} shell settings put secure enabled_accessibility_services null; adb -s ${env.ANDROID_SERIAL} shell appops set ai.ash.agent SYSTEM_ALERT_WINDOW deny"
+          ]
+        },
+        {
+          "exec": [
+            "adb",
+            "-s",
+            "${env.ANDROID_SERIAL}",
+            "shell",
+            "input",
+            "keyevent",
+            "3"
+          ]
+        },
+        {
+          "sleep_ms": 1500
+        }
+      ]
+    },
+    {
+      "name": "the ordinary one is in the normal channel",
+      "when": {
+        "checkpoint": "ordinary"
+      },
+      "do": [
+        {
+          "exec": [
+            "adb",
+            "-s",
+            "${env.ANDROID_SERIAL}",
+            "shell",
+            "dumpsys",
+            "notification",
+            "--noredact"
+          ],
+          "name": "dumpsys (ordinary)",
+          "within_ms": 8000,
+          "expect": {
+            "stdout": "NotificationRecord\\((?:(?!NotificationRecord\\()[\\s\\S])*?Notification\\(channel=ash\\.normal\\.v3(?:(?!NotificationRecord\\()[\\s\\S])*?ordinary notification test"
+          }
+        }
+      ]
+    },
+    {
+      "name": "the strong one is in the important channel; the channels ring and vibrate, or do not",
+      "when": {
+        "checkpoint": "strong"
+      },
+      "do": [
+        {
+          "exec": [
+            "adb",
+            "-s",
+            "${env.ANDROID_SERIAL}",
+            "shell",
+            "dumpsys",
+            "notification",
+            "--noredact"
+          ],
+          "name": "dumpsys (strong)",
+          "within_ms": 8000,
+          "expect": {
+            "stdout": "NotificationRecord\\((?:(?!NotificationRecord\\()[\\s\\S])*?Notification\\(channel=ash\\.important\\.v3(?:(?!NotificationRecord\\()[\\s\\S])*?strong notification test"
+          }
+        },
+        {
+          "exec": [
+            "adb",
+            "-s",
+            "${env.ANDROID_SERIAL}",
+            "shell",
+            "dumpsys",
+            "notification",
+            "--noredact"
+          ],
+          "name": "channels",
+          "expect": {
+            "stdout": "^(?=[\\s\\S]*NotificationChannel\\{mId='ash\\.important\\.v3'[^}]*mImportance=4[^}]*mSound=content:[^}]*mVibrationPattern=\\[0, 250, 150, 250\\])(?=[\\s\\S]*NotificationChannel\\{mId='ash\\.normal\\.v3'[^}]*mImportance=3[^}]*mSound=null[^}]*mVibrationPattern=null)"
+          }
+        }
+      ]
+    }
+  ],
+  "cleanup": [
+    {
+      "exec": [
+        "sh",
+        "-c",
+        "adb -s ${env.ANDROID_SERIAL} shell settings put secure enabled_accessibility_services \"$(cat /tmp/ash-script-${run}.a11y)\"; adb -s ${env.ANDROID_SERIAL} shell appops set ai.ash.agent SYSTEM_ALERT_WINDOW \"$(cat /tmp/ash-script-${run}.overlay)\"; rm -f /tmp/ash-script-${run}.a11y /tmp/ash-script-${run}.overlay"
+      ],
+      "name": "put the accessibility service and the overlay permission back"
+    }
+  ],
+  "expect": [
+    {
+      "step": "ordinary",
+      "ok": true
+    },
+    {
+      "step": "strong",
+      "ok": true
+    }
+  ]
+}

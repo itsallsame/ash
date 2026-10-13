@@ -1,0 +1,87 @@
+{
+  "name": "virtual screen: create, launch a system app, see it, close",
+  "timeout_s": 180,
+  "steps": [
+    {
+      "id": "create",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.create",
+        "body": {},
+        "purpose": "device verification: virtual screen"
+      }
+    },
+    {
+      "id": "launch",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.launch",
+        "body": {
+          "app": "com.android.settings"
+        },
+        "purpose": "device verification: virtual screen"
+      }
+    },
+    {
+      "id": "see",
+      "until": {
+        "call": {
+          "member": "service:host",
+          "word": "vscreen.see",
+          "body": {
+            "max_side": 480
+          },
+          "purpose": "device verification: virtual screen"
+        },
+        "path": "ok",
+        "equals": true
+      },
+      "timeout_ms": 20000,
+      "every_ms": 500
+    },
+    {
+      "id": "close",
+      "call": {
+        "member": "service:host",
+        "word": "vscreen.close",
+        "body": {},
+        "purpose": "device verification: virtual screen"
+      }
+    }
+  ],
+  "owner": [
+    {
+      "name": "approve what asks",
+      "when": {
+        "approval": {}
+      },
+      "repeat": true,
+      "optional": true,
+      "delay_ms": 500,
+      "do": [
+        {
+          "answer": "once"
+        }
+      ]
+    }
+  ],
+  "expect": [
+    {
+      "step": "create",
+      "ok": true
+    },
+    {
+      "step": "launch",
+      "ok": true
+    },
+    {
+      "step": "see",
+      "ok": true,
+      "min_images": 1
+    },
+    {
+      "step": "close",
+      "ok": true
+    }
+  ]
+}

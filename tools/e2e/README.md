@@ -46,6 +46,7 @@ land in the shell history and in `ps`. `--state DIR` keeps the identity key (one
 | `answer <id> <option> [text]` | `<id>` is the message id (or seq) of a card. An approval or a question (`ask` line): sends the owner's answer (`once`, `always`, `deny`, or a question's option; free text for cards that allow it). An option card (`card` line): picks that option for the agent that showed it. A second answer to the same card is refused (exit 3). |
 | `call <member> <word> ['<json>' \| - \| @file]` | Calls a word as the owner and prints the result. The body is a JSON object: in the argument, on standard input (`-`) or in a file (`@path`). |
 | `set-key [REF]` | `service:vault/set` for `REF` (default `DEEPSEEK_API_KEY`), the key from `--key-file PATH` or standard input; nothing of it is printed. |
+| `script <file.json>` | A debug hub only. Sends the script to `agent:script` (an agent that makes the calls the script lists, without a model), plays the owner's side while it runs (answering cards, looking at the phone), and checks what must hold. Exit 0 all held, 4 something did not, 2 the reports did not come in time. See [DEVICE-VERIFICATION.md](DEVICE-VERIFICATION.md) and the scripts in `scripts/`. |
 
 ### Setting the model key
 

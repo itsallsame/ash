@@ -12,7 +12,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildOwner } from "../../../../../tools/e2e/build-owner.mjs";
-import { MAIN, deferred, fromGate, startScenario, standardCapability, textResult, type Scenario } from "../../scenarios/harness";
+import { MAIN, deferred, ownerApproval, startScenario, standardCapability, textResult, type Scenario } from "../../scenarios/harness";
 import { eventually } from "../../fixtures/wait";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -107,9 +107,10 @@ test("R19 and S032: the card is found, answered, and the effect counted once (or
   await modelKey(s);
   s.driver.script(async (turn) => {
     const text = turn.messages.map((m) => m.text).join("\n");
-    const gate = turn.messages.find(fromGate);
-    if (gate) {
-      if (/pending\.redeem/.test(gate.text)) await turn.tool("human_pending_redeem", { id: /"id":"([^"]+)"/.exec(gate.text)?.[1] ?? "" });
+    const answered = turn.messages.find(ownerApproval);
+    if (answered) {
+      // The owner's answer comes as their own message: `[answers <pending id>, option once] 批准：…`.
+      if (/option once\]/.test(answered.text)) await turn.tool("human_pending_redeem", { id: /\[answers ([^,\]]+)/.exec(answered.text)?.[1] ?? "" });
       return;
     }
     const clip = /clipboard\.set[^{]*(\{"text":"[^"]+"\})/.exec(text);

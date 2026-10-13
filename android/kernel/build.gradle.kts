@@ -63,8 +63,8 @@ android {
         // 28 on purpose: the payload's executables (node, git, python, proot) are run from the app's private files/,
         // which Android refuses for apps targeting 29 and above. Same reason the shared-storage permissions work as they do.
         targetSdk = 28
-        versionCode = 22
-        versionName = "0.4.23"
+        versionCode = 23
+        versionName = "0.4.24"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
     ndkVersion = "27.2.12479018"
@@ -103,7 +103,7 @@ android {
 
     sourceSets["main"].assets.srcDir(payloadAssets)
     sourceSets["main"].assets.srcDir(containerAssets)
-    buildFeatures { aidl = true; prefab = true }
+    buildFeatures { aidl = true; prefab = true; buildConfig = true }
 
     androidResources {
         // The payload is extracted with java.util.zip and the container with tar -z: store both,
