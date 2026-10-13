@@ -6,6 +6,7 @@ import {ReadSourceSettings} from '../src/setup/read-source-settings';
 import {ConnectionSetupService} from '../src/setup/service';
 import {releaseSavedHistorySourceCandidate,releaseNativeReadDiscoveryInput} from '../src/setup/read-source-discovery';
 import {MaterialSetupIpcServer,callReadSourceSetup,callConnectionSetup} from '../src/setup/material-ipc';
+import {observeAuthorizationWrites} from './fixtures/authorization-events';
 import {SetupNativeVerification} from '../src/setup/native-verification';
 import {captureProtectedReadSource,releaseReadSource} from '../src/collaboration/read-source';
 const path=new URL('./fixtures/read-source-native-realm.mjs',import.meta.url).href,native=await import(path);
@@ -31,7 +32,7 @@ test('actual fixed source service and authenticated IPC save default/external, r
  const descriptor=JSON.parse(readFileSync(join(f.state,'collaboration-read-runtime.json'),'utf8'));assert.equal(descriptor.sqlite_home,external?f.external:f.home);
  await assert.rejects(callReadSourceSetup(f.state,'fixture','source.apply',{preview_id:preview.preview_id,selection_hash:preview.selection_hash}));
  // The saved reader is independent of the control listener after selection.
- await f.p.close();rmSync(join(f.state,'collaboration-control-runtime.json'));
+ await f.p.close();await observeAuthorizationWrites(f.state,['collaboration-control-runtime.json'],()=>rmSync(join(f.state,'collaboration-control-runtime.json')));
  const read=await callConnectionSetup(f.state,'fixture','setup.prepare',{selection:{kind:'read',allowedCwds:[f.project]}});await callConnectionSetup(f.state,'fixture','setup.apply',{preview_id:read.preview_id,selection_hash:read.selection_hash});
  const grant=JSON.parse(readFileSync(join(f.state,'collaboration-read.json'),'utf8')),proof=captureProtectedReadSource({stateDir:f.state,endpointId:'fixture',testing:{home:f.osHome,accountIdentity:{account_id:'synthetic-fixture-account',subject:'synthetic-fixture-subject'}}});try{assert.equal(grant.version,3);assert.equal(grant.source_id,proof.source_id);assert.equal(grant.binding_revision,proof.source_revision);}finally{releaseReadSource(proof);}
  assert.equal((await callReadSourceSetup(f.state,'fixture','source.status',{})).needsReadGrant,false);assert.equal(f.reserved(),false);

@@ -1,4 +1,4 @@
-// 健康 — the app's logic, free of MCP: reads the owner's health data through Ash (device:phone, within the grants
+// 健康 — the app's logic, free of MCP: reads the owner's health data through Ash (the phone, a device:<id> found with capability_list, within the grants
 // the owner gave at install), keeps its own logs and goals in data.json, and decides alerts and the weekly card.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -45,7 +45,7 @@ export class Store {
   markSent(key, value) { this.data.sent[key] = value; this.save(); }
 }
 
-/** A device:phone result ({content, data?}) as its JSON object. */
+/** A hand's result ({content, data?}) as its JSON object. */
 export function phoneJson(result) {
   if (result && typeof result === "object" && result.data && typeof result.data === "object") return result.data;
   const text = Array.isArray(result?.content) ? result.content.find((item) => item?.type === "text")?.text : typeof result?.content === "string" ? result.content : undefined;
@@ -95,8 +95,15 @@ const average = (list) => list.length ? list.reduce((a, b) => a + b, 0) / list.l
 const hours = (minutes) => round(minutes / 60, 1);
 
 export class Health {
-  /** ash: { call(member, word, body) → result, event(name, body) }; store: Store. */
+  /** ash: { call(member, word, body) → result, members() → [{id, capabilities: [{word}]}], event(name, body) }; store: Store. */
   constructor({ ash, store, now = Date.now }) { this.ash = ash; this.store = store; this.now = now; }
+
+  /** The hand that lends `word` (the phone): the app is granted `device:*`, so it looks the id up instead of writing one. */
+  async phone(word) {
+    const hand = (await this.ash.members()).find((member) => typeof member?.id === "string" && member.id.startsWith("device:") && member.capabilities?.some((item) => item?.word === word));
+    if (!hand) throw Object.assign(new Error(`offline: no hand lends ${word}`), { code: "offline", ownerText: "手机暂时没连上 Ash，稍后再试" });
+    return hand.id;
+  }
 
   /**
    * The phone's readings for the last `days` days. When the phone cannot answer (its senses helper restarting, say),
@@ -105,11 +112,15 @@ export class Health {
   async readings(days) {
     const now = this.now();
     try {
-      const result = phoneJson(await this.ash.call("device:phone", "health.read", { metrics: ["weight", "steps", "sleep", "heart_rate"],
+      const result = phoneJson(await this.ash.call(await this.phone("health.read"), "health.read", { metrics: ["weight", "steps", "sleep", "heart_rate"],
         from: new Date(startOfDay(now) - (days - 1) * DAY).toISOString(), to: new Date(now).toISOString(), max_rows: 20000 }));
+      this.failure = null;
       return { rows: Array.isArray(result.rows) ? result.rows : [], errors: result.source_errors ? [sourceErrors(result.source_errors)] : [], stale: null };
     } catch (error) {
-      process.stderr.write(`health.read failed: ${error instanceof Error ? error.message : error}\n`);
+      // Once per change of state: the phone being away is the same news every time the page asks.
+      const why = error instanceof Error ? error.message : String(error);
+      if (why !== this.failure) process.stderr.write(`health.read failed: ${why}\n`);
+      this.failure = why;
       const recent = error && typeof error === "object" ? error.recent : null;
       const rows = Array.isArray(recent?.rows) ? recent.rows : [];
       return { rows, errors: [plain(error)], stale: rows.length ? { as_of: typeof recent.as_of === "number" ? recent.as_of : rows.reduce((at, row) => Math.max(at, Number(row?.ts) || 0), 0), source: String(recent.source ?? "Ash 的记录") } : null, failed: true };
@@ -137,7 +148,7 @@ export class Health {
     let steps = stepsDay ? { value: stepsDay.value, date: stepsDay.date, at: latestAt(rows, "steps") } : null;
     if (!failed) {
       try {
-        const counter = phoneJson(await this.ash.call("device:phone", "sensors.steps", {}));
+        const counter = phoneJson(await this.ash.call(await this.phone("sensors.steps"), "sensors.steps", {}));
         if (typeof counter.steps_today === "number" && (steps === null || steps.date !== today || counter.steps_today > steps.value)) steps = { value: counter.steps_today, date: today, at: now };
       } catch (error) { errors.push(plain(error)); }
     }

@@ -6,7 +6,13 @@ data class TaskCard(val id: String, val pendingId: String, val target: String, v
     val title: String, val detail: String, val original: String, val options: List<Pair<String, String>>,
     val expiresAt: Long, val allowCustom: Boolean, val state: String) {
     fun actionable(now: Long) = state == "waiting" && expiresAt > now
+    /**
+     * A plain approval: a gate card whose answers are exactly the approval's (once / always / deny). Anything else the gate asks
+     * (a screen lease: its own durations) is answered with its own options, like a question, on every surface.
+     */
+    val plainApproval: Boolean get() = kind == "approval" && options.isNotEmpty() && options.all { it.first in APPROVAL_CHOICES }
     companion object {
+        private val APPROVAL_CHOICES = setOf("once", "always", "deny")
         fun parse(b: JSONObject): TaskCard {
             val options = b.getJSONArray("options")
             require(options.length() <= 8)
@@ -24,7 +30,9 @@ data class TaskCard(val id: String, val pendingId: String, val target: String, v
 internal data class TaskFrame(val session: String, val revision: Long, val turn: String?, val startedAt: Long,
     val state: String, val text: String, val steps: List<String>, val canStop: Boolean,
     val tool: String = "", val stepStartedAt: Long = startedAt, val outcome: String = "",
-    val reply: String = "", val cards: List<TaskCard> = emptyList(), val verdict: String = "", val agent: String = "agent:main") {
+    val reply: String = "", val cards: List<TaskCard> = emptyList(), val verdict: String = "",
+    /** The agent the owner talks to from here (`agent:<name>`); empty when the frame names none, and then there is nothing to talk to. */
+    val agent: String = "") {
     companion object {
         /** How a normally ended turn left things for the owner (core's task.outcome route); anything else is no verdict. */
         val VERDICTS = setOf("delivered", "needs_reply", "needs_action_in_ash", "incomplete")
@@ -48,7 +56,7 @@ internal data class TaskFrame(val session: String, val revision: Long, val turn:
                 b.optLong("step_started_at", started).coerceAtLeast(started), safe(b.optString("outcome", "")),
                 b.optString("reply", ""), if (cards == null) emptyList() else (0 until cards.length()).map { TaskCard.parse(cards.getJSONObject(it)) },
                 b.optString("verdict", "").takeIf { it in VERDICTS }.orEmpty(),
-                b.optString("agent", "agent:main").takeIf { Regex("agent:[a-z][a-z0-9_-]*").matches(it) } ?: "agent:main")
+                b.optString("agent", "").takeIf { Regex("agent:[a-z][a-z0-9_-]*").matches(it) }.orEmpty())
         }
     }
 }
@@ -58,7 +66,11 @@ internal data class TaskFrame(val session: String, val revision: Long, val turn:
  * resurrects an old task or stop button, and never shows the owner again what they already saw or closed.
  */
 internal class TaskStatusModel {
-    companion object { const val STALE_MS = 100_000L; const val NOTICED_MAX = 500 }
+    companion object {
+        const val STALE_MS = 100_000L; const val NOTICED_MAX = 500
+        /** States in which no new frame is expected (the turn is over, or it waits on the owner): their age says nothing about the link. */
+        private val QUIET = setOf("done", "waiting_you")
+    }
     var frame: TaskFrame? = null; private set
     private var received = 0L
     private var finished = 0L
@@ -84,7 +96,7 @@ internal class TaskStatusModel {
         return true
     }
     /** A turn under way that has sent no status for this long shows as disconnected. */
-    fun stale(now: Long): Boolean = frame?.state != "done" && now - received > STALE_MS
+    fun stale(now: Long): Boolean = frame?.state !in QUIET && now - received > STALE_MS
     private fun running(f: TaskFrame) = f.canStop && f.state !in setOf("done", "waiting_you")
     /** What in this frame the owner could still be told about: the ended turn's result and each open question. */
     private fun items(f: TaskFrame): List<String> {
@@ -120,7 +132,7 @@ internal class TaskStatusModel {
     }
     /**
      * What the island shows now (island v2): the task when there is one to show, otherwise the resident entry when the
-     * owner keeps it ([resident]: the setting is on and the screen helper draws it), otherwise nothing.
+     * owner keeps it ([resident]: the setting is on and the island draws it), otherwise nothing.
      */
     fun island(now: Long, resident: Boolean): Island = when {
         visible(now) -> Island.TASK

@@ -1,0 +1,8 @@
+{"items":[
+{"item":"accessibility","state":"granted"},
+{"item":"notification_listener","state":"missing"},
+{"item":"notifications","state":"granted"},
+{"item":"calendar","state":"granted"},
+{"item":"photos","state":"missing","detail":"READ_MEDIA_IMAGES not granted"},
+{"item":"host_shell","state":"unsupported","detail":"Android 12 or later"}
+]}

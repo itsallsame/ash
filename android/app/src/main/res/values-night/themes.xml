@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppsShell" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowLightStatusBar">false</item>
+        <!-- The frame is Ash's own: the design's page colour (ash_bg has a night variant) behind and under the system bars. -->
+        <item name="android:windowBackground">@color/ash_bg</item>
+        <item name="android:statusBarColor">@color/ash_bg</item>
+        <item name="android:navigationBarColor">@color/ash_bg</item>
+    </style>
+</resources>

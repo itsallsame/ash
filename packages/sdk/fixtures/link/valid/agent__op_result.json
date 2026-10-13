@@ -1,0 +1,9 @@
+{
+  "t": "agent",
+  "id": "g1",
+  "op_result": "session.new",
+  "ok": true,
+  "result": {
+    "handle": "h1"
+  }
+}

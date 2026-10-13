@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ash: the app icon, a ring that is part-way round with a coral dot (design/app/icons/app-icon.svg). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="512" android:viewportHeight="512">
+    <path android:fillColor="#FFF3EA"
+        android:pathData="M116,0 L396,0 Q512,0 512,116 L512,396 Q512,512 396,512 L116,512 Q0,512 0,396 L0,116 Q0,0 116,0 Z" />
+    <path android:strokeColor="#F6DFD0" android:strokeWidth="30"
+        android:pathData="M406,256 a150,150 0 1,1 -300,0 a150,150 0 1,1 300,0" />
+    <group android:pivotX="256" android:pivotY="256" android:rotation="-120">
+        <path android:strokeColor="#4CC7BE" android:strokeWidth="30" android:strokeLineCap="round" android:trimPathEnd="0.7427"
+            android:pathData="M406,256 a150,150 0 1,1 -300,0 a150,150 0 1,1 300,0" />
+    </group>
+    <path android:fillColor="#F2704E"
+        android:pathData="M256,256 m-52,0 a52,52 0 1,0 104,0 a52,52 0 1,0 -104,0" />
+</vector>

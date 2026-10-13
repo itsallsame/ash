@@ -1,4 +1,4 @@
-import type { CapabilitySpec } from "../../../sdk/src/api";
+import type { CapabilitySpec } from "./compat";
 import type { ReadAuthorizationSnapshot } from "./authorization";
 
 export const COLLABORATION_LIST = "collaboration.work.list";

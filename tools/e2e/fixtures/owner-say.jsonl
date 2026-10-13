@@ -1,0 +1,5 @@
+{"at":"2026-10-10T17:26:41.181Z","kind":"conn","state":"welcomed","hand":"HAND","client":"client:bIJ-XOXYx_0B","local":true}
+{"at":"2026-10-10T17:26:41.283Z","kind":"sent","seq":24,"id":"m_bh8paMNJpU0K","to":"agent:main"}
+{"at":"2026-10-10T17:26:41.552Z","kind":"msg","seq":29,"id":"m_TVj5j66dpHDD","from":"agent:main","to":"person:owner","mkind":"request","word":"say","text":"好","raw":{"seq":29,"id":"m_TVj5j66dpHDD","ts":1791653201479,"from":"agent:main","to":"person:owner","kind":"request","word":"say","body":{"text":"好"},"turn":"t_4","summary":"好","size":14}}
+{"at":"2026-10-10T17:26:43.089Z","kind":"done","replies":1,"waited_ms":1806}
+{"at":"2026-10-10T17:26:43.089Z","kind":"conn","state":"closed","code":1000,"reason":"stopped","reconnect":false}

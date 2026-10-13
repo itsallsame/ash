@@ -8,13 +8,13 @@
 //   runtime/   Termux aarch64 packages (node, python, git, rg, bash, curl, pnpm …), made relocatable:
 //              RUNPATH=$ORIGIN/…/lib on every ELF (no LD_LIBRARY_PATH needed), Termux prefix in
 //              shebangs replaced by the @PAYLOAD@ placeholder that the host fills in on extraction.
-//   dsh/       `npm install -g @deepseek-ai/dsh@<version>` for android-arm64, byte-for-byte as published,
-//              plus android-compat packages as siblings in dsh/lib/node_modules (never inside @deepseek-ai).
-//   ash/       ash core bundle.
-//   ash-skills/  ash's own DSH skill-provider plugin and its instructions.
-//   bin/       small sh wrappers (Android has no /usr/bin/env).
-//   profile/   the host's DSH patch layer (cordis.patch.yml rows, e.g. the ptc worker launcher).
-// Next to the zip: payload-index.json { build, links, exec, placeholders, dshTree }.
+//   ash/       ash core bundle (ash-core.mjs), libashnodump.so, android-node-compat/ (the preload the host starts core with),
+//              and next to the bundle the relay program (ash-gateway.mjs and its upload metadata ash-gateway.metadata.json, built by the gateway repository:
+//              `npm run build:bundle` there, then --gateway <dir> or ASH_GATEWAY_DIR; default node_modules/ash-gateway).
+//   ash-skills/  ash's skills, persona templates and agent templates (the hub reads them; the container carries its own copy as a DSH plugin).
+//   ash-apps/    first-party apps (packages/apps), one folder each: app.json, a bundled server.mjs, the icon.
+// DSH is not here: it runs in the agent container (tools/build-container-rootfs.mjs).
+// Next to the zip: payload-index.json { build, links, exec, placeholders }.
 //
 // Needs: node ≥ 22, npm, ar, tar (xz/zstd), zip, patchelf (PATCHELF=… to override).
 
@@ -24,8 +24,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dshFingerprint } from "../tools/verify-dsh.mjs";
-import { buildAndroidStateLock } from "../tools/build-android-state-lock.mjs";
+import { writeBundledApps } from "../packages/apps/bundle.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -41,6 +40,7 @@ const sh = (cmd, argv, o = {}) => execFileSync(cmd, argv, { stdio: ["ignore", "p
 const sha256 = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 const manifest = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
+const version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
 
 // ------------------------------------------------------------------ Termux index & lock
 
@@ -150,6 +150,7 @@ async function build() {
   } catch {
     throw new Error(`patchelf not found (${patchelf}); install it or set PATCHELF=…`);
   }
+  const relay = relayProgram(); // before anything is downloaded: a missing gateway build should not cost a whole assemble
   fs.mkdirSync(cache, { recursive: true });
   fs.rmSync(out, { recursive: true, force: true });
   const tree = path.join(out, "tree");
@@ -227,7 +228,7 @@ async function build() {
     fs.copyFileSync(file, path.join(tree, f.path));
     log("runtime file", f.path);
   }
-  // Patches to the runtime (never to DSH): each replaces one file whose original must match its
+  // Patches to the runtime: each replaces one file whose original must match its
   // sha256 — an upstream change stops the build instead of silently losing the fix.
   for (const pt of manifest.runtimePatches ?? []) {
     const target = path.join(tree, pt.path);
@@ -254,79 +255,27 @@ async function build() {
     links.splice(i, 1);
   }
 
-  // 2. DSH, as published, for android-arm64.
-  const dsh = path.join(tree, "dsh");
-  const spec = `${manifest.dsh.package}@${manifest.dsh.version}`;
-  log("npm install", spec);
-  sh("npm", ["install", "-g", "--prefix", dsh, spec, "--os=android", "--cpu=arm64", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], { stdio: "inherit" });
-  fs.rmSync(path.join(dsh, "bin"), { recursive: true, force: true }); // symlinks into lib/; the host starts DSH through ash core
-  const dshTree = hashTree(path.join(dsh, "lib/node_modules", manifest.dsh.package));
-  // R12 at build time: a desktop install of the same version, now, must be byte-identical in
-  // @deepseek-ai/** (platform packages aside). Anything else means DSH was altered on the way.
-  const reference = path.join(out, "reference");
-  sh("npm", ["install", "-g", "--prefix", reference, spec, "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], { stdio: "inherit" });
-  const ours = dshFingerprint(path.join(dsh, "lib/node_modules", manifest.dsh.package)).line;
-  const desktop = dshFingerprint(path.join(reference, "lib/node_modules", manifest.dsh.package)).line;
-  fs.rmSync(reference, { recursive: true, force: true });
-  if (ours !== desktop) throw new Error(`DSH differs from a desktop install of the same version:\n  payload: ${ours}\n  desktop: ${desktop}`);
-  log("DSH identical to a desktop install:", ours);
-
-  // 3. android-compat packages next to DSH (Node's resolution walks up to dsh/lib/node_modules).
-  const compatSrc = path.join(ROOT, "packages/android-compat/packages");
-  for (const name of fs.existsSync(compatSrc) ? fs.readdirSync(compatSrc) : []) {
-    const dir = name.startsWith("@") ? fs.readdirSync(path.join(compatSrc, name)).map((n) => `${name}/${n}`) : [name];
-    for (const pkg of dir) {
-      fs.cpSync(path.join(compatSrc, pkg), path.join(dsh, "lib/node_modules", pkg), { recursive: true, verbatimSymlinks: true });
-      log("compat", pkg);
-    }
-  }
-  for (const [name, version] of Object.entries(manifest.compatNpm ?? {})) {
-    // Official pure-JS / wasm fallbacks (e.g. @img/sharp-wasm32), installed beside DSH.
-    sh("npm", ["install", "--prefix", path.join(out, "npm-extra"), `${name}@${version}`, "--force", "--ignore-scripts", "--no-audit", "--no-fund", "--no-save", "--loglevel=error"], { stdio: "inherit" });
-    for (const [rel, e] of walk(path.join(out, "npm-extra/node_modules"))) {
-      if (!e.isDirectory() || rel.startsWith(".") || rel.split("/").length !== (rel.startsWith("@") ? 2 : 1)) continue;
-      const dst = path.join(dsh, "lib/node_modules", rel);
-      if (!fs.existsSync(dst)) fs.cpSync(path.join(out, "npm-extra/node_modules", rel), dst, { recursive: true });
-    }
-    log("compat npm", name, version);
-  }
-  fs.rmSync(path.join(out, "npm-extra"), { recursive: true, force: true });
-
-  // 4. ash core.
+  // 2. ash core.
   const core = path.join(ROOT, "packages/core/dist/ash-core.mjs");
   if (!fs.existsSync(core)) throw new Error("build ash core first: npm run build:core");
   fs.mkdirSync(path.join(tree, "ash"), { recursive: true });
   fs.copyFileSync(core, path.join(tree, "ash/ash-core.mjs"));
-  // Descriptor locks use the fixed verified Android helper next to the bundled core.
-  const stateLock = buildAndroidStateLock();
-  fs.copyFileSync(path.join(stateLock, "ash-state-lock"), path.join(tree, "ash/ash-state-lock"));
-  fs.chmodSync(path.join(tree, "ash/ash-state-lock"), 0o755);
-  fs.copyFileSync(path.join(stateLock, "native-helper.json"), path.join(tree, "ash/native-helper.json"));
-  exec.push("ash/ash-state-lock");
+  // The relay program `gateway.setup.deploy` uploads; core looks for it next to its own file.
+  fs.copyFileSync(relay, path.join(tree, "ash/ash-gateway.mjs"));
+  fs.copyFileSync(relay.replace(/\.mjs$/, ".metadata.json"), path.join(tree, "ash/ash-gateway.metadata.json"));
   // Core marks itself non-dumpable with this library, so the agent container (same Linux user) cannot read its memory.
   fs.copyFileSync(buildNodump(), path.join(tree, "ash/libashnodump.so"));
 
-  // Ash skills are a separate DSH plugin. Never modify the published DSH tree.
-  // Its tests stay in the repository: only the plugin, the skills (with their sample files) and the persona templates ship.
+  // The preload the host starts core with (--require): hard links and flock where the app sandbox refuses them.
+  fs.cpSync(path.join(ROOT, "packages/android-compat/packages/android-node-compat"), path.join(tree, "ash/android-node-compat"), { recursive: true });
+
+  // Ash's skills, persona and agent templates, read by the hub. Their tests stay in the repository: only the plugin, the skills (with their sample files) and the persona templates ship.
   fs.cpSync(path.join(ROOT, "packages/ash-skills"), path.join(tree, "ash-skills"), { recursive: true,
     filter: (source) => path.relative(path.join(ROOT, "packages/ash-skills"), source).split(path.sep)[0] !== "test" });
-  // The agent's DSH runs in the container (tools/build-container-rootfs.mjs): model calls and
-  // credentials go through ash core, so the in-process cost and vault plugins are not shipped.
-
-  // 5. wrappers.
-  const wrappers = path.join(HERE, "wrappers");
-  fs.mkdirSync(path.join(tree, "bin"), { recursive: true });
-  for (const w of fs.readdirSync(wrappers)) {
-    fs.copyFileSync(path.join(wrappers, w), path.join(tree, "bin", w));
-    exec.push(`bin/${w}`);
-    if (fs.readFileSync(path.join(wrappers, w), "utf8").includes(PLACEHOLDER)) placeholders.push(`bin/${w}`);
-  }
-
-  // Host-owned DSH patch layer (passed to runProfile as a patch file, never written into DSH).
-  fs.cpSync(path.join(HERE, "profile"), path.join(tree, "profile"), { recursive: true });
-  for (const f of fs.readdirSync(path.join(tree, "profile"))) placeholders.push(`profile/${f}`);
-
-  // 6. symlinks and zip; the index tells the host what to recreate.
+  // First-party apps (packages/apps/<id>) as single-file apps, beside ash-skills: the hub installs the ones the phone does not have yet as built-in apps.
+  const apps = await writeBundledApps(path.join(ROOT, "packages/apps"), path.join(tree, "ash-apps"));
+  log("first-party apps", apps.join(", "));
+  // 3. symlinks and zip; the index tells the host what to recreate.
   for (const [from] of links) fs.rmSync(path.join(tree, from), { force: true });
   for (const [rel, e] of walk(tree)) if (e.isSymbolicLink()) {
     if (!links.some(([from]) => from === rel)) links.push([rel, fs.readlinkSync(path.join(tree, rel))]);
@@ -339,7 +288,7 @@ async function build() {
   for (const [rel, e] of all) h.update(rel + "\0").update(e.isFile() ? fs.readFileSync(path.join(tree, rel)) : "dir").update("\0");
   const inputs = h.digest("hex").slice(0, 16);
   const entries = all.length + 1;
-  const index = { schema: 1, build: `${manifest.dsh.version}-${inputs}`, entries, dsh: manifest.dsh, dshVerify: ours, links, exec: [...new Set(exec)].sort(), placeholders: [...new Set(placeholders)].sort(), placeholder: PLACEHOLDER, dshTree };
+  const index = { schema: 1, build: `${version}-${inputs}`, entries, links, exec: [...new Set(exec)].sort(), placeholders: [...new Set(placeholders)].sort(), placeholder: PLACEHOLDER };
   fs.writeFileSync(path.join(tree, "payload-index.json"), JSON.stringify(index));
   fs.rmSync(path.join(out, "payload.zip"), { force: true });
   sh("zip", ["-q", "-r", "-X", "-9", path.join(out, "payload.zip"), "."], { cwd: tree });
@@ -348,18 +297,26 @@ async function build() {
   log(`done: ${out}/payload.zip (${size} MB), build ${index.build}, ${links.length} links, ${index.exec.length} executables`);
 }
 
-/** sha256 of every file under a directory, for the "DSH exactly as published" check (R12). */
-function hashTree(dir) {
-  const h = createHash("sha256");
-  let files = 0;
-  for (const [rel, e] of [...walk(dir)].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    if (e.isSymbolicLink()) h.update(`L ${rel} ${fs.readlinkSync(path.join(dir, rel))}\n`);
-    else if (e.isFile()) {
-      h.update(`F ${rel} ${sha256(path.join(dir, rel))}\n`);
-      files++;
-    }
-  }
-  return { files, sha256: h.digest("hex") };
+/**
+ * The gateway repository's build output, `dist/ash-gateway.mjs` (its `npm run build:bundle`), checked against the
+ * `dist/ash-gateway.mjs.sha256` written beside it, and the `dist/ash-gateway.metadata.json` it uploads with (the only
+ * copy of that metadata: the hub adds just the claim secret and the first-deploy migration). The gateway is not built here.
+ */
+function relayProgram() {
+  const dir = path.resolve(opt("--gateway", process.env.ASH_GATEWAY_DIR ?? path.join(ROOT, "node_modules/ash-gateway")));
+  const file = path.join(dir, "dist/ash-gateway.mjs");
+  const how = `build the gateway first: in ${dir} run \`npm run build:bundle\` (another checkout: --gateway <dir> or ASH_GATEWAY_DIR)`;
+  if (!fs.existsSync(file)) throw new Error(`the relay program ${file} does not exist; ${how}`);
+  const metadata = file.replace(/\.mjs$/, ".metadata.json");
+  if (!fs.existsSync(metadata)) throw new Error(`the relay metadata ${metadata} does not exist; ${how}`);
+  JSON.parse(fs.readFileSync(metadata, "utf8"));
+  const shaFile = `${file}.sha256`;
+  if (!fs.existsSync(shaFile)) throw new Error(`${shaFile} does not exist; ${how}`);
+  const expected = fs.readFileSync(shaFile, "utf8").trim().split(/\s+/)[0].toLowerCase();
+  const got = sha256(file);
+  if (expected !== got) throw new Error(`${file} has sha256 ${got}, its ${path.basename(shaFile)} says ${expected}; ${how}`);
+  log("relay program", file, got.slice(0, 12));
+  return file;
 }
 
 if (flag("--lock")) await lock();

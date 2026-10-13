@@ -21,7 +21,7 @@ async function fixture(run:(f:{base:string;release:string;root:string;config:str
   writeFileSync(join(release,'ash-device.mjs'),'// isolated runtime capture\n');
   for(const name of ['launchctl','systemctl'])writeFileSync(join(base,'tools',name),'#!/bin/sh\nexit 0\n',{mode:0o755});
   process.env.HOME=base;process.env.PATH=join(base,'tools');process.argv[1]=join(release,'ash-device.mjs');console.log=(...args)=>lines.push(args.join(' '));
-  const start=(async()=>{if(fail)throw Error('pairing rejected');return {close:async()=>{},run:Promise.resolve()};}) as typeof startDevice;
+  const start=(async()=>{if(fail)throw Error('pairing rejected');return {close:async()=>{},run:Promise.resolve()};}) as unknown as typeof startDevice;
   await run({base,release,root,config,project,lines,start});
  }finally{
   console.log=original.log;process.argv[1]=original.argv;

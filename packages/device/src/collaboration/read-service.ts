@@ -1,4 +1,4 @@
-import type { CallResult } from "../../../sdk/src/api";
+import type { CallResult } from "./compat";
 import { CodexReadAdapter, type CodexReadOptions, type CodexReadInput } from "./codex-read";
 import { deniedReadAuthorization, readAuthorizationSnapshot, type ReadAuthorizationSnapshot, type TrustedCallContext } from "./authorization";
 import { currentPinnedOwnerId, parseCurrentPairing } from "./pairing";

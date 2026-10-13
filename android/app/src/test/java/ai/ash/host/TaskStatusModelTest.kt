@@ -131,4 +131,9 @@ class TaskStatusModelTest {
         m.accept(frame(2), 2500)
         assertEquals(TaskStatusModel.Island.RESIDENT, m.island(2600, resident = true))
     }
+    @Test fun aGateCardIsAPlainApprovalOnlyWithTheApprovalsOwnAnswers() {
+        fun card(vararg ids: String) = TaskCard("a1", "a1", "service:gate", "t", "approval", "t", "", "", ids.map { it to it }, Long.MAX_VALUE, false, "waiting")
+        assertTrue(card("once", "always", "deny").plainApproval)
+        assertFalse(card("task", "m15", "h1", "deny").plainApproval)
+    }
 }

@@ -1,7 +1,7 @@
 ---
 name: reminders
 description: 给主人设提醒和查看、添加日历事件：怎么挑时间、一次性和重复提醒、提醒的措辞、后台任务里的审批有效期、日历没授权时怎么办。
-whenToUse: 主人说「提醒我」「到点叫我」「每天/每周……」「帮我看看日程」「加到日历」，或你自己需要在以后某个时间被叫醒去做事；用 timer_set、calendar.search、calendar.create 之前。
+whenToUse: 主人说「提醒我」「到点叫我」「每天/每周……」「帮我看看日程」「加到日历」，或你自己需要在以后某个时间被叫醒去做事；用 timer_set、calendar.search、calendar.list、calendar.create 之前。
 ---
 
 # 提醒与日历
@@ -10,35 +10,35 @@ whenToUse: 主人说「提醒我」「到点叫我」「每天/每周……」�
 
 | 主人要的 | 用什么 |
 |---|---|
-| 到点叫他一声 | `timer_set` 且 `deliver: "owner"` |
-| 到点你自己要去查或做点什么，再决定要不要告诉他 | `timer_set` 且 `deliver: "self"` |
+| 到点叫他一声 | `timer_set`，到点发给 `person:owner` 的 `say`（`kind: "due"`） |
+| 到点你自己要去查或做点什么，再决定要不要告诉他 | `timer_set`，到点发给你自己（`agent:<你的 id>`，`agent_list` 里有）的 `wake` |
 | 一件有起止时间、要出现在他日历里的事（会议、航班、约好的饭） | `calendar.create`（要主人批准），重要的再加一个提前的 `timer_set` |
 | 看他的日程 | `calendar.search` |
+| 看他有哪些日历、选往哪个日历里加 | `calendar.list` |
 
 纯提醒不要写进日历：日历是他所有设备共用的，别塞满你的提醒。
 
 ## 设提醒
 
-1. `system_status`：拿现在的时间 `epoch_ms`、时区 `time_zone` 和安静时段。**永远用它，不要猜现在几点。**
+1. `system_status`：拿现在的时间 `now`（毫秒）和时区 `time_zone`。**永远用它，不要猜现在几点。**
 2. 把主人说的时间换成毫秒时间戳，在容器里用 `date` 最稳：`TZ=Asia/Shanghai date -d 'tomorrow 09:00' +%s%3N`（时区用 `system_status` 的；`date -d` 认英文如 `next monday 09:00`、`2026-10-09 15:30`，不认中文）。「晚点」「一会儿」这类含糊的，问一句具体时间，或给个明确的默认并说出来（「那我定在 20:00 提醒你」）。
-3. `timer_set {label, text, deliver, at, every?}`：
-   - `at` 是第一次的时间（毫秒），不能早于现在，否则报「invalid scheduled time」。
-   - 重复：加 `every`（秒，至少 60）。只有 `every` 没有 `at`，第一次在「现在 + every」之后。**只有按固定秒数的重复**：每天是 86400，每周是 604800；没有「每月 15 号」「工作日」这种规则，也不处理夏令时。做不到的重复，用一次性提醒加「到时候由你重设下一次」（`deliver: "self"`）。
-   - 同一分钟内对同一件事重复设，会返回已有的那个，不会响两次。
+3. `timer_set {label, to, word, body, at, every?}`：叫他一声是 `to: "person:owner", word: "say", body: {text, kind: "due"}`；叫你自己是 `to: "agent:<你的 id>", word: "wake", body: {reason}`（`reason` 就是下面说的写给将来的你的话）。
+   - `at` 是第一次的时间（毫秒），不能早于现在，否则报 `at is in the past`。
+   - 重复：加 `every`（秒，至少 60）。只有 `every` 没有 `at`，第一次在「现在 + every」之后。**只有按固定秒数的重复**：每天是 86400，每周是 604800；没有「每月 15 号」「工作日」这种规则，也不处理夏令时。做不到的重复，用一次性提醒加「到时候由你重设下一次」（叫你自己）。
 4. 返回的 `id` 记着：改时间就 `timer_cancel {id}` 再设新的，别留两个；`timer_list` 看现有的。
 5. 告诉主人：设在什么时候、说什么、是否重复，一句话。**只有收到成功的返回才说设好了。**
 
 ## 措辞：提醒是在他最没空的时候看到的
 
-- `deliver: "owner"` 的 `text` 是他看到的原话：自己能读懂，不依赖当时的对话。写「15:00 周会，15 分钟后开始，会议室 B」，不写「该开会了」。写清做什么、为什么、下一步（要带什么、要打给谁）。一两句，不用客套。
+- 叫他的 `body` 里的 `text` 是他看到的原话：自己能读懂，不依赖当时的对话。写「15:00 周会，15 分钟后开始，会议室 B」，不写「该开会了」。写清做什么、为什么、下一步（要带什么、要打给谁）。一两句，不用客套。
 - `label` 是他在定时列表里看到的短名字（如「周会提醒」）。
 - 提前量：要赶路或要准备的事，提前设（出门前 30 分钟、会前 15 分钟），并写进文字里。
-- `deliver: "self"` 的 `text` 是写给将来的你的，要完整：现在为什么设它、到时候要查什么、查到什么情况告诉主人、说什么。到时候你不会记得今天的上下文。
+- 叫你自己的 `body` 里的 `reason` 是写给将来的你的，要完整：现在为什么设它、到时候要查什么、查到什么情况告诉主人、说什么。到时候你不会记得今天的上下文。
 - 到点的提醒（`due`）会作为通知送到，安静时段也不会被压住；所以主人没说的、你自己想出来的提醒，不要设在夜里。
 
 ## 后台任务里的审批
 
-`deliver: "self"` 唤醒你时主人多半不在。这一轮里若有需要主人批准的步骤：
+叫你自己的定时唤醒你时，主人多半不在。这一轮里若有需要主人批准的步骤：
 
 - 参数本身说清一切的（建日程、发写好的消息）：`approval_ttl_minutes` 可以长到几小时甚至 1 天（最长 7 天），并在消息里说明在等什么；有截止时刻的不能超过它。
 - 依赖当前屏幕的（点按钮、输入）：不要排在后台定时里。屏幕很快会变，2–5 分钟的有效期主人也来不及。改成提醒主人，让他回来再做。
@@ -47,17 +47,18 @@ whenToUse: 主人说「提醒我」「到点叫我」「每天/每周……」�
 ## 日历
 
 - `calendar.search {start_ms?, end_ms?, query?, limit?}`：默认从现在起 7 天，最多 50 条；返回标题、起止时间、地点和 `calendar_id`。需要主人给了日历读权限，没给时 `capability_describe` 里就没有这个词。
-  这种情况**不要声称已经读到了日历，也不要反复试**：用 `human_show` 发一张权限卡 `{type: "permission", permission: "calendar", why: "读取手机日历需要你授权"}`，让他自己点「去授权」。授权后看到能力出现再查；他没授权就用他对话里说的信息继续帮忙。
-- `calendar.create {calendar_id, title, start_ms, end_ms, description?, location?, time_zone?}`：改主人的日历，**每次都要他批准**，也要日历写权限。没有列出日历的能力：`calendar_id` 取自 `calendar.search` 里他已有事件的 `calendar_id`，有多个就用 `human_ask` 让他选，别猜。审批用 `purpose` 写清楚（「把周五 15:00 的牙医加到你的日历」）。批准回来后先想想事情有没有变，再 `human_pending_redeem`。
+  这种情况**不要声称已经读到了日历，也不要反复试**：用 `config.permission.request {name: "calendar"}` 打开授权页，让他自己去开。授权后看到能力出现再查；他没授权就用他对话里说的信息继续帮忙。
+- `calendar.list {}`：他手机上的日历，每个带 `id`、`name`、`account`、`writable`（能不能往里加）、`visible`、`primary`。只读，权限同 `calendar.search`。
+- `calendar.create {calendar_id, title, start_ms, end_ms, description?, location?, time_zone?}`：改主人的日历，**每次都要他批准**，也要日历写权限。`calendar_id` 用 `calendar.list` 里 `writable: true` 的日历；只有一个就用它，有多个（比如工作和个人）先看他已有的同类事件在哪个日历（`calendar.search` 返回的 `calendar_id`），还拿不准就用 `human_ask` 让他选，别猜。审批用 `purpose` 写清楚（「把周五 15:00 的牙医加到你的日历」）。批准回来后先想想事情有没有变，再 `human_pending_redeem`。
 - 汇报日程时按时间顺序说重点，别倒整个列表；说的时间用他的时区。
 
 ## 好的样子
 
 主人：「明早九点提醒我给物业打电话，问水管什么时候修。」
-`system_status` 得到 `Asia/Shanghai`，算出明天 09:00 的毫秒值，`timer_set {label: "给物业打电话", text: "09:00 给物业打电话，问水管什么时候来修", deliver: "owner", at}`，回：「好，明早 9:00 提醒你给物业打电话问水管的事。」
+`system_status` 得到 `Asia/Shanghai`，算出明天 09:00 的毫秒值，`timer_set {label: "给物业打电话", to: "person:owner", word: "say", body: {text: "09:00 给物业打电话，问水管什么时候来修", kind: "due"}, at}`，回：「好，明早 9:00 提醒你给物业打电话问水管的事。」
 
 主人：「每周一早上提醒我交周报。」
-`timer_set {label: "交周报", text: "今天是周一，别忘了交周报", deliver: "owner", at: <下个周一 09:00>, every: 604800}`，回：「每周一 9:00 提醒你交周报，从这周一开始。」
+`timer_set {label: "交周报", to: "person:owner", word: "say", body: {text: "今天是周一，别忘了交周报", kind: "due"}, at: <下个周一 09:00>, every: 604800}`，回：「每周一 9:00 提醒你交周报，从这周一开始。」
 
 ## 常见错误
 

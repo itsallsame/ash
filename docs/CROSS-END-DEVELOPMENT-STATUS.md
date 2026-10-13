@@ -1,3 +1,13 @@
+## 2026-10-13：新架构迁移本地收尾
+
+origin/main b8b475cd 已纳入coworker工作树，采用新kernel/edges/services、ash-link/1和原生电脑会话页面。读、新建、发送/追加、主动图片、链接草稿和结果stream已接通，原CLI项目授权保留。旧Core/HTTP桥已移除；共享协议归SDK。相关本地验证通过，全量测试的剩余上游/平台限制如实列于 [迁移记录](MAIN-ARCHITECTURE-MIGRATION-20261013.md)。新版正式APK与完整模拟器/真机验收尚未完成；旧安装包与以下旧版验收记录不得代用。
+
+## 2026-10-13：主分支新架构迁移进行中
+
+用户已明确采用 origin/main 新架构并迁移跨端功能。旧版完整实现保留在 `backup/coworker-before-main-20261013`（5b958f84），原安装包与历史验收记录仅适用于该旧版本。当前工作树以新版 kernel/edges/services、ash-link/1 与原生手机页面为基础；不保留旧 Core 并行运行。
+
+基础会话读、新建、发送/追加与结果服务正在迁入新的 service:collaboration，经 human channel 调用设备 capabilities。电脑CLI项目授权保持；共享DTO移到SDK。图片主动发送、原生界面和新架构测试仍在迁移，旧版绿灯不能替代新版验收。合并尚未提交或推送；不得把源码冲突消除视为功能完成。
+
 ## 2026-10-13：重启恢复与旧附件移除正式包
 
 正式包 `build/ash-coworker-20261013-reconnect.apk`，332,633,022B，SHA-256 `fd485c166885ea9f00e0fe368971a9454a34f9e59a1be7b2e50e3cc54deaf342`。顺序完成 payload 构建及普通 clean assemble，包名 ai.ash.agent、原证书、UI/payload/Core 字节匹配已核验；未更新或重启真实电脑连接器。首次 LocalSend 连接被拒，尚未发送，等待手机前台。覆盖安装后需要移除失效旧附件并重新选图，不能恢复已销毁的临时图片。Goal 真机验收仍未完成。

@@ -5,7 +5,7 @@
  * Load it from the host launcher, before the application entry:
  *
  *   node --expose-internals --require /abs/path/android-node-compat/index.cjs \
- *        <prefix>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js ...
+ *        /abs/path/ash-core.mjs ...
  *
  * It changes no file of the application. Everything is gated on
  * process.platform === 'android' and is a no-op elsewhere. It fixes three

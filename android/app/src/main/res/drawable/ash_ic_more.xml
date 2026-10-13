@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ash 图标（生成自设计稿，24 网格 1.8 线宽）。着色用 setTint / android:tint。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+  <path android:pathData="M4.5,12a1.5,1.5 0 1,0 3,0a1.5,1.5 0 1,0 -3,0" android:fillColor="#FF000000"/>
+  <path android:pathData="M10.5,12a1.5,1.5 0 1,0 3,0a1.5,1.5 0 1,0 -3,0" android:fillColor="#FF000000"/>
+  <path android:pathData="M16.5,12a1.5,1.5 0 1,0 3,0a1.5,1.5 0 1,0 -3,0" android:fillColor="#FF000000"/>
+</vector>

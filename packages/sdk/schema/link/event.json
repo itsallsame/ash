@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 event frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "event"
+    },
+    "ch": {
+      "const": "device"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "word": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "body": {
+      "type": "object",
+      "properties": {}
+    },
+    "at": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "t",
+    "ch",
+    "id",
+    "word",
+    "body",
+    "at"
+  ],
+  "additionalProperties": false
+}

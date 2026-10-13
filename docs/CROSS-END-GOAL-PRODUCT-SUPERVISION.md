@@ -1,3 +1,5 @@
+> 2026-10-13 实现更新：本分支已采用主分支kernel/edges/services与ash-link/1。跨端入口为原生电脑会话/浏览器human channel → service:collaboration → 电脑HandClient；图片复用签名side通道与Ledger/blob，结果走human stream。旧WorldRouter、OwnerLink和HTTP桥架构描述保留为历史设计，当前实现及验证边界见 [迁移记录](MAIN-ARCHITECTURE-MIGRATION-20261013.md)。坚持一切从简，主动索取材料与防重复专项延期。
+
 ## 2026-10-13：图片流程优先，防重复延期
 
 用户明确要求先把图片流程走顺，重复投递问题后续再解决。本轮交付条件调整为不同大小图片能选择、发送并看到回复，关闭重开后能看到消息；不以防重复专项验证阻塞交付，不新增相关机制。已有机制保留，仍如实记录失败与测试边界。一切从简。

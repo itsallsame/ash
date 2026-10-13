@@ -27,4 +27,14 @@ class ResultFileSaveTest {
         assertArrayEquals(full, snapshot.bytes)
     }
 
+    @Test fun streamedResultVerifiesTheFullFileWithoutBase64Frame() {
+        val full = ByteArray(4_194_304) { (it % 251).toByte() }
+        val hash = MessageDigest.getInstance("SHA-256").digest(full).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val asset = JSONObject().put("display_name", "streamed.txt").put("media_type", "text/plain").put("byte_length", full.size).put("sha256", hash)
+        assertArrayEquals(full, parseStreamedResultFile(asset, full).bytes)
+        assertThrows(IllegalArgumentException::class.java) { parseStreamedResultFile(asset, full.copyOf(full.size - 1)) }
+        asset.put("sha256", "0".repeat(64))
+        assertThrows(IllegalArgumentException::class.java) { parseStreamedResultFile(asset, full) }
+    }
+
 }

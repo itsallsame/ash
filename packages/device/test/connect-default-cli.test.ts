@@ -7,8 +7,8 @@ import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {DeviceKey,type Connection} from 'ash-gateway/client/client';
 import {deviceCli} from '../src/cli';
-import {startDevice} from '../src/main';
-import {ClientLink} from '../src/link';
+import {startConnectedDevice as startDevice, type ConnectedDevice} from './fixtures/connected-device';
+
 import {ConnectionSetupService} from '../src/setup/service';
 import {MaterialSetupIpcServer} from '../src/setup/material-ipc';
 import type {ControlRuntimeSettings} from '../src/setup/control-runtime-settings';
@@ -74,9 +74,7 @@ test('control cwd default and explicit override reach numbered discovery through
  }finally{await server.close();service.close();rmSync(root,{recursive:true,force:true});}
 });
 
-class OnlineFixtureLink extends ClientLink{
- async run(){this.conn={ws:{readyState:1},send(){},onStream(){},close(){}} as unknown as Connection;this.connected=true;this.onAttempt();await this.onConnected(this.conn);this.setupConnectionReady=true;}
-}
+
 test('read cwd default and explicit override use real main, native history and PTY; cancellation preserves scope and next command targets explicit project safely',{skip:process.platform!=='darwin',timeout:90000},async()=>{
  const native=await import(new URL('./fixtures/read-source-native-realm.mjs',import.meta.url).href);
  const root=realpathSync(mkdtempSync('/tmp/ash-rrealm.'));let original:any,app:Awaited<ReturnType<typeof startDevice>>|undefined;
@@ -88,9 +86,9 @@ test('read cwd default and explicit override use real main, native history and P
   const path=join(root,'device.json'),device={gateway:'https://fixture.invalid',name:'fixture',stateDir:f.state,workdir:explicit};writeFileSync(path,JSON.stringify(device),{mode:0o600});
   original=await native.nativeReader(f.executable,f.home,f.osHome,f.project);
   const source={capture:(current:()=>undefined)=>captureProtectedReadSource({stateDir:f.state,endpointId:key.id,current,testing:{home:f.osHome,accountIdentity:{account_id:'synthetic-fixture-account',subject:'synthetic-fixture-subject'}}}),current:currentReadSource,release:releaseReadSource,drained:readSourceDrained};
-  const open=()=>startDevice(device,undefined,{detect:async()=>[],testing:{sourceHome:f.home,readSource:{home:f.osHome,accountIdentity:{account_id:'synthetic-fixture-account',subject:'synthetic-fixture-subject'}},read:{source},detectBrowser:async()=>undefined,kimiFactory:()=>({start:async()=>{},online:false,url:'fixture',busy:false,close:async()=>{}}) as any,linkFactory:(...args)=>new OnlineFixtureLink(...args)}});app=await open();await app.run;
+  const open=()=>startDevice(device,undefined,{detect:async()=>[],testing:{sourceHome:f.home,readSource:{home:f.osHome,accountIdentity:{account_id:'synthetic-fixture-account',subject:'synthetic-fixture-subject'}},read:{source},detectBrowser:async()=>undefined,}});app=await open();await app.run;
   const env={PATH:process.env.PATH,HOME:f.osHome},before=snapshot(f.state);
-  const cancelled=await terminal(f.project,['connect','codex','--config',path],[['Allow read access?','n']],env);assert.equal(cancelled.exit,0,cancelled.output);assert.match(cancelled.output,/Cancelled; no read permissions changed/);assert.deepEqual(snapshot(f.state),before);
+  const cancelled=await terminal(f.project,['connect','codex','--config',path],[['Allow read access?','n']],env);assert.equal(cancelled.exit,0,cancelled.output);assert.match(cancelled.output,/Cancelled; no read, control or material permissions were saved/);assert.deepEqual(snapshot(f.state),before);
   const error=await promisify(execFile)(process.execPath,['--import',loader,cli,'connect','codex','--config',path],{cwd:f.project,env}).then(()=>null,error=>error);assert.match(error.stderr,/interactive terminal/);assert.deepEqual(snapshot(f.state),before);
   for(const extra of [[],['--project',explicit]]){
    if(extra.length){await app.close();app=await open();await app.run;}

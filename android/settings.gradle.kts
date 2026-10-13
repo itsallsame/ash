@@ -13,4 +13,5 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ash"
-include(":app", ":bridge", ":screen", ":senses", ":apps")
+include(":app")
+include(":kernel")

@@ -1,11 +1,11 @@
 package ai.ash.ui
 
-import ai.ash.host.browser.BrowserArguments
-import ai.ash.host.browser.BrowserSession
+import ai.ash.caps.browser.BrowserArguments
+import ai.ash.caps.browser.BrowserSession
+import ai.ash.ui.design.AshUi
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.Gravity
@@ -34,11 +34,21 @@ class BrowserActivity : Activity() {
     private var space: String? = null
     private val onChange: () -> Unit = { refresh() }
 
+    /** Which of light and dark the bar was drawn in: its colours are taken when it is made, so a switch of the system makes it again. */
+    private var themedNight = false
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (AshUi.night(this) != themedNight) recreate()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val ink = Color.parseColor("#1c1c1e")
-        val muted = Color.parseColor("#6e6e73")
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE) }
+        themedNight = AshUi.night(this)
+        val c = AshUi.p(this)
+        val ink = c.ink
+        val muted = c.text2
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(c.bg) }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(24, 16, 24, 0) }
         reason = TextView(this).apply { textSize = 15f; setTextColor(ink) }
         val done = Button(this).apply { text = "完成"; setOnClickListener { finish() } }
@@ -56,6 +66,7 @@ class BrowserActivity : Activity() {
         root.addView(spaceBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        ai.ash.apps.Ui.insets(root) // edge to edge (targetSdk 35)
         BrowserSession.addListener(onChange)
         show(intent)
     }

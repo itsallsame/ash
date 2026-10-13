@@ -1,0 +1,45 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { renderProgress } from "../js/progress.js";
+
+class Node {
+  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.dataset = {}; this.hidden = false; this.attributes = {}; }
+  append(child) { this.children.push(child); }
+  setAttribute(name, value) { this.attributes[name] = value; }
+  replaceChildren(...children) { this.children = children; }
+  addEventListener(name, callback) { this.listeners[name] = callback; }
+  set textContent(value) { this.value = value; this.children = []; }
+  get textContent() { return (this.value || "") + this.children.map((child) => child.textContent).join(""); }
+}
+
+test("the pill shows the latest safe step and the elapsed time, then a folded summary", () => {
+  globalThis.document = { createElement: (tag) => new Node(tag) };
+  try {
+    const root = new Node("root");
+    let opened = "";
+    const turn = { title: "查询", started: 1000, steps: [
+      { label: "正在理解", ts: 1200 },
+      { label: "service:self · write", requestId: "tool", ts: 2000 },
+      { label: "正在查看", ts: 2500 },
+      { label: "正在整理", ts: 3000 },
+    ] };
+    renderProgress(root, { turns: { t_one: turn } }, { now: 5000, onOpen: (id) => { opened = id; } });
+    assert.equal(root.hidden, false);
+    assert.match(root.textContent, /正在整理· 4 秒/);
+    assert.doesNotMatch(root.textContent, /service:self|write|正在理解|正在查看/);
+    assert.equal(root.children[0].className, "pill progress-button");
+    assert.equal(root.children[0].attributes["aria-label"], "查看活动");
+    root.children[0].listeners.click();
+    assert.equal(opened, "t_one");
+    turn.ended = 6000;
+    renderProgress(root, { turns: { t_one: turn } }, { now: 7000 });
+    assert.match(root.textContent, /做了 3 步· 5 秒/);
+    renderProgress(root, { turns: { t_one: { ...turn, step_count: 10000, steps: turn.steps.slice(-1) } } }, { now: 7000 });
+    assert.match(root.textContent, /做了 10000 步· 5 秒/, "a bounded DTO reports the whole turn's count, not the five loaded steps");
+    renderProgress(root, { turns: { t_one: turn } }, { now: 70_000 });
+    assert.equal(root.hidden, true);
+    // A finished turn that did no steps shows nothing rather than "做了 0 步".
+    renderProgress(root, { turns: { t_two: { started: 1000, ended: 2000, steps: [] } } }, { now: 2500 });
+    assert.equal(root.hidden, true);
+  } finally { delete globalThis.document; }
+});

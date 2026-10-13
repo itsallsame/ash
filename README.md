@@ -1,59 +1,46 @@
 # ash
 
-ash 是运行在 Android 手机上的常驻个人 Agent。ash core 管理消息、设备、权限、定时和界面；[DeepSeek Harness (DSH)](https://www.npmjs.com/package/@deepseek-ai/dsh) 运行 Agent。当前生产入口使用 `ash-api/2`，两者在同一 Core 进程中通过公开扩展点连接，DSH 发布包不作修改。
+ash 是运行在 Android 手机上的常驻个人 Agent。ash core 管理消息、设备、权限、定时和界面；[DeepSeek Harness (DSH)](https://www.npmjs.com/package/@deepseek-ai/dsh) 运行 Agent。DSH 发布包不作修改，在 Ash 的主 body（手机上的 proot Ubuntu）里运行，经 ACP 被驱动、经 MCP 调用 Core 的工具。
 
 当前代码包含：
 
-- 单一 `agent:main` 的对话、状态、后台流程、记忆文件与活动记录；
-- 手机感官、通知、审批、定时唤醒与本地暂停；
-- 浏览器界面、网关配对与笔记本设备能力；
-- DSH 的五个 ash 工具（`ash_describe`、`ash_send`、`ash_say`、`ash_react`、`ash_show`）及受控的原生读写/搜索工具。
+- 中枢（`packages/core`）：账本、成员、路由、关口、定时、感知、语义层，所有进出都变成消息；
+- 手机宿主、手 App、网页和电脑程序经 `ash-link/1` 连进同一个端口，agent 由 DSH 驱动并经 MCP 使用中枢的工具；
+- 审批、定时唤醒、应用（器官）与本地暂停。
 
 这些是代码能力清单，不代表真机回归和最终体验验收已经完成。进度以项目验收记录为准。
 
 ## 运行结构
 
 ```text
-Android App（Kotlin）
-  ├─ 前台服务、系统感官、通知、闹钟、Keystore、设备能力
-  ├─ APK 静态资源中的 WebView 界面 ── 本机原生桥 ──┐
-  └─ 宿主 HTTP 桥 127.0.0.1:4710 ────────────────┤
-                                                   ▼
-ash core（Node，单进程）
-  ├─ ash-api/2：账本、成员、消息路由、关口、时钟、投递、后台流程
-  ├─ 本机边缘 API 127.0.0.1:4700
-  ├─ DSH 绑定 ── 原样的 DSH core
-  └─ 网关出站连接 ── 配对浏览器 / 笔记本设备
+Android 宿主 ai.ash.kernel（Kotlin）：装运行环境、起进程并监管、签名、唤醒、保活
+  └─ 启动 ash core（Node，单进程；ash-host/1：host.json + 环境变量 + 标准输入事件）
+       ├─ 内核：账本、注册表、路由、关口、脱敏、保险箱
+       ├─ 边缘：/link 连接服务端、工具面（MCP）、DSH 驱动、主 body、应用、宿主、小模型
+       ├─ 服务：时钟、语义层、历史、设备目录、卡片、管理、用量、感知、反射
+       └─ 网关出站连接 ── 配对浏览器 / 电脑程序
+手 App ai.ash.agent、网页、电脑程序 ═ ash-link/1 ═ 本机端口
 ```
 
 Android WebView 从 APK 加载静态界面，通过原生桥访问 Core；远程浏览器通过网关使用同一界面。设备能力经过成员与审批链路，不直接展开成一批 Agent 工具。详细结构见 [架构说明](docs/ARCHITECTURE.md)。
 
 | 目录 | 内容 |
 |---|---|
-| `packages/sdk` | `ash-api/2` 类型、word 目录与客户端 |
-| `packages/core` | 世界层、成员、后台流程、边缘 API 和界面 |
-| `packages/dsh-binding` | DSH 会话、工具、上下文与审批绑定 |
+| `packages/sdk` | 契约：类型、JSON Schema、一致性样例 |
+| `packages/core` | 中枢：内核、边缘、服务（结构见 `docs/ARCHITECTURE.md`） |
+| `packages/link`、`packages/workspace`、`packages/device` | 连接协议实现、文件与命令操作、电脑程序 |
+| `packages/web` | 网页界面（Core 当静态文件发，Android 打包进 APK） |
 | `packages/ash-skills` | 人格模板、首次见面与其他技能 |
-| `packages/android-compat` | Android 上运行原样 DSH 的适配 |
-| `payload/` | DSH、运行时和 Core 的锁定输入与组装 |
+| `packages/android-compat` | Core 进程在 Android 上的运行时预加载（硬链接、flock 的兜底） |
+| `payload/` | 运行时和 Core（DSH 在容器里）的锁定输入与组装 |
 | `android/` | Android 宿主（Gradle/Kotlin） |
 | `tools/` | 构建、验证和回归脚本 |
 
-无障碍读屏、操作与灵动岛编译在主 APK 内，安装 Ash 后直接在系统无障碍设置开启「Ash」，无需安装屏幕助手。屏幕模块在同一应用的独立进程运行，后台权限与主应用统一设置。更新主应用后，如系统关闭无障碍，需要重新开启。位置/健康感知与应用展示仍是可选组件。
+## 跨端项目协作（coworker）
 
-## 已安装电脑连接器：连接当前项目
+本分支通过新的 `ash-link/1` 架构提供 Codex 项目协作。已配对电脑在项目目录运行 `ash-device connect codex --collaborate`，按提示授权读取、新建、发送/追加以及主动分享材料；材料授权默认 24 小时，续期运行同一命令。其他项目不自动开放。
 
-在需要连接的项目目录打开终端：
-
-```sh
-ash-device connect codex
-```
-
-按提示确认后，手机「电脑」里可以读取该项目的已保存会话。需要单个会话发送时，在同一目录运行 `ash-device connect codex --control`，选择会话并确认。
-
-需要整个项目协作时，运行 `"$HOME/.ash-device/current/bin/ash-device" connect codex --collaborate`，一次确认读取、新建、发送/追加及主动发送材料的范围。材料默认允许 24 小时；续期运行同一命令，可用 `--expires-in-minutes` 指定 1 至 10080 分钟。确认会替换此前的读取、控制和材料范围，请核对项目。使用 `--project PATH` 可以明确指定项目目录。上述命令需要已完成安装、配对；普通用户从零完整接入仍待集中验收。
-
-需要让 Codex 使用共享连接时，保存工作并正常退出 Codex，再运行 `"$HOME/.ash-device/current/bin/ash-device" codex-shared --start`；首次缺失配置会请求一次确认并由软件准备，已有配置不会覆盖。打开桌面后的连接仍需核实。
+手机从「电脑会话」选择电脑与会话。新版基础通道、图片集成、浏览器流程和 Android 关联测试已通过本地验证；新版正式 APK 和真机整体流程仍待验收，旧版 APK 的测试结论不适用于新版。完整进度见 [跨端开发状态](docs/CROSS-END-DEVELOPMENT-STATUS.md)。
 
 ## 本地构建与验证
 
@@ -64,11 +51,12 @@ npm ci
 npm run typecheck
 npm test
 npm run test:ui:e2e
+npm run build:container
 npm run build:payload
 cd android && ./gradlew :app:assembleDebug
 ```
 
-`npm test` 中依赖已安装 DSH 的场景，设置 `ASH_TEST_DSH_ROOT` 指向发布包根目录后运行；未设置时这些场景会明确跳过。浏览器 E2E 需先安装 Playwright Chromium。APK 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。
+`npm test` 跑全部单元测试和中枢场景测试。浏览器 E2E 需先安装 Playwright Chromium。APK 输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。
 
 ## 来源与许可
 

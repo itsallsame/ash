@@ -1,0 +1,150 @@
+/** A small hub for the tests: a real ledger, registry, gate and router, with fake members. */
+import { idKind } from "../../../../sdk/src/ids";
+import { WordError, type HandleContext, type Message, type Reply, type WordResult } from "../../../../sdk/src/message";
+import { DEFAULT_CALLERS, type Member, type WordContract } from "../../../../sdk/src/word";
+import { wordsOf } from "../../../../sdk/src/words";
+import { createGate, GateStore, needsLease } from "../../../src/kernel/gate";
+import { createRedact } from "../../../src/kernel/redact";
+import { createRegistry } from "../../../src/kernel/registry";
+import { createRouter } from "../../../src/kernel/router";
+import type { Traffic } from "../../../src/kernel/types";
+import { createGateService } from "../../../src/services/gate";
+import { createNameOf } from "../../../src/services/gate/names";
+import type { Caller, GateDeps } from "../../../src/kernel/types";
+import { after } from "node:test";
+import { openLedger } from "../ledger/helpers";
+
+// Cards nobody answered would keep their 600 s timers alive: stop every service when the file is done.
+const services: { stop(): void }[] = [];
+after(() => { for (const s of services) s.stop(); });
+
+export const HAND = "A".repeat(22);
+export const DEVICE = `device:${HAND}`;
+export const BODY = `body:${HAND}`;
+
+export const owner: Caller = { member: "person:owner", via: "human", local: true, client: "client:s1" };
+export const remoteOwner: Caller = { ...owner, local: false };
+export const agent = (name = "main", turn = "t1"): Caller => ({ member: `agent:${name}`, via: "agent", local: false, turn });
+export const service = (name = "clock"): Caller => ({ member: `service:${name}`, via: "service", local: true });
+export const app = (name = "todo"): Caller => ({ member: `app:${name}`, via: "app", local: false });
+export const hand: Caller = { member: DEVICE, via: "hand", local: false };
+
+export const word = (member: string, name: string, over: Partial<WordContract> = {}): WordContract => ({
+  member, word: name, kind: "request", direction: "in", description: "a word made for a test, nothing more",
+  input_schema: { type: "object", properties: {}, additionalProperties: true }, effect: "read", risk: "none",
+  callers: [...DEFAULT_CALLERS], label: { doing: "在测试" }, ...over,
+});
+
+export type Handler = (msg: Message, ctx: HandleContext) => Promise<WordResult | void> | WordResult | void;
+export interface Fake extends Member { calls: { msg: Message; ctx: HandleContext }[]; cancelled: string[]; handler: Handler }
+export function fake(id: string, words: WordContract[], handler: Handler = () => ({ data: { ok: true } }), extra: Partial<Member> = {}): Fake {
+  const calls: Fake["calls"] = [];
+  const m: Fake = {
+    id, kind: idKind(id) as Member["kind"], name: id, words: () => words, calls, cancelled: [], handler,
+    async handle(msg, ctx) { calls.push({ msg, ctx }); return m.handler(msg, ctx); },
+    cancel(requestId) { m.cancelled.push(requestId); },
+    ...extra,
+  };
+  return m;
+}
+
+/** The owner: it answers cards when the test says so. */
+export function fakeOwner() {
+  const cards: { msg: Message; answer: (reply: WordResult) => void; fail: (e: Error) => void }[] = [];
+  const said: Message[] = [];
+  const m = fake("person:owner", wordsOf("person:owner"), (msg) => {
+    if (msg.word === "say") { said.push(msg); return { data: { accepted: true } }; }
+    if (msg.word === "ask") return new Promise<WordResult>((answer, fail) => { cards.push({ msg, answer, fail }); });
+    return { data: { accepted: true } };
+  });
+  return Object.assign(m, { cards, said, answer(choice: string, index = cards.length - 1) { cards[index]!.answer({ data: { choice } }); } });
+}
+
+export function fakeAgent(name = "main") {
+  const inbox: Message[] = [];
+  const m = fake(`agent:${name}`, wordsOf(`agent:${name}`), (msg) => { inbox.push(msg); return { data: { accepted: true } }; });
+  return Object.assign(m, { inbox });
+}
+
+export interface WorldOptions {
+  /** The names hands were paired with (the hand id, without the `device:` prefix), known while they are offline. */
+  handNames?: Record<string, string>;
+  review?: "allow" | "ask" | "hang" | { verdict: "allow" | "ask" | "deny"; reason?: string };
+  tiers?: Record<string, "ask" | "full">;
+  assess?: (msg: Message) => Promise<"none" | "outward" | "structure" | null>;
+  policies?: Record<string, { tools?: string[] | null; words?: string[] | null } | null>;
+  toolWords?: (tool: string) => string[];
+  appGranted?: (appId: string, to: string, word: string) => boolean;
+  mayTalkToOwner?: (caller: Caller, word: string) => boolean;
+  mayAnswer?: (caller: Caller, body: unknown) => boolean;
+  tap?: (traffic: Traffic) => void;
+  /** What the hub does after the owner answered a card: the default says it to the agent as the owner, as the human edge does; false: the owner did not answer (the card ended by its time). */
+  ownerSay?: "owner" | "none" | "fails";
+  /** The fast path of an approval: how long an agent's call waits for the owner (ms). Default 0: the receipt at once, as before. */
+  fastWaitMs?: number;
+}
+
+export function world(options: WorldOptions = {}) {
+  const { ledger } = openLedger();
+  const clock = { now: 1_000_000 };
+  const registry = createRegistry();
+  const redact = createRedact();
+  const store = new GateStore(ledger, () => clock.now);
+  const state = { review: options.review ?? "ask", reviews: 0 };
+  const deps: GateDeps = {
+    tier: (t) => options.tiers?.[t] ?? "ask",
+    mode: () => store.mode(),
+    ...(options.assess ? { assess: options.assess } : {}),
+    review: async () => {
+      state.reviews++;
+      if (state.review === "hang") return new Promise(() => {});
+      return typeof state.review === "string" ? { verdict: state.review } : state.review;
+    },
+  };
+  const gate = createGate(deps, store, { now: () => clock.now, reviewMs: 30, assessMs: 30 });
+  const errors: { where: string; error: unknown }[] = [];
+  /** What the end of a screen lease did: the times the fingers were let go, and the requests cancelled on the way. */
+  const screen = { released: 0, cancelled: [] as string[] };
+  const router = createRouter({
+    ledger, registry, gate, redact, store, now: () => clock.now,
+    agentPolicy: (id) => (options.policies && id in options.policies ? options.policies[id]! : {}),
+    ...(options.toolWords ? { toolWords: options.toolWords } : {}),
+    ...(options.appGranted ? { appGranted: options.appGranted } : {}),
+    ...(options.mayTalkToOwner ? { mayTalkToOwner: options.mayTalkToOwner } : {}),
+    ...(options.mayAnswer ? { mayAnswer: options.mayAnswer } : {}),
+    ...(options.tap ? { tap: options.tap } : {}),
+    fastWaitMs: () => options.fastWaitMs ?? 0,
+    onParked: (p) => svc.issueCard(p),
+    onError: (where, error) => errors.push({ where, error }),
+  });
+  const svc = createGateService({
+    store, gate, send: (m, c, o) => router.send(m, c, o), redeem: (id, c, o) => router.redeem(id, c, o),
+    contractOf: (member, w) => registry.find(member, w)?.contract ?? null, nameOf: createNameOf({
+      memberName: (id) => registry.get(id)?.name, handName: (hand) => options.handNames?.[hand],
+      mainAgentName: () => registry.get("agent:main")?.name,
+    }), onError: (where, error) => errors.push({ where, error }),
+    releaseScreen: async () => { screen.released++; },
+    cancelScreen: (agent) => router.cancelWhere((r) => {
+      const hit = r.from === agent && r.to !== null && needsLease(registry.find(r.to, r.word)?.contract ?? ({} as never));
+      if (hit) screen.cancelled.push(r.word);
+      return hit;
+    }),
+    ownerSay: async (_askId, to, body) => {
+      if (options.ownerSay === "none") return false;
+      if (options.ownerSay === "fails") throw new Error("the owner's channel is gone");
+      const sent = await router.send({ to, kind: "request", word: "say", body }, { member: "person:owner", via: "human", local: true });
+      if (!sent.ok) throw new WordError(sent.error.code, sent.error.message);
+      return true;
+    },
+  });
+  services.push(svc);
+  const ownerMember = fakeOwner();
+  const main = fakeAgent("main");
+  registry.add(ownerMember); registry.add(main); registry.add(svc);
+  return { ledger, registry, redact, store, gate, router, svc, clock, state, errors, owner: ownerMember, main, screen };
+}
+
+export const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 15));
+export const failure = (reply: Reply) => { if (reply.ok) throw new Error(`expected an error, got ${JSON.stringify(reply)}`); return reply.error; };
+export const success = (reply: Reply) => { if (!reply.ok) throw new Error(`expected ok, got ${JSON.stringify(reply.error)}`); return reply.result?.data as any; };
+export { WordError };

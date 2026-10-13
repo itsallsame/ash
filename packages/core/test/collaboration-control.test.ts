@@ -4,7 +4,7 @@ import {
   CONTROL_CAPABILITIES, CONTROL_INPUT_BYTES, CONTROL_OUTPUT_BYTES, CoreControlError, FixedControlTransport,
   controlOperation, executeControlRoute, normalizeControlTarget, parseControlInput,
   type CoreControlSession, type CoreControlEnvelope, type ControlOperation,
-} from "../src/collaboration/control-service";
+} from "../src/services/collaboration/control-service";
 
 const work = { node_id: "desktop", endpoint_id: "desktop", kind: "conversation" as const, native_id: "thread-1" };
 const revision = "a".repeat(64);

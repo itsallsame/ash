@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Exact alarms for wake.at; without it the host falls back to an inexact alarm that still works in doze. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Shared storage: the agent in the container reads and writes the phone's files (targetSdk 28 + legacy storage). -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Optional pairing/reconnect shortcuts; code input also lives on the kernel page. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      Two signature-level permissions, declared by both packages (same signature may declare twice, so either installs first):
+      KERNEL protects starting this package's service; HAND protects the hand app's HandService, which this package binds.
+    -->
+    <permission android:name="ai.ash.permission.KERNEL" android:protectionLevel="signature" />
+    <permission android:name="ai.ash.permission.HAND" android:protectionLevel="signature" />
+    <uses-permission android:name="ai.ash.permission.KERNEL" />
+    <uses-permission android:name="ai.ash.permission.HAND" />
+
+    <application
+        android:name=".KernelApp"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true"
+        tools:ignore="GoogleAppIndexingWarning">
+
+        <!-- Keep both the system pairing dialog and this page resumed while typing on Android 10+. -->
+        <meta-data android:name="android.allow_multiple_resumed_activities" android:value="true" />
+
+        <!-- Supervises ash core. The hand app starts it (needs ai.ash.permission.KERNEL) when it finds the kernel not running. -->
+        <service
+            android:name=".KernelService"
+            android:exported="true"
+            android:permission="ai.ash.permission.KERNEL" />
+
+        <!--
+          No-screen entry that starts the service, for phones whose associated-start guard (MIUI, ColorOS) rejects another
+          package starting a service but lets an activity start through. Signature permission: only the hand app can start it;
+          it reads nothing from the intent. Not in recents, no launcher icon.
+        -->
+        <activity
+            android:name=".StartActivity"
+            android:exported="true"
+            android:permission="ai.ash.permission.KERNEL"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
+        <!--
+          「Ash 内核」: the kernel's one screen, with a launcher icon and its own task, so that the owner can lock its card in
+          recent apps (the maker's cleaning leaves locked apps alone). It reads nothing from the intent.
+        -->
+        <activity
+            android:name=".StatusActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Boot completed, and this package replaced by an update. -->
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- The exact alarm set by wake.at. -->
+        <receiver android:name=".WakeReceiver" android:exported="false" />
+
+        <!-- adb control (start, stop, restart); only holders of DUMP (shell, system) may send. The hand app uses the service's own actions. -->
+        <receiver android:name=".ControlReceiver" android:exported="true" android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="ai.ash.kernel.START" />
+                <action android:name="ai.ash.kernel.STOP" />
+                <action android:name="ai.ash.kernel.RESTART" />
+            </intent-filter>
+        </receiver>
+        <!--
+          「后台也能动手」 (host/): the kernel's own high-privilege layer. The shell host, launched through wireless debugging,
+          gets the kernel bridge here; only the shell and the system hold INTERACT_ACROSS_USERS_FULL.
+        -->
+        <provider
+            android:name=".host.KernelHostDoor"
+            android:authorities="${applicationId}.kernelhost"
+            android:multiprocess="false"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <!-- The minutes of a pairing or reconnection, while the owner is in the system's settings. -->
+        <service android:name=".host.GuideService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <!-- Existing hand-app links open the persistent kernel pairing page. -->
+        <activity android:name=".host.GuideActivity" android:exported="true" android:permission="ai.ash.permission.KERNEL"
+            android:launchMode="singleTask" />
+    </application>
+</manifest>

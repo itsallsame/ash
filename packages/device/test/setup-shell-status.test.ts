@@ -1,22 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,writeFileSync,rmSync,mkdirSync,renameSync,realpathSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';
-import {DeviceKey,type Connection} from 'ash-gateway/client/client';import {ClientLink,currentSetupConnectionProof} from '../src/link';import {setupDiagnostics} from '../src/setup/diagnostics';
-class OnlineLink extends ClientLink {
- private connectedGate!:()=>void;readonly syncing=new Promise<void>(resolve=>this.connectedGate=resolve);private sync!:()=>void;private readonly gate=new Promise<void>(resolve=>this.sync=resolve);private finish!:()=>void;
- readonly events:string[]=[];
- constructor(key:DeviceKey){super('https://signed-fixture.invalid',key,{manifest:async()=>({name:'fixture',kind:'laptop',capabilities:[]}),call:async()=>({ok:false,content:[]})},()=>{});
-  const closed=new Promise<any>(resolve=>this.finish=()=>resolve({code:1000}));const conn={ws:{readyState:1,addEventListener(){},send(){},close:()=>this.finish()},closed,onStream(){},close:()=>this.finish(),send(){}} as unknown as Connection;
-  Object.assign(this.gateway,{health:async()=>{this.events.push('health');return {protocol:'ash-gw/1'};},authenticate:async()=>{this.events.push('signed-authenticate');return {};},connect:async()=>{this.events.push('connect');return conn;}});
- }
- protected override async onConnected(conn:Connection){await super.onConnected(conn);this.connectedGate();await this.gate;}
- ready(){this.sync();}end(){this.finish();}
-}
-test('setup connection proof waits for authenticated first sync and remains bound to its physical connection and pairing',async()=>{
- const root=mkdtempSync(join(tmpdir(),'shell-connection-')),key=await DeviceKey.generate(),owner=await DeviceKey.generate();writeFileSync(join(root,'paired.json'),JSON.stringify({owner_key:owner.publicKey,grant_version:1,permissions:[]}),{mode:0o600});const link=new OnlineLink(key);let run:Promise<void>|undefined;
- try{await link.pair(root,undefined,'fixture');assert.throws(()=>link.captureSetupConnection());run=link.run();await link.syncing;assert.equal(link.connected,true);assert.throws(()=>link.captureSetupConnection());link.ready();await new Promise<void>(resolve=>setImmediate(resolve));const proof=link.captureSetupConnection();assert.equal(currentSetupConnectionProof(proof),undefined);assert.throws(()=>currentSetupConnectionProof(structuredClone(proof)));assert.deepEqual(link.events,['health','signed-authenticate','connect']);
-  const readProof=link.captureReadSetupConnection();writeFileSync(join(root,'collaboration-read.json'),'{}',{mode:0o600});assert.throws(()=>currentSetupConnectionProof(proof));assert.equal(currentSetupConnectionProof(readProof),undefined);const freshProof=link.captureSetupConnection();assert.equal(currentSetupConnectionProof(freshProof),undefined);
-  writeFileSync(join(root,'paired.json'),JSON.stringify({owner_key:owner.publicKey,grant_version:2,permissions:[]}),{mode:0o600});assert.throws(()=>currentSetupConnectionProof(proof));assert.throws(()=>link.captureSetupConnection());assert.throws(()=>currentSetupConnectionProof(readProof));assert.throws(()=>link.captureReadSetupConnection());link.stop();assert.throws(()=>currentSetupConnectionProof(proof));link.end();await run;
- }finally{link.ready();link.stop();link.end();await run;rmSync(root,{recursive:true,force:true});}
-});
+import {DeviceKey} from 'ash-gateway/client/client';import {setupDiagnostics} from '../src/setup/diagnostics';
 test('shell diagnostics keep connection, interface, grants and login distinct and whitelist evidence',()=>{
  const value=setupDiagnostics({installation:'verified',gateway:'unavailable',client:'verified',version:'verified',socket:'verified',source:'verified',controlCapability:'missing',readCapability:'unavailable',login:'unknown',secret:'hidden'} as any,{pairing:'paired',readGrant:'configured',controlGrant:'missing'});
  assert.equal(value.pairing,'paired');assert.equal(value.gateway,'unavailable');assert.equal(value.client,'verified');assert.equal(value.controlCapability,'missing');assert.equal(value.readCapability,'unavailable');assert.equal(value.login,'unknown');assert.equal(Object.hasOwn(value,'secret'),false);

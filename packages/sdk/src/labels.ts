@@ -118,6 +118,34 @@ export function serviceLabel(member: string, word: string): string | null {
   return Object.hasOwn(serviceLabels, key) ? serviceLabels[key]! : null;
 }
 
+/** What an upstream-labelled action is called when nothing readable came with it. */
+export const DOING_FALLBACK_LABEL = "在处理";
+
+/**
+ * A name made for programs, not people: only ASCII identifier characters, with an identifier's punctuation in it
+ * (`todo.list`, `get_items`, `a:b`). A title in words with a slash or a colon in it (「上传/下载」「日程:今天」) is for people.
+ */
+const rawNameLike = (text: string) => /^[A-Za-z0-9_.:/-]+$/.test(text) && /[_.:/]/.test(text);
+/** Text the owner can read as a name: not empty, no control characters, not the program's own name for the thing. */
+const readable = (text: string | undefined, ...raw: string[]): string | null => {
+  const value = text?.replace(/\s+/g, " ").trim();
+  if (!value || /[\p{Cc}\p{Cf}]/u.test(value) || raw.includes(value)) return null;
+  return [...value].slice(0, 40).join("");
+};
+
+/**
+ * The `doing` label for an action an app or a hand declared (approval cards and the island show it). The action's own title
+ * when it has a readable one; otherwise the owner's name for the app or the device (`noun`: 功能 for an app, 能力 for a device);
+ * otherwise 在处理. The tool's or capability's raw name (`word`) is never in it.
+ */
+export function upstreamDoingLabel(declared: { title?: string; word: string; owner?: string; ownerId?: string; noun: "功能" | "能力" }): string {
+  const title = readable(declared.title, declared.word);
+  if (title && !rawNameLike(title)) return `在用 ${title}`;
+  const owner = readable(declared.owner, ...(declared.ownerId ? [declared.ownerId] : []));
+  if (owner && !rawNameLike(owner)) return `在用 ${owner} 的${declared.noun}`;
+  return DOING_FALLBACK_LABEL;
+}
+
 const clean = (value: string, max: number) => {
   const text = value.replace(/[\p{Cc}\p{Cf}]/gu, " ").replace(/\s+/g, " ").trim();
   return [...text].length > max ? `${[...text].slice(0, max).join("")}…` : text;

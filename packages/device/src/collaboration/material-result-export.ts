@@ -2,7 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {constants,lstatSync,realpathSync,openSync,closeSync,fstatSync,readSync,watch,type FSWatcher,type BigIntStats} from 'node:fs';
 import {basename,extname,isAbsolute,join,relative,resolve} from 'node:path';
 import {marked} from 'marked';
-import type {CallResult} from '../../../sdk/src/api';
+import type {CallResult} from './compat';
 import type {TrustedCallContext} from './authorization';
 import {loadReadAuthorization} from './authorization';
 import {readLocalStateFile} from './local-state';

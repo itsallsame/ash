@@ -1,0 +1,6 @@
+{
+  "t": "error",
+  "id": "c1",
+  "code": "bad_request",
+  "message": "args do not match the schema"
+}

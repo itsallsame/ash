@@ -4,7 +4,7 @@ import {
   CREATE_CAPABILITIES, CREATE_INPUT_BYTES, CREATE_OUTPUT_BYTES, CoreCreateError, FixedCreateTransport,
   createOperation, executeCreateRoute, handleCreateRoute, normalizeCreateTarget, parseCreateInput,
   type CoreCreateSession, type CreateOperation,
-} from "../src/collaboration/create-service";
+} from "../src/services/collaboration/create-service";
 
 const revision = "a".repeat(64);
 const target = { node_id: "desktop", endpoint_id: "desktop", project_id: "project-1", cwd: "/workspace/project" };

@@ -1,0 +1,785 @@
+package ai.ash.ui
+
+import android.animation.ValueAnimator
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
+import android.text.method.LinkMovementMethod
+import android.view.Gravity
+import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import ai.ash.host.PresentRoutes
+import ai.ash.R
+import ai.ash.apps.Ui
+import ai.ash.ui.design.AshTokens
+import ai.ash.ui.design.AshType
+import ai.ash.ui.design.AshUi
+import ai.ash.ui.design.Role
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.TreeMap
+import java.util.UUID
+
+/**
+ * The chat, drawn natively (it was the web page's; it does what that page did). It reads and writes only through [port]:
+ * the same words (`service:history window / current / activity.page`, `service:agents list`, `say`, the `ask` response) and
+ * the same follow `sync`, which here only says "something changed" — the screen reads the newest window and the current state
+ * again, once per burst. Older messages are read when the list is scrolled to the top. What the owner wrote waits in an outbox
+ * (kept on the phone) until the kernel has it. Everything that moves is a small native view and redraws only itself.
+ */
+class ChatScreen(
+    private val activity: Activity,
+    private val port: HumanPort,
+    private val files: ChatHooks.Files,
+    private val home: ChatHooks.Home,
+    private val onApps: () -> Unit,
+) {
+    private val ctx: Context = activity
+    private val c = AshUi.p(ctx)
+    private val main = Handler(Looper.getMainLooper())
+    private fun dp(v: Int) = AshUi.dp(ctx, v)
+
+    val view = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(c.bg) }
+    private val avatar = OnboardingViews.avatar(ctx, "default", 36)
+    private val nameLine = AshUi.text(ctx, "Ash", AshType(16f, 20f, 650, Role.INK))
+    private val stateLine = AshUi.text(ctx, "", AshType(12f, 16f, 400, Role.TEXT_2))
+    private val dots = Dots(ctx, c.her)
+    private val banner = AshUi.text(ctx, "", AshType(12.5f, 17f, 400, Role.TEXT_2)).apply {
+        background = AshUi.rounded(c.surface2, AshUi.dpF(ctx, 12f)); setPadding(dp(12), dp(8), dp(12), dp(8)); visibility = View.GONE
+    }
+    private val list = AshUi.vstack(ctx, 8).apply { setPadding(dp(14), dp(8), dp(14), dp(12)) }
+    private val scroll = object : ScrollView(ctx) {
+        override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) { super.onScrollChanged(l, t, oldl, oldt); if (t < dp(200)) loadOlder(); paintToBottom() }
+    }.apply { isFillViewport = true; addView(list) }
+    /** Ids of the long messages the owner opened; kept here so a repaint or a page of older messages does not fold them again. */
+    private val unfolded = HashSet<String>()
+    /** New rows that came while the owner was reading further up: the 「回到底部」 button wears a dot until the bottom is reached. */
+    private var unseenBelow = false
+    private val toBottomDot = View(ctx).apply { background = AshUi.rounded(0xFFFF3B30.toInt(), AshUi.dpF(ctx, 5f)); visibility = View.GONE }
+    private val toBottom = FrameLayout(ctx).apply {
+        val s = dp(44)
+        background = AshUi.rounded(c.surface, s / 2f, c.line, dp(1)); AshUi.cardShadow(this)
+        isClickable = true; contentDescription = "回到最新消息"; alpha = 0f; visibility = View.GONE
+        addView(View(ctx).apply { background = ctx.getDrawable(R.drawable.ash_ic_down)!!.mutate().apply { setTint(c.text) } }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        addView(toBottomDot, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(8), 0) })
+        setOnClickListener { scroll.smoothScrollBy(0, list.height - scroll.scrollY - scroll.height) }
+    }
+    private val scrollHost = FrameLayout(ctx)
+    /** While the owner has lent the screen: who, how long is left, and a tap takes it back. */
+    private val leaseBar = AshUi.text(ctx, "", AshType(12.5f, 16f, 500, Role.TEXT)).apply {
+        gravity = Gravity.CENTER; visibility = View.GONE; setPadding(dp(12), dp(7), dp(12), dp(7)); contentDescription = "屏幕授权中，点这里收回"
+        background = AshUi.rounded(0xFFFFE2A8.toInt(), AshUi.dpF(ctx, 10f))
+        setOnClickListener { LeaseState.revoke(ctx) }
+    }
+    private val onLease: () -> Unit = { paintLease() }
+    private val pillSlot = FrameLayout(ctx)
+    private val input = EditText(ctx)
+    private val target = AshUi.text(ctx, "", AshType(12f, 16f, 500, Role.TEXT_2)).apply { visibility = View.GONE }
+    /** Files chosen so far (photos, videos, files), sent with the next message. */
+    private var picked = JSONArray()
+    /** The send button shows stop; the turn a stop was asked for (hidden from the button until it ends or the stop fails). */
+    private var stopMode = false
+    private var stopping: String? = null
+    /** Send, or stop while a turn runs (see [paintAction]); declared before `init`, which builds the composer with it. */
+    private val action: FrameLayout by lazy {
+        AshUi.iconButton(ctx, ctx.getDrawable(R.drawable.ash_ic_up)!!, "发送", filled = true) {
+            val turn = runningTurn()
+            if (stopMode && turn != null) { stopTurn(turn); return@iconButton }
+            val t = input.text.toString().trim()
+            if (t.isEmpty() && picked.length() == 0) return@iconButton
+            if (!Uploads.fits(t, picked)) { toast("附件太大：一条消息最多带约 3 MB"); return@iconButton }
+            val sending = picked
+            input.setText(""); picked = JSONArray(); paintPicked()
+            say(t, sending)
+        } as FrameLayout
+    }
+    private val pickedChip = AshUi.hstack(ctx, 2).apply {
+        background = AshUi.rounded(c.youSoft, AshUi.dpF(ctx, 15f)); setPadding(dp(12), 0, dp(2), 0); visibility = View.GONE
+    }
+
+    /** The rows shown, by seq; the newest window replaces what it covers, older pages add below it. */
+    private val items = TreeMap<Long, JSONObject>()
+    private var moreBefore = false
+    private var loadingOlder = false
+    private val rows = HashMap<String, Pair<String, View>>()
+    private val seen = HashSet<String>()
+    private val FOLD_LINES = 4
+    private var firstPaint = true
+    private var current: JSONObject? = null
+    private var refreshQueued = false
+    private var lastTyping = 0L
+    private var shown = false
+    private var agents = JSONArray()
+    private var chosen: String? = null
+    /** Her name as her home page reads it from IDENTITY.md: the bar and the box's hint follow it. */
+    private var herName = "Ash"
+    private val outbox = Outbox(ctx)
+    private var flushing = false
+    private val tick = object : Runnable { override fun run() { paintProgress(); paintLease(); if (shown) main.postDelayed(this, 1_000) } }
+    private val onChange: () -> Unit = { refresh() }
+
+    init {
+        view.addView(header(), LinearLayout.LayoutParams(-1, dp(56)))
+        view.addView(banner, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(4)) })
+        view.addView(leaseBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(4)) })
+        LeaseState.onChange(onLease)
+        scrollHost.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        scrollHost.addView(toBottom, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(10)) })
+        view.addView(scrollHost, LinearLayout.LayoutParams(-1, 0, 1f))
+        view.addView(pillSlot, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(6) })
+        view.addView(composer(), LinearLayout.LayoutParams(-1, -2))
+        port.onChange(onChange)
+        port.onLink { open ->
+            paintPresence()
+            if (open) { loadAgents(); refresh(); flush() }
+        }
+    }
+
+    fun close() { port.removeChange(onChange); LeaseState.removeChange(onLease) }
+
+    private fun paintLease() {
+        val first = LeaseState.leases.firstOrNull()
+        leaseBar.visibility = if (first == null) View.GONE else View.VISIBLE
+        if (first != null) leaseBar.text = "屏幕授权中 · ${first.name} · 剩 ${first.clock()} · 点这里收回"
+    }
+
+    fun shown(visible: Boolean) {
+        shown = visible
+        port.presence(visible = visible)
+        main.removeCallbacks(tick)
+        if (visible) { refresh(); tick.run() }
+    }
+
+    // --- reading ---
+
+    /** Reads the newest window and the current state again; a burst of changes is one read. */
+    private fun refresh() {
+        if (!port.open || refreshQueued) return
+        refreshQueued = true
+        main.postDelayed({
+            refreshQueued = false
+            var window: JSONObject? = null
+            var now: JSONObject? = null
+            fun both() { if (window != null && now != null) { take(window!!, newest = true); current = now; paintPresence(); paintProgress(); paintList() } }
+            port.call("service:history", "window", JSONObject().put("limit", PAGE)) { data, _ -> window = data ?: JSONObject(); both() }
+            port.call("service:history", "current", JSONObject().put("limit", PAGE)) { data, _ -> now = data ?: JSONObject(); both() }
+        }, 150)
+    }
+
+    private fun take(window: JSONObject, newest: Boolean) {
+        val got = window.optJSONArray("items") ?: JSONArray()
+        if (newest) {
+            val from = (0 until got.length()).mapNotNull { got.optJSONObject(it)?.optLong("seq") }.minOrNull()
+            if (from != null) items.tailMap(from, true).clear() else if (got.length() == 0) items.clear()
+            if (items.isEmpty()) moreBefore = window.optBoolean("has_more_before")
+        } else moreBefore = window.optBoolean("has_more_before")
+        for (i in 0 until got.length()) got.optJSONObject(i)?.let { items[it.optLong("seq")] = it }
+        // A message of the outbox that the kernel now shows is no longer waiting.
+        outbox.drop(items.values.mapNotNull { it.optString("client_id").ifEmpty { null } }.toSet(), items.values.map { it.optString("id") }.toSet())
+    }
+
+    private fun loadOlder() {
+        if (!moreBefore || loadingOlder || !port.open || items.isEmpty()) return
+        loadingOlder = true
+        val before = items.firstKey()
+        port.call("service:history", "window", JSONObject().put("limit", PAGE).put("before", before)) { data, _ ->
+            loadingOlder = false
+            if (data == null) return@call
+            val height = list.height
+            take(data, newest = false)
+            paintList()
+            // Keep what was on screen where it was.
+            list.post { scroll.scrollBy(0, list.height - height) }
+        }
+    }
+
+    private fun loadAgents() = port.call("service:agents", "list") { data, _ ->
+        agents = data?.optJSONArray("agents") ?: JSONArray()
+        paintTarget()
+    }
+
+    // --- writing ---
+
+    private fun say(text: String, attachments: JSONArray = JSONArray(), option: Pair<String, String>? = null) {
+        val to = chosen ?: port.primary
+        if ((text.isBlank() && attachments.length() == 0) || to == null) return
+        val body = JSONObject().put("text", text)
+        if (attachments.length() > 0) body.put("attachments", attachments)
+        option?.let { body.put("in_reply_to", it.first).put("option_id", it.second) }
+        outbox.add(JSONObject().put("to", to).put("kind", "request").put("word", "say").put("body", body).put("client_id", UUID.randomUUID().toString()))
+        paintList()
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        flush()
+    }
+
+    /** Sends what waits, oldest first, one at a time; a lost connection leaves the rest for the next one. */
+    private fun flush() {
+        if (flushing || !port.open) return
+        val next = outbox.next() ?: return
+        flushing = true
+        // The queue's own bookkeeping (`status`, the ledger `id`) is not part of the request the kernel accepts.
+        port.send(JSONObject(next.toString()).apply { remove("status"); remove("id") }) { r ->
+            flushing = false
+            if (r.optBoolean("ok")) { outbox.sent(next, r.optJSONObject("message")?.optString("id")); refresh(); flush() }
+            else {
+                val code = r.optJSONObject("error")?.optString("code").orEmpty()
+                if (code in RETRY) { outbox.mark(next, "unsent"); main.postDelayed({ flush() }, 3_000) }
+                else outbox.mark(next, "failed")
+                paintList()
+            }
+        }
+    }
+
+    /** The owner's answer to [ask]: the same route and message as the island's and a notification's ([PresentRoutes.answer]). */
+    private fun answer(ask: JSONObject, choice: String, text: String? = null) {
+        val opts = ask.optJSONArray("options") ?: JSONArray()
+        val offered = (0 until opts.length()).mapNotNull { opts.optJSONObject(it)?.optString("id") }.toSet()
+        val route = runCatching {
+            PresentRoutes.answer(ask.optString("id"), ask.optString("from"), offered, choice, text, ask.optBoolean("allow_custom"),
+                ask.optLong("expires_at"), System.currentTimeMillis())
+        }.getOrNull() ?: run { toast("这个问题已经结束了"); refresh(); return }
+        port.send(PresentRoutes.answerMessage(route, PresentRoutes.answerClientId(ask.optString("id")))) { r ->
+            if (!r.optBoolean("ok")) toast("没有送到，再点一次试试")
+            refresh()
+        }
+    }
+
+    // --- the screen ---
+
+    private fun header(): View = AshUi.hstack(ctx, 10).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(14), 0, dp(6), 0)
+        val who = AshUi.hstack(ctx, 10).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(avatar, LinearLayout.LayoutParams(dp(36), dp(36)))
+            addView(AshUi.vstack(ctx).apply {
+                addView(nameLine)
+                addView(AshUi.hstack(ctx, 4).apply { gravity = Gravity.CENTER_VERTICAL; addView(stateLine); addView(dots, LinearLayout.LayoutParams(dp(20), dp(8))) })
+            })
+            setOnClickListener { home.open() }
+            contentDescription = "打开她的主页"
+        }
+        addView(who, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(AshUi.iconButton(ctx, ctx.getDrawable(R.drawable.ash_ic_grid)!!, "应用") { onApps() })
+    }
+
+    private fun composer(): View = AshUi.vstack(ctx, 4).apply {
+        setPadding(dp(12), dp(4), dp(12), dp(10))
+        addView(target, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(52) })
+        target.setOnClickListener { pickTarget() }
+        addView(pickedChip, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(52) })
+        addView(AshUi.hstack(ctx, 8).apply {
+            gravity = Gravity.BOTTOM
+            addView(AshUi.iconButton(ctx, ctx.getDrawable(R.drawable.ash_ic_plus)!!, "加附件") {
+                files.pick { chosen ->
+                    // Files picked one choice after another add up until sent (at most 32); a new pick never drops the earlier ones.
+                    for (i in 0 until chosen.length()) if (picked.length() < Uploads.MAX_ATTACHMENTS) picked.put(chosen.get(i))
+                    paintPicked()
+                }
+            })
+            input.apply {
+                hint = "跟 Ash 说…"
+                AshUi.style(this, AshTokens.Type.chat, c.text)
+                setHintTextColor(c.text3)
+                background = AshUi.rounded(c.surface, AshUi.dpF(ctx, 20f), c.line, dp(1))
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                minHeight = dp(44); maxLines = 6
+                imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+                    override fun afterTextChanged(s: Editable?) {
+                        val now = System.currentTimeMillis()
+                        if (!s.isNullOrEmpty() && now - lastTyping > 3_000) { lastTyping = now; port.presence(typing = true) }
+                        if (s?.toString() == "@") pickTarget()
+                    }
+                })
+            }
+            addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(action)
+            input.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+                override fun afterTextChanged(s: Editable?) { paintAction() }
+            })
+        })
+    }
+
+    /** The turn the owner can stop from here: a front turn that has not ended (the same one the progress pill shows), else null. */
+    private fun runningTurn(): String? {
+        val p = current?.optJSONObject("progress") ?: return null
+        if (p.optBoolean("background") || (p.has("ended") && !p.isNull("ended"))) return null
+        return p.optString("id").takeIf { it.isNotEmpty() && it != stopping }
+    }
+
+    /** While a turn runs and nothing is typed or picked, the send button is a stop button; typing brings send back (to add to the task). */
+    private fun paintAction() {
+        val stop = runningTurn() != null && input.text.isNullOrBlank() && picked.length() == 0
+        if (stop == stopMode) return
+        stopMode = stop
+        val icon = ctx.getDrawable(if (stop) R.drawable.ash_ic_stop else R.drawable.ash_ic_up)!!.mutate().apply { setTint(c.text) }
+        action.getChildAt(0).background = icon
+        action.contentDescription = if (stop) "停止" else "发送"
+    }
+
+    /** Stops the running turn with the hub's own stop word (what the island's stop sends); the button is back as send once the turn is over. */
+    private fun stopTurn(turn: String) {
+        stopping = turn; paintAction()
+        port.send(JSONObject().put("to", "service:reflex").put("kind", "request").put("word", "task.stop")
+            .put("body", JSONObject().put("turn", turn)).put("wait", true).put("client_id", java.util.UUID.randomUUID().toString())) { r ->
+            val data = r.optJSONObject("response")?.takeIf { it.optBoolean("ok") }?.optJSONObject("result")?.optJSONObject("data")
+            if (data?.optBoolean("cancelled") != true) { stopping = null; toast("没能停下，再点一次试试") }
+            refresh()
+        }
+    }
+
+    /** 「N 个附件」 with a ✕ to take them all off, above the text field while something is picked. */
+    private fun paintPicked() {
+        paintAction()
+        pickedChip.removeAllViews()
+        pickedChip.visibility = if (picked.length() == 0) View.GONE else View.VISIBLE
+        if (picked.length() == 0) return
+        pickedChip.addView(AshUi.text(ctx, "${picked.length()} 个附件", AshType(12.5f, 18f, 400, null), c.youText))
+        pickedChip.addView(FrameLayout(ctx).apply {
+            contentDescription = "移除附件"; isClickable = true
+            addView(View(ctx).apply { background = ctx.getDrawable(R.drawable.ash_ic_x)!!.mutate().apply { setTint(c.youText) } }, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER))
+            setOnClickListener { picked = JSONArray(); paintPicked() }
+        }, LinearLayout.LayoutParams(dp(30), dp(30)))
+    }
+
+    private fun paintTarget() {
+        val name = nameOf(chosen ?: port.primary)
+        target.text = "跟 $name 说 ›"
+        target.visibility = if (agents.length() > 1) View.VISIBLE else View.GONE
+        input.hint = "跟 $name 说点什么…"
+    }
+
+    private fun nameOf(id: String?): String {
+        if (id != null && id == port.primary) return herName
+        for (i in 0 until agents.length()) agents.optJSONObject(i)?.let { if (it.optString("id") == id) return it.optString("name").ifEmpty { "Ash" } }
+        return "Ash"
+    }
+
+    /** 「跟谁说」: Ash, or one of the helpers she runs. */
+    private fun pickTarget() {
+        if (agents.length() == 0) { loadAgents(); return }
+        val names = (0 until agents.length()).map { i -> agents.optJSONObject(i).let { a ->
+            val state = if (a.optBoolean("reachable", true).not()) "暂时用不了" else if (a.optString("state") == "starting") "启动中"
+                else a.optString("summary").ifEmpty { if (a.optBoolean("primary")) "在线" else "就绪" }
+            "${a.optString("name")} · $state"
+        } }
+        AlertDialog.Builder(ctx).setTitle("跟谁说").setItems(names.toTypedArray()) { _, i ->
+            chosen = agents.optJSONObject(i)?.optString("id")?.takeIf { it != port.primary }
+            if (input.text.toString().startsWith("@")) input.setText(input.text.toString().removePrefix("@").trimStart())
+            paintTarget(); focusInput()
+        }.show()
+    }
+
+    private fun paintPresence() {
+        val presence = current?.optJSONObject("presence")
+        val state = presence?.optString("state")
+        val face = when (state) { "thinking" -> "thinking"; "working" -> "focused"; "waiting_you", "listening" -> "listening"; "resting" -> "resting"; "done" -> "success"; else -> "default" }
+        avatar.image = OnboardingViews.face(ctx, face)
+        avatar.state = when {
+            !port.open -> AshUi.AvatarView.State.OFFLINE
+            state == "thinking" || state == "listening" -> AshUi.AvatarView.State.THINKING
+            state == "working" -> AshUi.AvatarView.State.WORKING
+            state == "waiting_you" -> AshUi.AvatarView.State.WAITING
+            else -> AshUi.AvatarView.State.ONLINE
+        }
+        val text = presence?.optString("text").orEmpty().ifEmpty {
+            when (state) { "thinking" -> "正在想"; "working" -> "在忙"; "waiting_you" -> "等你一句话"; "listening" -> "在听"; "resting" -> "休息中"; null -> "状态待同步"; else -> "在线" }
+        }
+        stateLine.text = if (port.open) text else "连接中…"
+        stateLine.setTextColor(when { !port.open -> c.text3; state == "waiting_you" -> c.warn; state in setOf("thinking", "working", "listening") -> c.her; else -> c.text2 })
+        dots.visibility = if (port.open && state == "thinking") View.VISIBLE else View.GONE
+        banner.text = "暂时连不上 Ash。你写的消息会先存着，连上就发。"
+        banner.visibility = if (port.open) View.GONE else View.VISIBLE
+    }
+
+    private fun paintProgress() {
+        pillSlot.removeAllViews()
+        paintAction()
+        val p = current?.optJSONObject("progress") ?: return
+        if (p.optBoolean("background")) return
+        val now = System.currentTimeMillis()
+        val ended = if (p.has("ended") && !p.isNull("ended")) p.optLong("ended") else null
+        if (ended != null && now - ended >= 60_000) return
+        val steps = p.optJSONArray("steps") ?: JSONArray()
+        val count = p.optInt("step_count", steps.length())
+        if (ended != null && count == 0) return
+        val seconds = ((minOf(now, ended ?: now) - p.optLong("started")) / 1000).coerceAtLeast(0)
+        val label = if (ended != null) "做了 $count 步" else steps.optJSONObject(steps.length() - 1)?.optString("label").orEmpty().ifEmpty { "正在处理" }
+        val pill = AshUi.progressPill(ctx, label, "$seconds 秒 ›", running = ended == null)
+        pill.setOnClickListener { activitySheet(p) }
+        pillSlot.addView(pill)
+    }
+
+    /** What she did in this turn (`activity.page`), newest last. */
+    private fun activitySheet(p: JSONObject) = port.call("service:history", "activity.page", JSONObject().put("turn", p.optString("id")).put("limit", 100)) { data, _ ->
+        val steps = data?.optJSONArray("items") ?: p.optJSONArray("steps") ?: JSONArray()
+        val lines = (0 until steps.length()).mapNotNull { steps.optJSONObject(it) }.joinToString("\n") { s ->
+            val mark = when (s.optString("state")) { "ok" -> "✓"; "failed" -> "✕"; else -> "…" }
+            "$mark ${s.optString("label").ifEmpty { s.optString("summary") }}"
+        }.ifEmpty { "还没有做什么。" }
+        AlertDialog.Builder(ctx).setTitle("她在做的事").setMessage(lines).setPositiveButton("好", null).show()
+    }
+
+    /** The round 「回到底部」 button: up once the owner has scrolled more than a screen away from the newest message; its dot says something new came meanwhile. */
+    private fun paintToBottom() {
+        val away = list.height - (scroll.scrollY + scroll.height)
+        val show = away > scroll.height
+        if (away <= dp(24)) unseenBelow = false
+        toBottomDot.visibility = if (unseenBelow) View.VISIBLE else View.GONE
+        val up = toBottom.visibility == View.VISIBLE && toBottom.tag == true
+        if (show == up) return
+        toBottom.tag = show
+        if (show) { toBottom.visibility = View.VISIBLE; toBottom.animate().alpha(1f).setDuration(150).start() }
+        else toBottom.animate().alpha(0f).setDuration(150).withEndAction { if (toBottom.tag != true) toBottom.visibility = View.GONE }.start()
+    }
+
+    private fun paintList() {
+        val atBottom = !scroll.canScrollVertically(1)
+        val wanted = ArrayList<Pair<String, () -> View?>>()
+        for (item in items.values) wanted.add(item.optString("id") + "#" + item.toString().hashCode() to { row(item) })
+        for (o in outbox.items()) wanted.add("out:" + o.optString("client_id") + o.optString("status") to { pending(o) })
+        if (wanted.isEmpty()) {
+            list.removeAllViews(); rows.clear()
+            list.addView(AshUi.text(ctx, if (port.open) "还没有消息，跟她说点什么吧。" else "正在连接…", AshTokens.Type.body, c.text3).apply { gravity = Gravity.CENTER; setPadding(0, dp(40), 0, 0) })
+            return
+        }
+        val next = HashMap<String, Pair<String, View>>()
+        list.removeAllViews()
+        if (moreBefore) list.addView(note("往上翻看更早的消息"))
+        for ((key, make) in wanted) {
+            val id = key.substringBefore('#')
+            val v = rows[id]?.takeIf { it.first == key }?.second ?: make() ?: continue
+            next[id] = key to v
+            (v.parent as? android.view.ViewGroup)?.removeView(v)
+            list.addView(v)
+            if (seen.add(id) && !firstPaint) { enter(v); if (!atBottom) unseenBelow = true }
+        }
+        rows.clear(); rows.putAll(next)
+        firstPaint = false
+        if (atBottom) scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        scroll.post { paintToBottom() }
+    }
+
+    /** A new row rises in (once; the system's "remove animations" turns it off). */
+    private fun enter(v: View) {
+        if (!AshUi.motionOn(ctx)) return
+        v.alpha = 0f; v.translationY = AshUi.dpF(ctx, 6f)
+        v.animate().alpha(1f).translationY(0f).setDuration(AshTokens.Motion.message).setInterpolator(AshTokens.Motion.easing()).start()
+    }
+
+    /** One item of the window (the projected conversation: `say`, `ask`, `card`, `failed`). */
+    private fun row(item: JSONObject): View? = when (item.optString("type")) {
+        "say" -> message(item)
+        "ask" -> item.optJSONObject("ask")?.let { askCard(it) }
+        "card" -> card(item)
+        "failed" -> note("刚才这件事没做成。")
+        else -> null
+    }
+
+    private fun message(item: JSONObject): View {
+        val mine = item.optString("side") == "owner"
+        val box = AshUi.vstack(ctx, 4).apply { gravity = if (mine) Gravity.END else Gravity.START }
+        val text = item.opt("text").let { if (it is String) it else (it as? JSONObject)?.optString("text").orEmpty() }
+        // Attachments stand above the words, as their own blocks; a message of attachments alone has no bubble.
+        val attachments = item.optJSONArray("attachments") ?: JSONArray()
+        for (i in 0 until attachments.length()) attachments.optJSONObject(i)?.let { a ->
+            (files.attachment(item, a, mine) ?: AshUi.text(ctx, "📎 ${a.optString("name").ifEmpty { "附件" }}", AshTokens.Type.callout, c.text2))
+                .let { box.addView(it, LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START }) }
+        }
+        if (text.isNotBlank()) {
+            val bubble = AshUi.bubbleText(ctx, if (mine) text else Md.render(text, c.surface2, c.her) { files.openLink(it) }, mine).apply {
+                setTextIsSelectable(true); movementMethod = LinkMovementMethod.getInstance()
+            }
+            val side = LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START }
+            box.addView(foldable(bubble, item.optString("id")), side)
+        }
+        val reactions = item.optJSONArray("reactions") ?: JSONArray()
+        if (reactions.length() > 0) box.addView(AshUi.text(ctx, (0 until reactions.length()).joinToString(" ") { reactions.optJSONObject(it)?.optString("emoji").orEmpty() }, AshTokens.Type.callout),
+            LinearLayout.LayoutParams(-2, -2).apply { gravity = if (mine) Gravity.END else Gravity.START })
+        return box
+    }
+
+    /**
+     * A bubble longer than four lines shows four, its last ones fading out (as the web timeline masks a folded message), with a 「展开全文 ⌄」
+     * button under it; open, the button reads 「收起 ⌃」. Whether it is long is the laid-out text's own line count (the layout holds every line;
+     * maxLines only cuts what is drawn): a selectable bubble with links never ellipsizes. The fade is a gradient on the text's paint, so it
+     * works on any bubble colour. The bubble keeps its taps for selecting text and following links.
+     */
+    private fun foldable(bubble: TextView, id: String): View {
+        // The bubble's face moves to a frame that holds the text and, under it inside the bubble, the 「展开全文 ⌄」 / 「收起 ⌃」 link.
+        val frame = AshUi.vstack(ctx, 2).apply {
+            background = bubble.background
+            setPadding(bubble.paddingLeft, bubble.paddingTop, bubble.paddingRight, bubble.paddingBottom)
+            // Its shadow and outline go with the face, or the text would cast a second box inside the bubble.
+            elevation = bubble.elevation; translationZ = bubble.translationZ; outlineProvider = bubble.outlineProvider
+        }
+        bubble.elevation = 0f; bubble.translationZ = 0f; bubble.outlineProvider = null
+        bubble.background = null
+        bubble.setPadding(0, 0, 0, 0)
+        val fader = FadeBottom(ctx).apply { addView(bubble, android.widget.FrameLayout.LayoutParams(-2, -2)) }
+        frame.addView(fader, LinearLayout.LayoutParams(-2, -2))
+        val toggle = AshUi.text(ctx, "展开全文 ⌄", AshTokens.Type.callout, bubble.currentTextColor).apply {
+            visibility = View.GONE; alpha = 0.75f; setPadding(0, dp(4), 0, 0); isClickable = true
+        }
+        frame.addView(toggle, LinearLayout.LayoutParams(-2, -2))
+        fun open() = id.isNotEmpty() && id in unfolded
+        fun fade() {
+            val l = bubble.layout
+            val folded = !open() && l != null && l.lineCount > FOLD_LINES
+            fader.fadePx = if (folded) Math.round(l!!.getLineBottom(0) * 1.6f) else 0
+        }
+        fun apply() {
+            val open = open()
+            bubble.maxLines = if (open) Int.MAX_VALUE else FOLD_LINES
+            // A folded bubble is a preview: no selecting and no links, or the text view scrolls its cut-off lines inside itself.
+            // Open, it gets both back.
+            bubble.setTextIsSelectable(open)
+            bubble.movementMethod = if (open) LinkMovementMethod.getInstance() else null
+            if (!open) bubble.scrollTo(0, 0)
+            toggle.text = if (open) "收起 ⌃" else "展开全文 ⌄"
+            fade()
+        }
+        apply()
+        bubble.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val long = (bubble.layout?.lineCount ?: 0) > FOLD_LINES
+            val want = if (long) View.VISIBLE else View.GONE
+            if (toggle.visibility != want) toggle.post { toggle.visibility = want }
+            fade()
+        }
+        toggle.setOnClickListener { if (id.isEmpty()) return@setOnClickListener; if (!unfolded.add(id)) unfolded.remove(id); apply() }
+        return frame
+    }
+
+    private fun pending(o: JSONObject): View {
+        val body = o.optJSONObject("body") ?: JSONObject()
+        val box = AshUi.vstack(ctx, 2).apply { gravity = Gravity.END }
+        val attached = body.optJSONArray("attachments") ?: JSONArray()
+        for (i in 0 until attached.length()) attached.optJSONObject(i)?.let { a ->
+            val kib = (Uploads.base64Size(a.optString("data")) + 1023) / 1024
+            box.addView(AshUi.text(ctx, "${a.optString("name").ifEmpty { "附件" }} · $kib KiB", AshTokens.Type.callout, c.text2), LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END })
+        }
+        if (body.optString("text").isNotBlank() || attached.length() == 0)
+            box.addView(AshUi.bubbleText(ctx, body.optString("text"), true).apply { alpha = 0.7f }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END })
+        val status = when (o.optString("status")) { "failed" -> "没发出去 · 点这里删掉"; "unsent" -> "还没发出，连上就发"; else -> "发送中…" }
+        box.addView(AshUi.text(ctx, status, AshType(11.5f, 15f, 400, Role.TEXT_3)).apply {
+            if (o.optString("status") == "failed") setOnClickListener { outbox.remove(o); paintList() }
+        }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END })
+        return box
+    }
+
+    private fun note(text: String): View = AshUi.text(ctx, text, AshType(12.5f, 16f, 400, Role.TEXT_3)).apply { gravity = Gravity.CENTER }
+
+    private fun plainCard(label: String, title: String, body: String, tone: AshUi.Tone = AshUi.Tone.HER, icon: Int = R.drawable.ash_ic_ask): LinearLayout = AshUi.card(ctx).apply {
+        if (label.isNotEmpty()) addView(AshUi.cardHeader(ctx, tone, ctx.getDrawable(icon)!!, label))
+        if (title.isNotEmpty()) addView(AshUi.text(ctx, title, AshType(15f, 21f, 650, Role.INK)))
+        if (body.isNotEmpty()) addView(AshUi.text(ctx, Md.render(body, c.surface2, c.her), AshTokens.Type.body, c.text2).apply { movementMethod = LinkMovementMethod.getInstance() })
+    }
+
+    private fun askCard(ask: JSONObject): View {
+        val gate = ask.optString("from") == "service:gate"
+        val name = if (gate) "需要你确认" else "${nameOf(ask.optString("from"))} 问你"
+        return plainCard(name, ask.optString("title"), ask.optString("detail"), if (gate) AshUi.Tone.YOU else AshUi.Tone.HER, if (gate) R.drawable.ash_ic_shield else R.drawable.ash_ic_ask).apply {
+            if (ask.has("original")) addView(AshUi.button(ctx, "查看完整原文", AshUi.Kind.GHOST, AshUi.BtnSize.SM) {
+                AlertDialog.Builder(ctx).setTitle("完整原文").setMessage(ask.optString("original")).setPositiveButton("好", null).show()
+            })
+            val options = ask.optJSONArray("options") ?: JSONArray()
+            val choice = ask.optString("choice").takeIf { it.isNotEmpty() && it != "null" }
+            val pending = ask.optString("state") == "pending" && ask.optLong("expires_at") > System.currentTimeMillis()
+            when {
+                choice != null -> addView(AshUi.resolved(ctx, labelOf(options, choice, ask.optString("answer_text").ifEmpty { "已回答" }), ok = true))
+                !pending -> addView(AshUi.resolved(ctx, if (ask.optString("state") == "expired") "已过期" else "已结束"))
+                gate -> addView(AshUi.hstack(ctx, 8).apply {
+                    for (i in 0 until options.length()) options.optJSONObject(i)?.let { o ->
+                        val kind = when (o.optString("id")) { "deny", "no" -> AshUi.Kind.NEUTRAL; "always" -> AshUi.Kind.SECONDARY; else -> AshUi.Kind.PRIMARY }
+                        addView(AshUi.button(ctx, o.optString("label"), kind, AshUi.BtnSize.MD) { answer(ask, o.optString("id")) }, LinearLayout.LayoutParams(0, dp(44), 1f))
+                    }
+                })
+                else -> {
+                    for (i in 0 until options.length()) options.optJSONObject(i)?.let { o -> addView(AshUi.option(ctx, o.optString("label")) { answer(ask, o.optString("id")) }) }
+                    if (ask.optBoolean("allow_custom")) addView(custom { t -> answer(ask, PresentRoutes.CUSTOM, t) })
+                }
+            }
+        }
+    }
+
+    private fun card(item: JSONObject): View? {
+        val card = item.optJSONObject("card") ?: return null
+        val chosenOption = item.optString("selected_option_id").takeIf { it.isNotEmpty() && it != "null" }
+        return when (card.optString("type")) {
+            "options" -> plainCard("${nameOf(port.primary)} 问你", card.optString("prompt").ifEmpty { "选一个" }, "").apply {
+                val options = card.optJSONArray("options") ?: JSONArray()
+                for (i in 0 until options.length()) options.optJSONObject(i)?.let { o ->
+                    val id = o.optString("id")
+                    addView(AshUi.option(ctx, o.optString("text"), selected = id == chosenOption, dimmed = chosenOption != null && id != chosenOption,
+                        onClick = if (chosenOption == null) ({ say(o.optString("text"), option = item.optString("id") to id) }) else null))
+                }
+                if (chosenOption == null && card.optBoolean("allow_custom")) addView(custom { t -> say(t, option = item.optString("id") to "__custom") })
+            }
+            "file", "image" -> files.card(item, card) ?: plainCard(if (card.optString("type") == "image") "图片" else "文件", card.optString("name").ifEmpty { card.optString("alt") }, "", AshUi.Tone.MUTE, R.drawable.ash_ic_file)
+            "link" -> plainCard("链接", card.optString("title").ifEmpty { card.optString("url") }, card.optString("summary"), AshUi.Tone.MUTE, R.drawable.ash_ic_link).apply {
+                setOnClickListener { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(card.optString("url")))) } }
+            }
+            "permission" -> plainCard("需要授权", "打开「${PERMISSIONS[card.optString("permission")] ?: "手机"}」权限", card.optString("why").ifEmpty { "需要授权" }, AshUi.Tone.YOU, R.drawable.ash_ic_lock).apply {
+                addView(AshUi.button(ctx, "去授权", AshUi.Kind.PRIMARY, AshUi.BtnSize.SM) { ctx.startActivity(Intent(ctx, ConsoleActivity::class.java)) }, LinearLayout.LayoutParams(-2, -2))
+            }
+            "app" -> plainCard(card.optString("name"), "打开${card.optString("name")} · ${card.optString("title")}", card.optString("text"), AshUi.Tone.HER, R.drawable.ash_ic_grid).apply {
+                setOnClickListener { runCatching { ctx.startActivity(Ui.appIntent(activity, card.optString("app"))) } }
+            }
+            else -> null
+        }
+    }
+
+    /** 「自己说…」 under the options. */
+    private fun custom(send: (String) -> Unit): View = AshUi.hstack(ctx, 8).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        val field = EditText(ctx).apply {
+            hint = "自己说…"; AshUi.style(this, AshTokens.Type.body, c.text); setHintTextColor(c.text3)
+            background = AshUi.rounded(c.surface2, AshUi.dpF(ctx, 14f)); setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+        addView(field, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(AshUi.button(ctx, "发送", AshUi.Kind.SECONDARY, AshUi.BtnSize.SM) { field.text.toString().trim().takeIf { it.isNotEmpty() }?.let(send) })
+    }
+
+    private fun labelOf(options: JSONArray, id: String, fallback: String): String {
+        for (i in 0 until options.length()) options.optJSONObject(i)?.let { if (it.optString("id") == id) return it.optString("label").ifEmpty { it.optString("text") } }
+        return fallback
+    }
+
+    private fun toast(s: String) = android.widget.Toast.makeText(ctx, s, android.widget.Toast.LENGTH_SHORT).show()
+
+    /** Her name changed (her home page read IDENTITY.md): the bar and the hint say it. */
+    fun setName(name: String) { herName = name; nameLine.text = name; paintTarget() }
+
+    /** Words from her home page go into the message box, which gets the cursor. */
+    fun compose(text: String) { input.setText(text); input.setSelection(input.text.length); focusInput() }
+
+    /** Shows message [id]: where it is when it is on screen, otherwise after reading the window around it. */
+    fun jumpTo(id: String) {
+        fun show() { rows[id]?.second?.let { v -> scroll.post { scroll.smoothScrollTo(0, maxOf(0, v.top - dp(60))) } } }
+        if (rows.containsKey(id)) { show(); return }
+        port.call("service:history", "window", JSONObject().put("limit", PAGE).put("around_id", id)) { data, _ ->
+            if (data == null) return@call
+            val had = moreBefore
+            val oldest = items.firstEntry()?.key ?: Long.MAX_VALUE
+            take(data, newest = false)
+            // reaching further back than what was loaded: that window says whether there is more; otherwise what was said stands
+            if (items.firstKey() >= oldest) moreBefore = had
+            paintList(); show()
+        }
+    }
+
+    /** Puts the cursor in the message box and raises the keyboard. */
+    fun focusInput() {
+        input.requestFocus()
+        ctx.getSystemService(InputMethodManager::class.java)?.showSoftInput(input, 0)
+    }
+
+    /** The three dots after 「正在想」: a small view of its own, pulsing with a standard animator. */
+    private class Dots(ctx: Context, color: Int) : View(ctx) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+        private var t = 0f
+        private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1_200; repeatCount = ValueAnimator.INFINITE; interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener { t = it.animatedValue as Float; invalidate() }
+        }
+        override fun onVisibilityAggregated(isVisible: Boolean) {
+            super.onVisibilityAggregated(isVisible)
+            if (isVisible && AshUi.motionOn(context)) anim.start() else anim.cancel()
+        }
+        override fun onDraw(canvas: Canvas) {
+            val r = height / 4f
+            for (i in 0 until 3) {
+                val phase = ((t - i * 0.17f) % 1f + 1f) % 1f
+                paint.alpha = (255 * (0.25f + 0.75f * (1 - Math.abs(phase * 2 - 1)))).toInt()
+                canvas.drawCircle(r + i * (r * 3.2f), height / 2f, r, paint)
+            }
+        }
+    }
+
+    /** What the owner wrote and the kernel has not taken yet; kept on the phone, so a closed app sends it next time. */
+    private class Outbox(ctx: Context) {
+        private val prefs = ctx.getSharedPreferences("ash.chat.outbox", Context.MODE_PRIVATE)
+        /** What is attached waits in files (a message may carry about 3 MB): the list in the preferences only names them. */
+        private val dir = java.io.File(ctx.filesDir, "outbox").apply { mkdirs() }
+        private val list = runCatching { JSONArray(prefs.getString("items", "[]")) }.getOrDefault(JSONArray())
+            .let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.toMutableList() }
+        init { list.forEach(::load); dir.listFiles()?.forEach { f -> if (list.none { f.name.startsWith(it.optString("client_id") + ".") }) f.delete() } }
+
+        private fun attachments(o: JSONObject) = o.optJSONObject("body")?.optJSONArray("attachments")
+        private fun fileOf(o: JSONObject, i: Int) = java.io.File(dir, "${o.optString("client_id")}.$i")
+        private fun load(o: JSONObject) {
+            val a = attachments(o) ?: return
+            for (i in 0 until a.length()) a.optJSONObject(i)?.let { att ->
+                if (att.has("file")) { att.put("data", runCatching { fileOf(o, i).readText() }.getOrDefault("")); att.remove("file") }
+            }
+        }
+        private fun stored(o: JSONObject): JSONObject {
+            val copy = JSONObject(o.toString())
+            val a = attachments(copy) ?: return copy
+            for (i in 0 until a.length()) a.optJSONObject(i)?.let { att ->
+                val f = fileOf(o, i)
+                if (!f.exists()) runCatching { f.writeText(att.optString("data")) }
+                att.remove("data"); att.put("file", f.name)
+            }
+            return copy
+        }
+        private fun save() = prefs.edit().putString("items", JSONArray(list.map(::stored)).toString()).apply()
+        private fun forget(o: JSONObject) { dir.listFiles()?.forEach { if (it.name.startsWith(o.optString("client_id") + ".")) it.delete() } }
+        fun items(): List<JSONObject> = list.toList()
+        fun add(o: JSONObject) { o.put("status", "sending"); list.add(o); save() }
+        fun next(): JSONObject? = list.firstOrNull { it.optString("status") != "failed" && !it.has("id") }
+        fun mark(o: JSONObject, status: String) { o.put("status", status); save() }
+        fun sent(o: JSONObject, id: String?) { if (id.isNullOrEmpty()) { list.remove(o); forget(o) } else o.put("id", id).put("status", "sent"); save() }
+        fun remove(o: JSONObject) { list.remove(o); forget(o); save() }
+        /** Drops what the window now shows (by its ledger id or its client id). */
+        fun drop(clientIds: Set<String>, ids: Set<String>) {
+            val gone = list.filter { it.optString("client_id") in clientIds || it.optString("id") in ids }
+            if (gone.isNotEmpty()) { list.removeAll(gone.toSet()); gone.forEach(::forget); save() }
+        }
+    }
+
+    companion object {
+        private const val PAGE = 60
+        private val RETRY = setOf("offline", "unavailable", "timeout", "result_unknown", "internal")
+        private val PERMISSIONS = mapOf("calendar" to "日历", "notifications" to "通知", "battery" to "后台运行", "accessibility" to "无障碍",
+            "photos" to "照片和文件", "all_files" to "所有文件", "usage" to "使用情况", "write_settings" to "系统设置", "overlay" to "悬浮窗")
+    }
+}
+
+/**
+ * Fades its content out over its bottom [fadePx] (as the web timeline's mask-image does a folded message): the content is drawn
+ * into a layer and a gradient erases its last lines, so text, code blocks and quotes all fade alike and the bubble shows through.
+ */
+private class FadeBottom(ctx: android.content.Context) : android.widget.FrameLayout(ctx) {
+    var fadePx = 0
+        set(value) { if (field != value) { field = value; invalidate() } }
+    private val eraser = android.graphics.Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT) }
+
+    override fun dispatchDraw(canvas: android.graphics.Canvas) {
+        if (fadePx <= 0 || height <= 0) { super.dispatchDraw(canvas); return }
+        val w = width.toFloat(); val h = height.toFloat(); val top = (h - fadePx).coerceAtLeast(0f)
+        val save = canvas.saveLayer(0f, 0f, w, h, null)
+        super.dispatchDraw(canvas)
+        eraser.shader = android.graphics.LinearGradient(0f, top, 0f, h, 0x00000000, 0xFF000000.toInt(), android.graphics.Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, top, w, h, eraser)
+        canvas.restoreToCount(save)
+    }
+}

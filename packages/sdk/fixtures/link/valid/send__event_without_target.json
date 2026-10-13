@@ -1,0 +1,11 @@
+{
+  "t": "send",
+  "ch": "human",
+  "id": "s2",
+  "request": {
+    "to": null,
+    "kind": "event",
+    "word": "typing",
+    "body": {}
+  }
+}

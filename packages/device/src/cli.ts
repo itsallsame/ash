@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 import { DEVICE_VERSION, installRelease, serviceDefinition } from "./install";
 import type { startDevice, DeviceConfig } from "./main";
 import { deviceLogger } from "./log";
-import { fileSigner } from "./link";
+import { loadIdentity } from "./link";
 import { parseReadAuthorization, READ_AUTHORIZATION_MAX_BYTES } from "./collaboration/authorization";
 import { loadCurrentPairing, parseCurrentPairing } from "./collaboration/pairing";
 import { readLocalStateFile } from "./collaboration/local-state";
@@ -112,7 +112,7 @@ export async function deviceCli(start: typeof startDevice, args = process.argv.s
       }finally{prompt.close();}
       return;
     }
-    const signer=await fileSigner(config.stateDir);let running:Awaited<ReturnType<typeof start>>|undefined;
+    const signer=(await loadIdentity(config.stateDir)).key;let running:Awaited<ReturnType<typeof start>>|undefined;
     try{
       try{await callReadSourceSetup(config.stateDir,signer.id,'source.status',{});}catch(error){if(!String(error).includes('service_unavailable'))throw error;running=await start(config);console.log('Ash is running in this terminal. Keep it open to stay online.');}
       if(running){const deadline=Date.now()+30000;let ready=false;while(Date.now()<deadline){ready=await callConnectionReady(config.stateDir,signer.id,Math.min(1000,deadline-Date.now()));if(ready)break;await new Promise(resolve=>setTimeout(resolve,Math.min(100,Math.max(0,deadline-Date.now()))));}if(!ready)throw Error('Ash could not connect within 30 seconds. Check the gateway connection and try again.');}
@@ -142,10 +142,10 @@ export async function deviceCli(start: typeof startDevice, args = process.argv.s
     if (!gateway || !pair) throw new Error("setup requires --gateway URL --pair CODE");
     const url = new URL(gateway); if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Use HTTPS for the gateway");
     await mkdir(root, { recursive: true, mode: 0o700 });
-    const config: DeviceConfig = { gateway, name: option("--name") ?? hostname(), kind: option("--kind") === "server" ? "server" : "laptop",
+    const config: DeviceConfig = { gateway, name: option("--name") ?? hostname(),
       stateDir: join(root, "state"), workdir: resolve(option("--workdir") ?? join(homedir(), "ash-shared")), installRoot: root };
     await writeFile(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-    console.log("Open Ash and approve this computer's pairing request.");
+    console.log("Open Ash and approve this computer's pairing request. Choose what it may do: lend its abilities, be a body, run local agents, web access.");
     const running = await start(config, pair); await running.close();
     if (args.includes("--no-service")) {
       console.log(`Paired. Start with: ${quote(executable)} run --config ${quote(configPath)}${args.includes('--root') ? ` --root ${quote(root)}` : ''}`);
@@ -187,4 +187,9 @@ export async function deviceCli(start: typeof startDevice, args = process.argv.s
   const running = await start(config, option("--pair"), { restart: () => { void running.close().then(() => process.exit(0)); } });
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void running.close().then(() => process.exit(0)); });
   await running.run;
+  // The connection is over for good (revoked, or the hub speaks another protocol): leave the service stopped, not retrying.
+  const paired = JSON.parse(await readFile(join(config.stateDir, "paired.json"), "utf8").catch(() => "{}"));
+  console.log(paired.revoked ? "This computer was revoked by its owner; pair it again to reconnect." : "The connection to Ash ended and will not be retried.");
+  await running.close();
+  process.exit(paired.revoked ? 0 : 1);
 }

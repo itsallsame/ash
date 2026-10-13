@@ -1,0 +1,3 @@
+{"at":"2026-10-10T17:26:43.430Z","kind":"conn","state":"welcomed","hand":"HAND","client":"client:jdWOTJ0ZAsmh","local":true}
+{"at":"2026-10-10T17:26:43.535Z","kind":"result","to":"service:admin","word":"status","ok":true,"data":{"now":1791653203504,"time_zone":"Asia/Singapore","paused":false,"version":"0.4.0","uptime_ms":5511,"agents":1,"hands_online":1},"raw":{"ok":true,"result":{"data":{"now":1791653203504,"time_zone":"Asia/Singapore","paused":false,"version":"0.4.0","uptime_ms":5511,"agents":1,"hands_online":1}}}}
+{"at":"2026-10-10T17:26:43.536Z","kind":"conn","state":"closed","code":1000,"reason":"stopped","reconnect":false}

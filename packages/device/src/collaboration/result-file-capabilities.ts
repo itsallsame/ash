@@ -1,4 +1,4 @@
-import type {CapabilitySpec} from '../../../sdk/src/api';
+import type {CapabilitySpec} from './compat';
 import {RESULT_EXPORT_PREPARE, RESULT_EXPORT_READ_CHUNK} from './material-result-export';
 
 /** Fixed result operations: metadata first, bytes only after local approval. */

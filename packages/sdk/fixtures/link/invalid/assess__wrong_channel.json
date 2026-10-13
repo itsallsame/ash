@@ -1,0 +1,7 @@
+{
+  "t": "assess",
+  "ch": "agent",
+  "id": "a1",
+  "capability": "workspace.write",
+  "args": {}
+}

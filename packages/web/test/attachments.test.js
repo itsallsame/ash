@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { decodeInlineAttachment, openInlineBlob, prepareUploads } from "../js/attachments.js";
+
+const wire = (name, mime_type, bytes) => ({ name, mime_type, data: Buffer.from(bytes).toString("base64") });
+
+test("inline attachment is decoded only from canonical bounded base64", () => {
+  const decoded = decodeInlineAttachment(wire("a/b.txt", "text/plain", "hello"));
+  assert.equal(decoded.name, "a_b.txt");
+  assert.equal(decoded.preview, false);
+  assert.equal(decoded.mime_type, "application/octet-stream");
+  assert.equal(Buffer.from(decoded.bytes).toString(), "hello");
+  for (const item of [{ data: "!!!!", mime_type: "text/plain" }, { data: "eA", mime_type: "text/plain" }, { data: "eA==\n", mime_type: "text/plain" }]) assert.throws(() => decodeInlineAttachment(item));
+});
+
+test("only verified raster signatures get an active preview; SVG and fake image bytes download inert", () => {
+  const png = decodeInlineAttachment(wire("photo.png", "image/png", Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10, 1)));
+  assert.equal(png.preview, true);
+  assert.equal(png.mime_type, "image/png");
+  const forged = decodeInlineAttachment(wire("fake.png", "image/png", "<script>alert(1)</script>"));
+  assert.equal(forged.preview, false);
+  assert.equal(forged.mime_type, "application/octet-stream");
+  const svg = decodeInlineAttachment(wire("drawing.svg", "image/svg+xml", "<svg onload='alert(1)'/>"));
+  assert.equal(svg.preview, false);
+  assert.equal(svg.mime_type, "application/octet-stream");
+});
+
+test("temporary object URL revokes once", () => {
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  let revoked = 0;
+  URL.createObjectURL = () => "blob:fixture";
+  URL.revokeObjectURL = (url) => { assert.equal(url, "blob:fixture"); revoked++; };
+  try {
+    const opened = openInlineBlob(wire("note.txt", "text/plain", "note"));
+    assert.equal(opened.url, "blob:fixture");
+    opened.revoke();
+    opened.revoke();
+    assert.equal(revoked, 1);
+  } finally { URL.createObjectURL = originalCreate; URL.revokeObjectURL = originalRevoke; }
+});
+
+test("upload keeps original file and animated media bytes, with attachment-only input", async () => {
+  const file = new File(["<svg onload='x'>"], "a/b.svg", { type: "image/svg+xml" });
+  const gif = new File(["GIF89aoriginal"], "moving.gif", { type: "image/gif" });
+  const attachments = await prepareUploads([file, gif], "");
+  assert.deepEqual(attachments.map(({ name, mime_type }) => [name, mime_type]), [["a_b.svg", "image/svg+xml"], ["moving.gif", "image/gif"]]);
+  assert.equal(Buffer.from(attachments[0].data, "base64").toString(), "<svg onload='x'>");
+  assert.equal(Buffer.from(attachments[1].data, "base64").toString(), "GIF89aoriginal");
+});
+
+test("upload rejects a file that cannot travel in one frame, and several that together cannot", async () => {
+  const tooLarge = new File([new Uint8Array(3 * 1024 * 1024 + 1)], "too-large.bin", { type: "application/octet-stream" });
+  await assert.rejects(() => prepareUploads([tooLarge], ""), /附件太大/);
+  const file = new File([new Uint8Array(2 * 1024 * 1024)], "bounded.bin", { type: "application/octet-stream" });
+  assert.equal((await prepareUploads([file], "")).length, 1);
+  await assert.rejects(() => prepareUploads([file, file], ""), /附件太大/);
+});
+
+test("decodable static PNG shrinks to a bounded JPEG without changing a GIF or document", async () => {
+  const oldBitmap = globalThis.createImageBitmap;
+  const oldDocument = globalThis.document;
+  const canvas = { width: 0, height: 0, getContext: () => ({ fillRect() {}, drawImage() {}, set fillStyle(value) { assert.equal(value, "white"); } }),
+    toBlob(callback, type, quality) { assert.equal(type, "image/jpeg"); assert.equal(quality, 0.85); callback(new Blob([Uint8Array.of(255, 216, 255, 0)], { type })); } };
+  let decodeCalls = 0;
+  let closed = 0;
+  globalThis.createImageBitmap = async () => { decodeCalls++; return { width: 4096, height: 1024, close() { closed++; } }; };
+  globalThis.document = { createElement(tag) { assert.equal(tag, "canvas"); return canvas; } };
+  try {
+    const png = new File([Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10), new Uint8Array(16)], "photo.png", { type: "image/png" });
+    const gif = new File(["GIF89aanimation"], "motion.gif", { type: "image/gif" });
+    const note = new File(["literal document"], "note.txt", { type: "text/plain" });
+    const result = await prepareUploads([png, gif, note]);
+    assert.deepEqual(result.map(({ name, mime_type }) => [name, mime_type]), [["photo.jpg", "image/jpeg"], ["motion.gif", "image/gif"], ["note.txt", "text/plain"]]);
+    assert.equal(canvas.width, 2048);
+    assert.equal(canvas.height, 512);
+    assert.equal(decodeCalls, 1);
+    assert.equal(closed, 1);
+    assert.equal(Buffer.from(result[0].data, "base64").toString("hex"), "ffd8ff00");
+    assert.equal(Buffer.from(result[1].data, "base64").toString(), "GIF89aanimation");
+    assert.equal(Buffer.from(result[2].data, "base64").toString(), "literal document");
+  } finally { globalThis.createImageBitmap = oldBitmap; globalThis.document = oldDocument; }
+});
+
+test("unsupported decode and larger JPEG output preserve original bytes and names", async () => {
+  const oldBitmap = globalThis.createImageBitmap;
+  const oldDocument = globalThis.document;
+  let calls = 0;
+  globalThis.createImageBitmap = async () => { calls++; if (calls === 1) throw new Error("unsupported codec"); return { width: 100, height: 100, close() {} }; };
+  globalThis.document = { createElement: () => ({ getContext: () => ({ fillRect() {}, drawImage() {} }), toBlob(callback) { callback(new Blob([new Uint8Array(1000)], { type: "image/jpeg" })); } }) };
+  try {
+    const heif = new File([Uint8Array.of(0, 0, 0, 12, 102, 116, 121, 112, 104, 101, 105, 102)], "image.heif", { type: "image/heif" });
+    const jpeg = new File([Uint8Array.of(255, 216, 255, 1)], "small.jpeg", { type: "image/jpeg" });
+    const result = await prepareUploads([heif, jpeg]);
+    assert.deepEqual(result.map(({ name, mime_type }) => [name, mime_type]), [["image.heif", "image/heif"], ["small.jpeg", "image/jpeg"]]);
+    assert.equal(Buffer.from(result[0].data, "base64").toString("hex"), Buffer.from(await heif.arrayBuffer()).toString("hex"));
+    assert.equal(Buffer.from(result[1].data, "base64").toString("hex"), Buffer.from(await jpeg.arrayBuffer()).toString("hex"));
+  } finally { globalThis.createImageBitmap = oldBitmap; globalThis.document = oldDocument; }
+});

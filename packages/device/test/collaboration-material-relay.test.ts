@@ -5,7 +5,7 @@ import { DeviceKey, GatewayClient } from "ash-gateway/client/client";
 import { DeviceTunnels } from "ash-gateway/src/device-tunnels";
 import { MaterialClient, MATERIAL_REQUEST_TYPE, MATERIAL_RESPONSE_TYPE, relaySize } from "../src/collaboration/material-client";
 import { ExternalCollaborationTools, UnsupportedCodexMaterialBindingProvider } from "../src/collaboration/external-collaboration-tools";
-import { MaterialGatewayAdapter, MaterialGatewayReplayOwner } from "../../core/src/collaboration/material-gateway";
+import { MaterialGatewayAdapter, MaterialGatewayReplayOwner } from "../src/collaboration/material-gateway";
 import { MaterialProtocolError } from "../src/collaboration/material-types";
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function setup(budgetMs = 500, maxReplayEntries = 4096, observeUnfinished?:(work:Promise<unknown>)=>undefined,replayOwner?:MaterialGatewayReplayOwner) {
@@ -64,24 +64,6 @@ test("inflight cap and final UTF8 envelope accounting include escaping/signature
 });
 test("unsupported Codex host binding exposes no tools and refuses model native identity", async () => { const f = await setup(); const tools = new ExternalCollaborationTools(f.client,new UnsupportedCodexMaterialBindingProvider()); assert.deepEqual(tools.available(),[]); await assert.rejects(tools.invoke("discover",f.input),{code:"unsupported"}); assert.equal(f.counts().sends,0); f.client.close(); f.adapter.close(); });
 test("actual gateway DeviceTunnels rejects client-originated http.req", () => { const owner: any[] = [], device: any[] = []; const sql = { exec() { return {toArray: () => []}; } }; const tunnels = new DeviceTunnels(sql as any, f=>owner.push(f), (_id,f)=>device.push(f),()=>true); tunnels.fromDevice({t:"tun",op:"http.req",sid:"client-made",method:"POST",path:"/mcp"},"client"); assert.equal(owner.length,0); assert.equal(device[0].code,"forbidden"); });
-test("actual request service/store and canonical fixture ledger preserve submit once across relay calls", async () => {
-  const { mkdtempSync, rmSync } = await import("node:fs"), { tmpdir } = await import("node:os"), { join } = await import("node:path");
-  const { MaterialRequestStore } = await import("../../core/src/collaboration/material-request-store");
-  const { CoreMaterialRequestService } = await import("../../core/src/collaboration/material-request-service");
-  const { MaterialFaultLedger } = await import("../../core/test/fixtures/material-fault-ledger");
-  const dir=mkdtempSync(join(tmpdir(),"relay-actual-request-")), store=new MaterialRequestStore({file:join(dir,"metadata.sqlite")}), ledger=new MaterialFaultLedger(join(dir,"ledger.sqlite"),Date.now);
-  const f=await setup(1000);
-  try {
-    const auth={before:async(c:any)=>c,after:async()=>{},current:()=>undefined};
-    const svc=new CoreMaterialRequestService({store,ledger,authorization:auth,currentContext:()=>undefined,resolveExternalMember:async()=>"external:one"});
-    // The adapter injects its protected source context; the model never supplies it.
-    const source={kind:"work" as const,work:{node_id:"desktop",endpoint_id:"codex",kind:"conversation" as const,native_id:"host-verified-thread"}};
-    f.service((op,i)=>svc.invoke(op,i,{principal_id:"external-one",pairing_id:"pair",grant_revision:"g1",authorization_epoch:"e1",source_binding:source,expires_at:Date.now()+60000}) as any);
-    const request={version:1 as const,request_id:"real-request",client_id:"real-client",source,return_to:source,target:{node_id:"phone",endpoint_id:"materials"},target_work:null,kind:"human_material" as const,purpose:"Select synthetic image",context:{goal:"fixture",confirmed_decisions:[],increment:"one",expected_output:"image",uncertain:[],missing:[],refs:[],provenance:[]},expected_output:"image",expires_at:Date.now()+60000};
-    for(let n=0;n<2;n++){const p=f.client.invoke("submit",request,f.binding);await f.adapter.acceptFrame(await f.sent());assert.equal(f.qb.length,1);await f.client.acceptFrame(f.qb.shift());const fact=await p;assert.equal(fact.state,"waiting_owner");assert.ok(fact.question?.pending_id);}
-    assert.equal(ledger.accepts,1);
-  }finally{f.client.close();f.adapter.close();store.close();ledger.close();rmSync(dir,{recursive:true,force:true});}
-});
 test("gateway close releases a stalled verifier/service acceptFrame promptly", async()=> {const f=await setup(1000);let release!:()=>void;f.service(async(_o,i)=>{await new Promise<void>(r=>release=r);return{version:1,target:i.target,capabilities:[]};});const p=f.start(),fail=assert.rejects(p);const receiving=f.adapter.acceptFrame(await f.sent());for(let n=0;!release&&n<30;n++)await delay(2);f.adapter.close();await receiving;assert.equal(f.adapter.inflight,0);f.client.close();await fail;release();await delay(2);assert.equal(f.qb.length,0);});
 test("actual asset service/store commits a full 40KiB chunk via signed relay", async()=> {
   const {mkdtemp,rm,realpath}=await import("node:fs/promises"),{tmpdir}=await import("node:os"),{join}=await import("node:path"),{createHash}=await import("node:crypto");

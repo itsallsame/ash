@@ -4,7 +4,7 @@ import { CollaborationReadError } from "./types";
 import { currentPinnedOwnerId } from "./pairing";
 import { readLocalStateFile } from "./local-state";
 
-/** Set only by ClientLink after checking the gateway transport against the pinned pairing. */
+/** Issued by the active tunnel only after its authenticated peer matches the pinned pairing. */
 export interface TrustedCallContext { readonly transportOwnerId: string; isCurrent(): boolean }
 interface ReadAuthorizationFields {
   owner_id: string;

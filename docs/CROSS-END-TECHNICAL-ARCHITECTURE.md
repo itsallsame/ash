@@ -1,3 +1,5 @@
+> 2026-10-13 实现更新：本分支已采用主分支kernel/edges/services与ash-link/1。跨端入口为原生电脑会话/浏览器human channel → service:collaboration → 电脑HandClient；图片复用签名side通道与Ledger/blob，结果走human stream。旧WorldRouter、OwnerLink和HTTP桥架构描述保留为历史设计，当前实现及验证边界见 [迁移记录](MAIN-ARCHITECTURE-MIGRATION-20261013.md)。坚持一切从简，主动索取材料与防重复专项延期。
+
 # Ash 多端协作技术架构 v0.2
 
 2026-10-09。研究与设计，未实现。对应[产品设计 v0.5](CROSS-END-PRODUCT-DESIGN-V2.md)。

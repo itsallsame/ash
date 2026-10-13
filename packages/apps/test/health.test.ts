@@ -13,10 +13,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { BUILTIN_APPS } from "../../core/src/apps/builtin.generated";
-import { appCapabilities } from "../../core/src/apps/runtime";
-import { validateManifest } from "../../core/src/apps/schema";
-import { validateCard } from "../../core/src/members/widgets-card";
+import { appToolContract } from "../../sdk/src/app";
+import { bundleApp } from "../bundle.mjs";
+import { checkManifest } from "../../core/src/edges/apps/check";
+import { validateCard } from "../../core/src/services/widgets/card";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "../health/src");
@@ -26,7 +26,7 @@ const DAY = 86_400_000;
 // Monday 2026-10-05, 09:00 local time.
 const MONDAY = new Date(2026, 9, 5, 9, 0, 0).getTime();
 
-/** Phone rows like device:phone health.read returns them. */
+/** Phone rows like the phone's health.read returns them. */
 function rows(now: number) {
   const at = (daysAgo: number, hour: number) => new Date(now - daysAgo * DAY).setHours(hour, 0, 0, 0);
   const out: Record<string, unknown>[] = [];
@@ -42,6 +42,10 @@ function rows(now: number) {
   return out;
 }
 
+/** What capability_list gives an app granted device:*: the phone's id is looked up, never written in the app. */
+const PHONE_ID = "device:Ph0neHandIdWith22Chars";
+const PHONE_MEMBERS = [{ id: PHONE_ID, name: "手机", capabilities: [{ word: "health.read" }, { word: "sensors.steps" }] }];
+
 function fakeAsh(now: number, options: { steps?: number; fail?: boolean } = {}) {
   const calls: { member: string; word: string; body: Record<string, unknown> }[] = [];
   const events: { name: string; body: Record<string, unknown> }[] = [];
@@ -54,6 +58,7 @@ function fakeAsh(now: number, options: { steps?: number; fail?: boolean } = {}) 
       throw new Error("unexpected");
     },
     async event(name: string, body: Record<string, unknown>) { events.push({ name, body }); },
+    async members() { return PHONE_MEMBERS; },
   } };
 }
 
@@ -74,7 +79,7 @@ test("health tools: today, trend, log, goals and report from Ash's rows plus the
   assert.equal(today.steps.value, 12000, "the phone's counter wins when it is ahead");
   assert.deepEqual([today.sleep.minutes, today.sleep.hours], [330, 5.5]);
   assert.equal(today.resting_heart_rate.value, 58);
-  assert.deepEqual(fake.calls.map((call) => `${call.member}/${call.word}`), ["device:phone/health.read", "device:phone/sensors.steps"]);
+  assert.deepEqual(fake.calls.map((call) => `${call.member}/${call.word}`), [`${PHONE_ID}/health.read`, `${PHONE_ID}/sensors.steps`]);
   assert.deepEqual(fake.calls[0]!.body.metrics, ["weight", "steps", "sleep", "heart_rate"]);
 
   health.log("weight", 71.2, now - 1000);
@@ -111,7 +116,7 @@ test("when the phone's senses are away, today and trends show what Ash recorded 
   const recorded = rows(now - DAY).map(({ ts_end: _end, ...row }) => row);
   const away = (recent: unknown) => ({ async call(_member: string, word: string) {
     throw Object.assign(new Error(`failed: the phone has no capability ${word}`), { code: "failed", ownerText: "感知暂时不在线，稍后再试", recent });
-  }, async event() {} });
+  }, async event() {}, async members() { return PHONE_MEMBERS; } });
   const store = new Store(join(mkdtempSync(join(tmpdir(), "ash-health-")), "data.json"));
   const recent = { as_of: Math.max(...recorded.map((row) => row.ts as number)), source: "Ash 的感知记录", rows: recorded };
   const today = await new Health({ ash: away(recent), store, now: () => now }).today();
@@ -166,10 +171,10 @@ test("health alerts: weight change over 1.5 kg in 7 days, three short nights, an
 
 test("the tools' MCP shapes map to ash capabilities with the intended risk; screens are self-contained MCP Apps HTML", async () => {
   const { TOOLS, RESOURCES, readResource, UI_MIME } = await load("tools.mjs");
-  const caps = appCapabilities("健康", TOOLS);
-  assert.deepEqual(caps.map((cap) => [cap.name, cap.effect]), [["health.today", "read"], ["health.trend", "read"], ["health.log", "write"],
-    ["health.goal.set", "write"], ["health.card", "read"], ["health.report", "read"]]);
-  assert.equal(caps[0]!.label, "在健康里看今日健康");
+  const caps = TOOLS.map((tool: Parameters<typeof appToolContract>[1]) => appToolContract("health", tool));
+  assert.deepEqual(caps.map((cap: { word: string; effect: string }) => [cap.word, cap.effect]), [["health.today", "read"], ["health.trend", "read"], ["health.log", "act"],
+    ["health.goal.set", "act"], ["health.card", "read"], ["health.report", "read"]]);
+  assert.equal(caps[0]!.member, "app:health");
   const linked = TOOLS.filter((tool: { _meta?: { ui?: { resourceUri?: string } } }) => tool._meta?.ui?.resourceUri).map((tool: { _meta: { ui: { resourceUri: string } } }) => tool._meta.ui.resourceUri);
   assert.deepEqual(linked, ["ui://health/home", "ui://health/trends", "ui://health/goals"]);
   const ui = join(here, "../health/ui");
@@ -197,7 +202,8 @@ async function fakeAshEndpoint(token: string, now: number) {
       const args = (call.params.arguments ?? {}) as Record<string, unknown>;
       seen.push({ name: call.params.name, args });
       let result: Record<string, unknown>;
-      if (call.params.name === "capability_call" && args.word === "health.read") result = { ok: true, result: { content: [{ type: "text", text: JSON.stringify({ rows: rows(now) }) }] } };
+      if (call.params.name === "capability_list") result = { ok: true, result: { members: PHONE_MEMBERS } };
+      else if (call.params.name === "capability_call" && args.word === "health.read") result = { ok: true, result: { content: [{ type: "text", text: JSON.stringify({ rows: rows(now) }) }] } };
       else if (call.params.name === "capability_call") result = { ok: false, error: { code: "forbidden", message: "not granted", owner_text: "安装时没有批准这一项，用不了" } };
       else result = { ok: true, result: { recorded: true } };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
@@ -216,17 +222,17 @@ test("the Ash client speaks MCP to the endpoint ash gives the app, with its toke
   const endpoint = await fakeAshEndpoint("secret-token", Date.now());
   try {
     const ash = ashClient(endpoint.url, "secret-token");
-    const read = await ash.call("device:phone", "health.read", { metrics: ["weight"] });
+    const read = await ash.call(PHONE_ID, "health.read", { metrics: ["weight"] });
     assert.ok(Array.isArray(read.content));
-    await assert.rejects(ash.call("device:phone", "sensors.steps", {}), /forbidden/);
+    await assert.rejects(ash.call(PHONE_ID, "sensors.steps", {}), /forbidden/);
     await ash.event("app.card", { title: "上周健康小结", text: "x" });
     assert.deepEqual(endpoint.seen.map((item) => item.name), ["capability_call", "capability_call", "ash_event"]);
-    await assert.rejects(ashClient(endpoint.url, "wrong").call("device:phone", "health.read", {}));
+    await assert.rejects(ashClient(endpoint.url, "wrong").call(PHONE_ID, "health.read", {}));
   } finally { await endpoint.close(); }
 });
 
 test("the bundled server the core installs runs over stdio: tools, a call through Ash, and its screens", async () => {
-  const app = BUILTIN_APPS.find((item) => item.id === "health")!;
+  const app = { files: await bundleApp(join(here, "../health")) };
   const dir = mkdtempSync(join(tmpdir(), "ash-health-app-"));
   for (const [name, text] of Object.entries(app.files)) writeFileSync(join(dir, name), text);
   // Data from 1.0.x (next to app.json) moves into data_dir on start.
@@ -261,7 +267,9 @@ test("the home-screen card: today's weight and steps from the same data as the p
   const { Health, Store } = await load("logic.mjs");
   const { todayCard } = await load("tools.mjs");
   const manifest = JSON.parse(readFileSync(join(here, "../health/app.json"), "utf8"));
-  assert.equal(validateManifest(manifest).ok, true);
+  const checked = checkManifest(readFileSync(join(here, "../health/app.json"), "utf8"), "health");
+  assert.deepEqual(checked.problems.filter((problem) => problem.level === "error"), [], "the new schema accepts the manifest (needs.member device:*)");
+  assert.equal(manifest.needs[0].member, "device:*");
   assert.deepEqual(manifest.cards, [{ id: "today", title: "今日健康", size: "4x2", tool: "health.card", refresh_min: 60 }]);
   const store = new Store(join(mkdtempSync(join(tmpdir(), "ash-health-card-")), "data.json"));
   const health = new Health({ ash: fakeAsh(MONDAY, { steps: 12000 }).ash, store, now: () => MONDAY });
@@ -274,4 +282,23 @@ test("the home-screen card: today's weight and steps from the same data as the p
   const empty = new Health({ ash: fakeAsh(MONDAY, { fail: true }).ash, store: new Store(join(mkdtempSync(join(tmpdir(), "ash-health-card-")), "data.json")), now: () => MONDAY });
   const blank = validateCard(todayCard(await empty.today()));
   assert.equal(blank.components.find((c) => c.id === "wv")!.text, "—");
+});
+
+test("a phone that stays away is said once on stderr, again only after it came back and went away", async () => {
+  const { Health, Store } = await load("logic.mjs");
+  const store = new Store(join(mkdtempSync(join(tmpdir(), "ash-health-")), "data.json"));
+  const now = MONDAY;
+  const lines: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => { lines.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try {
+    const away = new Health({ ash: fakeAsh(now, { fail: true }).ash, store, now: () => now });
+    await away.readings(3); await away.readings(3); await away.readings(3);
+    assert.equal(lines.filter((l) => l.includes("health.read failed")).length, 1);
+    away.ash = fakeAsh(now).ash;
+    await away.readings(3);
+    away.ash = fakeAsh(now, { fail: true }).ash;
+    await away.readings(3);
+    assert.equal(lines.filter((l) => l.includes("health.read failed")).length, 2);
+  } finally { process.stderr.write = write; }
 });

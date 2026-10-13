@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 presence frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "presence"
+    },
+    "ch": {
+      "const": "human"
+    },
+    "visible": {
+      "type": "boolean"
+    },
+    "watching": {
+      "type": "boolean"
+    },
+    "typing": {
+      "type": "boolean"
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "t",
+    "ch"
+  ],
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "visible"
+      ]
+    },
+    {
+      "required": [
+        "watching"
+      ]
+    },
+    {
+      "required": [
+        "typing"
+      ]
+    },
+    {
+      "required": [
+        "agent"
+      ]
+    }
+  ]
+}

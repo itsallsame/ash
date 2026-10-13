@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createHash } from "node:crypto";
+import { coreUiBytes, staticManifest, verifyStaticUi } from "../../../tools/spikes/v2-604-ui-asset.mjs";
+import { UI_JS, UI_JS_FILE } from "../../core/src/edges/link-server/ui.generated.ts";
+import { assertNoInlineScripts } from "../../../tools/ui-scripts.mjs";
+import { buildUiBundle } from "../../../tools/ui-bundle.mjs";
+
+const scripts = (html) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+
+test("packaged UI refuses executable inline markup, including encoded and mixed-case URL attributes", () => {
+  for (const html of ['<script>run()</script>', '<script src="app.js">run()</script>', '<button ONCLICK="run()">', '<input onfocus=run()>', '<a href="javascript:run()">', '<a href=" java&#x73;cript:run()">', '<a href="java&#10;script:run()">', '<svg><a xlink:href=JavaScript:run()>'])
+    assert.throws(() => assertNoInlineScripts(html), /inline|JavaScript/);
+  assert.doesNotThrow(() => assertNoInlineScripts('<script defer src="app.abc.js"></script><a href="ash://console">go</a>'));
+  assert.doesNotThrow(() => assertNoInlineScripts('<!-- <script>example()</script> --><style>.a{color:red}</style>'));
+});
+
+test("test-only static UI uses exactly the generated core bytes", () => {
+  const bytes = coreUiBytes();
+  const manifest = staticManifest(bytes);
+  assert.equal(verifyStaticUi(bytes, manifest), true);
+  assert.equal(manifest.bytes, bytes.length);
+  assert.match(manifest.sha256, /^[a-f0-9]{64}$/);
+  const html = bytes.toString("utf8");
+  assert.ok(!html.includes("/?token="));
+  assert.ok(!html.includes("ash_ui"));
+});
+
+test("the deferred browser script parses without placeholder substitution", () => {
+  const html = coreUiBytes().toString("utf8");
+  assert.ok(html.includes(`<script defer src="/${UI_JS_FILE}"></script>`));
+  assert.equal(UI_JS_FILE, `app.${createHash("sha256").update(UI_JS).digest("hex")}.js`);
+  assert.equal(scripts(html).length, 0, "the browser bundle is not parsed as HTML");
+  assert.ok(!UI_JS.includes("<!-- ui-app -->"));
+  assert.doesNotThrow(() => new Function(UI_JS));
+});
+
+test("test-only static parity refuses altered bytes, digest and length", () => {
+  const bytes = coreUiBytes();
+  const manifest = staticManifest(bytes);
+  const changed = Buffer.from(bytes);
+  changed[changed.length - 2] ^= 1;
+  assert.throws(() => verifyStaticUi(changed, manifest), /differs/);
+  assert.throws(() => verifyStaticUi(bytes, { ...manifest, sha256: "0".repeat(64) }), /differs/);
+  assert.throws(() => verifyStaticUi(bytes, { ...manifest, bytes: manifest.bytes + 1 }), /differs/);
+});
+
+test("the browser bundle matches the current shared sources and compiles no code while the page opens", async () => {
+  const build = await buildUiBundle("browser");
+  assert.equal(build.code, UI_JS);
+  const webInputs = Object.keys(build.inputs).filter(path => /packages\/web\/js\//.test(path));
+  assert.ok(webInputs.some(path => path.endsWith("/markdown.js")) && webInputs.some(path => path.endsWith("/home.js")) && webInputs.some(path => path.endsWith("/app.js")));
+  // Browser frame checks are generated at build time; the page compiles nothing while opening.
+  assert.ok(!UI_JS.includes("new Function"));
+});

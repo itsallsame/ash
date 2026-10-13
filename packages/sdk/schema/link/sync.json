@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 sync frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "sync"
+    },
+    "ch": {
+      "const": "human"
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "after": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "before": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "follow": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "t",
+    "ch",
+    "sid"
+  ],
+  "additionalProperties": false,
+  "not": {
+    "required": [
+      "after",
+      "before"
+    ]
+  }
+}

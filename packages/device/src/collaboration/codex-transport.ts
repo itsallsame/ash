@@ -29,8 +29,15 @@ export function verifyUnixListener(options: Pick<CodexTransportOptions, "socket"
     const run = (args: string[]) => execFileSync("lsof", args, { encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 }).split("\n");
     const unix = run(["-nP", "-a", "-p", String(options.pid), "-U", "-Fn"]);
     const text = run(["-a", "-p", String(options.pid), "-d", "txt", "-Fn"]);
+    const all = run(["-nP", "-U", "-Fpn"]);
     const canonical = (line: string) => { try { return realpathSync(line.slice(1)); } catch { return ""; } };
     if (!unix.some(line => line.startsWith("n") && canonical(line) === socket) || !text.some(line => line.startsWith("n") && canonical(line) === executable)) throw 0;
+    const owners = new Set<number>(); let pid = 0;
+    for (const line of all) {
+      if (line.startsWith("p")) { const value = Number(line.slice(1)); pid = Number.isSafeInteger(value) && value > 0 ? value : 0; }
+      else if (line.startsWith("n") && pid && canonical(line) === socket) owners.add(pid);
+    }
+    if (owners.size !== 1 || !owners.has(options.pid)) throw 0;
     const version = execFileSync(executable, ["--version"], { encoding: "utf8", timeout: 5000, maxBuffer: 4096 }).match(/\b\d+\.\d+\.\d+(?:[-+][\w.-]+)?\b/)?.[0];
     if (!version) throw 0;
     return { socket, executable, pid: options.pid, version, identity: `${options.pid}:${stat.dev}:${stat.ino}:${stat.ctimeMs}:${executable}:${version}` };
@@ -86,7 +93,7 @@ export class CodexTransport {
     try {
       if(this.options.verifyListener)return this.options.verifyListener(force);
       this.artifact&&readNativeArtifactVersion(this.artifact,realpathSync(this.options.executable));
-      if(force){const evidence=inspectUnixListener(this.options,()=>verifyListenerMainEvidence(verifyUnixListener(this.options),!!this.artifact));this.artifact&&readNativeArtifactVersion(this.artifact,evidence.executable);if(this.options.current&&this.options.current()!==undefined)throw 0;return evidence;}
+      if(force){const evidence=verifyListenerMainEvidence(verifyUnixListener(this.options),!!this.artifact);this.artifact&&readNativeArtifactVersion(this.artifact,evidence.executable);if(this.options.current&&this.options.current()!==undefined)throw 0;return evidence;}
       if(this.artifact===undefined){let candidate:NativeArtifactVersion|undefined;try{
         candidate=NativeArtifactVersion.open(realpathSync(this.options.executable),this.version);
         inspectUnixListener(this.options,undefined,candidate,true);

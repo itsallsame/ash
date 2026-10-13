@@ -1,0 +1,13 @@
+{
+  "name": "ash-link",
+  "private": true,
+  "type": "module",
+  "description": "ash-link/1: the connection protocol between the kernel and its hands (server, Node and browser clients)",
+  "exports": {
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  }
+}

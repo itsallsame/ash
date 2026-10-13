@@ -1,0 +1,10 @@
+{
+  "t": "present",
+  "ch": "human",
+  "id": "p2",
+  "surface": "notification",
+  "op": "hide",
+  "body": {
+    "id": "n1"
+  }
+}

@@ -7,7 +7,7 @@ import ai.ash.host.TaskFrame
 import ai.ash.host.TaskStatus
 import ai.ash.host.screen.ScreenBridge
 
-/** The task island over other apps. The screen helper draws it; Ash tells it what to show (see [ScreenBridge]). */
+/** The task island over other apps. The screen side draws it; Ash tells it what to show (see [ScreenBridge]). */
 object TaskCapsule {
     private const val PREFS = "ash_island"
     /** The island is on screen for the owner now: what it shows needs no notification. */
@@ -21,15 +21,15 @@ object TaskCapsule {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("resident", on).apply()
         TaskStatus.refresh()
     }
-    /** The resident entry is shown between tasks: kept, and the screen helper draws it (an older one does not). */
-    fun residentOn(ctx: Context): Boolean = residentKept(ctx) && ScreenBridge.islandResident()
+    /** The resident entry is shown between tasks: kept. */
+    fun residentOn(ctx: Context): Boolean = residentKept(ctx)
 
     internal fun update(ctx: Context, frame: TaskFrame, elapsed: Long, stale: Boolean, interactive: Boolean, canStop: Boolean, notice: String?) {
         check(Looper.myLooper() == Looper.getMainLooper())
-        // The helper lays its own pending answers over the cards.
-        ScreenBridge.island(IslandPresentation.project(frame, elapsed, stale, interactive, canStop, notice, emptyMap(), System.currentTimeMillis()), AppState.homeVisible)
+        // The island lays its own pending answers over the cards.
+        ScreenBridge.island(IslandPresentation.project(frame, elapsed, stale, interactive, canStop, notice, emptyMap(), System.currentTimeMillis(), LeaseState.islandClock()), AppState.homeVisible)
     }
     /** The resident entry: no task, only the way to talk to Ash. */
-    fun resident() = ScreenBridge.island(IslandPresentation.resident(), AppState.homeVisible)
+    fun resident(canSend: Boolean) = ScreenBridge.island(IslandPresentation.resident(canSend, LeaseState.islandClock()), AppState.homeVisible)
     fun hide() = ScreenBridge.island(null, AppState.homeVisible)
 }

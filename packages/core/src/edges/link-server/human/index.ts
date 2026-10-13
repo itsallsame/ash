@@ -1,0 +1,294 @@
+/**
+ * human (HUB-MODULES §2.2): the member `person:owner` and the owner's channels on the link. Every connection that opened
+ * the `human` channel is one channel `client:<sid>`.
+ *
+ *   in    `send` -> `router.send` as the owner (./inbound); `presence` -> remembered; `sync` -> the ledger (./sync)
+ *   out   conversation: nothing to do, it is in the ledger and every channel reads it with `sync`;
+ *         notification / island / status / widget / chat pages: `present` frames to the channels that declared the surface
+ *   words say, show, react, ask, open (the contracts of sdk/words.ts)
+ *
+ * Cards on the home screen: `service:widgets` sends the event `widget.state` (to `person:owner`) with the whole state; it is
+ * presented to every channel that declared `widget`, and what a channel reports becomes `widget.rendered`. A channel that
+ * has just connected is given the current state from `service:widgets/widget.list`.
+ *
+ * Assembly: `link.onChannel("human", human.attach)`, `registry.add(human.member)`; the small model goes in as `summarize`
+ * (`createSummarizer` of edges/llm/summary).
+ */
+import { isAgentId, OWNER_ID } from "../../../../../sdk/src/ids";
+import type { HelloFrame } from "../../../../../sdk/src/link";
+import {
+  WordError, type Caller, type HandleContext, type Message, type Outgoing, type WordResult,
+} from "../../../../../sdk/src/message";
+import type { Member, WordContract } from "../../../../../sdk/src/word";
+import { wordsOf } from "../../../../../sdk/src/words";
+import type { Ledger } from "../../../kernel/ledger";
+import type { Router } from "../../../kernel/types";
+import type { ChannelAttach } from "../index";
+import { Asks } from "./ask";
+import { Clients, SURFACES, type ClientInfo, type LiveClient, type Surface } from "./clients";
+import { Inbound, Recorded } from "./inbound";
+import { Notifier } from "./notify";
+import { Presenter, type PresentResult } from "./present";
+import { TaskStatus, type Summarize } from "./status";
+import { Syncs } from "./sync";
+
+export { type Summarize, type TaskFrame } from "./status";
+export { isQuiet, QUIET_HOURS_KEY, DEDUPE_MINUTES_KEY } from "./delivery";
+export type { ClientInfo, Surface } from "./clients";
+export type { PresentResult } from "./present";
+
+export interface HumanDeps {
+  router: Pick<Router, "send" | "subscribe">;
+  ledger: Pick<Ledger, "db" | "page" | "get">;
+  /** The hub's settings by key (`service:admin`); here only `delivery.quiet_hours` and `delivery.dedupe_minutes` are read. */
+  settings(): Record<string, unknown>;
+  /** The primary agent's id, or null while there is no agent: then replies on notifications have nobody to go to and are not sent. */
+  primary(): string | null;
+  /** One short line about what the agent is doing, from the small model; null when there is none. Absent: the tool's own line stays. */
+  summarize?: Summarize;
+  now?: () => number;
+  /** IANA zone for quiet hours; default the host's local time. */
+  timeZone?: string;
+  log?: (message: string, error?: unknown) => void;
+  timing?: Partial<{ presentMs: number; islandMs: number; recordMs: number; summaryDelayMs: number }>;
+}
+
+export interface HumanEdge {
+  /** `person:owner`: add it to the registry. */
+  member: Member;
+  /** For `link.onChannel("human", …)`. */
+  attach: ChannelAttach;
+  clients(): ClientInfo[];
+  /** The owner is looking at a live view (the virtual screen's preview) on some channel: that counts as using Ash. */
+  viewing(): boolean;
+  /** The channels open now, as little as the agents' environment needs (「主人在哪」): which kind, what it is called, local or not (whether it is being looked at is `clients()`, for delivery). */
+  channels(): { client: string; kind: ClientInfo["channel"]; label: string; local: boolean }[];
+  /**
+   * Sends [bytes] to one channel as a stream (`stream` frames) and returns the stream id, which the answer to its word carries
+   * (`service:blobs/get`). [client] is the channel the word came in through; throws `offline` when it is not connected.
+   */
+  openStream(client: string | undefined, bytes: Uint8Array, mime: string): string;
+  /**
+   * The owner's words after they answered the approval [askId]: sends [body] as a `say` to [to], as the owner, on the channel the
+   * answer came from (counted once for one approval, however many times it is asked). False when the owner did not answer it (it ended by its time).
+   */
+  sayAfterAnswer(askId: string, to: string, body: Record<string, unknown>): Promise<boolean>;
+  /** Brings a channel (default: the one the owner is on) to the front, e.g. after an authorization page. */
+  focus(client?: string): Promise<PresentResult>;
+  close(): void;
+}
+
+
+/** The member `person:owner` acting on its own (its events `typing` and `widget.rendered`, reading the widget state): the hub's code, not the owner speaking. */
+const AS_SERVICE: Caller = { member: OWNER_ID, via: "service", local: true };
+
+export function createHuman(deps: HumanDeps): HumanEdge {
+  const now = deps.now ?? Date.now;
+  const log = deps.log ?? ((message, error) => console.error(`[human] ${message}${error ? `: ${(error as Error).message}` : ""}`));
+  const t = { presentMs: 10_000, islandMs: 1500, recordMs: 3000, ...deps.timing };
+  const db = deps.ledger.db();
+
+  const clients = new Clients(db, now);
+  const presenter = new Presenter(t.presentMs);
+  const recorded = new Recorded();
+  const syncs = new Syncs(deps.ledger, log);
+
+  const status = new TaskStatus({
+    session: `ts_${now().toString(36)}`, primary: () => deps.primary(),
+    asks: () => asks.list(),
+    ...(deps.summarize ? { summarize: deps.summarize } : {}),
+    ...(t.summaryDelayMs !== undefined ? { summaryDelayMs: t.summaryDelayMs } : {}),
+    emit: (frame) => { for (const c of clients.withSurface("status")) void presenter.send(c, { surface: "status", op: "frame", body: frame as never }); },
+  });
+  const notifier: Notifier = new Notifier({
+    clients, presenter, settings: deps.settings, now, islandMs: t.islandMs, ...(deps.timeZone ? { zone: deps.timeZone } : {}),
+    primary: deps.primary,
+  });
+  const asks: Asks = new Asks({
+    now,
+    ended: (ask, notified) => notifier.hide(ask.id, notified),
+    changed: () => status.asksChanged(),
+  });
+  const inbound = new Inbound({ router: deps.router, ledger: deps.ledger, recorded, asks, now, recordMs: t.recordMs, log });
+
+  const sendEvent = (out: Outgoing) => void deps.router.send(out, AS_SERVICE).then((reply) => { if (!reply.ok) log(`${out.word} to ${out.to} refused: ${reply.error.message}`); }, (error) => log(`${out.word} to ${out.to} failed`, error));
+
+  // Everything the router announces: following syncs, answers waiting to be recorded, the task status, the turns that make replies ring.
+  const unsubscribe = deps.router.subscribe({}, (m: Message) => {
+    syncs.publish(m);
+    if (m.from === OWNER_ID) recorded.offer(m);
+    status.observe(m);
+    const turn = (m.body as { turn?: unknown } | null)?.turn;
+    if (m.kind === "event" && typeof turn === "string") {
+      if (m.word === "turn.started") notifier.turnStarted(turn);
+      else if (m.word === "turn.ended") void notifier.turnEnded(turn).catch((error) => log("turn end notification failed", error));
+    }
+  });
+
+  // ---- the member -----------------------------------------------------------------------------------------------------
+
+  const member: Member = {
+    id: OWNER_ID, kind: "person", name: "Owner",
+    words: (): WordContract[] => wordsOf(OWNER_ID),
+    cancel: (id) => asks.cancel(id),
+    async handle(msg: Message, ctx: HandleContext): Promise<WordResult | void> {
+      const body = (msg.body ?? {}) as Record<string, any>;
+      switch (msg.word) {
+        case "widget.preview": return preview(body as { card: string; size?: string });
+        case "widget.state": void pushWidgets(body, clients.withSurface("widget")); return;
+        case "lease.state":
+          for (const c of clients.withSurface("status")) void presenter.send(c, { surface: "status", op: "lease", body: { leases: Array.isArray(body.leases) ? body.leases : [] } });
+          return;
+        case "vscreen.state":
+          for (const c of clients.withSurface("status")) void presenter.send(c, { surface: "status", op: "vscreen", body: { open: body.open === true } });
+          return;
+        case "say":
+          void notifier.say(msg).catch((error) => log("notification failed", error));
+          return { data: { accepted: true } };
+        case "show":
+          return { data: { accepted: true } };
+        case "react":
+          if (!deps.ledger.get(body.message_id)) throw new WordError("not_found", `no message ${body.message_id}`);
+          return { data: { accepted: true } };
+        case "ask": {
+          const { ask, done } = asks.wait(msg, ctx.signal);
+          void notifier.ask(ask).then((reached) => {
+            // The question may have ended while the notification was on its way.
+            if (asks.has(ask.id)) for (const client of reached) asks.noted(ask.id, client);
+            else notifier.hide(ask.id, reached);
+          }).catch((error) => log("notification failed", error));
+          return done;
+        }
+        case "open": return open(body as Parameters<typeof open>[0]);
+        default: throw new WordError("not_found", `person:owner has no word ${msg.word}`);
+      }
+    },
+  };
+
+  /** `widget.preview`: the first channel that shows widgets and can draw the card gives the picture. */
+  async function preview(body: { card: string; size?: string }): Promise<WordResult> {
+    let failure: WordError = new WordError("offline", "no channel that shows widgets is connected");
+    for (const c of clients.withSurface("widget")) {
+      const result = await presenter.send(c, { surface: "widget", op: "preview", body: { card: body.card, size: body.size ?? "2x2" } });
+      if (!result.ok) { failure = new WordError(result.error.code, result.error.message); continue; }
+      const image = result.data as { type?: unknown } | undefined;
+      return { data: result.data, ...(image?.type === "image" ? { content: [result.data as never] } : {}) };
+    }
+    throw failure;
+  }
+
+  /** `open`: a page on the named channel, else the one the owner is on. */
+  async function open(body: { target: string; id?: string; mode?: string; client?: string }): Promise<WordResult> {
+    const c = body.client ? clients.get(body.client) : clients.current();
+    if (!c) throw new WordError("offline", body.client ? `${body.client} is not connected` : "the owner has no channel open");
+    if (!c.surfaces.includes("chat")) throw new WordError("unavailable", `${c.client} does not show chat pages`);
+    const result = await presenter.send(c, { surface: "chat", op: "open", body: { target: body.target, ...(body.id !== undefined ? { id: body.id } : {}), ...(body.mode !== undefined ? { mode: body.mode } : {}) } });
+    if (!result.ok) throw new WordError(result.error.code, result.error.message);
+    return { data: { opened: (result.data as { opened?: unknown } | undefined)?.opened !== false } };
+  }
+
+  // ---- the channels ---------------------------------------------------------------------------------------------------
+
+  const attach: ChannelAttach = (session, ctx) => {
+    const grant = session.channels.human;
+    if (!grant || !("client" in grant)) return;
+    const declared = (session.hello as HelloFrame).channels.human ?? {};
+    const hand = session.hello.hand;
+    const surfaces = (declared.surfaces ?? []).filter((s): s is Surface => (SURFACES as readonly string[]).includes(s));
+    const at = now();
+    const c: LiveClient = {
+      client: grant.client, hand: `device:${ctx.handId}`, channel: hand.kind === "phone" ? "app" : hand.kind === "im" ? "im" : "web",
+      ...(hand.kind === "im" ? { provider: hand.platform } : {}), label: declared.label ?? hand.name, local: ctx.local, surfaces,
+      connected_at: at, last_seen: at, visible: false, visible_at: 0, active_at: at, watching: false, session,
+    };
+    clients.add(c);
+    // After the welcome, which the link server sends right after this returns.
+    setImmediate(() => {
+      if (surfaces.includes("status")) void presenter.send(c, { surface: "status", op: "frame", body: status.frame() as never });
+      if (surfaces.includes("widget")) greetWidgets(c);
+      if (surfaces.includes("status")) greetLeases(c);
+    });
+
+    return {
+      human(frame) {
+        switch (frame.t) {
+          case "send":
+            clients.touch(c);
+            void inbound.send(c, frame.request).then(
+              (o) => session.send(o.ok ? { t: "send.result", id: frame.id, ok: true, message: o.message, ...(o.duplicate ? { duplicate: true } : {}), ...(o.response ? { response: o.response } : {}) } : { t: "send.result", id: frame.id, ok: false, error: o.error }),
+              (error) => { log("send failed", error); session.send({ t: "send.result", id: frame.id, ok: false, error: { code: "internal", message: "the hub failed while handling this request" } }); },
+            );
+            return;
+          case "sync": syncs.start(c, frame); return;
+          case "sync.close": syncs.close(c, frame.sid); return;
+          case "present.result": presenter.result(frame); return;
+          case "presence":
+            clients.touch(c);
+            if (frame.visible !== undefined) { c.visible = frame.visible; if (frame.visible) c.visible_at = now(); }
+            if (frame.watching !== undefined) c.watching = frame.watching;
+            if (frame.typing === true && frame.agent && isAgentId(frame.agent)) sendEvent({ to: frame.agent, kind: "event", word: "typing", body: {} });
+            return;
+        }
+      },
+      closed() {
+        syncs.closeAll(c);
+        presenter.drop(c.client);
+        clients.remove(c.client);
+      },
+    };
+  };
+
+  // ---- what other modules use -----------------------------------------------------------------------------------------
+
+  /** Presents the whole widget state on [targets]; what each reports goes on as `widget.rendered`. */
+  async function pushWidgets(state: unknown, targets: LiveClient[]): Promise<void> {
+    const results = await Promise.all(targets.map((c) => presenter.send(c, { surface: "widget", op: "state", body: state as never })));
+    for (const result of results) {
+      if (!result.ok || !result.data || typeof result.data !== "object") continue;
+      const data = result.data as { widgets?: unknown; rendered?: unknown };
+      sendEvent({ to: "service:widgets", kind: "event", word: "widget.rendered", body: {
+        ...(Array.isArray(data.widgets) ? { widgets: data.widgets } : {}), rendered: Array.isArray(data.rendered) ? data.rendered : [],
+      } });
+    }
+  }
+
+  /** A channel that shows status gets the screen leases in force now. */
+  function greetLeases(c: LiveClient): void {
+    void deps.router.send({ to: "service:gate", kind: "request", word: "lease.list", body: {} }, AS_SERVICE).then(
+      (reply) => { if (reply.ok && reply.result?.data !== undefined) return presenter.send(c, { surface: "status", op: "lease", body: reply.result.data as never }); },
+      (error) => log("lease.list failed", error),
+    );
+  }
+
+  /** A channel that just connected gets the current state. */
+  function greetWidgets(c: LiveClient): void {
+    void deps.router.send({ to: "service:widgets", kind: "request", word: "widget.list", body: {} }, AS_SERVICE).then(
+      (reply) => { if (reply.ok && reply.result?.data !== undefined) return pushWidgets(reply.result.data, [c]); },
+      (error) => log("widget.list failed", error),
+    );
+  }
+
+  return {
+    member, attach,
+    openStream(client, bytes, mime) {
+      const c = client ? clients.get(client) : undefined;
+      if (!c) throw new WordError("unavailable", "this connection cannot receive a stream");
+      return c.session.sendStream("human", bytes, { mime });
+    },
+    async sayAfterAnswer(askId, to, body) {
+      const c = asks.takeAnswerer(askId);
+      if (!c) return false;
+      const sent = await inbound.send(c, { to, kind: "request", word: "say", body, client_id: `approval:${askId}` } as Parameters<Inbound["send"]>[1]);
+      if (!sent.ok) throw new WordError(sent.error.code, sent.error.message);
+      return true;
+    },
+    clients: () => clients.info(),
+    viewing: () => clients.viewing(),
+    channels: () => clients.all().map((c) => ({ client: c.client, kind: c.channel, label: c.label, local: c.local })),
+    async focus(client) {
+      const c = client ? clients.get(client) : clients.current();
+      return c ? presenter.send(c, { surface: "chat", op: "focus", body: {} }) : { ok: false, error: { code: "offline", message: "the owner has no channel open" } };
+    },
+    close() { unsubscribe(); status.close(); },
+  };
+}

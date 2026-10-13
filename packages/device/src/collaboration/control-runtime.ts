@@ -255,7 +255,7 @@ export function createDeviceControlRuntime(options: DeviceControlRuntimeOptions)
           if (released || born !== generation || config !== JSON.stringify(now) || lease.current() !== undefined) throw new Error();
           capture.artifact&&readNativeArtifactVersion(capture.artifact,capture.listener!.executable);
           if(force||listenerMemo===undefined){
-            const listener = options.testing?.listener?.(now) ?? inspectUnixListener({socket:now.socket,executable:now.executable,pid:capture.listener!.pid},()=>verifyListenerMainEvidence(discoverControlListener(now),!!capture.artifact),force?undefined:capture.artifact??undefined);
+            const listener = options.testing?.listener?.(now) ?? (force ? verifyListenerMainEvidence(discoverControlListener(now),!!capture.artifact) : inspectUnixListener({socket:now.socket,executable:now.executable,pid:capture.listener!.pid},()=>verifyListenerMainEvidence(discoverControlListener(now),!!capture.artifact),capture.artifact??undefined));
             if (identity !== JSON.stringify(listener)) throw new Error();
             if(listenerMemo===undefined)queueMicrotask(()=>{listenerMemo=undefined;});
             listenerMemo=JSON.stringify(listener);

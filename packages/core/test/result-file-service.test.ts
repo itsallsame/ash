@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {ResultFileService,parseResultInput,type ResultFileInput} from '../src/collaboration/result-file-service';
+import {ResultFileService,parseResultInput,type ResultFileInput} from '../src/services/collaboration/result-file-service';
 const bytes=Buffer.from('approved result'),sha=createHash('sha256').update(bytes).digest('hex');
 const input:ResultFileInput={version:1,device_id:'device:pc',endpoint_id:'pc',authorization_generation:1,authorization_revision:'a'.repeat(64),action:'read_work',work:{node_id:'pc',endpoint_id:'pc',kind:'conversation',native_id:'work'},turn_id:'turn',source_message_id:'assistant',exact_href:'./result.txt'};
 function fixture(){let approved=false,revoked=false,corrupt=false,calls=0;const service=new ResultFileService({async resultCall(_i,cap,args){calls++;if(revoked)throw new Error('revoked');if(cap.endsWith('prepare'))return approved?{version:1,state:'ready',export_id:'export',asset:{kind:'asset',asset_id:'asset',version:1,sha256:sha,byte_length:bytes.length,media_type:'text/plain',display_name:'result.txt',provenance:[],expires_at:Date.now()+900000},expires_at:Date.now()+900000}:{version:1,state:'approval_required',pending_id:'pending',display_name:'result.txt',media_type:'text/plain',byte_length:bytes.length,expires_at:Date.now()+900000};return {version:1,export_id:'export',asset_id:'asset',asset_version:1,sha256:sha,byte_length:bytes.length,chunk_index:args.chunk_index,data_base64:(corrupt?Buffer.alloc(bytes.length):bytes).toString('base64')};}});return {service,approve(){approved=true;},revoke(){revoked=true;},corrupt(){corrupt=true;},calls:()=>calls};}

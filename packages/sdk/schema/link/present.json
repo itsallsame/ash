@@ -1,0 +1,462 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 present frame",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "notification"
+        },
+        "op": {
+          "const": "show"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "title",
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "notification"
+        },
+        "op": {
+          "const": "hide"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "notification"
+        },
+        "op": {
+          "const": "alert"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "island"
+        },
+        "op": {
+          "const": "query"
+        },
+        "body": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "status"
+        },
+        "op": {
+          "const": "frame"
+        },
+        "body": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "status"
+        },
+        "op": {
+          "const": "vscreen"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "open": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "open"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "status"
+        },
+        "op": {
+          "const": "lease"
+        },
+        "body": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "widget"
+        },
+        "op": {
+          "const": "state"
+        },
+        "body": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "widget"
+        },
+        "op": {
+          "const": "preview"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "card": {},
+            "size": {}
+          },
+          "required": [
+            "card",
+            "size"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "chat"
+        },
+        "op": {
+          "const": "focus"
+        },
+        "body": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "present"
+        },
+        "ch": {
+          "const": "human"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "surface": {
+          "const": "chat"
+        },
+        "op": {
+          "const": "open"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "target"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "ch",
+        "id",
+        "surface",
+        "op",
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

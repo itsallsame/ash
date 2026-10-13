@@ -3,8 +3,8 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 const root=fileURLToPath(new URL('../',import.meta.url));
-// The screen helper draws the island with them; Ash shows its face in the conversation notification.
-for(const app of ['android/screen','android/app']){
+// The island draws with them, and Ash shows its face in the conversation notification.
+for(const app of ['android/app']){
   const assets=join(root,app,'src/main/assets/ash-island');
   mkdirSync(join(assets,'avatars'),{recursive:true});
   for(const face of ['default','focused','listening','resting','success','thinking'])
@@ -54,5 +54,5 @@ internal object IslandTokens {
 ${lines.join('\n')}
 }
 `;
-mkdirSync(join(root,'android/screen/src/main/java/ai/ash/screen/island'),{recursive:true});
-writeFileSync(join(root,'android/screen/src/main/java/ai/ash/screen/island/IslandTokens.kt'),kotlin);
+mkdirSync(join(root,'android/app/src/main/java/ai/ash/screen/island'),{recursive:true});
+writeFileSync(join(root,'android/app/src/main/java/ai/ash/screen/island/IslandTokens.kt'),kotlin);

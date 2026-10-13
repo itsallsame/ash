@@ -17,9 +17,12 @@
 //     opt/node/                      node 22 linux-arm64
 //     opt/dsh/                       `npm install @deepseek-ai/dsh` for linux-arm64 (glibc)
 //     opt/ash/dsh-ash-control/       ash's DSH plugin (packages/dsh-ash-control)
+//     opt/ash/ash-cost/              the cost collector plugin (packages/ash-cost)
 //     opt/ash/ash-skills/            ash's skills plugin and persona templates (packages/ash-skills)
+//     opt/ash/patch.yml              the DSH patch that loads the three (tools/container-sources.mjs)
 //     etc/apt/sources.list.d/ubuntu.sources, root/.config/pip/pip.conf, root/.npmrc   mirrors
-//     etc/resolv.conf                placeholder; ash core rewrites it on every start
+//     etc/apt/apt.conf.d/99ash-lock  apt/dpkg wait for a held lock
+//     etc/resolv.conf                placeholder; the main body rewrites it with the host's DNS servers
 //     root/work/                     the agent workspace
 //     root/.dsh/                     DSH_HOME
 //
@@ -35,7 +38,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CONTAINER_PACKAGES, containerSourcesDigest } from "./container-sources.mjs";
+import { CONTAINER_APT_LOCK, CONTAINER_APT_LOCK_PATH, CONTAINER_PACKAGES, CONTAINER_PATCH, containerSourcesDigest, missingContainerFiles } from "./container-sources.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -89,12 +92,14 @@ Suites: noble-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 `,
+  // apt and dpkg wait up to five minutes for a lock, so DSH's own apt does not fail while ash installs python3.
+  [CONTAINER_APT_LOCK_PATH]: CONTAINER_APT_LOCK,
   "root/.config/pip/pip.conf": `[global]
 index-url = https://pypi.tuna.tsinghua.edu.cn/simple
 `,
   "root/.npmrc": `registry=https://registry.npmmirror.com/
 `,
-  // Rewritten by ash core on every start with the phone's current DNS servers.
+  // Rewritten by the main body (edges/body) with the host's DNS servers.
   "etc/resolv.conf": `nameserver 223.5.5.5
 nameserver 119.29.29.29
 `,
@@ -242,10 +247,12 @@ async function build() {
   }
   verifyDsh(nm, prune);
 
-  // 5. ash's DSH plugins: the ACP control bridge and ash's own skills (+ persona templates).
+  // 5. ash's DSH plugins (the ACP control bridge, the cost collector, ash's own skills with the persona templates) and the
+  //    patch that loads them: DSH is started with `--patch /opt/ash/patch.yml` and refuses to start without the file.
   for (const pkg of CONTAINER_PACKAGES) {
     fs.cpSync(path.join(ROOT, "packages", pkg), path.join(ubuntu, "opt/ash", pkg), { recursive: true });
   }
+  fs.writeFileSync(path.join(ubuntu, "opt/ash/patch.yml"), CONTAINER_PATCH, { mode: 0o644 });
 
   // 6. Mirrors, DNS placeholder, workspace and DSH home.
   for (const [rel, body] of Object.entries(MIRRORS)) {
@@ -326,37 +333,7 @@ function verifyDsh(nm, pruned) {
 
 /** The contract layout, checked before archiving. */
 function validate(work) {
-  const need = [
-    "proot/bin/proot",
-    "proot/lib/libtalloc.so.2",
-    "proot/lib/libandroid-shmem.so",
-    "proot/libexec/loader",
-    "ubuntu/etc/os-release",
-    "ubuntu/usr/bin/env",
-    "ubuntu/bin",
-    "ubuntu/opt/node/bin/node",
-    "ubuntu/opt/node/bin/npm",
-    "ubuntu/opt/dsh/node_modules/.bin/dsh",
-    "ubuntu/opt/ash/dsh-ash-control/index.mjs",
-    "ubuntu/opt/ash/dsh-ash-control/package.json",
-    "ubuntu/opt/ash/ash-skills/index.mjs",
-    "ubuntu/opt/ash/ash-skills/skills",
-    "ubuntu/opt/ash/ash-skills/persona",
-    "ubuntu/etc/apt/sources.list.d/ubuntu.sources",
-    "ubuntu/root/.config/pip/pip.conf",
-    "ubuntu/root/.npmrc",
-    "ubuntu/root/work",
-    "ubuntu/root/.dsh",
-    "ubuntu/etc/resolv.conf",
-  ];
-  const missing = need.filter((p) => {
-    try {
-      fs.lstatSync(path.join(work, p));
-      return false;
-    } catch {
-      return true;
-    }
-  });
+  const missing = missingContainerFiles(work);
   if (missing.length) throw new Error(`container layout incomplete:\n  ${missing.join("\n  ")}`);
   if (binaryKind(path.join(work, "ubuntu/opt/node/bin/node")) !== "aarch64") throw new Error("opt/node/bin/node is not aarch64");
   if (!/VERSION_ID="24\.04"/.test(fs.readFileSync(path.join(work, "ubuntu/etc/os-release"), "utf8"))) throw new Error("ubuntu is not 24.04");

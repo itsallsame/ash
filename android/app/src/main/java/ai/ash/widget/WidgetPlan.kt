@@ -12,7 +12,8 @@ data class WState(val revision: Long, val cards: Map<String, WCard>, val binding
 /** What one "Ash 卡片" widget shows. */
 sealed class CardView {
     object Unbound : CardView()
-    data class Expired(val card: WCard) : CardView()
+    /** The card's core stopped updating it: it is shown as it was, in grey, saying when (not cleared); [render] is null when it could not be drawn at all. */
+    data class Expired(val card: WCard, val render: CardRender?) : CardView()
     data class Broken(val card: WCard, val problem: String) : CardView()
     data class Show(val card: WCard, val render: CardRender) : CardView()
 }
@@ -43,11 +44,15 @@ object WidgetPlan {
         return WState(b.optLong("revision"), cards, bindings, previews)
     }
 
+    /** What a `widget` `state` present answers: the Ash widgets on the home screen, what each card drew, and that previews are served. */
+    fun stateResult(widgets: JSONArray, rendered: JSONArray): JSONObject =
+        JSONObject().put("widgets", widgets).put("rendered", rendered).put("previews", true)
+
     /** The bound card wins over the one picked on the phone only when the core knows a binding for this widget. */
     fun view(state: WState?, widgetId: Int, localCard: String?, now: Long): CardView {
         val cardId = state?.bindings?.get(widgetId.toString()) ?: localCard ?: return CardView.Unbound
         val card = state?.cards?.get(cardId) ?: return CardView.Unbound
-        if (card.expiresAt != null && card.expiresAt <= now) return CardView.Expired(card)
+        if (card.expiresAt != null && card.expiresAt <= now) return CardView.Expired(card, card.render)
         val render = card.render ?: return CardView.Broken(card, card.problem ?: "卡片内容缺失")
         return CardView.Show(card, render)
     }

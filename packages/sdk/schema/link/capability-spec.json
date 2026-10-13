@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 CapabilitySpec",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "maxLength": 128
+    },
+    "description": {
+      "type": "string"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    },
+    "effect": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "act",
+        "execute"
+      ]
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "none",
+        "outward",
+        "structure"
+      ]
+    },
+    "label": {
+      "type": "string"
+    },
+    "result_schema": {
+      "type": "object",
+      "properties": {}
+    },
+    "per_call_risk": {
+      "type": "boolean"
+    },
+    "foreground": {
+      "type": "boolean"
+    },
+    "callers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "agent",
+          "app",
+          "kernel"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "input_schema",
+    "effect",
+    "risk"
+  ],
+  "additionalProperties": false
+}

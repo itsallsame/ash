@@ -1,0 +1,16 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 123456 Realtime: 123456
+
+** MEMINFO in pid 9034 [ai.ash.kernel] **
+                   Pss  Private  Private  SwapPss      Rss     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty    Total     Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------   ------   ------
+  Native Heap    81234    81100        0        0    82000    90000    81234     8000
+           TOTAL   214567   150000    20000     1234   300000   120000   100000    12000
+
+ App Summary
+                       Pss(KB)                        Rss(KB)
+                        ------                         ------
+           Java Heap:     1234                           2345
+         Native Heap:    81234                          82000
+       TOTAL PSS:   214,567            TOTAL RSS:   300,000       TOTAL SWAP PSS:     1,234

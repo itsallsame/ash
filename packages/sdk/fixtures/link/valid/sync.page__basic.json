@@ -1,0 +1,11 @@
+{
+  "t": "sync.page",
+  "sid": "y1",
+  "messages": [
+    {
+      "id": "m1",
+      "seq": 1
+    }
+  ],
+  "end": true
+}

@@ -1,0 +1,95 @@
+{
+  "$comment": "Shared by the web and Android letter-avatar tests. letter = first grapheme cluster of the trimmed name (a single ASCII a-z is upper-cased), \"?\" when empty. tone = sum of the code points of the trimmed name, mod 6, indexing the six helper colours of tokens.json in table order (purple, blue, teal, green, amber, rose).",
+  "cases": [
+    {
+      "name": "小研",
+      "letter": "小",
+      "tone": 1
+    },
+    {
+      "name": "阿福",
+      "letter": "阿",
+      "tone": 0
+    },
+    {
+      "name": "老王",
+      "letter": "老",
+      "tone": 2
+    },
+    {
+      "name": "记账员",
+      "letter": "记",
+      "tone": 0
+    },
+    {
+      "name": "Ash",
+      "letter": "A",
+      "tone": 2
+    },
+    {
+      "name": "a",
+      "letter": "A",
+      "tone": 1
+    },
+    {
+      "name": "小",
+      "letter": "小",
+      "tone": 5
+    },
+    {
+      "name": "翻译",
+      "letter": "翻",
+      "tone": 0
+    },
+    {
+      "name": "Zed",
+      "letter": "Z",
+      "tone": 3
+    },
+    {
+      "name": "émile",
+      "letter": "é",
+      "tone": 2
+    },
+    {
+      "name": "😀笑",
+      "letter": "😀",
+      "tone": 3
+    },
+    {
+      "name": "👩‍💻助手",
+      "letter": "👩‍💻",
+      "tone": 3
+    },
+    {
+      "name": "🇨🇳旗",
+      "letter": "🇨🇳",
+      "tone": 0
+    },
+    {
+      "name": "𠮷野",
+      "letter": "𠮷",
+      "tone": 1
+    },
+    {
+      "name": "école",
+      "letter": "é",
+      "tone": 5
+    },
+    {
+      "name": "  研 ",
+      "letter": "研",
+      "tone": 2
+    },
+    {
+      "name": "",
+      "letter": "?",
+      "tone": 0
+    },
+    {
+      "name": "   ",
+      "letter": "?",
+      "tone": 0
+    }
+  ]
+}

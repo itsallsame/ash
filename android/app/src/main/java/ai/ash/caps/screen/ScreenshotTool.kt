@@ -1,0 +1,53 @@
+package ai.ash.caps.screen
+
+import ai.ash.caps.CapResult
+import ai.ash.caps.Capability
+import ai.ash.caps.Effect
+import ai.ash.caps.Risk
+import ai.ash.caps.prop
+import ai.ash.caps.result
+import ai.ash.caps.schema
+import android.content.Context
+import android.os.Environment
+import android.util.Base64
+import org.json.JSONObject
+import java.io.File
+
+/** screen.screenshot: the screen side captures ([ScreenCapabilities.capture]), Ash writes the file, with its own storage access. */
+internal object ScreenshotTool : Capability {
+    override val name = "screen.screenshot"
+    override val description = "Save a full-resolution PNG screenshot of the phone's screen to a file and return its path (the image itself is " +
+        "not shown to you — use screen.see to look at the screen). Default location: /sdcard/Ash/screenshots/screen-<time>.png " +
+        "(app-private storage if shared storage isn't writable). Needs Android 11+."
+    override val schema: JSONObject = schema(
+        "path" to prop("string", "optional absolute file path to write (parent directories are created)"),
+        "display" to prop("integer", "display id to capture (default 0 = the main screen)"),
+    )
+    override val result: JSONObject = result("path:string!", "width:integer", "height:integer", "bytes:integer")
+    override val effect = Effect.READ
+    override val risk = Risk.NONE
+    override val label = "在截屏"
+    override fun available(ctx: Context) = ScreenCapabilities.canCapture(ctx)
+
+    override fun run(ctx: Context, args: JSONObject): CapResult {
+        val data = ScreenCapabilities.capture(args.optInt("display", 0))
+        val png = Base64.decode(data.optString("png"), Base64.NO_WRAP)
+        val p = args.optString("path").trim()
+        val out = if (p.isNotEmpty()) File(p) else File(dir(ctx), "screen-${System.currentTimeMillis()}.png")
+        out.parentFile?.mkdirs()
+        out.writeBytes(png)
+        val w = data.optInt("width"); val h = data.optInt("height")
+        return CapResult.text("Screenshot saved: ${out.absolutePath} (${w}x$h px, ${out.length()} bytes)",
+            JSONObject().put("path", out.absolutePath).put("width", w).put("height", h).put("bytes", out.length()))
+    }
+
+    /** Shared <sdcard>/Ash/screenshots/ (readable by anyone the file is handed to), else app-private files/screenshots/. */
+    @Suppress("DEPRECATION")
+    private fun dir(ctx: Context): File {
+        runCatching {
+            val d = File(File(Environment.getExternalStorageDirectory(), "Ash"), "screenshots")
+            if ((d.exists() || d.mkdirs()) && d.canWrite()) return d
+        }
+        return File(ctx.filesDir, "screenshots").apply { mkdirs() }
+    }
+}

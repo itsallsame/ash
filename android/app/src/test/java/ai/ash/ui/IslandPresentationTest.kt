@@ -15,6 +15,13 @@ class IslandPresentationTest {
         assertEquals("reply", value.getString("kind")); assertEquals(frame.reply, value.getString("reply"))
         assertTrue(value.getBoolean("mayClose"))
     }
+    @Test fun aCompletedTurnWithNothingSaidProjectsAnEmptyReplyTheIslandDoesNotOpenFor() {
+        val value = IslandPresentation.project(frame.copy(reply = "", text = "本轮已结束"), 5, false, true, false, null, emptyMap(), 2000)
+        assertEquals("reply", value.getString("kind")); assertEquals("", value.getString("reply"))
+        assertFalse(ai.ash.screen.island.IslandRules.opensCard(value.getString("kind"), waitingOnOwner = false))
+        assertTrue(ai.ash.screen.island.IslandRules.settles(value.getString("kind")))
+        assertTrue(value.getBoolean("mayClose"))
+    }
     @Test fun closeCannotDismissPendingApprovalOrCancelAnything() {
         val value = IslandPresentation.project(frame.copy(cards = listOf(card)), 5, false, true, false, null, emptyMap(), 2000)
         assertFalse(value.getBoolean("mayClose"))
@@ -37,10 +44,28 @@ class IslandPresentationTest {
         assertEquals("working", value.getString("kind")); assertEquals("在看网页", value.getString("activity"))
         assertFalse(value.has("steps")); assertFalse(value.getBoolean("mayClose"))
     }
+    @Test fun theComposerIsOfferedOnlyWhenTheFrameNamesAnAgent() {
+        assertFalse(IslandPresentation.project(frame, 5, false, true, false, null, emptyMap(), 2000).getBoolean("canSend"))
+        assertTrue(IslandPresentation.project(frame.copy(agent = "agent:writer"), 5, false, true, false, null, emptyMap(), 2000).getBoolean("canSend"))
+        assertFalse(IslandPresentation.resident(false).getBoolean("canSend"))
+    }
+    @Test fun aTaskFrameTakesItsAgentFromTheFrameAndNeverGuessesOne() {
+        fun raw() = org.json.JSONObject().put("session", "s").put("revision", 1).put("turn", org.json.JSONObject.NULL).put("started_at", 0).put("state", "idle")
+            .put("text", "").put("steps", org.json.JSONArray()).put("can_stop", false)
+        assertEquals("", TaskFrame.parse(raw()).agent)
+        assertEquals("agent:writer", TaskFrame.parse(raw().put("agent", "agent:writer")).agent)
+        assertEquals("", TaskFrame.parse(raw().put("agent", "somebody")).agent)
+    }
     @Test fun residentEntryCarriesNoTaskContent() {
-        val value = IslandPresentation.resident()
+        val value = IslandPresentation.resident(true)
         assertEquals("resident", value.getString("kind"))
         assertEquals("", value.getString("turn")); assertEquals("", value.getString("reply")); assertEquals("", value.getString("activity"))
         assertEquals(0, value.getJSONArray("cards").length()); assertFalse(value.getBoolean("canStop"))
+    }
+    @Test fun theScreenLeaseRidesOnBothTheTaskAndTheResidentEntry() {
+        assertEquals("", IslandPresentation.project(frame, 5, false, true, false, null, emptyMap(), 2000).getString("lease"))
+        assertEquals("14:39", IslandPresentation.project(frame, 5, false, true, false, null, emptyMap(), 2000, lease = "14:39").getString("lease"))
+        assertEquals("", IslandPresentation.resident(true).getString("lease"))
+        assertEquals("0:59", IslandPresentation.resident(true, "0:59").getString("lease"))
     }
 }

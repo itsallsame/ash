@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { JsonProcess, type Command, type Frame } from "./process";
+import { childEnv, JsonProcess, type Command, type Frame } from "./process";
 import { checkTools, type AgentSession, type OpenOptions } from "./types";
 import { AshTools } from "./mcp";
 import { redactText } from "../redact";
@@ -31,7 +31,7 @@ export class CodexSession implements AgentSession {
     };
   }
 
-  static async open(options: OpenOptions, command: Command = { command: "codex", args: ["app-server", "--stdio"] }): Promise<CodexSession> {
+  static async open(options: OpenOptions, command: Command = { command: "codex", args: ["app-server", "--stdio"], env: childEnv(options.env) }): Promise<CodexSession> {
     const session = new CodexSession(options, command);
     try {
       await session.process.request("initialize", { clientInfo: { name: "ash", version: "0.1.0" }, capabilities: { experimentalApi: true } });
@@ -93,6 +93,11 @@ export class CodexSession implements AgentSession {
   async select(model?: string, effort?: string): Promise<void> {
     if (this.active || this.unavailable) throw new Error("session is not idle");
     this.model = model; this.effort = effort;
+  }
+  async compact(): Promise<{ compacted: boolean; detail?: string }> {
+    if (this.active || this.unavailable) throw new Error("session is not idle");
+    await this.process.request("thread/compact/start", { threadId: this.thread });
+    return { compacted: true, detail: "compaction requested" };
   }
   async close(): Promise<void> { await this.process.close(); }
 

@@ -1,0 +1,10 @@
+{
+  "t": "present",
+  "ch": "human",
+  "id": "p6",
+  "surface": "widget",
+  "op": "state",
+  "body": {
+    "widgets": []
+  }
+}

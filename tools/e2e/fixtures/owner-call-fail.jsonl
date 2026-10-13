@@ -1,0 +1,3 @@
+{"at":"2026-10-10T17:26:43.901Z","kind":"conn","state":"welcomed","hand":"HAND","client":"client:REJzkFedHpWz","local":true}
+{"at":"2026-10-10T17:26:43.908Z","kind":"result","to":"service:nothing","word":"status","ok":false,"code":"offline","message":"service:nothing is not connected"}
+{"at":"2026-10-10T17:26:43.908Z","kind":"conn","state":"closed","code":1000,"reason":"stopped","reconnect":false}

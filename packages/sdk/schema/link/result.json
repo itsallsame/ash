@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 result frame",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "result"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "ok": {
+          "const": true
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "text"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "image"
+                  },
+                  "mime": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "b64": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "mime",
+                  "b64"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "resource"
+                  },
+                  "stream": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "mime": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "type",
+                  "stream",
+                  "mime",
+                  "size"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "data": {}
+      },
+      "required": [
+        "t",
+        "id",
+        "ok",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "result"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "bad_request",
+                "unauthorized",
+                "forbidden",
+                "not_found",
+                "denied",
+                "cancelled",
+                "timeout",
+                "offline",
+                "result_unknown",
+                "conflict",
+                "too_large",
+                "unavailable",
+                "failed",
+                "internal"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "detail": {},
+            "recovery_hint": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "id",
+        "ok",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

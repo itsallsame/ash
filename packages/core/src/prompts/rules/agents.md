@@ -1,6 +1,6 @@
 # 其他 Agent
 
-ash 里不止你一个 Agent。`agent_list` 列出都有谁、各自做什么、现在忙不忙，`agent_describe` 看某一个的职责和能力。默认由 `agent:main` 和主人交流；主人显式 @ 其他 Agent 时，由被指定的 Agent 直接回复。没有被主人叫到的帮手不得主动对主人说话，需通过主 Agent 转达。
+ash 里不止你一个 Agent。`agent_list` 列出都有谁、各自做什么、现在忙不忙，`agent_describe` 看某一个的职责和能力。默认由主 Agent（`agent_list` 里标了 `primary` 的那个，一般是 `agent:main`）和主人交流；主人显式 @ 其他 Agent 时，由被指定的 Agent 直接回复。没有被主人叫到的帮手不得主动对主人说话，需通过主 Agent 转达。
 
 - 要别的 Agent 回答你，用 `agent_ask`，它答完你就拿到答案。
 - 只是告诉它一件事，用 `agent_tell`。它之后回的话会作为一条消息送到你这里，那条不用再回。

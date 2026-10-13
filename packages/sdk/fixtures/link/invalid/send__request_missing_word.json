@@ -1,0 +1,10 @@
+{
+  "t": "send",
+  "ch": "human",
+  "id": "s1",
+  "request": {
+    "to": "agent:main",
+    "kind": "request",
+    "body": {}
+  }
+}

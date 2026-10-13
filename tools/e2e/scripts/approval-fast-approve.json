@@ -1,0 +1,69 @@
+{
+  "name": "approval fast path: the owner approves in 3 s, the same call gets the result in the same turn",
+  "settings": {
+    "approval.fast_seconds": 30
+  },
+  "timeout_s": 90,
+  "steps": [
+    {
+      "id": "a1",
+      "call": {
+        "member": "service:gate",
+        "word": "mode.set",
+        "body": {
+          "mode": "auto"
+        },
+        "purpose": "device verification: approval fast path"
+      }
+    }
+  ],
+  "owner": [
+    {
+      "name": "approve",
+      "when": {
+        "approval": {
+          "word": "mode.set"
+        }
+      },
+      "delay_ms": 3000,
+      "do": [
+        {
+          "answer": "once"
+        }
+      ]
+    }
+  ],
+  "expect": [
+    {
+      "step": "a1",
+      "ok": true,
+      "data": {
+        "mode": "auto"
+      },
+      "min_ms": 2500,
+      "max_ms": 15000
+    },
+    {
+      "messages": {
+        "from": "person:owner",
+        "to": "agent:script",
+        "text": "批准"
+      },
+      "count": 0
+    },
+    {
+      "messages": {
+        "from": "agent:script",
+        "word": "pending.redeem"
+      },
+      "count": 0
+    },
+    {
+      "messages": {
+        "from": "agent:script",
+        "word": "turn.started"
+      },
+      "count": 1
+    }
+  ]
+}

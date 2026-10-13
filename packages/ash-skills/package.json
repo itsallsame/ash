@@ -4,5 +4,5 @@
   "private": true,
   "type": "module",
   "main": "index.mjs",
-  "files": ["index.mjs", "skills", "persona"]
+  "files": ["index.mjs", "skills", "persona", "agents", "organs"]
 }

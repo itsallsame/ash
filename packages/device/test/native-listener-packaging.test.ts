@@ -7,6 +7,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renam
 import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
+import { DEVICE_VERSION } from '../src/install';
 
 test('offline native-target archive contains verified fixed listener release', { skip: process.platform !== 'darwin', timeout: 40_000 }, async () => {
   const root = mkdtempSync('/tmp/ash-npkg.'), repository = process.cwd();
@@ -39,7 +40,7 @@ test('offline native-target archive contains verified fixed listener release', {
     // requires its installed libnode; use a child-only library path for this
     // same-host test. This does NOT establish a portable/self-contained release.
     const localEnv = { ...process.env, DYLD_LIBRARY_PATH: resolve(dirname(realpathSync(process.execPath)), '../lib') };
-    assert.equal(execFileSync(bundledNode, [join(release, 'ash-device.mjs'), '--version'], { env: localEnv, encoding: 'utf8', timeout: 15_000 }).trim(), '0.1.0');
+    assert.equal(execFileSync(bundledNode, [join(release, 'ash-device.mjs'), '--version'], { env: localEnv, encoding: 'utf8', timeout: 15_000 }).trim(), DEVICE_VERSION);
     assert.equal(JSON.parse(readFileSync(join(release, 'release.json'), 'utf8')).native_listener_evidence, 8);
     // Runtime wiring is a separate change. Exercise the exact production loader
     // from the extracted release location, with the archived artifact pair.

@@ -1,5 +1,7 @@
 package ai.ash.host
 
+import ai.ash.human.HumanSend
+import ai.ash.link.PresentOutcome
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.app.RemoteInput
@@ -20,6 +22,8 @@ object Present {
     private const val ACTION = "action:"
     private const val CONSUMED = "consumed:"
     private const val RETIRED = "retired:"
+    /** Who a retired presentation's reply goes to: a reply typed into the conversation notification still counts after it left it. */
+    private const val TARGET = "target:"
     private const val AT = "at:"
     private val kinds = setOf("reply", "approval", "due", "offer", "heads_up")
     private val choices = setOf("once", "always", "deny")
@@ -36,74 +40,83 @@ object Present {
         return number.toLong()
     }
 
-    /** `to` identifies the original ask sender; required to route an approval answer correctly. */
-    fun show(ctx: Context, input: JSONObject): Pair<Int, JSONObject> {
+    private fun refuse(code: String, why: String) = PresentOutcome(false, null, code, why)
+
+    /** A `present` of the `notification` surface, op `show` (`HostPresentationV2`). `reply_target` identifies the original ask sender; required to route an approval answer correctly. */
+    fun show(ctx: Context, input: JSONObject): PresentOutcome {
         val id = (input.opt("id") as? String)?.trim() ?: ""
         val kind = input.opt("kind") as? String ?: ""
-        if (id.isEmpty() || id.length > 128 || kind !in kinds) return 400 to JSONObject().put("error", "invalid_presentation")
+        if (id.isEmpty() || id.length > 128 || kind !in kinds) return refuse("bad_request", "invalid_presentation")
         val allowed = setOf("id", "kind", "title", "text", "options", "expires_at", "reply_to", "reply_target", "human_kind", "allow_custom", "alert")
-        if (input.keys().asSequence().any { it !in allowed }) return 400 to JSONObject().put("error", "unsupported_field")
+        if (input.keys().asSequence().any { it !in allowed }) return refuse("bad_request", "unsupported_field")
         if (!input.has("title") || !input.has("text") || input.opt("title") !is String || input.opt("text") !is String)
-            return 400 to JSONObject().put("error", "invalid_text")
+            return refuse("bad_request", "invalid_text")
         val record = JSONObject(input.toString())
         record.put("id", id).put("kind", kind)
         if (kind == "approval") {
             val question = record.optString("human_kind") == "question"
             if (record.has("human_kind") && !question || record.has("allow_custom") && (!question || record.opt("allow_custom") !is Boolean))
-                return 400 to JSONObject().put("error", "invalid_question_metadata")
-            val opts = record.optJSONArray("options") ?: return 400 to JSONObject().put("error", "approval_options_required")
-            if (opts.length() == 0) return 400 to JSONObject().put("error", "approval_options_required")
+                return refuse("bad_request", "invalid_question_metadata")
+            val opts = record.optJSONArray("options") ?: return refuse("bad_request", "approval_options_required")
+            if (opts.length() == 0) return refuse("bad_request", "approval_options_required")
             val ids = mutableSetOf<String>()
             for (i in 0 until opts.length()) {
-                val option = opts.optJSONObject(i) ?: return 400 to JSONObject().put("error", "invalid_option")
-                val choice = option.opt("id") as? String ?: return 400 to JSONObject().put("error", "invalid_option")
-                val label = option.opt("label") as? String ?: return 400 to JSONObject().put("error", "invalid_option")
-                if (option.length() != 2 || (if (question) !Regex("^[A-Za-z0-9_-]{1,64}$").matches(choice) else choice !in choices) || !ids.add(choice) || label.isBlank()) return 400 to JSONObject().put("error", "invalid_option")
+                val option = opts.optJSONObject(i) ?: return refuse("bad_request", "invalid_option")
+                val choice = option.opt("id") as? String ?: return refuse("bad_request", "invalid_option")
+                val label = option.opt("label") as? String ?: return refuse("bad_request", "invalid_option")
+                if (option.length() != 2 || (if (question) !Regex("^[A-Za-z0-9_-]{1,64}$").matches(choice) else choice !in choices) || !ids.add(choice) || label.isBlank()) return refuse("bad_request", "invalid_option")
             }
-            if (if (question) ids.size > 8 else !PresentRoutes.notificationOptionsValid(ids.toList())) return 400 to JSONObject().put("error", "invalid_options")
-            if ((record.opt("reply_to") as? String).isNullOrBlank() || !record.has("expires_at")) return 400 to JSONObject().put("error", "reply_route_required")
-            // The target comes from the delivery service, never from a notification intent.
-            if (!PresentRoutes.member.matches(record.opt("reply_target") as? String ?: "")) return 400 to JSONObject().put("error", "ask_sender_required")
-        } else if (record.has("options") || record.has("reply_target") || record.has("human_kind") || record.has("allow_custom")) return 400 to JSONObject().put("error", "unexpected_reply_route")
-        if (record.has("reply_to") && (record.opt("reply_to") as? String).isNullOrBlank()) return 400 to JSONObject().put("error", "invalid_reply_to")
-        if (record.has("alert") && (kind != "reply" || record.opt("alert") !in setOf("quiet", "strong"))) return 400 to JSONObject().put("error", "invalid_alert")
-        if (record.has("expires_at") && positiveSafeInteger(record.opt("expires_at")) == null) return 400 to JSONObject().put("error", "invalid_expiry")
+            if (if (question) ids.size > 8 else !PresentRoutes.notificationOptionsValid(ids.toList())) return refuse("bad_request", "invalid_options")
+            if ((record.opt("reply_to") as? String).isNullOrBlank() || !record.has("expires_at")) return refuse("bad_request", "reply_route_required")
+        } else if (record.has("options") || record.has("human_kind") || record.has("allow_custom")) return refuse("bad_request", "unexpected_reply_route")
+        // Every notification says who its answer or reply goes to (the ask's sender, or the agent that spoke); it comes from
+        // the delivery service, never from a notification intent.
+        if (!PresentRoutes.member.matches(record.opt("reply_target") as? String ?: "")) return refuse("bad_request", "reply_target_required")
+        if (record.has("reply_to") && (record.opt("reply_to") as? String).isNullOrBlank()) return refuse("bad_request", "invalid_reply_to")
+        if (record.has("alert") && (kind != "reply" || record.opt("alert") !in setOf("quiet", "strong"))) return refuse("bad_request", "invalid_alert")
+        if (record.has("expires_at") && positiveSafeInteger(record.opt("expires_at")) == null) return refuse("bad_request", "invalid_expiry")
         return serial.run {
             val prior = item(ctx, id)
             var duplicate = false
             when (PresentLifecycle.admission(prior?.toString(), record.toString(), prefs(ctx).getBoolean(RETIRED + id, false))) {
-                PresentAdmission.RETIRED -> return 409 to JSONObject().put("error", "presentation_id_retired")
-                PresentAdmission.CONFLICT -> return 409 to JSONObject().put("error", "presentation_id_reused")
+                PresentAdmission.RETIRED -> return refuse("conflict", "presentation_id_retired")
+                PresentAdmission.CONFLICT -> return refuse("conflict", "presentation_id_reused")
                 PresentAdmission.DUPLICATE -> duplicate = true
                 PresentAdmission.NEW -> {
                     if (prefs(ctx).getBoolean(CONSUMED + id, false))
-                        return 409 to JSONObject().put("error", "presentation_id_consumed")
+                        return refuse("conflict", "presentation_id_consumed")
                 }
             }
             if (!duplicate && !prefs(ctx).edit().putString(ITEM + id, record.toString()).putLong(AT + id, System.currentTimeMillis()).commit())
-                return 500 to JSONObject().put("error", "store_failed")
+                return refuse("internal", "store_failed")
             if (expired(record)) {
-                if (!retireLocked(ctx, id)) return 500 to JSONObject().put("error", "store_failed")
-                return 200 to JSONObject().put("ok", true).put("expired", true)
+                if (!retireLocked(ctx, id)) return refuse("internal", "store_failed")
+                return PresentOutcome(true, JSONObject().put("expired", true))
             }
             // A reply while its task still runs only updates the conversation; anything else rings.
             if (PresentChat.isChat(kind)) refreshChatLocked(ctx, ring = !duplicate && record.optString("alert") != "quiet")
             else if (PresentLifecycle.restore(prefs(ctx).getBoolean(RETIRED + id, false), prefs(ctx).getBoolean(CONSUMED + id, false)))
                 Notifications.present(ctx, record)
             if (record.has("expires_at")) scheduleExpiry(ctx, id, record.optLong("expires_at"))
-            200 to JSONObject().put("ok", true).apply { if (duplicate) put("duplicate", true) }
+            PresentOutcome(true, JSONObject().apply { if (duplicate) put("duplicate", true) })
         }
     }
 
     /** Caller holds serial so a later render cannot overtake the cancellation. */
     private fun retireLocked(ctx: Context, id: String): Boolean {
         val chat = item(ctx, id)?.optString("kind")?.let(PresentChat::isChat) == true
-        val stored = prefs(ctx).edit().remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true).commit()
+        val stored = retire(ctx, prefs(ctx).edit(), id).commit()
         if (!stored) return false
         Notifications.hidePresent(ctx, id)
         cancelExpiry(ctx, id)
         if (chat) refreshChatLocked(ctx, ring = false)
         return true
+    }
+
+    /** Retires [id] in [edit], keeping where its reply would go. */
+    private fun retire(ctx: Context, edit: android.content.SharedPreferences.Editor, id: String): android.content.SharedPreferences.Editor {
+        item(ctx, id)?.optString("reply_target")?.takeIf { it.isNotEmpty() }?.let { edit.putString(TARGET + id, it) }
+        return edit.remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true)
     }
 
     fun hide(ctx: Context, id: String): Boolean = serial.run { retireLocked(ctx, id) }
@@ -123,7 +136,7 @@ object Present {
 
     private fun clearChatLocked(ctx: Context) {
         val edit = prefs(ctx).edit()
-        for (id in chatIds(ctx)) edit.remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true)
+        for (id in chatIds(ctx)) retire(ctx, edit, id)
         edit.commit()
         Notifications.presentChat(ctx, emptyList(), ring = false)
     }
@@ -138,7 +151,7 @@ object Present {
         val (keep, drop) = PresentChat.split(live.map { it.first to it.third })
         if (drop.isNotEmpty()) {
             val edit = prefs(ctx).edit()
-            for (id in drop) edit.remove(ITEM + id).remove(AT + id).putBoolean(RETIRED + id, true)
+            for (id in drop) retire(ctx, edit, id)
             edit.commit()
         }
         val byId = live.associateBy { it.first }
@@ -171,42 +184,28 @@ object Present {
         serial.run {
             // A reply typed into the conversation notification still counts after its message was cleared from it.
             val record = item(ctx, id) ?: if (replyText != null && prefs(ctx).getBoolean(RETIRED + id, false))
-                JSONObject().put("id", id).put("kind", "reply") else return
+                JSONObject().put("id", id).put("kind", "reply").put("reply_target", prefs(ctx).getString(TARGET + id, null) ?: return) else return
             if (expired(record) || prefs(ctx).getBoolean(CONSUMED + id, false)) return
             val route = try { when (record.optString("kind")) {
-                "approval" -> {
-                    if (record.optString("human_kind") == "question") PresentRoutes.question(record.getString("reply_to"), record.getString("reply_target"),
-                        offeredSet(record), choice, replyText, record.optBoolean("allow_custom"), record.getLong("expires_at"), System.currentTimeMillis())
-                    else {
-                        if (choice == null || !offered(record, choice)) return
-                        PresentRoutes.approval(record.getString("reply_to"), record.getString("reply_target"),
-                            offeredSet(record), choice, record.getLong("expires_at"), System.currentTimeMillis())
-                    }
-                }
+                "approval" -> PresentRoutes.answer(record.getString("reply_to"), record.getString("reply_target"), offeredSet(record), choice, replyText,
+                    record.optBoolean("allow_custom"), record.getLong("expires_at"), System.currentTimeMillis())
                 "reply", "offer", "heads_up" -> {
-                    PresentRoutes.reply(replyText ?: return)
+                    PresentRoutes.reply(record.getString("reply_target"), replyText ?: return)
                 }
                 else -> return
             } } catch (_: IllegalArgumentException) { return }
-            val outbound = JSONObject().put("to", route.to).put("kind", route.kind).put("word", route.word)
-                .put("body", if (route.choice != null) JSONObject().put("ok", true).put("result", JSONObject().put("choice", route.choice).apply { if (route.text != null) put("text", route.text) })
-                    else JSONObject().put("text", route.text))
-            if (route.replyTo != null) outbound.put("reply_to", route.replyTo)
             val actionId = UUID.randomUUID().toString()
-            outbound.put("client_id", actionId)
+            // An answer is the response to the hub's `ask`, the same from every surface; a reply is a `say` to the agent that spoke.
+            val outbound = if (route.kind == "response") PresentRoutes.answerMessage(route, PresentRoutes.answerClientId(route.replyTo!!))
+                else JSONObject().put("to", route.to).put("kind", route.kind).put("word", route.word).put("body", JSONObject().put("text", route.text)).put("client_id", actionId)
             val entry = JSONObject().put("id", actionId).put("presentation", id).put("payload", outbound).put("state", "queued")
             if (!prefs(ctx).edit().putString(ACTION + actionId, entry.toString()).putBoolean(CONSUMED + id, true).commit()) return
         }
         // Answering the conversation reads it, as opening the app would.
         if (PresentChat.isChat(item(ctx, id)?.optString("kind") ?: "")) clearChat(ctx) else Notifications.hidePresent(ctx, id)
         cancelExpiry(ctx, id)
-        CoreService.start(ctx)
+        KernelLauncher.start(ctx)
         flushAsync(ctx)
-    }
-
-    private fun offered(record: JSONObject, choice: String): Boolean {
-        val options = record.optJSONArray("options") ?: return false
-        return (0 until options.length()).any { options.optJSONObject(it)?.optString("id") == choice }
     }
 
     private fun offeredSet(record: JSONObject): Set<String> {
@@ -241,11 +240,10 @@ object Present {
             }
         }
         PresentOutbox(store, { raw ->
-            try { CoreClient(ctx).sendPresentAction(JSONObject(raw)); PresentDelivery.Accepted }
-            catch (e: CoreClient.HttpError) {
-                if (e.status in 400..499) PresentDelivery.Rejected("core rejected action (${e.status})")
-                else { Log.w(TAG, "core temporarily unavailable", e); PresentDelivery.Retry }
-            } catch (e: Exception) { Log.w(TAG, "will retry action after core returns", e); PresentDelivery.Retry }
+            // Sent over the human channel; a retry carries the same client_id, so the kernel counts it once.
+            try { HumanSend.send(ctx, JSONObject(raw)); PresentDelivery.Accepted }
+            catch (e: HumanSend.Refused) { if (e.final) PresentDelivery.Rejected(e.code) else PresentDelivery.Retry }
+            catch (e: Exception) { Log.w(TAG, "will retry action after the kernel returns", e); PresentDelivery.Retry }
         }, { Notifications.presentFailure(ctx, it.presentation) }).flush()
     }
 

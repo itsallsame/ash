@@ -21,7 +21,7 @@ async function fixture(external=false){
  const p=new JsonProcess({command:f.executable,args:['app-server','--listen',`unix://${socket}`],env:{HOME:f.osHome,CODEX_HOME:f.home,PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8'}},f.home);
  const until=Date.now()+5000;while(!existsSync(socket)&&Date.now()<until)await pause();
  assert(existsSync(socket),'own native socket ready');
- return {...f,root,socket,p,capture:(current=()=>undefined)=>captureNativeReadDiscoveryInput({stateDir:f.state,endpointId:'fixture',codexHome:f.home,current}),close:async()=>{await p.close();if(!p.child.stdout.closed||!p.child.stderr.closed)await new Promise<void>(r=>p.child.once('close',()=>r()));rmSync(root,{recursive:true,force:true});}};
+ return {...f,root,socket,p,capture:(current=()=>undefined)=>captureNativeReadDiscoveryInput({stateDir:f.state,endpointId:'fixture',codexHome:f.home,current,testing:{accountIdentity:{account_id:'synthetic-fixture-account',subject:'synthetic-fixture-subject'}}}),close:async()=>{await p.close();if(!p.child.stdout.closed||!p.child.stderr.closed)await new Promise<void>(r=>p.child.once('close',()=>r()));rmSync(root,{recursive:true,force:true});}};
  }catch(e){rmSync(root,{recursive:true,force:true});throw e;}
 }
 test('existing fixed native endpoint proves default and external physical SQLite sources without a new reader', {skip:process.platform!=='darwin',timeout:60000},async()=>{
@@ -41,7 +41,7 @@ test('native-issued tokens reject forged inputs and candidates and missing endpo
  const root=realpathSync(mkdtempSync('/tmp/ash-rrealm.'));try{assert.throws(()=>captureNativeReadDiscoveryInput({stateDir:root,endpointId:'fixture',codexHome:root,current:()=>undefined}),{code:process.platform==='darwin'?'source_required':'unsupported'});}finally{rmSync(root,{recursive:true,force:true});}
 });
 test('unknown artifact fails before any endpoint connection', {skip:process.platform!=='darwin'},()=>{
- const root=realpathSync(mkdtempSync('/tmp/ash-rrealm.'));try{const exe=join(root,'untrusted');writeFileSync(exe,'#!/bin/sh\necho codex-cli 0.162.0-alpha.17.2\n',{mode:0o700});writeFileSync(join(root,'collaboration-control-runtime.json'),JSON.stringify({version:1,endpoint_id:'fixture',socket:join(root,'absent.sock'),executable:exe,supportedVersions:[native.FIXED_VERSION]}),{mode:0o600});assert.throws(()=>captureNativeReadDiscoveryInput({stateDir:root,endpointId:'fixture',codexHome:root,current:()=>undefined}),{code:'unsupported'});}finally{rmSync(root,{recursive:true,force:true});}
+ const root=realpathSync(mkdtempSync('/tmp/ash-rrealm.'));try{const exe=join(root,'untrusted');writeFileSync(exe,'#!/bin/sh\necho codex-cli 0.162.0-alpha.17.2\n',{mode:0o700});writeFileSync(join(root,'collaboration-control-runtime.json'),JSON.stringify({version:1,endpoint_id:'fixture',socket:join(root,'absent.sock'),executable:exe,supportedVersions:[native.FIXED_VERSION]}),{mode:0o600});assert.throws(()=>captureNativeReadDiscoveryInput({stateDir:root,endpointId:'fixture',codexHome:root,current:()=>undefined,testing:{accountIdentity:{account_id:'synthetic-fixture-account',subject:'synthetic-fixture-subject'}}}),{code:'unsupported'});}finally{rmSync(root,{recursive:true,force:true});}
 });
 test('config response await replacement fails closed and cannot revive the old input', {skip:process.platform!=='darwin',timeout:30000},async()=>{
  const f=await fixture();let input:any;const original=WebSocket.prototype.send;try{

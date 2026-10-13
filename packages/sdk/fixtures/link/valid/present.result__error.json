@@ -1,0 +1,9 @@
+{
+  "t": "present.result",
+  "id": "p4",
+  "ok": false,
+  "error": {
+    "code": "unavailable",
+    "message": "island is off"
+  }
+}

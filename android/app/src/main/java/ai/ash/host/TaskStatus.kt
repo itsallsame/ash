@@ -1,5 +1,6 @@
 package ai.ash.host
 
+import ai.ash.human.HumanSend
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,7 +18,7 @@ import ai.ash.ui.TaskCapsule
 import org.json.JSONObject
 import java.util.UUID
 
-/** Authenticated host projection, independent of virtual displays and Shizuku. */
+/** Authenticated host projection, independent of virtual displays and the phone's debug identity. */
 object TaskStatus {
     private val main = Handler(Looper.getMainLooper())
     private val model = TaskStatusModel()
@@ -25,7 +26,6 @@ object TaskStatus {
     private var stopping: String? = null
     private var notice: String? = null
     private var lastNotification: String? = null
-    private const val CHANNEL = "ash.task"
     private const val ID = 7
     private const val NOTICED = "ash_island_noticed"
     private fun saveNoticed() {
@@ -36,14 +36,20 @@ object TaskStatus {
         val raw = ctx.getSharedPreferences(NOTICED, Context.MODE_PRIVATE).getString("keys", null) ?: return
         runCatching { org.json.JSONArray(raw) }.getOrNull()?.let { a -> model.restoreNoticed((0 until a.length()).map { a.getString(it) }) }
     }
-    fun start(ctx: Context) { main.post { if (app == null) loadNoticed(ctx.applicationContext); app = ctx.applicationContext; ai.ash.host.screen.ScreenBridge.start(ctx); ai.ash.host.senses.SensesBridge.start(ctx); main.removeCallbacks(tick); tick.run() } }
+    fun start(ctx: Context) { main.post { if (app == null) loadNoticed(ctx.applicationContext); app = ctx.applicationContext; ai.ash.host.screen.ScreenBridge.start(ctx); ai.ash.caps.senses.SenseSync.start(ctx); main.removeCallbacks(tick); tick.run() } }
     fun close() { main.post {
         main.removeCallbacks(tick); model.clear(); TaskCapsule.hide(); app?.getSystemService(NotificationManager::class.java)?.cancel(ID)
         val ctx = app; app = null; lastNotification = null
         if (ctx != null) runCatching { ai.ash.widget.AshWidgetProvider.refresh(ctx, widgetView()) }
     } }
-    /** Show the current state again now (the screen helper connected, Ash's own screen came or went). */
+    /** Show the current state again now (the accessibility service connected, Ash's own screen came or went). */
     fun refresh() { main.post { render() } }
+    /** What the agent is doing now, as the island reads it: the current line and the last steps (empty when nothing runs). Main thread. */
+    fun activity(): List<String> {
+        val f = model.frame ?: return emptyList()
+        if (f.state in setOf("idle", "resting", "done")) return emptyList()
+        return listOfNotNull(f.text.takeIf { it.isNotBlank() }) + f.steps.filter { it.isNotBlank() }
+    }
     fun accept(ctx: Context, body: JSONObject): Boolean {
         val frame = try { TaskFrame.parse(body) } catch (_: Exception) { return false }
         main.post {
@@ -60,7 +66,7 @@ object TaskStatus {
     }
     /** What the Ash home-screen widget shows now, from the same frame and "noticed" record as the island. Main thread. */
     fun widgetView(): ai.ash.widget.AshWidgetView = ai.ash.widget.AshWidgetModel.view(model.frame, model.noticedKeys().toSet(),
-        app != null, CoreService.state == "running", model.stale(System.currentTimeMillis()))
+        app != null, app?.let { KernelLauncher.connected(it) } ?: false, model.stale(System.currentTimeMillis()))
     private fun render() {
         renderTask()
         val ctx = app ?: return
@@ -72,7 +78,7 @@ object TaskStatus {
         val frame = model.frame
         // Between tasks, and once the owner has seen what a task left, the island is the resident entry (if kept).
         val island = model.island(now, TaskCapsule.residentOn(ctx))
-        if (island != TaskStatusModel.Island.TASK) { if (island == TaskStatusModel.Island.RESIDENT) TaskCapsule.resident() else TaskCapsule.hide() }
+        if (island != TaskStatusModel.Island.TASK) { if (island == TaskStatusModel.Island.RESIDENT) TaskCapsule.resident(model.frame?.agent?.isNotEmpty() == true) else TaskCapsule.hide() }
         if (!model.active() || frame == null) {
             ctx.getSystemService(NotificationManager::class.java).cancel(ID); lastNotification = null; return
         }
@@ -97,9 +103,9 @@ object TaskStatus {
     }
     private fun notify(ctx: Context, f: TaskFrame, title: String, canStop: Boolean) {
         val manager = ctx.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel(CHANNEL, "Ash 任务进度", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
+        Notifications.createChannels(ctx)
         val open = PendingIntent.getActivity(ctx, ID, Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val b = Notifications.builder(ctx, CHANNEL)
+        val b = Notifications.builder(ctx, Notifications.CH_STATUS)
         b.setContentTitle("Ash · $title").setContentText("点此回到 Ash 查看任务")
             .setContentIntent(open).setOnlyAlertOnce(true).setOngoing(f.canStop).setVisibility(Notification.VISIBILITY_PRIVATE)
         if (canStop) {
@@ -124,12 +130,10 @@ object TaskStatus {
         val ids = frame.cards.filter { it.state == "waiting" || it.kind == "approval" && it.state == "answered" }.map { it.pendingId }.distinct()
         Thread({
             val accepted = runCatching {
-                val out = CoreClient(ctx).sendPresentAction(JSONObject().put("to", "service:reflex").put("kind", "request")
+                val out = HumanSend.send(ctx, JSONObject().put("to", "service:reflex").put("kind", "request")
                     .put("word", "task.end").put("body", JSONObject().put("turn", turn).put("pending_ids", org.json.JSONArray(ids)))
                     .put("wait", true).put("client_id", "capsule-end:${frame.session}:$turn"))
-                val reply = out.optJSONObject("reply")
-                reply?.optString("reply_to") == out.optString("id") && reply?.optJSONObject("body")?.optBoolean("ok") == true &&
-                    reply.optJSONObject("body")?.optJSONObject("result")?.optBoolean("ended") == true
+                HumanSend.data(out)?.optBoolean("ended") == true
             }.getOrDefault(false)
             main.post {
                 stopping = null
@@ -148,9 +152,7 @@ object TaskStatus {
             done(false, "状态不可用，请回 Ash 核对"); return@post
         }
         val route = runCatching {
-            if (card.kind == "question") PresentRoutes.question(card.id, card.target, card.options.map { it.first }.toSet(), choice, text,
-                card.allowCustom, card.expiresAt, System.currentTimeMillis())
-            else PresentRoutes.approval(card.id, card.target, card.options.map { it.first }.toSet(), choice, card.expiresAt, System.currentTimeMillis())
+            PresentRoutes.answer(card.id, card.target, card.options.map { it.first }.toSet(), choice, text, card.allowCustom, card.expiresAt, System.currentTimeMillis())
         }.getOrNull()
         if (route == null || card.state != "waiting") { done(false, "此请求已处理或已过期"); return@post }
         val prefs = ctx.getSharedPreferences("ash_capsule_answers", Context.MODE_PRIVATE)
@@ -161,25 +163,25 @@ object TaskStatus {
         if (!prefs.edit().putString(id, value).commit()) { done(false, "无法保存答复，请重试"); return@post }
         Thread({
             val ok = runCatching {
-                CoreClient(ctx).sendPresentAction(JSONObject().put("to", route.to).put("kind", "response").put("word", "ask")
-                    .put("reply_to", id).put("body", JSONObject().put("ok", true).put("result", result))
-                    .put("client_id", "capsule-answer:$id")).optString("id").isNotBlank()
+                // The answer is the response to the kernel's `ask`: a reply whose result data is the choice.
+                HumanSend.send(ctx, PresentRoutes.answerMessage(route, PresentRoutes.answerClientId(id))).getJSONObject("message").optString("id").isNotBlank()
             }.getOrDefault(false)
-            main.post { done(ok, if (ok) { if (choice == "deny") "已拒绝" else if (card.kind == "question") "已回答" else "已批准，等待继续" } else "答复未确认，可原样重试") }
+            main.post { done(ok, if (ok) { if (choice == "deny") "已拒绝" else if (!card.plainApproval) "已回答" else "已批准，等待继续" } else "答复未确认，可原样重试") }
         }, "ash-capsule-answer").start()
     } }
     /** Same authenticated phone-owner path as notification replies; stable client id makes retries safe. */
     fun sendInput(text: String, clientId: String, done: (Boolean, String) -> Unit) { main.post {
         val ctx = app
-        val target = model.frame?.agent ?: "agent:main"
+        val target = model.frame?.agent.orEmpty()
+        if (target.isEmpty()) { done(false, "还没有可对话的 Ash，稍后再试"); return@post }
         if (ctx == null || text.isBlank() || text.length > 4000 || ctx.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked) {
             done(false, "暂时不能发送，请解锁后重试"); return@post
         }
         Thread({
             val accepted = runCatching {
-                val response = CoreClient(ctx).sendPresentAction(JSONObject().put("to", target).put("kind", "request")
+                HumanSend.send(ctx, JSONObject().put("to", target).put("kind", "request")
                     .put("word", "say").put("body", JSONObject().put("text", text)).put("wait", false).put("client_id", clientId))
-                response.optString("id").isNotBlank()
+                    .getJSONObject("message").optString("id").isNotBlank()
             }.getOrDefault(false)
             main.post { done(accepted, if (accepted) "已发送给 Ash" else "发送未确认，点发送可重试") }
         }, "ash-capsule-input").start()
@@ -190,12 +192,10 @@ object TaskStatus {
         stopping = turn; notice = "正在停止…"; render()
         Thread({
             val accepted = runCatching {
-                val out = CoreClient(ctx).sendPresentAction(JSONObject().put("to", "service:reflex").put("kind", "request")
+                val out = HumanSend.send(ctx, JSONObject().put("to", "service:reflex").put("kind", "request")
                     .put("word", "task.stop").put("body", JSONObject().put("turn", turn)).put("wait", true)
                     .put("client_id", UUID.randomUUID().toString()))
-                val id = out.optString("id"); val reply = out.optJSONObject("reply")
-                id.isNotBlank() && reply?.optString("reply_to") == id && reply.optString("from") == "service:reflex" &&
-                    reply.optJSONObject("body")?.optBoolean("ok") == true && reply.optJSONObject("body")?.optJSONObject("result")?.optBoolean("cancelled") == true
+                HumanSend.data(out)?.optBoolean("cancelled") == true
             }.getOrDefault(false)
             main.post {
                 if (model.frame?.turn == turn && model.frame?.canStop == true) {

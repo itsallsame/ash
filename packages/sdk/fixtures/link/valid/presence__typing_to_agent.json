@@ -1,0 +1,6 @@
+{
+  "t": "presence",
+  "ch": "human",
+  "typing": true,
+  "agent": "agent:main"
+}

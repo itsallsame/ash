@@ -13,7 +13,7 @@ export async function observeAuthorizationWrites(directory: string, filenames: r
   });
   watcher.on("error", reject);
   const deadline = setTimeout(() => reject(new Error("Fixture authorization events were not observed")), 3000);
-  try { write(); await observed; await new Promise<void>(done => setImmediate(done)); }
+  try { await new Promise<void>(done => setImmediate(done)); write(); await observed; await new Promise<void>(done => setImmediate(done)); }
   finally { clearTimeout(deadline); watcher.close(); }
 }
 

@@ -22,3 +22,15 @@ internal fun parseResultFileSnapshot(raw: ByteArray, decode: (String) -> ByteArr
     require(Regex("[a-f0-9]{64}").matches(asset.getString("sha256")) && hash == asset.getString("sha256"))
     return ResultFileSnapshot(name, mime, bytes)
 }
+
+/** The authenticated human stream is verified against the exact prepared asset before saving. */
+internal fun parseStreamedResultFile(asset: JSONObject, bytes: ByteArray): ResultFileSnapshot {
+    val name = asset.getString("display_name"); val mime = asset.getString("media_type")
+    require(name.isNotBlank() && name.length <= 256 && name.none { it == '/' || it == '\\' || it.isISOControl() })
+    val extension = name.substringAfterLast('.', "").lowercase()
+    require(when(mime) { "image/png" -> extension == "png"; "image/jpeg" -> extension in setOf("jpg", "jpeg"); "text/plain" -> extension == "txt"; "text/markdown" -> extension == "md"; else -> false })
+    val length = asset.getLong("byte_length"); require(length in 0..4_194_304 && bytes.size.toLong() == length)
+    val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+    require(Regex("[a-f0-9]{64}").matches(asset.getString("sha256")) && hash == asset.getString("sha256"))
+    return ResultFileSnapshot(name, mime, bytes)
+}

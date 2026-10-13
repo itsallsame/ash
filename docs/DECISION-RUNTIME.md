@@ -82,20 +82,18 @@ conversation.control      screen.reconcile       future routes...
 The implemented source layout preserves the existing member dependency boundary:
 
 ```text
-packages/core/src/world/decision/
-  runtime.ts              route registration, scheduling, audit lifecycle
+packages/core/src/services/reflex/
+  index.ts                the reflex service: routes, scheduling, audit lifecycle
   jev.ts                  generic typed JEV transport
-packages/core/src/members/reflex/
-  conversation-control.ts route semantics and restricted cancel/pause executor
-  screen-execution.ts     pre-run screen choice, scoped runner context and constraint
-  screen-reconcile.ts     route semantics and restricted screen executor
+  keywords.ts             exact stop/pause matching
+  screen.ts               pre-run screen choice, scoped runner context, restricted screen executor
 android/.../host/
   ScreenDecisionHost.kt   atomic host comparisons and screen effects
   ScreenDecisionState.kt  turn ownership, epochs and host-side deduplication
 ```
 
-`members/reflex.ts` becomes the small world-member adapter which feeds accepted
-ledger messages to `DecisionRuntime`. It should not contain route semantics.
+The reflex service (`services/reflex`) feeds accepted ledger messages to the routes.
+(The layout above is the new one; the earlier `world/decision` and `members/reflex` files are gone.)
 
 ## 5. Generic route contract
 
@@ -366,24 +364,27 @@ service:reflex/surface.get -> {
 
 service:reflex/screen.get -> {
   foreground_package,
-  state_epoch,
-  virtual_generation,
-  virtual_owner_turn,
-  virtual_open
+  state_epoch
 }
 
 service:reflex/screen.return { expected_state_epoch, expected_package, decision_id }
-service:reflex/virtual.close { expected_generation, owner_turn, decision_id }
 ```
+
+The virtual screen is not the hand's: it is served by the kernel host as
+`service:host/vscreen.*` (0.4.7). Its bookkeeping (`generation`, owner turn,
+open) lives in the hub next to that member (`edges/host/virtual.ts`): every
+vscreen call goes through it one at a time, and the reflex reads it and closes
+the screen through it (`close(expected_generation, owner_turn, decision_id)`).
 
 They are available only to the local authenticated `service:reflex` path, not
 as general model tools. The Android host performs compare-and-act atomically
 where possible. `return_to_ash` launches the existing Ash activity; it does not
 simulate Back, because Back has app-specific and stack-specific consequences.
 
-`surface.get` reads Android lifecycle state without requiring Shizuku
-or the accessibility service. It now also reports a cheap Shizuku readiness
-boolean (`virtual_available`), but does not start Shizuku or create a display.
+`surface.get` reads Android lifecycle state without requiring the phone's debug
+identity or the accessibility service. Whether a virtual screen can be made is
+the host's to say (`service:host` declares the `vscreen` capability only while
+the shell host is paired).
 `screen.get` is only needed after the
 turn and for the final freshness check; it is not on the normal task-start
 critical path.
@@ -398,7 +399,7 @@ The decision is discarded if, after collection and before effect:
 
 - a newer conversational turn started;
 - the foreground package or state epoch changed;
-- user interaction changed the combined monotonic `state_epoch`;
+- user interaction changed the combined monotonic `state_epoch`, or the kernel host opened an app or pressed a key on the real screen (the phone app cannot see those; the hub counts them next to the epoch);
 - the virtual screen no longer exists or is no longer owned by the turn;
 - Ash is shutting down or paused in a way which invalidates the action.
 
@@ -615,14 +616,7 @@ restriction. The subsequent final-version rerun reached an apps.open approval
 card, then the mac-mini device went offline; that rerun was not completed. No
 online JEV model or physical Shizuku display success is claimed.
 
-The isolated simulator probe is `tools/decision-simulator.mjs` (`serve`, `keys`,
-`probe`) with `tools/decision-simulator.config.json`. It targets only
-`ai.ash.agent.probe`; the owner's installed package is never overwritten. Start
-the isolated APK once, copy the override with app-owned permissions, restart its
-core, then configure its test credentials. The script reads the existing
-temporary DeepSeek test key, does not print it, and does not delete it. JEV's
-synthetic credential is used only with the local endpoint. Do not reuse this
-configuration as a production JEV setup.
+(The simulator probe `tools/decision-simulator.mjs` described here has been removed with the old core.)
 
 ## 19. Execution-screen selection and visible app delivery
 

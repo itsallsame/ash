@@ -1,0 +1,7 @@
+  PID ARGS
+    1 init
+  612 zygote64
+ 9034 /data/data/ai.ash.kernel/files/payload/runtime/bin/node --require /data/data/ai.ash.kernel/files/payload/ash/android-node-compat/index.cjs /data/data/ai.ash.kernel/files/payload/ash/ash-core.mjs
+ 9120 /data/data/ai.ash.kernel/files/payload/container/proot --rootfs=/data/data/ai.ash.kernel/files/container/ubuntu -w /root/agents/main node /opt/dsh/bin/dsh.mjs --profile acp --patch /opt/ash/patch.yml
+ 9188 node /opt/dsh/bin/dsh.mjs --profile acp --patch /opt/ash/patch.yml
+10001 ai.ash.agent

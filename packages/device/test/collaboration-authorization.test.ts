@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync, mkdirSync, readdirSync, realpathSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadReadAuthorization, parseReadAuthorization, readAuthorizationPath } from "../src/collaboration/authorization";
-import { deviceCli } from "../src/cli";
+import { ConnectionSetupService } from "../src/setup/service";
 import { DeviceKey } from "ash-gateway/client/client";
 import { deviceIdForKey } from "ash-gateway/src/protocol";
 import { fileSigner } from "../src/link";
@@ -31,51 +31,13 @@ test("read authorization defaults closed and binds exact scopes to the local end
   } finally { rmSync(state, { recursive: true, force: true }); }
 });
 
-test("read-scope persists only explicit scopes; clear increments authorization without starting services", async () => {
-  const state = mkdtempSync(join(tmpdir(), "ash-read-cli-"));
-  try {
-    pair(state);
-    const configPath = join(state, "device.json");
-    writeFileSync(configPath, JSON.stringify({ stateDir: state }));
-    const predictable = `${readAuthorizationPath(state)}.tmp-${process.pid}`;
-    writeFileSync(predictable, "preexisting file", { mode: 0o644 });
-    const neverStart = (async () => { throw new Error("must not start device"); }) as Parameters<typeof deviceCli>[0];
-    await new Promise(resolve => setTimeout(resolve, 160)); // Drain our startup writes before opening the CLI watcher.
-    await deviceCli(neverStart, ["read-scope", "--config", configPath, "--allow-cwd", "/tmp/one", "--allow-cwd", "/tmp/two"]);
-    const signer = await fileSigner(state);
-    assert.deepEqual(loadReadAuthorization(state, signer.id).allowedCwds, ["/tmp/one", "/tmp/two"]);
-    assert.equal(statSync(readAuthorizationPath(state)).mode & 0o777, 0o600);
-    assert.equal(readFileSync(predictable, "utf8"), "preexisting file");
-    await new Promise(resolve => setTimeout(resolve, 160));
-    await deviceCli(neverStart, ["read-scope", "--config", configPath, "--clear"]);
-    assert.equal(loadReadAuthorization(state, signer.id).authorization_generation, 2);
-    assert.equal(loadReadAuthorization(state, signer.id).state, "scope_required");
-    const saved = readFileSync(readAuthorizationPath(state), "utf8");
-    await assert.rejects(deviceCli(neverStart, ["read-scope", "--config", configPath, "--allow-cwd", "relative"]));
-    assert.equal(readFileSync(readAuthorizationPath(state), "utf8"), saved);
-    rmSync(readAuthorizationPath(state)); mkdirSync(readAuthorizationPath(state));
-    await assert.rejects(deviceCli(neverStart, ["read-scope", "--config", configPath, "--clear"]));
-    assert.deepEqual(readdirSync(state).filter(name => name.startsWith("collaboration-read.json.tmp-")), [`collaboration-read.json.tmp-${process.pid}`]);
-  } finally { rmSync(state, { recursive: true, force: true }); }
-});
 
-test("concurrent scope writers use private unique temporary files and leave an atomic revision-bound scope", async () => {
-  const state = mkdtempSync(join(tmpdir(), "ash-read-cli-concurrent-"));
-  try {
-    pair(state);
-    const configPath = join(state, "device.json");
-    writeFileSync(configPath, JSON.stringify({ stateDir: state }));
-    const signer = await fileSigner(state);
-    const neverStart = (async () => { throw new Error("must not start device"); }) as Parameters<typeof deviceCli>[0];
-    await new Promise(resolve => setTimeout(resolve, 160));
-    const outcomes = await Promise.allSettled(Array.from({ length: 6 }, (_, index) => deviceCli(neverStart, ["read-scope", "--config", configPath, "--allow-cwd", `/tmp/concurrent-${index}`])));
-    assert.equal(outcomes.filter(result => result.status === "fulfilled").length, 1);
-    for (const result of outcomes) if (result.status === "rejected") assert.match(result.reason.message, /Read scope: (stale|busy)/);
-    const saved = loadReadAuthorization(state, signer.id);
-    assert.equal(saved.state, "scope_required"); assert.equal(saved.allowedCwds.length, 1);
-    assert.match(saved.allowedCwds[0], /^\/tmp\/concurrent-[0-5]$/);
-    assert.match(saved.authorization_revision, /^[a-f0-9]{64}$/);
-    assert.equal(statSync(readAuthorizationPath(state)).mode & 0o777, 0o600);
-    assert.deepEqual(readdirSync(state).filter(name => name.startsWith("collaboration-read.json.tmp-")), []);
-  } finally { rmSync(state, { recursive: true, force: true }); }
+function setup(stateDir:string,endpointId:string){return new ConnectionSetupService({stateDir,endpointId,testing:{allowBooleanVerification:true,readBinding:{source_id:'fixture-source',binding_revision:'a'.repeat(64)}},verification:{verifyScope:async()=>true,diagnostics:async()=>({})},runtime:{reserveChange:async()=>({assertCurrent:()=>undefined,release:()=>undefined})}});}
+test('protected scope setter writes only explicit source-bound scopes privately; clear revokes authorization',async()=>{
+ const state=realpathSync(mkdtempSync(join(tmpdir(),'ash-read-settings-')));pair(state);const signer=await fileSigner(state),service=setup(state,signer.id),predictable=`${readAuthorizationPath(state)}.tmp-${process.pid}`;
+ try{writeFileSync(predictable,'preexisting file',{mode:0o644});const before=(await service.status()).precondition!;await service.applyScope({kind:'read',allowedCwds:['/tmp/one','/tmp/two']},before);const saved=loadReadAuthorization(state,signer.id);assert.equal(saved.version,3);assert.equal(saved.state,'ready');assert.deepEqual(saved.allowedCwds,['/tmp/one','/tmp/two']);assert.equal(statSync(readAuthorizationPath(state)).mode&0o777,0o600);assert.equal(readFileSync(predictable,'utf8'),'preexisting file');const current=(await service.status()).precondition!;await service.revoke('read',current);assert.equal(existsSync(readAuthorizationPath(state)),false);assert.equal(loadReadAuthorization(state,signer.id).state,'scope_required');const bytes=loadReadAuthorization(state,signer.id).authorization_revision;await assert.rejects(service.applyScope({kind:'read',allowedCwds:['relative']},(await service.status()).precondition!));assert.equal(loadReadAuthorization(state,signer.id).authorization_revision,bytes);}finally{service.close();rmSync(state,{recursive:true,force:true});}
+});
+test('concurrent protected scope setters leave one atomic source-bound revision without temporary filename collisions',async()=>{
+ const state=realpathSync(mkdtempSync(join(tmpdir(),'ash-read-settings-')));pair(state);const signer=await fileSigner(state),services=Array.from({length:6},()=>setup(state,signer.id));
+ try{const before=(await services[0].status()).precondition!;const outcomes=await Promise.allSettled(services.map((service,index)=>service.applyScope({kind:'read',allowedCwds:[`/tmp/concurrent-${index}`]},before)));assert.equal(outcomes.filter(result=>result.status==='fulfilled').length,1);for(const result of outcomes)if(result.status==='rejected')assert.match(result.reason.message,/Connection setup: (stale|busy)/);const saved=loadReadAuthorization(state,signer.id);assert.equal(saved.state,'ready');assert.equal(saved.allowedCwds.length,1);assert.match(saved.allowedCwds[0],/^\/tmp\/concurrent-[0-5]$/);assert.match(saved.authorization_revision,/^[a-f0-9]{64}$/);assert.equal(statSync(readAuthorizationPath(state)).mode&0o777,0o600);assert.deepEqual(readdirSync(state).filter(name=>name.startsWith('collaboration-read.json.tmp-')),[]);}finally{services.forEach(service=>service.close());rmSync(state,{recursive:true,force:true});}
 });

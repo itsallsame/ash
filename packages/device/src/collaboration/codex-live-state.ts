@@ -1,7 +1,7 @@
 import type { WorkRef } from "./types";
 import type { NativeFrame } from "./control-native-types";
-export type TurnIdentityProvenance = "none" | "observed_turn_started" | "history_candidate";
-export type LiveSnapshot = { state: "unknown" | "idle" | "active" | "approval_required"; turn_id?: string; revision: number; work: WorkRef; connector_epoch: string; source: "codex.live"; observed_at: string | null; identity_provenance: TurnIdentityProvenance };
+export type { TurnIdentityProvenance, LiveSnapshot } from "../../../sdk/src/collaboration/live-types";
+import type { TurnIdentityProvenance, LiveSnapshot } from "../../../sdk/src/collaboration/live-types";
 /** Shared across rearming a target; finished/errored IDs cannot become candidates again. */
 export interface TurnFences { blocked: Set<string>; exhausted: boolean }
 type BootstrapEvent = { kind: string; turn?: string; status?: string; approval?: boolean };

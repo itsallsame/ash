@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { STATUS_FALLBACK_LABEL, nativeDetailLabel, statusLabel } from "../src/labels";
+import { DOING_FALLBACK_LABEL, STATUS_FALLBACK_LABEL, nativeDetailLabel, statusLabel, upstreamDoingLabel } from "../src/labels";
 
 test("status labels use declared human wording without leaking unrecognized tool names", () => {
   assert.equal(statusLabel("device:phone", "calendar.list", "在看日程"), "在看日程");
@@ -38,14 +38,23 @@ test("Ash's own services and tools read as plain words, not their English contra
   assert.equal(statusLabel("device:phone", "clipboard.set", "改剪贴板"), "改剪贴板");
 });
 
-test("every request word the owner can see being done is named in Chinese", async () => {
-  const { WORD_CONTRACTS } = await import("../src/words");
-  const han = /\p{Script=Han}/u;
-  for (const word of WORD_CONTRACTS.filter((item) => item.kind === "request")) {
-    assert.ok(han.test(word.label ?? ""), `${word.member}/${word.word} has an English label: ${word.label}`);
-    const status = statusLabel(word.member, word.word, word.label);
-    assert.ok(han.test(status), `${word.member}/${word.word} shows ${status} in the status line`);
-  }
+test("a word with a label shows it in the status line", () => {
   assert.equal(statusLabel("service:apps", "apps.install", "安装应用"), "在申请安装应用");
   assert.equal(statusLabel("service:widgets", "widget.card.put", "更新桌面卡片"), "在更新桌面卡片");
+});
+
+test("an upstream action's label: its own readable title, else the owner's name, else 在处理; the raw name is never in it", () => {
+  assert.equal(upstreamDoingLabel({ title: "List todos", word: "todo.list", owner: "待办", noun: "功能" }), "在用 List todos");
+  assert.equal(upstreamDoingLabel({ word: "todo.list", owner: "待办", noun: "功能" }), "在用 待办 的功能");
+  // A title in words keeps its slash or colon; only an ASCII identifier is taken for a raw name.
+  for (const title of ["上传/下载", "日程:今天", "A/B测试", "1.5倍速"]) assert.equal(upstreamDoingLabel({ title, word: "todo.list", owner: "待办", noun: "功能" }), `在用 ${title}`);
+  assert.equal(upstreamDoingLabel({ word: "camera.snap", owner: "Redmi K30", noun: "能力" }), "在用 Redmi K30 的能力");
+  // a title that is only the tool's name (or looks like one) is no title
+  for (const title of ["todo.list", "todo_list", "ns:todo", "", "  ", "bad\u202ename"])
+    assert.equal(upstreamDoingLabel({ title, word: "todo.list", owner: "待办", noun: "功能" }), "在用 待办 的功能", JSON.stringify(title));
+  // an owner with no readable name
+  for (const owner of [undefined, "", "app:todo", "my_app", "device:x"])
+    assert.equal(upstreamDoingLabel({ word: "todo.list", ...(owner !== undefined ? { owner } : {}), ownerId: "app:todo", noun: "功能" }), DOING_FALLBACK_LABEL, JSON.stringify(owner));
+  assert.equal(upstreamDoingLabel({ title: "get", word: "get", noun: "功能" }), DOING_FALLBACK_LABEL, "title equal to the word");
+  assert.equal([...upstreamDoingLabel({ title: "字".repeat(90), word: "w", noun: "功能" })].length, "在用 ".length + 40, "a long title is cut");
 });

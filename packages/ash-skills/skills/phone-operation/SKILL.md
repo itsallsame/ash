@@ -1,10 +1,12 @@
 ---
 name: phone-operation
 description: 操作主人的手机屏幕和应用：真实前台还是虚拟屏、先看再点、卡住怎么办、登录验证码的边界、付款和下单被打断后不重复，以及哪些操作要主人批准。
-whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东西、点按钮、填内容、改设置；用到 screen.*、vscreen.*、apps.open、settings.*、intent.view、input.key 或 shell.run 之前。
+whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东西、点按钮、填内容、改设置；用到 screen.*、vscreen.*、apps.open、apps.open_url、settings.*、config.*、input.key 或 shell.run 之前。
 ---
 
 # 在手机上办事
+
+这里的词分两处，都用 `capability_call`：看屏幕、点按输入、读应用列表、打开链接、改设置、剪贴板、权限（`screen.*`、`apps.list/info/usage`、`apps.open_url`、`settings.*`、`clipboard.*`、`config.*`）在主人的手机上，`{member: "device:<手机的 id>", word, body}`；手机的 id 从每轮上下文里的设备列表拿（名字是手机、能力里有 `screen.*` 的那一只），不要写死。虚拟屏、按键、打开应用（`vscreen.*`、`input.key`、`apps.open`）是宿主能力，在 `service:host` 上（固定名字，直接用）；没接上「后台也能动手」时这里只有媒体键和音量键，其余不在能力清单里——看不到就说明得先接。列表里没有手机，或显示 offline，先读技能 `connect-device`。
 
 ## 先分清要哪种
 
@@ -12,12 +14,12 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 
 | 模式 | 意思 | 怎么做 |
 |---|---|---|
-| `foreground_handoff` | 主人要的是**把应用打开给他用**（「帮我打开闲鱼」「带我去设置」） | `apps.open` / `settings.open` / `intent.view` 在真实屏幕上打开，成功后就停，留在那个应用里；不要用虚拟屏冒充已打开，不要自己回 Ash 或回桌面 |
+| `foreground_handoff` | 主人要的是**把应用打开给他用**（「帮我打开闲鱼」「带我去设置」） | `apps.open` / `settings.open` / `apps.open_url`（链接或深度链接）在真实屏幕上打开，成功后就停，留在那个应用里；不要用虚拟屏冒充已打开，不要自己回 Ash 或回桌面 |
 | `virtual_task` | 主人要你在应用**里面办事**并拿结果（「在闲鱼查一下价格」），他留在 Ash 里 | `vscreen.create` → `vscreen.launch` → `vscreen.see` → 用 `vscreen.tap/swipe/key/type` 操作，做完 `vscreen.close` |
 | `foreground_task` | 要在真实屏幕办事，或需要主人自己登录、收验证码 | 用 `screen.*` 操作真实屏幕；需要他动手时把那一页留着并说明，最后一屏也留着 |
 | `no_preference` | 不需要屏幕 | 别无谓地开屏；以后要给主人打开应用仍然用真实屏幕 |
 
-在前台模式下用 `vscreen.*`（除了 `status`、`see`、`close`）会被拒绝，一个操作也不会执行。虚拟屏需要 Shizuku 运行并授权 Ash（Android 10 以上），`vscreen.status` 或 `shell.status` 可以先看；用不了就按前台办，并告诉主人原因。
+在前台模式下用 `vscreen.*`（除了 `status`、`see`、`close`）会被拒绝，一个操作也不会执行。虚拟屏、注入按键、`apps.open` 都要「后台也能动手」（手机的调试身份，Android 10 以上）：没接上时这些词不在 `service:host` 的能力清单里，`config.status`（`host_shell` 一项）可以先看。打开应用用不了就告诉主人去接「后台也能动手」；虚拟屏用不了就按前台办，并说明原因。手机重启后要主人自己重新接一下，Ash 不能替他开关无线调试。
 
 ## 先看，再点，再看
 
@@ -33,7 +35,8 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 - 被弹窗、键盘、广告挡住：`screen.global_action {action: "back"}` 关键盘或返回；`home`、`recents` 回桌面和切应用。同一个办法最多试 3 次，换思路。
 - 页面没反应：等一下再读；仍然不对，退回上一步重来，不要连点。
 - 密码、支付页面是安全屏，截图会失败：不是故障，请主人自己来。
-- 无障碍断了、`screen.*` 不可用：告诉主人需要在设置里把 Ash 屏幕助手的无障碍打开（`human_show` 的权限卡可以带他去），不要假装做了。
+- 无障碍断了、`screen.*` 不可用：先 `config.status` 看是哪一项没开，再 `config.permission.request {name: "accessibility"}` 打开系统设置页，请主人亲手打开（无障碍是主人在系统里开关的，Ash 不能替他开），不要假装做了。
+- 其他权限（位置、通知、悬浮窗、后台也能动手、使用情况访问……）同样：`config.status` 看，缺哪项就 `config.permission.request {name}`，授权由主人本人完成。应用总被系统杀掉，用 `config.keepalive.status` 看厂商的自启动和后台限制，请主人在打开的设置页里自己打开。
 - 还是做不成：停下，如实说停在了哪一步、屏幕上现在是什么，让主人决定。
 
 ## 登录、验证码、付款：边界
@@ -44,13 +47,21 @@ whenToUse: 主人要你打开某个应用，或在手机上某个应用里查东
 
 ## 哪些要批准
 
-读屏幕和读信息（`screen.read`、`screen.see`、`apps.list`、`settings.get`、`clipboard.get`、`vscreen.see`……）直接执行。点、输入、滑动、打开应用或设置、按键、在虚拟屏里操作，由裁判当场判断：明显是主人要的就放行，拿不准会弹卡。改系统设置、改剪贴板、创建和关闭虚拟屏属于结构性改动。`shell.run` 和付款每次都弹卡。依赖当前屏幕的调用，`approval_ttl_minutes` 设 2–5 分钟，批准回来后先重新看一眼屏幕再兑现。不换说法再问同一件被拒绝的事。
+读屏幕和读信息（`screen.read`、`screen.see`、`apps.list`、`settings.get`、`clipboard.get`、`vscreen.see`……）直接执行。**操作主人的真实屏幕要先有「屏幕授权」**：点、输入、滑动、手势、打开应用或链接、按键、打开设置页、申请权限（`screen.tap/type/scroll/swipe/hold/touch/gesture/global_action`、`apps.open`、`apps.open_url`、`input.key`、`settings.open`、`config.permission.request`），没有授权一律被拒绝，不弹卡、不审核。
+- 动手前先在对话里一句话告诉主人要做什么，再调 `screen_lease_request`（`service:gate/lease.request`）：`goal` 写清为什么（如「在微信里给小王发你说的那条消息」），`minutes` 够用就好（默认 15，别贪多）。它立刻返回 `waiting_owner`，不要等、不要重复申请；主人点了「本次任务／15 分钟／1 小时」之后，会有一条主人的消息（如「授权操作屏幕 15 分钟」），你在这条消息开始的回合里接着做。「不行」会来一条「拒绝：操作屏幕」，尊重，不要换说法再要。
+- 授权期间灵动岛上会一直有「结束 + 倒计时」的按钮，主人随时点它收回；你真的在操作屏幕时，屏幕上还会出现一个小悬浮球（显示是你在操作），停手几秒后收起。做完立刻调 `screen_lease_release` 交还；到期前 1 分钟会有一条提醒，请收尾。
+- 被拒绝时看错误里的原因：「没有授权」「还在等主人」「已到期」「主人收回了」。收回或到期后不要继续操作，先和主人说清楚。
+- 付款类的事授权里也仍然每次弹卡问主人。虚拟屏（`vscreen.*`）不要授权，走原来的审批；改剪贴板、创建和关闭虚拟屏属于结构性改动。`shell.run` 这类命令先过审核模型。不换说法再问同一件被拒绝的事。
 
 ## 好的样子
 
 主人说「在闲鱼帮我看看这个耳机多少钱」。上下文判定 `virtual_task`：`vscreen.create` → `vscreen.launch {app: "闲鱼"}` → `vscreen.see` 确认确实出现在虚拟屏而不是主人的屏幕 → 点搜索框、`vscreen.type` 输入、点搜索 → `vscreen.see` 读结果 → 回「查到三个，最低 128 元，卖家……」 → `vscreen.close`。中途弹出登录页，就停下说「需要你在闲鱼里登录一下，我把它放到前面」，改用前台并告诉主人。
 
 主人说「帮我打开设置里的电池页」：`foreground_handoff`，`settings.open {page: …}` 成功后就结束，一句话告诉他已经打开，不再操作。
+
+## 录屏
+
+主人说「录下来」「录个屏」时，在虚拟屏里做事之前先 `vscreen.record.start`，做完 `vscreen.record.stop`：视频（mp4）存在你工作区的 `/root/work/recordings/`，回复里有路径和时长，再用 `human_show` 发一张文件卡给主人（workspace `body:main`，mime `video/mp4`）。默认最长 120 秒，到时间或虚拟屏关闭会自己停并存好，之后 `vscreen.record.stop` 照样能取。主人自己点预览小窗上的「● 录制」时，视频会直接以文件卡出现在对话里，不用你再发。
 
 ## 常见错误
 

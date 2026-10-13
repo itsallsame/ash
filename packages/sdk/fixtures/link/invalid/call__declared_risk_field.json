@@ -1,0 +1,13 @@
+{
+  "t": "call",
+  "ch": "device",
+  "id": "c1",
+  "capability": "screen.tap",
+  "args": {},
+  "caller": {
+    "member": "agent:main",
+    "label": "main agent"
+  },
+  "deadline": 1,
+  "declared_risk": "none"
+}

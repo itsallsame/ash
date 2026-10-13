@@ -4,19 +4,21 @@
 
 ## 标称尺寸与字号
 
-| size | 手机核对时按 | 内容区（外框留 14 dp） |
-|---|---|---|
-| 2x2 | 150×150 dp | 约 122×122 |
-| 4x2 | 330×150 dp | 约 302×122 |
-| 4x4 | 330×330 dp | 约 302×302 |
+| size | 还没放到桌面时核对按 | 预览图按（手机宽 360–411 dp） | 预览的内容区（外框留 14 dp） |
+|---|---|---|---|
+| 2x2 | 150×150 dp | 148–174 × 164–192 dp | 120–146 × 136–164 |
+| 4x2 | 330×150 dp | 312–363 × 164–192 dp | 284–335 × 136–164 |
+| 4x4 | 330×330 dp | 312–363 × 345–401 dp | 284–335 × 317–373 |
+
+预览图的大小按桌面四列格子算：格子宽 =（屏幕宽 − 32）÷ 4，高是宽的 1.1 倍，小组件 = 格子 × 列数（行数）− 16。13sp 正文一个汉字宽 13 dp、一行高约 18 dp。
 
 放到桌面后按那个小组件实际的大小画（主人可以拉伸）。`variant` 字号（sp）：`h1` 30 粗、`h2` 17 粗、`h3` 15 粗、`h4` 14 粗、`h5` 13 粗、`body` 13、`caption` 12（次要色）。大数字用 `h1`，标题用 `h3`/`h4`，`style.fontSize` 可改。卡片内容第一行文字如果就是卡片 `title`，外框不再重复印标题；否则外框在上面多印一行 12sp 小标题。
 
 ## 组件
 
-能画：`Text`、`Image`、`Icon`、`Row`、`Column`、`Stack`、`Grid`、`List`、`Card`、`Tabs`、`Divider`、`Spacer`、`Button`、`CheckBox`、`Switch`、`ChoicePicker`、`ProgressBar`、`Badge`、`Clock`（实时）、`Timer`（实时正计时或倒计时）。
+能画：`Text`、`Image`、`Icon`、`Row`、`Column`、`Stack`、`Grid`、`List`、`Card`、`Tabs`、`Divider`、`Spacer`、`Button`、`CheckBox`、`Switch`、`ChoicePicker`、`ProgressBar`、`Badge`、`Clock`（实时）、`Timer`（实时正计时或倒计时）、`Chart`（折线或柱状图，`series` 里 1–4 组，`style.height` 必填，由手机按实际大小画成位图）。
 
-画不了，会被拒绝并给出原因：`Video`、`AudioPlayer`、`TextField`、`DateTimeInput`、`Slider`、`Modal`、网页、脚本、动画、图表、地图、SVG 图片；`style` 里的 `border`、`shadow`、`gradient`、`fontFamily`、`transform`。要边框，把元素放进背景色是边框色、padding 是边框宽的容器；要图表，用 `ProgressBar`、`Row` 的色块，或送一张图片。
+画不了，会被拒绝并给出原因：`Video`、`AudioPlayer`、`TextField`、`DateTimeInput`、`Slider`、`Modal`、网页、脚本、动画、地图、SVG 图片；`style` 里的 `border`、`shadow`、`gradient`、`fontFamily`、`transform`。要边框，把元素放进背景色是边框色、padding 是边框宽的容器；要图表，用 `Chart`。
 
 `style` 可用：`background`、`color`（子孙继承）、`cornerRadius`、`padding`、`margin`（数字、`[上下, 左右]`、`[上, 右, 下, 左]` 或 `{top, end, bottom, start}`，单位 dp）、`width`/`height`（dp、`fill`、`wrap`）、`fontSize`、`fontWeight`、`italic`、`underline`、`strikethrough`、`textAlign`、`maxLines`、`ellipsize`（`end`/`middle`/`start`/`none`）、`lineHeight`、`letterSpacing`、`opacity`、`place`（`Stack` 子项位置）。
 

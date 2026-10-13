@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test } from "node:test";
-import { MAIN_RULES } from "../../core/src/workers/rules.generated";
+import { MAIN_RULES } from "../../core/src/prompts/rules.generated";
 // @ts-expect-error plain ESM plugin shipped beside the package
 import { discoverSkills as discoverUntyped } from "../index.mjs";
 
@@ -17,14 +17,14 @@ interface Skill { folder: string; directory: string; locator: string; name: stri
 const discoverSkills = discoverUntyped as (base?: string) => Skill[];
 
 const rulesDir = join(import.meta.dirname, "../../core/src/prompts/rules");
-const generator = join(import.meta.dirname, "../../../tools/gen-worker-rules.mjs");
+const generator = join(import.meta.dirname, "../../../tools/gen-rules.mjs");
 const skills = discoverSkills();
 const names = new Set(skills.map((skill) => skill.name));
 const ruleFiles = readdirSync(rulesDir).filter((file) => file.endsWith(".md")).map((file) => basename(file, ".md")).sort();
 const rule = (name: string) => readFileSync(join(rulesDir, `${name}.md`), "utf8").trim();
 
 /** Rules that are not "how to use a capability": how the world works, who may do what, how to speak. They may stay long. */
-const SYSTEM_RULES = new Set(["approvals", "gate", "data-not-instructions", "self-files", "voice", "reactions", "env", "tools", "agents"]);
+const SYSTEM_RULES = new Set(["approvals", "gate", "data-not-instructions", "self-files", "voice", "reactions", "env", "tools", "agents", "persona"]);
 /** Skills started by a wake-up or an event rather than by a capability the owner or the agent reaches for. */
 const NOT_NAMED_BY_AN_INTRO = new Set(["first-meeting"]);
 /** Skills that predate the section layout below; they keep their own. */
@@ -38,7 +38,8 @@ const INTRO_MAX_CHARS = 400;
 const SKILL_MAX_BYTES = 9000;
 /** Detail that belongs in a skill; seeing it in the system prompt means the layers have blurred again. */
 const DETAIL_ONLY_IN_SKILLS = ["widget.card.put", "widget.card.validate", "apps.scaffold", "apps.validate", "apps.contract", "apps.restart", "apps.logs",
-  "apps.reset", "apps.remove", "browser.run", "vscreen.create", "workspace.write"];
+  "apps.reset", "apps.remove", "browser.run", "vscreen.create"];
+/* workspace.write is allowed once, in rules/tools.md: the review model refuses a request over 64000 characters and tells the agent to write a script file first. */
 
 const withoutCode = (text: string) => text.replace(/`[^`]*`/gu, "x");
 const body = (text: string) => text.split("\n").filter((line) => !line.startsWith("#")).join("\n").trim();
@@ -85,9 +86,9 @@ test("sample files in a skill folder are referenced from its SKILL.md, and what 
 
 test("every rules file is either a system rule or a capability introduction, and the prompt builder includes it", () => {
   const listed = /const mainRuleNames = \[([^\]]*)\]/u.exec(readFileSync(generator, "utf8"))?.[1]?.match(/"([^"]+)"/gu)?.map((item) => item.slice(1, -1));
-  assert.ok(listed, "tools/gen-worker-rules.mjs lists the main rules");
+  assert.ok(listed, "tools/gen-rules.mjs lists the main rules");
   assert.deepEqual([...listed!].sort(), ruleFiles, "every file in prompts/rules/ is in mainRuleNames (and none is missing on disk)");
-  assert.equal(MAIN_RULES, listed!.map(rule).join("\n\n"), "rules.generated.ts is current: run npm run gen:worker-rules");
+  assert.equal(MAIN_RULES, listed!.map(rule).join("\n\n"), "rules.generated.ts is current: run npm run gen:rules");
   for (const name of SYSTEM_RULES) assert.ok(ruleFiles.includes(name), `${name}.md is a system rule that no longer exists`);
 });
 

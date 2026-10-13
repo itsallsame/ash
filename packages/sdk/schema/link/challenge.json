@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 challenge frame",
+  "type": "object",
+  "properties": {
+    "t": {
+      "const": "challenge"
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kernel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "protocol"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "t",
+    "nonce",
+    "kernel"
+  ],
+  "additionalProperties": false
+}

@@ -1,12 +1,5 @@
 {
   "schema": 1,
-  "dsh": {
-    "package": "@deepseek-ai/dsh",
-    "version": "0.2.0-rc.2"
-  },
-  "compatNpm": {
-    "@img/sharp-wasm32": "0.35.5"
-  },
   "runtimeNpm": {},
   "runtimeFiles": [
     {

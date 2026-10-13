@@ -1,0 +1,16 @@
+[
+{"seq":24,"id":"m_z9DJj28G_gaQ","ts":1791653235258,"from":"agent:main","to":"person:owner","kind":"response","word":"say","body":{"ok":true,"result":{"data":{"accepted":true}}},"reply_to":"m_qYuVKTPUwwJx"},
+{"seq":27,"id":"m_kD2btEAAS-Z8","ts":1791653235404,"from":"agent:main","to":null,"kind":"event","word":"turn.started","body":{"turn":"t_4","lane":"front","ids":["m_qYuVKTPUwwJx"]},"turn":"t_4"},
+{"seq":28,"id":"m_Bf3PgvyohKkW","ts":1791653235483,"from":"agent:main","to":null,"kind":"event","word":"turn.ended","body":{"turn":"t_4","lane":"front","outcome":"error","error":"model unavailable"},"turn":"t_4"},
+{"seq":29,"id":"m_EVrotn37pNS4","ts":1791653235440,"from":"agent:main","to":"person:owner","kind":"request","word":"say","body":{"text":"刚才这件事没做成：出了点意外的错误。","kind":"reply"},"turn":"t_4"},
+{"seq":30,"id":"m_oAwRXL0OOh-E","ts":1791653235461,"from":"agent:main","to":"person:owner","kind":"request","word":"show","body":{"card":{"type":"options","prompt":"要我再试一次吗？","options":[{"id":"retry:t_4","text":"重试"}]}},"turn":"t_4"},
+{"seq":32,"id":"m__CCu_pwoRXAv","ts":1791653235597,"from":"person:owner","to":"agent:main","kind":"response","word":"say","body":{"ok":true,"result":{"data":{"accepted":true}}},"reply_to":"m_EVrotn37pNS4"},
+{"seq":33,"id":"m_hJkJA2ouroK7","ts":1791653235642,"from":"person:owner","to":"agent:main","kind":"response","word":"show","body":{"ok":true,"result":{"data":{"accepted":true}}},"reply_to":"m_oAwRXL0OOh-E"},
+{"seq":37,"id":"m_XZAlDa83K_oC","ts":1791653236072,"from":"person:owner","to":"agent:main","kind":"request","word":"say","body":{"in_reply_to":"m_oAwRXL0OOh-E","option_id":"retry"},"origin":{"channel":"web","client":"client:rfZIFjmDjF7h","hand":"device:YS0WaCi1k5xDWb9pcbSz4O","label":"owner command line"}},
+{"seq":38,"id":"m_ctlh109b4tFS","ts":1791653236152,"from":"agent:main","to":"person:owner","kind":"response","word":"say","body":{"ok":true,"result":{"data":{"accepted":true}}},"reply_to":"m_XZAlDa83K_oC"},
+{"seq":42,"id":"m_S2HLFsJmEPyb","ts":1791653236352,"from":"agent:main","to":null,"kind":"event","word":"turn.started","body":{"turn":"t_5","lane":"front","ids":["m_XZAlDa83K_oC"]},"turn":"t_5"},
+{"seq":43,"id":"m_ITf9KyO5c-SF","ts":1791653236373,"from":"agent:main","to":"person:owner","kind":"request","word":"say","body":{"text":"这次好了"},"turn":"t_5"},
+{"seq":44,"id":"m_dt0y4AzHyTMs","ts":1791653236440,"from":"agent:main","to":null,"kind":"event","word":"turn.ended","body":{"turn":"t_5","lane":"front","outcome":"completed"},"turn":"t_5"},
+{"seq":46,"id":"m_jKVELcuB-5K3","ts":1791653236507,"from":"person:owner","to":"agent:main","kind":"response","word":"say","body":{"ok":true,"result":{"data":{"accepted":true}}},"reply_to":"m_ITf9KyO5c-SF"},
+{"seq":49,"id":"m_qYr-7SW7ItP8","ts":1791653238952,"from":"person:owner","to":"service:history","kind":"request","word":"query","body":{"limit":200},"origin":{"channel":"web","client":"client:9ToZBCl4zgoE","hand":"device:YS0WaCi1k5xDWb9pcbSz4O","label":"owner command line"}}
+]

@@ -18,7 +18,7 @@ import { COLLABORATION_LIST } from "../src/collaboration/capabilities";
 import { ConnectionSetupService } from "../src/setup/service";
 import { SetupError } from "../src/setup/scope-settings";
 import { deviceCli } from "../src/cli";
-import { ClientLink, fileSigner, type LocalCapabilities, type TunnelResponse } from "../src/link";
+import { GatewayLine, TunnelPort, loadIdentity, fileSigner } from "../src/link";
 
 const keyA = await DeviceKey.generate(), keyB = await DeviceKey.generate();
 const ownerA = await deviceIdForKey(keyA.publicKey), ownerB = await deviceIdForKey(keyB.publicKey);
@@ -39,7 +39,7 @@ function fixture(t: { after(fn: () => void): void }) {
   return { state, pair, read: join(state, "collaboration-read.json") };
 }
 function setup(stateDir: string, endpointId = "node") {
-  return new ConnectionSetupService({ stateDir, endpointId, testing:{allowBooleanVerification:true},verification: { diagnostics: async () => ({}), verifyScope: async () => true },
+  return new ConnectionSetupService({ stateDir, endpointId, testing:{allowBooleanVerification:true,readBinding:{source_id:"fixture-source",binding_revision:"a".repeat(64)}},verification: { diagnostics: async () => ({}), verifyScope: async () => true },
     runtime: { reserveChange: async () => ({ assertCurrent: () => undefined, release: () => undefined }) } });
 }
 const neverStart = (async () => { throw new Error("must not start device"); }) as Parameters<typeof deviceCli>[0];
@@ -94,8 +94,9 @@ test("legacy v1 stays unchanged through status/read and requires explicit owner-
     assert.equal(code(await service.call(COLLABORATION_LIST, envelope(service, signer.id), undefined, ctx(ownerA))), "permission_denied");
     assert.equal(readFileSync(f.read, "utf8"), legacy);
     assert.doesNotMatch(outputs.join(""), /private|legacy|owner_key|workdir/);
-    await deviceCli(neverStart, ["read-scope", "--config", config, "--allow-cwd", "/chosen"]);
-    const current = loadReadAuthorization(f.state, signer.id); assert.equal(current.version, 2); assert.equal(current.owner_id, ownerA); assert.deepEqual(current.allowedCwds, ["/chosen"]);
+    const settings = setup(f.state, signer.id);
+    try { const before=(await settings.status()).precondition!; await settings.applyScope({kind:"read",allowedCwds:["/chosen"]},before); } finally {settings.close();}
+    const current = loadReadAuthorization(f.state, signer.id); assert.equal(current.version, 3); assert.equal(current.owner_id, ownerA); assert.deepEqual(current.allowedCwds, ["/chosen"]);
   } finally { console.log = log; await service.close(); }
 });
 test("hardlinks/symlinks/FIFO/oversized pairing or scope fail before native reads", async t => {
@@ -118,14 +119,13 @@ test("hardlinks/symlinks/FIFO/oversized pairing or scope fail before native read
     assert.ok(Date.now() - before < 2000, "special file must not block");
   }
 });
-test("CLI and setup contend on the same crash-safe OS lock without changing grants", async t => {
+test("setup and other local writers contend on the same crash-safe OS lock without changing grants", async t => {
   const f = fixture(t), signer = await fileSigner(f.state), config = join(f.state, "device.json");
   writeFileSync(config, JSON.stringify({ stateDir: f.state }));
   writeFileSync(join(f.state, AUTHORIZATION_LOCK_FILE), "", { mode: 0o600 });
   const db = acquireDescriptorStateLock(f.state), settings = setup(f.state, signer.id);
   const before = (await settings.status()).precondition!;
   try {
-    await assert.rejects(deviceCli(neverStart, ["read-scope", "--config", config, "--allow-cwd", "/cli"]), /Read scope: busy/);
     await assert.rejects(settings.applyScope({ kind: "read", allowedCwds: ["/settings"] }, before), e => e instanceof SetupError && e.code === "busy");
     assert.equal(loadReadAuthorization(f.state, signer.id).state, "scope_required");
   } finally { db.release(); settings.close(); }
@@ -146,66 +146,9 @@ test("process death while holding the authorization lock releases it without PID
   } finally { settings.close(); }
 });
 
-class Tunnel extends ClientLink {
-  responses = new Map<string, TunnelResponse>();
-  frame(frame: Record<string, unknown>) { this.onFrame(frame); }
-  connectFake() { this.conn = { ws: { readyState: WebSocket.OPEN }, close: () => {} } as never; }
-  bindAttempt() { this.onAttempt(); }
-  revoke() { return this.onRevoked(); }
-  stubPair(request: () => ReturnType<typeof this.gateway.requestPairing>, approval: () => ReturnType<typeof this.gateway.waitForApproval>) { this.gateway.requestPairing = request; this.gateway.waitForApproval = approval; }
-  protected override reply(sid: string, response: TunnelResponse) { this.responses.set(sid, response); }
-  async request(sid: string, from: string, args: Record<string, unknown>) {
-    this.frame({ t: "tun", op: "http.req", sid, method: "POST", path: "/ash/call", from });
-    this.frame({ t: "tun", op: "http.reqbody", sid, data: b64u(Buffer.from(JSON.stringify({ capability: COLLABORATION_LIST, caller: "person:owner", args }))) });
-    this.frame({ t: "tun", op: "http.reqend", sid });
-    for (let n = 0; n < 300 && !this.responses.has(sid); n++) await new Promise(resolve => setTimeout(resolve, 2));
-    const result = this.responses.get(sid); assert.ok(result && "body" in result); return JSON.parse(String(result.body));
-  }
-}
-const fakeLocal: LocalCapabilities = { manifest: async () => ({ name: "fake", kind: "laptop", capabilities: [] }), call: async () => ({ ok: true, content: [] }) };
-test("pairing preparation fences replacement and pairing ABA during gateway awaits", async t => {
-  for (const restore of [false, true]) {
-    const f = fixture(t), transaction = new LocalStateTransaction(f.state);
-    const link = new Tunnel("https://unused.invalid", keyA, fakeLocal, () => {});
-    let approve!: (value: { permissions: []; grant_version: number }) => void;
-    link.stubPair(async () => ({ request_id: "fake", client_id: keyA.id, owner_key: keyB.publicKey, owner_fingerprint: "fake" }), () => new Promise(resolve => { approve = resolve; }));
-    try {
-      const pending = link.pair(f.state, "fake-code", "fake");
-      while (!approve) await new Promise(resolve => setImmediate(resolve));
-      transaction.write("paired.json", JSON.stringify({ owner_key: keyB.publicKey }), transaction.capture());
-      if (restore) transaction.write("paired.json", JSON.stringify({ owner_key: keyA.publicKey }), transaction.capture());
-      approve({ permissions: [], grant_version: 1 });
-      await assert.rejects(pending, /stale/);
-      assert.equal(loadCurrentPairing(join(f.state, "paired.json"))!.ownerId, restore ? ownerA : ownerB);
-    } finally { link.stop(); transaction.close(); }
-  }
-});
-test("late revoke is bound to original connection and cannot revoke a replacement pairing", async t => {
-  const f = fixture(t), link = new Tunnel("https://unused.invalid", keyA, fakeLocal, () => {});
-  try {
-    await link.pair(f.state, undefined, "fake"); link.connectFake(); link.bindAttempt();
-    f.pair(keyB.publicKey);
-    assert.equal(link.revoke(), false);
-    const current = loadCurrentPairing(join(f.state, "paired.json"))!; assert.equal(current.ownerId, ownerB); assert.equal(current.revoked, false);
-  } finally { link.stop(); }
-});
-test("real ClientLink trusted context reaches real read service; owner replacement stays closed", async t => {
-  const f = fixture(t); writeFileSync(f.read, JSON.stringify(grant(ownerA, keyA.id)));
-  let factories = 0;
-  const service = makeService({ stateDir: f.state, nodeId: keyA.id, factory: () => { factories++; return { listWork: async () => page(), readWork: async () => page(), close: async () => {} }; } });
-  const local: LocalCapabilities = { manifest: async () => ({ name: "fake", kind: "laptop", ...service.manifest() }), call: (name, args, _caller, signal, context) => service.call(name, args, signal, context), collaborationDisconnected: () => service.invalidate() };
-  const link = new Tunnel("https://unused.invalid", keyA, local, () => {});
-  try {
-    await link.pair(f.state, undefined, "fake"); link.connectFake();
-    await observeAuthorizationWrites(f.state, ["paired.json", "collaboration-read.json"], () => { replaceFixtureAuthorization(f.state, "paired.json", JSON.stringify({ owner_key: keyA.publicKey })); replaceFixtureAuthorization(f.state, "collaboration-read.json", JSON.stringify(grant(ownerA, keyA.id))); });
-    assert.equal((await link.request("A-read", ownerA, envelope(service, keyA.id))).ok, true); assert.equal(factories, 1);
-    f.pair(keyB.publicKey);
-    assert.equal((await link.request("B-read", ownerB, envelope(service, keyA.id))).ok, false); assert.equal(factories, 1);
-  } finally { link.stop(); await service.close(); }
-});
 test("real watcher invalidates observed ABA even when an injected additional epoch is constant", async t => {
   const f = fixture(t), settings = new ConnectionSetupService({ stateDir: f.state, endpointId: "node", observationEpoch: () => "constant",
-    testing:{allowBooleanVerification:true},verification: { diagnostics: async () => ({}), verifyScope: async () => true }, runtime: { reserveChange: async () => ({ assertCurrent: () => undefined, release: () => undefined }) } });
+    testing:{allowBooleanVerification:true,readBinding:{source_id:"fixture-source",binding_revision:"a".repeat(64)}},verification: { diagnostics: async () => ({}), verifyScope: async () => true }, runtime: { reserveChange: async () => ({ assertCurrent: () => undefined, release: () => undefined }) } });
   try {
     await observeAuthorizationWrites(f.state, ["paired.json"], () => replaceFixtureAuthorization(f.state, "paired.json", JSON.stringify({ owner_key: keyA.publicKey })));
     const before = await settings.status(), original = readFileSync(join(f.state, "paired.json"), "utf8");
@@ -215,16 +158,6 @@ test("real watcher invalidates observed ABA even when an injected additional epo
     assert.notEqual(after.precondition!.epoch, before.precondition!.epoch);
     await assert.rejects(settings.applyScope({ kind: "read", allowedCwds: ["/selected"] }, before.precondition!), e => e instanceof SetupError && e.code === "stale");
   } finally { settings.close(); }
-});
-test("current transport revoke atomically persists only its paired owner", async t => {
-  const f = fixture(t), link = new Tunnel("https://unused.invalid", keyA, fakeLocal, () => {});
-  try {
-    await link.pair(f.state, undefined, "fake"); link.connectFake();
-    assert.equal(link.revoke(), true);
-    const revoked = loadCurrentPairing(join(f.state, "paired.json"))!;
-    assert.equal(revoked.ownerId, ownerA); assert.equal(revoked.revoked, true);
-    assert.equal(statSync(join(f.state, "paired.json")).mode & 0o777, 0o600);
-  } finally { link.stop(); }
 });
 test("parent descriptor retains native flock after helper exit and another Node process is busy", async t => {
   const f = fixture(t), helper = fileURLToPath(new URL("../src/collaboration/descriptor-lock.ts", import.meta.url));
@@ -236,4 +169,19 @@ test("parent descriptor retains native flock after helper exit and another Node 
     assert.equal(exit, 0, "separate Node process must not acquire while parent's verified fd is retained");
   } finally { lock.release(); }
   acquireDescriptorStateLock(f.state).release();
+});
+
+class PairingFixture extends GatewayLine {
+ stubPair(request: () => ReturnType<typeof this.gateway.requestPairing>, approval: () => ReturnType<typeof this.gateway.waitForApproval>) {this.gateway.requestPairing=request;this.gateway.waitForApproval=approval;}
+}
+test('GatewayLine pairing retains its local preparation across owner replacement and ABA during approval awaits',async t=>{
+ for(const restore of [false,true]) {
+  const f=fixture(t),tx=new LocalStateTransaction(f.state),identity=await loadIdentity(f.state),line=new PairingFixture('https://fixture.invalid',identity,new TunnelPort(),()=>{});
+  let approve!:(value:{permissions:[];grant_version:number})=>void;
+  line.stubPair(async()=>({request_id:'fake',client_id:identity.id,owner_key:keyB.publicKey,owner_fingerprint:'fake'}),()=>new Promise(resolve=>approve=resolve));
+  try{const pending=line.pair(f.state,'fake-code','fixture');while(!approve)await new Promise(resolve=>setImmediate(resolve));tx.write('paired.json',JSON.stringify({owner_key:keyB.publicKey}),tx.capture());if(restore)tx.write('paired.json',JSON.stringify({owner_key:keyA.publicKey}),tx.capture());approve({permissions:[],grant_version:1});await assert.rejects(pending,/stale/);assert.equal(loadCurrentPairing(join(f.state,'paired.json'))!.ownerId,restore?ownerA:ownerB);}finally{line.stop();tx.close();}
+ }
+});
+test('GatewayLine late revoke never revokes a replacement owner and current revoke writes the original pairing privately',async t=>{
+ for(const replace of [false,true]){const f=fixture(t),identity=await loadIdentity(f.state),line=new GatewayLine('https://fixture.invalid',identity,new TunnelPort(),()=>{});try{await line.pair(f.state,undefined,'fixture');if(replace)f.pair(keyB.publicKey);line.markRevoked();const current=loadCurrentPairing(join(f.state,'paired.json'))!;assert.equal(current.ownerId,replace?ownerB:ownerA);assert.equal(current.revoked,!replace);if(!replace)assert.equal(statSync(join(f.state,'paired.json')).mode&0o777,0o600);}finally{line.stop();}}
 });

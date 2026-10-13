@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ash-link/1 agent frame",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "agent"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "agent.start",
+            "agent.stop",
+            "agent.list",
+            "session.get",
+            "session.set",
+            "session.new",
+            "session.reload",
+            "session.compact",
+            "send",
+            "followup",
+            "steer",
+            "inject",
+            "interrupt",
+            "restart",
+            "configure",
+            "config.get",
+            "plugins"
+          ]
+        }
+      },
+      "required": [
+        "t",
+        "id",
+        "op"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "agent"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "op_result": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {},
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "bad_request",
+                "unauthorized",
+                "forbidden",
+                "not_found",
+                "denied",
+                "cancelled",
+                "timeout",
+                "offline",
+                "result_unknown",
+                "conflict",
+                "too_large",
+                "unavailable",
+                "failed",
+                "internal"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "detail": {},
+            "recovery_hint": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "t",
+        "id",
+        "op_result",
+        "ok"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "agent"
+        },
+        "event": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "t",
+        "event"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "agent"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "outbound": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "t",
+        "id",
+        "outbound"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "t": {
+          "const": "agent"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "outbound_result": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "t",
+        "id",
+        "outbound_result"
+      ]
+    }
+  ]
+}

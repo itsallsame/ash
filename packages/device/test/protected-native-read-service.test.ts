@@ -10,7 +10,7 @@ import { JsonProcess } from '../src/agents/process';
 import { captureProtectedReadSource,currentReadSource,releaseReadSource,readSourceDrained,readSourcePath } from '../src/collaboration/read-source';
 import { CollaborationReadService } from '../src/collaboration/read-service';
 import { COLLABORATION_LIST,COLLABORATION_READ } from '../src/collaboration/capabilities';
-import type { CallResult } from '../../sdk/src/api';
+import type { CallResult } from '../src/collaboration/compat';
 import type { HistoryTurn,ReadPage,WorkSummary } from '../src/collaboration/types';
 const nativeFixturePath='./fixtures/read-source-native-realm.mjs';
 const native=await import(nativeFixturePath);

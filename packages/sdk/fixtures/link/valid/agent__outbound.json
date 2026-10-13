@@ -1,0 +1,9 @@
+{
+  "t": "agent",
+  "id": "g2",
+  "outbound": "agent_tell",
+  "args": {
+    "to": "agent:main",
+    "text": "hi"
+  }
+}

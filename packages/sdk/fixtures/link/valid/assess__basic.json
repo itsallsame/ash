@@ -1,0 +1,9 @@
+{
+  "t": "assess",
+  "ch": "device",
+  "id": "a1",
+  "capability": "workspace.write",
+  "args": {
+    "path": "a.txt"
+  }
+}

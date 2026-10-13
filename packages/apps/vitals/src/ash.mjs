@@ -1,0 +1,40 @@
+// The way back into Ash: the MCP endpoint Ash gave this app (ASH_MCP_URL, ASH_MCP_TOKEN). Only what the owner
+// granted at install can be called; events go through ash_event.
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+export function ashClient(url, token) {
+  let client = null;
+  const connect = async () => {
+    if (client) return client;
+    if (!url || !token) throw new Error("not started by Ash (ASH_MCP_URL / ASH_MCP_TOKEN missing)");
+    const next = new Client({ name: "vitals", version: "1.0.0" });
+    await next.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
+    client = next;
+    return next;
+  };
+  const tool = async (name, args) => {
+    try {
+      const result = await (await connect()).callTool({ name, arguments: args }, undefined, { timeout: 60_000 });
+      const out = result.structuredContent ?? JSON.parse(result.content?.find((item) => item.type === "text")?.text ?? "{}");
+      // owner_text is Ash's sentence for the owner; recent is what Ash already recorded when the phone could not answer.
+      if (!out.ok) throw Object.assign(new Error(`${out.error?.code ?? "failed"}: ${out.error?.message ?? ""}`),
+        { code: out.error?.code, ownerText: out.error?.owner_text, recent: out.error?.recent });
+      return out;
+    } catch (error) {
+      if (!error.code) {
+        try { await client?.close(); } catch { /* gone */ }
+        client = null;
+        if (!error.ownerText) error.ownerText = "连不上 Ash，稍后再试";
+      }
+      throw error;
+    }
+  };
+  return {
+    /** A word's result as the hub's words answer: { data } (what the bridge calls `result`) and { content } when it came with parts. */
+    call: async (member, word, body) => { const out = await tool("capability_call", { member, word, body }); return { data: out.result, ...(out.content ? { content: out.content } : {}) }; },
+    /** The members this app may use and the words it may call on each (capability_list). */
+    members: async () => (await tool("capability_list", {}))?.result?.members ?? [],
+    event: async (name, body) => (await tool("ash_event", { name, body })).result,
+  };
+}
