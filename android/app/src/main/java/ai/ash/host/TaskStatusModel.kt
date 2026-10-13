@@ -6,7 +6,13 @@ data class TaskCard(val id: String, val pendingId: String, val target: String, v
     val title: String, val detail: String, val original: String, val options: List<Pair<String, String>>,
     val expiresAt: Long, val allowCustom: Boolean, val state: String) {
     fun actionable(now: Long) = state == "waiting" && expiresAt > now
+    /**
+     * A plain approval: a gate card whose answers are exactly the approval's (once / always / deny). Anything else the gate asks
+     * (a screen lease: its own durations) is answered with its own options, like a question, on every surface.
+     */
+    val plainApproval: Boolean get() = kind == "approval" && options.isNotEmpty() && options.all { it.first in APPROVAL_CHOICES }
     companion object {
+        private val APPROVAL_CHOICES = setOf("once", "always", "deny")
         fun parse(b: JSONObject): TaskCard {
             val options = b.getJSONArray("options")
             require(options.length() <= 8)

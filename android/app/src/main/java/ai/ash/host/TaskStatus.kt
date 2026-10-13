@@ -152,7 +152,7 @@ object TaskStatus {
             done(false, "状态不可用，请回 Ash 核对"); return@post
         }
         val route = runCatching {
-            if (card.kind == "question") PresentRoutes.question(card.id, card.target, card.options.map { it.first }.toSet(), choice, text,
+            if (!card.plainApproval) PresentRoutes.question(card.id, card.target, card.options.map { it.first }.toSet(), choice, text,
                 card.allowCustom, card.expiresAt, System.currentTimeMillis())
             else PresentRoutes.approval(card.id, card.target, card.options.map { it.first }.toSet(), choice, card.expiresAt, System.currentTimeMillis())
         }.getOrNull()
@@ -170,7 +170,7 @@ object TaskStatus {
                     .put("reply_to", id).put("body", JSONObject().put("ok", true).put("result", JSONObject().put("data", result)))
                     .put("client_id", "capsule-answer:$id")).getJSONObject("message").optString("id").isNotBlank()
             }.getOrDefault(false)
-            main.post { done(ok, if (ok) { if (choice == "deny") "已拒绝" else if (card.kind == "question") "已回答" else "已批准，等待继续" } else "答复未确认，可原样重试") }
+            main.post { done(ok, if (ok) { if (choice == "deny") "已拒绝" else if (!card.plainApproval) "已回答" else "已批准，等待继续" } else "答复未确认，可原样重试") }
         }, "ash-capsule-answer").start()
     } }
     /** Same authenticated phone-owner path as notification replies; stable client id makes retries safe. */
