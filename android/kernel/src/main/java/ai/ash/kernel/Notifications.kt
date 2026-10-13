@@ -20,6 +20,10 @@ object KernelText {
     const val RETRYING = "Ash 反复退出，正在重试"
     const val ERROR = "出错了"
 
+    /** The strong notice when the host layer is gone while the kernel stays (not when the kernel package is replaced, which ends both). */
+    const val HOST_LOST_TITLE = "后台动手断开了"
+    const val HOST_LOST_TEXT = "USB 插拔或切换 USB 用途会断开它。点这里重新接上；平时把 USB 用途保持「仅充电」。"
+
     fun error(detail: String?): String = if (detail.isNullOrBlank()) ERROR else "$ERROR：$detail"
 
     /** The default line of a supervisor state (the core's own status text replaces it while the core runs). */
@@ -67,6 +71,8 @@ object Notifications {
     /** Channels the pairing guide uses: progress (silent, same as the status channel) and a ringing one for what the owner must do now. */
     const val CH_STATUS = CHANNEL
     const val CH_URGENT = "ash.kernel.urgent"
+    /** Strong: banner, sound and vibration (a channel's vibration cannot be added later, so it is its own id). */
+    const val CH_HOST_LOST = "ash.kernel.hostlost.v1"
     // Dedicated, silent high-importance input channel, as in Shizuku's adb pairing service.
     // Never share the resident service's MIN channel: owners must be able to see and expand this input.
     const val CH_PAIRING = "ash.kernel.pairing.v1"
@@ -83,7 +89,18 @@ object Notifications {
             },
         )
         nm.createNotificationChannel(
-            NotificationChannel(CH_URGENT, "Ash 内核配对", NotificationManager.IMPORTANCE_HIGH).apply { setShowBadge(false) },
+            NotificationChannel(CH_URGENT, "宿主重连提示", NotificationManager.IMPORTANCE_HIGH).apply {
+                setShowBadge(false); description = "开机或更新后提醒你把宿主重新接上。"
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_HOST_LOST, "后台动手断开", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "宿主层被系统带走时的强提醒：弹横幅、响铃、振动；点一下重新接上。"
+                setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                    android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                enableVibration(true); vibrationPattern = longArrayOf(0, 250, 150, 250)
+            },
         )
         nm.createNotificationChannel(
             NotificationChannel(CH_PAIRING, "输入配对码", NotificationManager.IMPORTANCE_HIGH).apply {

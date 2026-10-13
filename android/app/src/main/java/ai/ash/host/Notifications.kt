@@ -15,44 +15,52 @@ import org.json.JSONObject
 
 /** Everything ash shows in the notification shade: service status, agent notices, owner confirmations. */
 object Notifications {
-    const val CH_STATUS = "ash.status.v2"
     /**
-     * Ash's replies, approvals and reminders all reach the owner like a messaging app's: banner, sound and vibration.
-     * What should not ring (a reply while its task still runs) is posted silently on the same channel. Android fixes a
-     * channel's importance and vibration once created, so these replace the earlier quieter channels.
+     * Two channels for what Ash tells the owner, one for what stays on screen:
+     *  - 重要通知: what the owner should look at now (approvals, questions, a finished task's reply, reminders, something broken
+     *    or waiting on a tap): banner, sound and vibration.
+     *  - 普通通知: replies and progress that can wait: shown, never rings.
+     *  - 任务状态: the ongoing notices (a running task, the browser being open).
+     * Android fixes a channel's importance, sound and vibration once created, so these are new ids and the earlier,
+     * differently named channels are deleted (a channel still carrying a running notice is deleted at the next start).
      */
-    const val CH_MESSAGES = "ash.messages.v2"
-    const val CH_URGENT = "ash.urgent.v2"
-    const val CH_CONFIRM = "ash.confirm.v2"
-    const val CH_BROWSING = "ash.browsing"
-    private val RETIRED_CHANNELS = listOf("ash.messages", "ash.urgent", "ash.confirm", "ash.status")
+    const val CH_IMPORTANT = "ash.important.v3"
+    const val CH_NORMAL = "ash.normal.v3"
+    const val CH_STATUS = "ash.status.v3"
+    private val RETIRED_CHANNELS = listOf("ash.messages", "ash.urgent", "ash.confirm", "ash.status", "ash.messages.v2", "ash.urgent.v2",
+        "ash.confirm.v2", "ash.status.v2", "ash.browsing", "ash.task")
     private const val CHAT_SHORTCUT = "ash.chat"
     private val VIBRATION = longArrayOf(0, 250, 150, 250)
 
     fun createChannels(ctx: Context) {
         if (Build.VERSION.SDK_INT < 26) return
         val nm = ctx.getSystemService(NotificationManager::class.java)
-        fun ringing(id: String, name: String) = NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH).apply {
+        nm.createNotificationChannel(NotificationChannel(CH_IMPORTANT, "重要通知", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "需要你马上看的：审批、提问、任务做完的回复、到点的提醒、出了问题。会弹出横幅、响铃、振动。"
+            setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
             enableVibration(true); vibrationPattern = VIBRATION
-        }
-        // Default importance, but silent: makers clear a minimum-importance service first when memory runs short.
-        nm.createNotificationChannel(NotificationChannel(CH_STATUS, "Ash 运行状态", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            setShowBadge(false); setSound(null, null); enableVibration(false)
         })
-        nm.createNotificationChannel(ringing(CH_MESSAGES, "Ash 的消息"))
-        nm.createNotificationChannel(ringing(CH_URGENT, "Ash 的提醒"))
-        nm.createNotificationChannel(ringing(CH_CONFIRM, "需要你确认"))
-        nm.createNotificationChannel(NotificationChannel(CH_BROWSING, "Ash 正在浏览", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
-        // A channel still carrying the running service's notification cannot be deleted; the next start retires it.
-        for (old in RETIRED_CHANNELS) runCatching { nm.deleteNotificationChannel(old) }
+        // Default importance, but silent: it shows in the shade without a banner, a sound or a buzz.
+        nm.createNotificationChannel(NotificationChannel(CH_NORMAL, "普通通知", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "不急的回复和进度。静静地出现在通知栏，不弹横幅、不响、不振动。"
+            setSound(null, null); enableVibration(false)
+        })
+        nm.createNotificationChannel(NotificationChannel(CH_STATUS, "任务状态", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Ash 正在做事、正在浏览网页时的常驻状态，随任务结束消失。"
+            setShowBadge(false)
+        })
+        // A channel still carrying a running notice cannot be deleted; the next start retires it.
+        for (old in RETIRED_CHANNELS) if (nm.getNotificationChannel(old) != null) runCatching { nm.deleteNotificationChannel(old) }
     }
 
-    /** What Android tells Ash: notifications are on and its message channel rings and vibrates (a maker's own switches aside). */
+    /** What Android tells Ash: notifications are on and the important channel rings and vibrates (a maker's own switches aside). */
     fun ringing(ctx: Context): Boolean {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         if (!nm.areNotificationsEnabled()) return false
         if (Build.VERSION.SDK_INT < 26) return true
-        val channel = nm.getNotificationChannel(CH_MESSAGES) ?: return true
+        val channel = nm.getNotificationChannel(CH_IMPORTANT) ?: return true
         return channel.importance >= NotificationManager.IMPORTANCE_HIGH && channel.shouldVibrate()
     }
 
@@ -61,7 +69,7 @@ object Notifications {
         android.widget.Toast.makeText(a, "5 秒后发一条测试提醒：可以先锁屏或回到桌面，感觉一下有没有响铃振动", android.widget.Toast.LENGTH_LONG).show()
         val ctx = a.applicationContext
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            val n = builder(ctx, CH_URGENT).setContentTitle("测试提醒")
+            val n = builder(ctx, CH_IMPORTANT).setContentTitle("测试提醒")
                 .setContentText("响了、振了，就回 Ash 点「已设好」").setContentIntent(openApp(ctx, "alert-test".hashCode()))
                 .setAutoCancel(true).apply { if (Build.VERSION.SDK_INT < 26) setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL) }.build()
             ctx.getSystemService(NotificationManager::class.java).notify("alert-test", 0, n)
@@ -73,7 +81,7 @@ object Notifications {
      * page, a permission prompt). One per [tag]; [PendingIntent] must be immutable.
      */
     fun notice(ctx: Context, tag: String, title: String, text: String, tap: PendingIntent) {
-        val n = builder(ctx, CH_URGENT).setContentTitle(title).setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
+        val n = builder(ctx, CH_IMPORTANT).setContentTitle(title).setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(tap).setAutoCancel(true).setCategory(Notification.CATEGORY_REMINDER)
             .apply { if (Build.VERSION.SDK_INT < 26) setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL) }.build()
         ctx.getSystemService(NotificationManager::class.java).notify("notice:$tag", 0, n)
@@ -121,7 +129,7 @@ object Notifications {
         val id = p.getString("id")
         val kind = p.getString("kind")
         val text = p.optString("text")
-        val channel = when (kind) { "approval" -> CH_CONFIRM; "due" -> CH_URGENT; else -> CH_MESSAGES }
+        val channel = when (kind) { "approval", "due" -> CH_IMPORTANT; else -> CH_NORMAL }
         // Core names the kind ("Due", "Reply"); the owner reads who it is from and what it is.
         val title = when (kind) { "approval" -> p.optString("title").ifBlank { "需要你确认" }; "due" -> "Ash · 提醒"; else -> "Ash" }
         val b = builder(ctx, channel)
@@ -186,7 +194,7 @@ object Notifications {
             .also { s -> for ((record, at) in items) s.addMessage(Notification.MessagingStyle.Message(record.optString("text"), at, ashPerson(ctx))) }
             else @Suppress("DEPRECATION") Notification.MessagingStyle("我").also { s -> for ((record, at) in items) s.addMessage(record.optString("text"), at, "Ash") }
         val input = RemoteInput.Builder("reply").setLabel("回复").build()
-        val b = builder(ctx, CH_MESSAGES)
+        val b = builder(ctx, if (ring) CH_IMPORTANT else CH_NORMAL)
             .setContentTitle("Ash")
             .setContentText(latest.optString("text"))
             .setStyle(style)
@@ -223,7 +231,7 @@ object Notifications {
             return "in_front"
         }
         val open = PendingIntent.getActivity(ctx, "browser".hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val n = builder(ctx, CH_URGENT)
+        val n = builder(ctx, CH_IMPORTANT)
             .setContentTitle("Ash 请你看一下浏览器").setContentText(reason).setStyle(Notification.BigTextStyle().bigText(reason))
             .setContentIntent(open).setFullScreenIntent(open, true).setCategory(Notification.CATEGORY_REMINDER)
             .setAutoCancel(true).build()
@@ -243,7 +251,7 @@ object Notifications {
         }
         val text = reason ?: "点一下打开相机"
         val open = PendingIntent.getActivity(ctx, "camera".hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val n = builder(ctx, CH_URGENT)
+        val n = builder(ctx, CH_IMPORTANT)
             .setContentTitle("Ash 想请你拍一张照片").setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(open).setFullScreenIntent(open, true).setCategory(Notification.CATEGORY_REMINDER)
             .setAutoCancel(true).build()
@@ -265,7 +273,7 @@ object Notifications {
         val text = if (latest.title.isBlank() || latest.site.isBlank()) page else "$page · ${latest.site}"
         val tap = PendingIntent.getActivity(ctx, "browser-browsing".hashCode(), browserIntent(ctx, latest.id, null),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val b = builder(ctx, CH_BROWSING)
+        val b = builder(ctx, CH_STATUS)
             .setContentTitle("Ash 正在浏览").setContentText(text.ifBlank { "打开中…" })
             .setContentIntent(tap).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
             .setCategory(Notification.CATEGORY_STATUS)
@@ -277,7 +285,7 @@ object Notifications {
     fun hidePresent(ctx: Context, id: String) = ctx.getSystemService(NotificationManager::class.java).cancel("present:$id", 0)
 
     fun presentFailure(ctx: Context, id: String) {
-        val n = builder(ctx, CH_URGENT)
+        val n = builder(ctx, CH_IMPORTANT)
             .setContentTitle("操作未送达")
             .setContentText("通知操作未被接受，请打开 Ash 检查。")
             .setContentIntent(openApp(ctx, id.hashCode())).setAutoCancel(true).build()

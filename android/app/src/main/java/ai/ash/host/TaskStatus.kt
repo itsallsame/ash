@@ -26,7 +26,6 @@ object TaskStatus {
     private var stopping: String? = null
     private var notice: String? = null
     private var lastNotification: String? = null
-    private const val CHANNEL = "ash.task"
     private const val ID = 7
     private const val NOTICED = "ash_island_noticed"
     private fun saveNoticed() {
@@ -98,9 +97,9 @@ object TaskStatus {
     }
     private fun notify(ctx: Context, f: TaskFrame, title: String, canStop: Boolean) {
         val manager = ctx.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel(CHANNEL, "Ash 任务进度", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
+        Notifications.createChannels(ctx)
         val open = PendingIntent.getActivity(ctx, ID, Intent(ctx, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val b = Notifications.builder(ctx, CHANNEL)
+        val b = Notifications.builder(ctx, Notifications.CH_STATUS)
         b.setContentTitle("Ash · $title").setContentText("点此回到 Ash 查看任务")
             .setContentIntent(open).setOnlyAlertOnce(true).setOngoing(f.canStop).setVisibility(Notification.VISIBILITY_PRIVATE)
         if (canStop) {

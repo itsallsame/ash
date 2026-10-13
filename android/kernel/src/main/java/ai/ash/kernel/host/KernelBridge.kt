@@ -119,6 +119,9 @@ object HostPresence {
     @Synchronized private fun gone(ctx: Context, cb: IHostCallback) {
         if (callback?.asBinder() != cb.asBinder()) return
         callback = null
+        // Not one the kernel asked for (shutdown): the system took it away, so the owner is told at once.
+        if (!asked) runCatching { KernelPairing.hostLost(ctx) }
+        asked = false
         coreReady = false
         status = "宿主未连接"
         onChange?.invoke()
@@ -127,5 +130,7 @@ object HostPresence {
     }
 
     fun wakeFired(atMs: Long) = runCatching { callback?.wakeFired(atMs) }
-    fun shutdown(reason: String) = runCatching { callback?.shutdown(reason) }
+    /** The kernel asked the host to stop: its going is not a loss. */
+    @Volatile private var asked = false
+    fun shutdown(reason: String) = runCatching { asked = true; callback?.shutdown(reason) }
 }

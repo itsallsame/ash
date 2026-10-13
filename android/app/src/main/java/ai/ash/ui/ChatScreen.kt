@@ -68,6 +68,22 @@ class ChatScreen(
     private val target = AshUi.text(ctx, "", AshType(12f, 16f, 500, Role.TEXT_2)).apply { visibility = View.GONE }
     /** Files chosen so far (photos, videos, files), sent with the next message. */
     private var picked = JSONArray()
+    /** The send button shows stop; the turn a stop was asked for (hidden from the button until it ends or the stop fails). */
+    private var stopMode = false
+    private var stopping: String? = null
+    /** Send, or stop while a turn runs (see [paintAction]); declared before `init`, which builds the composer with it. */
+    private val action: FrameLayout by lazy {
+        AshUi.iconButton(ctx, ctx.getDrawable(R.drawable.ash_ic_up)!!, "发送", filled = true) {
+            val turn = runningTurn()
+            if (stopMode && turn != null) { stopTurn(turn); return@iconButton }
+            val t = input.text.toString().trim()
+            if (t.isEmpty() && picked.length() == 0) return@iconButton
+            if (!Uploads.fits(t, picked)) { toast("附件太大：一条消息最多带约 3 MB"); return@iconButton }
+            val sending = picked
+            input.setText(""); picked = JSONArray(); paintPicked()
+            say(t, sending)
+        } as FrameLayout
+    }
     private val pickedChip = AshUi.hstack(ctx, 2).apply {
         background = AshUi.rounded(c.youSoft, AshUi.dpF(ctx, 15f)); setPadding(dp(12), 0, dp(2), 0); visibility = View.GONE
     }
@@ -256,19 +272,46 @@ class ChatScreen(
                 })
             }
             addView(input, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(AshUi.iconButton(ctx, ctx.getDrawable(R.drawable.ash_ic_up)!!, "发送", filled = true) {
-                val t = input.text.toString().trim()
-                if (t.isEmpty() && picked.length() == 0) return@iconButton
-                if (!Uploads.fits(t, picked)) { toast("附件太大：一条消息最多带约 3 MB"); return@iconButton }
-                val sending = picked
-                input.setText(""); picked = JSONArray(); paintPicked()
-                say(t, sending)
+            addView(action)
+            input.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+                override fun afterTextChanged(s: Editable?) { paintAction() }
             })
         })
     }
 
+    /** The turn the owner can stop from here: a front turn that has not ended (the same one the progress pill shows), else null. */
+    private fun runningTurn(): String? {
+        val p = current?.optJSONObject("progress") ?: return null
+        if (p.optBoolean("background") || (p.has("ended") && !p.isNull("ended"))) return null
+        return p.optString("id").takeIf { it.isNotEmpty() && it != stopping }
+    }
+
+    /** While a turn runs and nothing is typed or picked, the send button is a stop button; typing brings send back (to add to the task). */
+    private fun paintAction() {
+        val stop = runningTurn() != null && input.text.isNullOrBlank() && picked.length() == 0
+        if (stop == stopMode) return
+        stopMode = stop
+        val icon = ctx.getDrawable(if (stop) R.drawable.ash_ic_stop else R.drawable.ash_ic_up)!!.mutate().apply { setTint(c.text) }
+        action.getChildAt(0).background = icon
+        action.contentDescription = if (stop) "停止" else "发送"
+    }
+
+    /** Stops the running turn with the hub's own stop word (what the island's stop sends); the button is back as send once the turn is over. */
+    private fun stopTurn(turn: String) {
+        stopping = turn; paintAction()
+        port.send(JSONObject().put("to", "service:reflex").put("kind", "request").put("word", "task.stop")
+            .put("body", JSONObject().put("turn", turn)).put("wait", true).put("client_id", java.util.UUID.randomUUID().toString())) { r ->
+            val data = r.optJSONObject("response")?.takeIf { it.optBoolean("ok") }?.optJSONObject("result")?.optJSONObject("data")
+            if (data?.optBoolean("cancelled") != true) { stopping = null; toast("没能停下，再点一次试试") }
+            refresh()
+        }
+    }
+
     /** 「N 个附件」 with a ✕ to take them all off, above the text field while something is picked. */
     private fun paintPicked() {
+        paintAction()
         pickedChip.removeAllViews()
         pickedChip.visibility = if (picked.length() == 0) View.GONE else View.VISIBLE
         if (picked.length() == 0) return
@@ -332,6 +375,7 @@ class ChatScreen(
 
     private fun paintProgress() {
         pillSlot.removeAllViews()
+        paintAction()
         val p = current?.optJSONObject("progress") ?: return
         if (p.optBoolean("background")) return
         val now = System.currentTimeMillis()

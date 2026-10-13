@@ -1,6 +1,7 @@
 package ai.ash.kernel.host
 
 import ai.ash.kernel.KernelService
+import ai.ash.kernel.KernelText
 import ai.ash.kernel.Notifications
 import ai.ash.kernel.StatusActivity
 import ai.ash.kernel.host.adb.AdbClient
@@ -74,6 +75,23 @@ object KernelPairing {
             .apply { if (tap != null) setContentIntent(tap); if (input != null) addAction(input) }.build()
     internal fun notify(ctx: Context, title: String, text: String, tap: PendingIntent?, ongoing: Boolean) =
         ctx.getSystemService(NotificationManager::class.java).notify(NOTICE, 0, notification(ctx, title, text, tap, ongoing))
+    /**
+     * The host layer died while the kernel stayed (adbd restarted: a cable plugged or pulled, the USB use changed). Strong: banner,
+     * sound, vibration; a tap opens the guide that connects it again. Taken down by [cancel] when it is back. Nothing is switched
+     * or connected here: that stays the owner's.
+     */
+    fun hostLost(ctx: Context) {
+        if (!AdbKey.paired(ctx)) return
+        val n = Notifications.builder(ctx, Notifications.CH_HOST_LOST)
+            .setContentTitle(KernelText.HOST_LOST_TITLE).setContentText(KernelText.HOST_LOST_TEXT)
+            .setStyle(Notification.BigTextStyle().bigText(KernelText.HOST_LOST_TEXT))
+            .setContentIntent(openPage(ctx)).setAutoCancel(true).setCategory(Notification.CATEGORY_ALARM)
+            .setVisibility(Notification.VISIBILITY_PUBLIC).build()
+        // Same tag as the reconnect prompt: take that one down first so this is a new notification, not an update that may stay quiet.
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        nm.cancel(NOTICE, 0)
+        nm.notify(NOTICE, 0, n)
+    }
     internal fun cancel(ctx: Context) = ctx.getSystemService(NotificationManager::class.java).cancel(NOTICE, 0)
     internal fun keyName() = KernelHost.keyName()
     internal fun log(msg: String) = Log.i("ash.hostshell", msg)

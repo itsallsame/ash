@@ -36,4 +36,11 @@ class KernelTextTest {
         assertEquals("2 个任务在跑", KernelText.fromCore("2 个任务在跑", "running"))
         assertEquals("all fine", KernelText.fromCore("all fine", "running"))
     }
+
+    @Test fun theHostLostNoticeSaysWhatHappenedAndWhatToDo() {
+        assertEquals("后台动手断开了", KernelText.HOST_LOST_TITLE)
+        assertTrue(KernelText.HOST_LOST_TEXT.contains("USB 插拔"))
+        assertTrue(KernelText.HOST_LOST_TEXT.contains("重新接上"))
+        assertTrue(KernelText.HOST_LOST_TEXT.contains("仅充电"))
+    }
 }
