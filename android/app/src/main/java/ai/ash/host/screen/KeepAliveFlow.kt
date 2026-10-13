@@ -25,18 +25,18 @@ object KeepAliveFlow {
     private val main = Handler(Looper.getMainLooper())
 
     /** The permission entry each app's switches settle. */
-    private val keys = mapOf(KeepAliveSwitches.ASH_PACKAGE to "autostart", Bridge.SCREEN_PACKAGE to "screen_keepalive", Bridge.SENSES_PACKAGE to "senses_keepalive")
+    private val keys = mapOf(KeepAliveSwitches.ASH_PACKAGE to "autostart", Bridge.SENSES_PACKAGE to "senses_keepalive")
 
     /** A helper that has the flow is connected with its accessibility service on, on a phone whose settings it knows. */
     fun available(ctx: Context): Boolean = PhoneMaker.current == PhoneMaker.COLOROS && ScreenBridge.accessibility() &&
-        ScreenBridge.installedVersion(ctx) >= KeepAliveSwitches.MIN_HELPER_VERSION && !ScreenBridge.needsInstall(ctx)
+        ScreenBridge.installedVersion() >= KeepAliveSwitches.MIN_HELPER_VERSION
 
     /** Asks the owner, then runs; [guidance] is the old way (written steps), used when this cannot be offered or does not finish. */
     fun offer(a: Activity, guidance: () -> Unit) {
         if (!available(a)) return guidance()
         if (running.get()) { Toast.makeText(a, "正在打开中，请稍等", Toast.LENGTH_SHORT).show(); return }
         AlertDialog.Builder(a).setTitle("帮我打开")
-            .setMessage("让屏幕助手替你打开 Ash、Ash 感知、屏幕助手的开机自启动、后台自启动和后台行为？期间请不要操作手机。")
+            .setMessage("让 Ash 替你打开自身和 Ash 感知的开机自启动、后台自启动和后台行为？期间请不要操作手机。")
             .setPositiveButton("确定") { _, _ -> start(a, guidance) }
             .setNegativeButton("取消", null).show()
     }
@@ -44,7 +44,7 @@ object KeepAliveFlow {
     private fun start(a: Activity, guidance: () -> Unit) {
         if (!running.compareAndSet(false, true)) return
         val ctx = a.applicationContext
-        val asked = KeepAliveSwitches.targets.filter { installed(ctx, it.pkg) }
+        val asked = KeepAliveSwitches.targets.filter { it.pkg in keys && installed(ctx, it.pkg) }
         Thread({
             val report = try { run(asked) } finally { running.set(false) }
             main.post { finish(a, asked, report, guidance) }

@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAuthScopeKey } from "./auth-scope";
 import { protectProcessMemory } from "./harden";
@@ -26,6 +26,13 @@ import { agentName, resolveAgents, wordAllowed, type AgentDeclaration, type Conf
 import { AGENT_RULES } from "./workers/rules.generated";
 import type { Message } from "../../sdk/src/api";
 import { resolveWorldConfigV2, type WorldConfigV2 } from "../../sdk/src/config";
+import {createCoreMaterialEntry} from './collaboration/material-edge';
+import {MaterialInputService} from './collaboration/material-input-service';
+import {MaterialNativeImport} from './collaboration/material-native-import';
+import {MaterialDraftStore} from './collaboration/material-draft-store';
+import {NativeMaterialSignerAuthority} from './collaboration/material-signer-authority';
+import {LocalStateTransaction} from '../../device/src/collaboration/local-state-transaction';
+import {MaterialProtocolError} from '../../device/src/collaboration/material-types';
 import { ClientLink, fileSigner, OwnerLink } from "./gateway/link";
 import { HostDeviceLink, type HostConnection } from "./host-v2";
 import { TaskStatusBridge } from "./task-status";
@@ -220,6 +227,33 @@ export async function startOwner(config: Config): Promise<Running> {
   let widgets: WidgetsMember | null = null;
   let pulse: PulseMember | null = null;
   let stopFirstMeeting: (() => void) | null = null;
+  let material:Awaited<ReturnType<typeof createCoreMaterialEntry>>|null=null;let materialState:LocalStateTransaction|null=null;let materialSignerAuthority:NativeMaterialSignerAuthority|null=null;
+  let materialInput:MaterialInputService|null=null,materialImports:MaterialNativeImport|null=null,materialDrafts:MaterialDraftStore|null=null;
+  let materialClosing:Promise<void>|undefined,materialResourcesReleased=false;
+  const stopMaterialAdmission=(stopLink=true)=>{material?.service.stopInputAdmission();material?.bindings.close();material?.work.stop();if(stopLink)link?.stop();};
+  const closeMaterial=async(budgetMs=20000,stopLink=true)=>{
+    stopMaterialAdmission(stopLink);
+    materialClosing??=(async()=>{
+      const errors:unknown[]=[];
+      const cleanup=async(work:()=>unknown)=>{try{await work();}catch(error){errors.push(error);}};
+      // The source service owns captured FDs; release them before closing imports or their DB.
+      await cleanup(()=>materialInput?.close());
+      await cleanup(()=>materialImports?.close());
+      // A cleanup error is not evidence that its raw tasks or held source pins settled.
+      // Keep this owned chain pending; the caller's observation budget may end independently.
+      while(materialInput?.busy||materialImports?.busy)await new Promise<void>(resolve=>setTimeout(resolve,10));
+      await cleanup(()=>materialDrafts?.close());
+      if(material)await cleanup(async()=>{while(true){const result=await material!.close(20000);if(result.state==='closed'&&!result.busy)break;}});
+      while(material?.runtime.busy||material?.work.busy)await new Promise<void>(resolve=>setTimeout(resolve,10));
+      await cleanup(()=>materialSignerAuthority?.close());
+      await cleanup(()=>materialState?.close());
+      materialResourcesReleased=true;
+      if(errors.length)throw new AggregateError(errors,'Material cleanup failed');
+    })();
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try{await Promise.race([materialClosing,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Material I/O is still draining')),budgetMs);})]);}
+    finally{if(timer)clearTimeout(timer);}
+  };
   let link: OwnerLink | null = null;
   let server: Awaited<ReturnType<typeof startEdgeServer>> | null = null;
   let apps: AppRuntime | null = null;
@@ -603,10 +637,25 @@ export async function startOwner(config: Config): Promise<Running> {
       owner.setDeviceManagement((id, fallback) => devices!.deviceName(id, fallback), id => devices!.localAgentsAllowed(id));
       owner.onPairingRequest = (item) => devices!.pairingRequested(item);
       link = owner;
-      void owner.start(join(config.stateDir, "bootstrap-secret"), config.name ?? "Ash owner");
-      // Remote recovery prefers current grants to an old snapshot, but waits only briefly; devices join as they connect.
-      if (!await owner.waitConnected()) log("gateway not connected at startup", owner.problem ?? owner.lastError);
+
     } catch (error) { log("gateway setup failed; running without the gateway", error); }
+    // Materials reuse this physical signer and canonical Ledger; source input uses the authenticated peer target provider.
+    try{const signer=link?.signer??(hostLink?await hostLink.signer():await fileSigner(config.stateDir));materialState=new LocalStateTransaction(resolve(config.stateDir));const root=join(materialState.stateDir,'material-assets');mkdirSync(root,{recursive:true,mode:0o700});if(hostLink)materialSignerAuthority=await NativeMaterialSignerAuthority.fromHost(hostLink);material=await createCoreMaterialEntry({state:materialState,signer,signerCurrent:()=>{materialState!.capture();return undefined;},...(materialSignerAuthority?{signerAuthority:materialSignerAuthority}:{}),edge,ledger,stores:[{local_store_id:`node:${signer.id}:materials`,endpoint_id:'materials',root_dir:root}],peerProofs:link?.materialPeerProofs()??{currentEpoch:()=> 'gateway-not-configured',async capture(){throw new MaterialProtocolError('unsupported');}}});if(link){
+        materialDrafts=new MaterialDraftStore(join(materialState.stateDir,'material-ui-drafts.sqlite'));
+        materialImports=new MaterialNativeImport(material.runtime.registry,join(materialState.stateDir,'material-native-sources'));
+        materialInput=new MaterialInputService({runtime:material.runtime,edge,link,drafts:materialDrafts,imports:materialImports});
+        material.service.attachInput(materialInput,materialImports);
+        link.attachMaterial(material.runtime,material.bindings,material.work);
+      }
+    }catch(error){
+      try{await closeMaterial(20000,false);}catch(cleanupError){throw new AggregateError([error,cleanupError],'Material startup rollback failed');}
+      material=null;materialInput=null;materialImports=null;materialDrafts=null;materialState=null;materialSignerAuthority=null;materialClosing=undefined;materialResourcesReleased=false;
+      log('materials unavailable',error);
+    }
+    if(link){void link.start(join(config.stateDir,'bootstrap-secret'),config.name??'Ash owner');
+      // Attach material admission before connecting, then wait briefly for current recovery grants.
+      if(!await link.waitConnected())log('gateway not connected at startup',link.problem??link.lastError);
+    }
     // Reconcile durable stop intents before router recovery can replay an old tool request.
     const committedPause = admin.currentCommittedPause();
     if (committedPause) agent.reconcileCommittedPause(committedPause.requestId, committedPause.targetTurn);
@@ -687,16 +736,28 @@ export async function startOwner(config: Config): Promise<Running> {
     // Apps start in the background: a slow or broken app never delays ash.
     void apps.start().catch((error) => log("apps failed to start", error));
     return { url, tokens, ledger, world, members, edge, link, dsh, container, agents: () => [agent!, ...(agentSystem?.agents() ?? [])], async close() {
+      stopMaterialAdmission();
       stopTour?.(); stopFirstMeeting?.(); senses?.close(); cost?.close();
-      link?.stop(); await taskStatus?.close(); widgets?.close(); pulse?.close(); hostLink?.close();
-      if (server) await new Promise<void>((resolve) => { server!.close(() => resolve()); server!.closeAllConnections(); });
-      await reflex?.close(); await post?.close(); await clock?.close(); work?.close(); await agent?.close(); await agentSystem?.close(); await mind?.close(); admin?.close(); await dsh?.close(); (provisioning as ChildProcess | null)?.kill(); await container?.close(); await agentTools?.close(); await apps?.close(); await egress?.close(); await self?.close(); world.dispose(); ledger.close();
+      const errors:unknown[]=[];
+      try{await closeMaterial();}catch(error){if(!materialResourcesReleased)throw error;errors.push(error);}
+      for(const cleanup of [()=>taskStatus?.close(),()=>widgets?.close(),()=>pulse?.close(),()=>hostLink?.close(),
+        ()=>server?new Promise<void>(resolve=>{server!.close(()=>resolve());server!.closeAllConnections();}):undefined,
+        ()=>reflex?.close(),()=>post?.close(),()=>clock?.close(),()=>work?.close(),()=>agent?.close(),()=>agentSystem?.close(),()=>mind?.close(),()=>admin?.close(),()=>dsh?.close(),()=>{(provisioning as ChildProcess|null)?.kill();},()=>container?.close(),()=>agentTools?.close(),()=>apps?.close(),()=>egress?.close(),()=>self?.close(),()=>world.dispose(),()=>ledger.close()]){
+        try{await cleanup();}catch(error){errors.push(error);}
+      }
+      if(errors.length)throw new AggregateError(errors,'Owner cleanup failed');
     } };
   } catch (error) {
+    stopMaterialAdmission();
     stopTour?.(); stopFirstMeeting?.(); senses?.close(); cost?.close();
-    link?.stop(); await taskStatus?.close(); widgets?.close(); pulse?.close(); hostLink?.close();
-    if (server) await new Promise<void>((resolve) => { server!.close(() => resolve()); server!.closeAllConnections(); });
-    await reflex?.close(); await post?.close(); await clock?.close(); work?.close(); await agent?.close(); await agentSystem?.close(); await mind?.close(); admin?.close(); await dsh?.close(); (provisioning as ChildProcess | null)?.kill(); await container?.close(); await agentTools?.close(); await apps?.close(); await egress?.close(); await self?.close(); ledger.close();
+    const errors:unknown[]=[error];
+    try{await closeMaterial();}catch(cleanupError){if(!materialResourcesReleased)throw new AggregateError([...errors,cleanupError],'Owner startup I/O is still draining');errors.push(cleanupError);}
+    for(const cleanup of [()=>taskStatus?.close(),()=>widgets?.close(),()=>pulse?.close(),()=>hostLink?.close(),
+      ()=>server?new Promise<void>(resolve=>{server!.close(()=>resolve());server!.closeAllConnections();}):undefined,
+      ()=>reflex?.close(),()=>post?.close(),()=>clock?.close(),()=>work?.close(),()=>agent?.close(),()=>agentSystem?.close(),()=>mind?.close(),()=>admin?.close(),()=>dsh?.close(),()=>{(provisioning as ChildProcess|null)?.kill();},()=>container?.close(),()=>agentTools?.close(),()=>apps?.close(),()=>egress?.close(),()=>self?.close(),()=>ledger.close()]){
+      try{await cleanup();}catch(cleanupError){errors.push(cleanupError);}
+    }
+    if(errors.length>1)throw new AggregateError(errors,'Owner startup failed');
     throw error;
   }
 }

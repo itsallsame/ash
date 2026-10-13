@@ -97,6 +97,46 @@ export class ScreenNet {
     return this.uiTransport.request(url, options);
   }
 
+  async collaborationResponse(path, options = {}) {
+    const response = await this.request(path, { ...options, credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "application/json", [SCREEN_TOKEN_HEADER]: this.token, ...options.headers } });
+    const body = await response.json();
+    if (!response.ok || body?.ok !== true) throw Object.assign(new Error(body?.error?.message || "桌面历史暂时无法读取"), { code: body?.error?.code });
+    return body;
+  }
+
+  collaborationEndpoints(signal) { return this.collaborationResponse("/api/collaboration/endpoints", { signal }); }
+
+  collaborationControlEndpoints(signal) { return this.collaborationResponse("/api/collaboration/control/endpoints", { signal }); }
+
+  async collaborationControl(operation, input, signal) {
+    if (!['state', 'apply', 'query', 'reconcile'].includes(operation)) throw new Error('unsupported control operation');
+    const scope = this.currentScope, token = this.token;
+    const result = await this.collaborationResponse(`/api/collaboration/control/${operation}`, { method: 'POST', signal, body: JSON.stringify(input) });
+    if (signal?.aborted || this.currentScope !== scope || this.token !== token || result.auth_scope !== scope) throw Object.assign(new Error('控制授权已改变'), { code: 'permission_denied' });
+    return result;
+  }
+
+  collaborationCreateEndpoints(signal) { return this.collaborationResponse('/api/collaboration/create/endpoints', { signal }); }
+
+  async collaborationCreate(operation, input, signal) {
+    if (!['projects', 'apply', 'query', 'reconcile'].includes(operation)) throw new Error('unsupported create operation');
+    const scope = this.currentScope, token = this.token;
+    const result = await this.collaborationResponse(`/api/collaboration/create/${operation}`, { method: 'POST', signal, body: JSON.stringify(input) });
+    if (signal?.aborted || this.currentScope !== scope || this.token !== token || result.auth_scope !== scope) throw Object.assign(new Error('创建授权已改变'), { code: 'permission_denied' });
+    return result;
+  }
+
+  async collaborationResultFile(target, work, turn, message, href, cursor, signal) {
+    const scope=this.currentScope, token=this.token;
+    const answer=await this.collaborationResponse('/api/collaboration/result-files/prepare', {method:'POST',signal,body:JSON.stringify({version:1,device_id:target.device_id,endpoint_id:target.endpoint_id,authorization_generation:target.authorization_generation,authorization_revision:target.authorization_revision,work,turn_id:turn,source_message_id:message,exact_href:href,...(cursor?{page_cursor:cursor}:{})})});
+    if(signal?.aborted||this.currentScope!==scope||this.token!==token||answer.auth_scope!==scope)throw Object.assign(new Error('结果文件授权已改变'),{code:'permission_denied'});
+    return answer.result;
+  }
+
+  collaborationRead(target, work, cursor, signal) {
+    return this.collaborationResponse("/api/collaboration/read", { method: "POST", signal, body: JSON.stringify({ version: 1, device_id: target.device_id, endpoint_id: target.endpoint_id, authorization_generation: target.authorization_generation, authorization_revision: target.authorization_revision, action: work ? "read_work" : "list_work", page: { limit: work ? 10 : 50, ...(cursor ? { cursor } : {}) }, ...(work ? { work } : {}) }) });
+  }
+
   async catchUp(generation, signal) {
     let more = true;
     while (more && generation === this.generation && !signal.aborted) {

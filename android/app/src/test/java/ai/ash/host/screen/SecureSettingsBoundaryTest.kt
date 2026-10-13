@@ -36,14 +36,25 @@ class SecureSettingsBoundaryTest {
         assertFalse(tools.filter { use.containsMatchIn(it.readText()) }.map { it.name }.toString(), tools.any { use.containsMatchIn(it.readText()) })
     }
 
-    @Test fun onlyTheHelpersEntryIsTakenOutAndPutBack() {
-        val list = "com.other/.Reader:ai.ash.screen/ai.ash.screen.a11y.A11yService:com.third/.Svc"
-        assertEquals(listOf("ai.ash.screen/ai.ash.screen.a11y.A11yService"), ScreenRecovery.Services.helpers(list))
+    @Test fun onlyAshsScreenServiceIsTakenOutAndPutBack() {
+        val list = "com.other/.Reader:ai.ash.agent/ai.ash.screen.a11y.A11yService:com.third/.Svc"
+        assertEquals(listOf("ai.ash.agent/ai.ash.screen.a11y.A11yService"), ScreenRecovery.Services.helpers(list))
         val without = ScreenRecovery.Services.withoutHelper(list)
         assertEquals("com.other/.Reader:com.third/.Svc", without)
-        assertEquals("com.other/.Reader:com.third/.Svc:ai.ash.screen/ai.ash.screen.a11y.A11yService", ScreenRecovery.Services.withHelperBack(without, list))
+        assertEquals("com.other/.Reader:com.third/.Svc:ai.ash.agent/ai.ash.screen.a11y.A11yService", ScreenRecovery.Services.withHelperBack(without, list))
         // Never adds the helper unless the owner had it on; a look-alike package is not the helper.
         assertEquals("com.other/.Reader", ScreenRecovery.Services.withHelperBack("com.other/.Reader", "com.other/.Reader"))
-        assertEquals(emptyList<String>(), ScreenRecovery.Services.helpers("ai.ash.screenfake/.X"))
+        assertEquals(emptyList<String>(), ScreenRecovery.Services.helpers("ai.ash.agentfake/.X:ai.ash.agent/.Other:ai.ash.screen/ai.ash.screen.a11y.A11yService"))
     }
+    @Test fun recoveryKeepsOtherServicesInTheSamePackageAndSupportsIsolatedBuilds() {
+        val probe = "ai.ash.agent.probe"
+        val screen = "$probe/ai.ash.screen.a11y.A11yService"
+        val other = "$probe/.OtherAccessibility"
+        val original = "ai.ash.agent/ai.ash.screen.a11y.A11yService:$screen:$other"
+        assertEquals(listOf(screen), ScreenRecovery.Services.helpers(original, probe))
+        val without = ScreenRecovery.Services.withoutHelper(original, probe)
+        assertEquals("ai.ash.agent/ai.ash.screen.a11y.A11yService:$other", without)
+        assertEquals("$without:$screen", ScreenRecovery.Services.withHelperBack(without, original, probe))
+    }
+
 }

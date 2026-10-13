@@ -54,7 +54,7 @@ object ScreenRecovery {
     private fun check() {
         val ctx = app ?: return
         main.postDelayed(::check, CHECK_MS)
-        val down = ScreenBridge.trusted(ctx) && ScreenBridge.switchedOn(ctx) && !ScreenBridge.accessibility()
+        val down = ScreenBridge.switchedOn(ctx) && !ScreenBridge.accessibility()
         val now = System.currentTimeMillis()
         if (!down) { downSince = 0; return }
         if (downSince == 0L) { downSince = now; return }
@@ -68,11 +68,11 @@ object ScreenRecovery {
         val key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         val services = Settings.Secure.getString(resolver, key).orEmpty()
         // The owner turned the switch off since the check: leave it off.
-        if (Services.helpers(services).isEmpty()) return
+        if (Services.helpers(services, ctx.packageName).isEmpty()) return
         try {
-            Settings.Secure.putString(resolver, key, Services.withoutHelper(services))
+            Settings.Secure.putString(resolver, key, Services.withoutHelper(services, ctx.packageName))
             Thread.sleep(800)
-            Settings.Secure.putString(resolver, key, Services.withHelperBack(Settings.Secure.getString(resolver, key).orEmpty(), services))
+            Settings.Secure.putString(resolver, key, Services.withHelperBack(Settings.Secure.getString(resolver, key).orEmpty(), services, ctx.packageName))
             Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
         } catch (e: SecurityException) { Log.w(TAG, "accessibility recovery not permitted", e); return }
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -89,10 +89,14 @@ object ScreenRecovery {
      */
     internal object Services {
         private fun entries(list: String) = list.split(':').filter { it.isNotBlank() }
-        fun helpers(list: String) = entries(list).filter { it.startsWith("${Bridge.SCREEN_PACKAGE}/") }
-        fun withoutHelper(list: String) = (entries(list) - helpers(list).toSet()).joinToString(":")
-        /** [now] with the helper's entries from [before] back at its end; nothing is added unless it was there before. */
-        fun withHelperBack(now: String, before: String) = (entries(now) + helpers(before)).distinct().joinToString(":")
+        fun helpers(list: String, packageName: String = Bridge.ASH_PACKAGE) = entries(list).filter {
+            val component = it.split('/', limit = 2)
+            component.size == 2 && component[0] == packageName && component[1] == "ai.ash.screen.a11y.A11yService"
+        }
+        fun withoutHelper(list: String, packageName: String = Bridge.ASH_PACKAGE) = (entries(list) - helpers(list, packageName).toSet()).joinToString(":")
+        /** Only restores this service if the owner already had it enabled. */
+        fun withHelperBack(now: String, before: String, packageName: String = Bridge.ASH_PACKAGE) =
+            (entries(now) + helpers(before, packageName)).distinct().joinToString(":")
     }
 
     /** For the diagnostics page. */

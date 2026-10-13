@@ -142,7 +142,7 @@ internal class DirectCoreHttpTransport : CoreHttpTransport {
             connection.instanceFollowRedirects = false
             connection.requestMethod = request.method
             connection.connectTimeout = 3_000
-            connection.readTimeout = if (request.streaming) 35_000 else 10_000
+            connection.readTimeout = fixedCoreReadTimeout(request)
             request.headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }
             if (request.body != null) {
                 connection.doOutput = true
@@ -181,3 +181,14 @@ internal class DirectCoreHttpTransport : CoreHttpTransport {
         } finally { connection.disconnect() }
     }
 }
+
+/** Fixed image operations wait for Core's bounded 180-second overall deadline. */
+internal fun fixedCoreReadTimeout(request: CoreHttpRequest): Int =
+    if (request.method == "POST" && request.url.query == null && request.url.path in setOf(
+        "/api/collaboration/material/ui/input/submit",
+        "/api/collaboration/material/ui/input/send",
+        "/api/collaboration/material/ui/input/retry",
+    )) 185_000
+    else if (request.streaming || request.method == "POST" && request.url.query == null &&
+        request.url.path == "/api/collaboration/result-files/native/snapshot") 35_000
+    else 10_000

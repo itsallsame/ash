@@ -8,13 +8,10 @@ import ai.ash.host.TaskStatus
 import ai.ash.host.cap.CapResult
 import ai.ash.host.cap.Capability
 import ai.ash.ui.HomeActivity
-import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.ServiceConnection
-import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -24,9 +21,9 @@ import org.json.JSONObject
 import java.util.UUID
 
 /**
- * Ash's end of the bridge to its screen helper (ai.ash.screen): the app that holds the accessibility service and draws
+ * Ash's internal bridge to its built-in screen module: it holds the accessibility service and draws
  * the task island. The helper's tools join the phone's manifest while it is connected; the island is told what to
- * show, and the owner's actions on it come back here. Ash only binds to a helper signed like itself.
+ * show, and the owner's actions on it come back here. The service is private to this APK.
  */
 object ScreenBridge {
     private const val TAG = "ash.screen"
@@ -73,34 +70,22 @@ object ScreenBridge {
 
     fun start(ctx: Context) {
         app = ctx.applicationContext
-        // Installed, updated or removed later: connect again.
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_PACKAGE_ADDED); addAction(Intent.ACTION_PACKAGE_REPLACED); addAction(Intent.ACTION_PACKAGE_REMOVED)
-            addDataScheme("package")
-        }
-        ctx.applicationContext.registerReceiver(object : BroadcastReceiver() {
-            override fun onReceive(c: Context, intent: Intent) {
-                if (intent.data?.schemeSpecificPart == Bridge.SCREEN_PACKAGE) main.post { unbind(); connect() }
-            }
-        }, filter)
         main.post { connect() }
         ScreenRecovery.start(ctx)
     }
 
-    /** Binds to the helper when it is installed and signed like Ash. */
+    /** Binds to the internal screen service, including in an isolated probe package. */
     fun connect() {
         val ctx = app ?: return
-        // An isolated test build never takes over the owner's helper.
-        if (bound || BuildConfig.ISOLATED_PROBE || !trusted(ctx)) return
-        val intent = Intent().setClassName(Bridge.SCREEN_PACKAGE, Bridge.SCREEN_SERVICE)
+        if (bound) return
+        val intent = Intent().setClassName(ctx.packageName, Bridge.SCREEN_SERVICE)
         bound = runCatching { ctx.bindService(intent, connection, Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT) }.getOrDefault(false)
         if (!bound) Log.w(TAG, "could not bind the screen helper")
         main.removeCallbacks(stillWaiting)
         main.postDelayed(stillWaiting, retryMs)
     }
 
-    // bindService answers true even when a maker's ROM then refuses to start the helper (ColorOS「关联启动」off): the
-    // binding stays pending forever and no connection ever comes. Unconnected after a while: bind again, backing off.
+    // A service connection can stay pending during a restart: retry with backoff.
     private var retryMs = FIRST_RETRY_MS
     private val stillWaiting = Runnable {
         if (bridge != null || app == null) { retryMs = FIRST_RETRY_MS; return@Runnable }
@@ -130,20 +115,15 @@ object ScreenBridge {
 
     // ---- what Ash asks of the helper ----
 
-    /** Installed and signed like Ash (another app under the helper's name is never used). */
-    fun trusted(ctx: Context): Boolean = installedVersion(ctx) > 0 &&
-        ctx.packageManager.checkSignatures(ctx.packageName, Bridge.SCREEN_PACKAGE) == PackageManager.SIGNATURE_MATCH
-    fun installedVersion(ctx: Context): Long = runCatching {
-        val info = ctx.packageManager.getPackageInfo(Bridge.SCREEN_PACKAGE, 0)
-        if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
-    }.getOrDefault(0L)
-    /** Not installed, or older than the one Ash carries. */
-    fun needsInstall(ctx: Context): Boolean = installedVersion(ctx) < BuildConfig.SCREEN_VERSION_CODE || !trusted(ctx)
+    /** The screen module is part of this APK, so there is no separate installation or update. */
+    fun installedVersion(): Long = BuildConfig.SCREEN_VERSION_CODE
 
     fun connected() = bridge != null
     /** The helper's accessibility switch is on in system settings (whether or not its service is running). */
     fun switchedOn(ctx: Context): Boolean = android.provider.Settings.Secure.getString(ctx.contentResolver,
-        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any { it.startsWith("${Bridge.SCREEN_PACKAGE}/") }
+        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any {
+            ComponentName.unflattenFromString(it) == ComponentName(ctx.packageName, "ai.ash.screen.a11y.A11yService")
+        }
     /** The helper's accessibility service is on: Ash can see and operate the screen. */
     fun accessibility() = connected() && status.optBoolean("accessibility")
     /** The island can be drawn (the helper's accessibility service, or its overlay permission). */

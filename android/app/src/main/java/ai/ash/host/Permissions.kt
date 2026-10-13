@@ -147,45 +147,14 @@ object Permissions {
                 { "在列表里找到 Ash 并打开" },
             ))
             add(Permission(
-                "accessibility", "屏幕助手（无障碍）", "让 Ash 看懂屏幕内容，替你点击、输入、滚动，并在其他应用上方显示灵动岛",
-                { ScreenBridge.accessibility() && !ScreenBridge.needsInstall(it) },
-                // A separate small app holds the accessibility service, so updating or restarting Ash never turns it off.
-                { a -> if (ScreenBridge.needsInstall(a)) ScreenInstaller.install(a) else ScreenInstaller.openAccessibility(a) },
-                { c ->
-                    when {
-                        ScreenBridge.installedVersion(c) == 0L -> "先安装「Ash 屏幕助手」（Ash 自带，点一下即可安装）"
-                        ScreenBridge.needsInstall(c) -> "屏幕助手需要更新，点一下即可更新"
-                        // The system stopped the helper: its switch stays on, but the service is not running.
-                        ScreenBridge.switchedOn(c) -> "开关开着，但屏幕助手没在工作（系统清理过它）：在无障碍里把它关掉再打开"
-                        else -> "在无障碍列表里找到「Ash 屏幕助手」并打开"
-                    }
-                },
+                "accessibility", "无障碍（读屏与操作）", "让 Ash 看懂屏幕内容，替你点击、输入、滚动，并在其他应用上方显示灵动岛",
+                { ScreenBridge.accessibility() },
+                { a -> ScreenInstaller.openAccessibility(a) },
+                { c -> if (ScreenBridge.switchedOn(c)) "开关开着，但服务没有运行：在无障碍里把 Ash 关掉再打开"
+                    else "在无障碍列表里找到「Ash」并打开" },
             ))
             add(Permission(
-                "screen_keepalive", "屏幕助手不被清理", "系统清理后台时会顺带停掉屏幕助手，无障碍就失效了；放行后它能一直在",
-                { c -> ScreenBridge.installedVersion(c) > 0 && c.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(Bridge.SCREEN_PACKAGE) },
-                { a -> ScreenInstaller.keepAlive(a) },
-                { c ->
-                    when {
-                        ScreenBridge.installedVersion(c) == 0L -> "先安装屏幕助手（上一项）"
-                        !c.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(Bridge.SCREEN_PACKAGE) -> "先允许它在后台运行（点「去开启」，系统会问你）"
-                        else -> PhoneMaker.current.keepAliveFor("Ash 屏幕助手")
-                    }
-                },
-                confirmable = { PhoneMaker.current.ownSwitches },
-            ))
-            add(Permission(
-                "screen_lock", "在最近任务里锁定屏幕助手", "屏幕助手平时不在最近任务里；点「去开启」会打开它的一张卡片，锁上后系统清理时会尽量留下它",
-                { c -> ScreenBridge.installedVersion(c) >= ScreenInstaller.LOCK_CARD_VERSION },
-                { a -> ScreenInstaller.lockCard(a) },
-                { c ->
-                    if (ScreenBridge.installedVersion(c) < ScreenInstaller.LOCK_CARD_VERSION) "先安装或更新屏幕助手"
-                    else PhoneMaker.current.lock.replace("它", "「Ash 屏幕助手」")
-                },
-                confirmable = { PhoneMaker.current.ownSwitches },
-            ))
-            add(Permission(
-                "screen_recovery", "无障碍自动恢复", "系统清理掉屏幕助手后，Ash 几秒内把它的无障碍重新拉起来，不用你去手动开关",
+                "screen_recovery", "无障碍自动恢复", "Ash 运行时，检测到无障碍被系统停止后尝试恢复，不用你手动开关",
                 { ScreenRecovery.granted(it) },
                 { a -> ScreenInstaller.grantRecovery(a) },
                 { c -> if (ShizukuState.ready()) "点「去开启」，经 Shizuku 授权一次" else "需要授权一次：用 Shizuku，或在电脑上运行 ${ScreenRecovery.grantCommand(c)}" },

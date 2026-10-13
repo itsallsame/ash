@@ -1,3 +1,5 @@
+import {randomBytes,randomUUID} from 'node:crypto';
+import {deviceIdForKey,verifySignature} from 'ash-gateway/src/protocol';
 import type { CallResult } from "../../sdk/src/api";
 import type { HostManifestV2 } from "../../sdk/src/host";
 import { hostPresentationErrors, type HostPresentationV2 } from "../../sdk/src/host";
@@ -10,6 +12,10 @@ import type { TaskStatusFrame } from "./task-status";
 import type { WidgetState } from "./members/widgets";
 
 export interface HostConnection { url: string; token: string }
+/** Public coordinates only. Ownership is registered privately by the actual host instance. */
+export interface HostSignerProof { readonly id:string;readonly publicKey:string;readonly generation:string }
+const SIGNER_PROOF_MS=30000,SIGNER_RENEW_MS=15000;
+
 
 /** Host I/O never passes through the retired v1 event writer. */
 export class HostDeviceLink {
@@ -17,7 +23,11 @@ export class HostDeviceLink {
   private member: DeviceMember | null = null;
   private refreshEpoch = 0;
   private closed = false;
-  private constructor(readonly config: HostConnection, private currentManifest: HostManifestV2) {}
+  readonly #config:Readonly<HostConnection>;
+  readonly #instance=randomUUID();readonly #lifetime=new AbortController();
+  #signer:Signer|undefined;#signerInitialization:Promise<Signer>|undefined;#signerEpoch=0;#proofExpires=0;#proofRefresh:Promise<void>|undefined;#proofTimer:ReturnType<typeof setTimeout>|undefined;
+  readonly #proofs=new WeakMap<object,{signer:Signer;epoch:number}>();readonly #actual=new Set<Promise<unknown>>();#requests=0;
+  private constructor(config: HostConnection, private currentManifest: HostManifestV2) {this.#config=Object.freeze({...config});}
 
   get manifest(): HostManifestV2 { return structuredClone(this.currentManifest); }
 
@@ -35,18 +45,26 @@ export class HostDeviceLink {
   }
 
   static async probe(config: HostConnection): Promise<HostDeviceLink> {
-    const raw = await HostDeviceLink.request(config, "GET", "/manifest");
-    return new HostDeviceLink(config, HostDeviceLink.validatedManifest(raw));
+    const fixed=Object.freeze({...config});
+    const raw = await HostDeviceLink.request(fixed, "GET", "/manifest");
+    return new HostDeviceLink(fixed, HostDeviceLink.validatedManifest(raw));
   }
 
   private static async request(config: HostConnection, method: string, path: string, body?: unknown, timeoutMs = 30_000, signal?: AbortSignal): Promise<unknown> {
-    const result = await fetch(new URL(path, config.url), { method,
+    const encoded=body===undefined?undefined:JSON.stringify(body);if(encoded!==undefined&&Buffer.byteLength(encoded)>32*1024*1024)throw Error("host request too large");
+    const result = await fetch(new URL(path, config.url), { method,redirect:"error",
       headers: { authorization: `Bearer ${config.token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-      body: body === undefined ? undefined : JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
-    if (!result.ok) throw new Error(`host ${path} failed (${result.status})`);
-    return result.json();
+      body: encoded, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
+    if (!result.ok) {await result.body?.cancel();throw new Error(`host ${path} failed (${result.status})`);}
+    const maximum=path==="/key"||path==="/sign"?4096:path==="/manifest"?1024*1024:32*1024*1024;
+    const reader=result.body?.getReader();if(!reader)throw Error("host response unavailable");const chunks:Uint8Array[]=[];let size=0;
+    try{while(true){const item=await reader.read();if(item.done)break;size+=item.value.byteLength;if(size>maximum)throw Error("host response too large");chunks.push(item.value);}return JSON.parse(Buffer.concat(chunks,size).toString("utf8"));}catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
   }
-  private request(method: string, path: string, body?: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> { return HostDeviceLink.request(this.config, method, path, body, timeoutMs, signal); }
+  private request(method:string,path:string,body?:unknown,timeoutMs?:number,signal?:AbortSignal):Promise<unknown>{const work=this.requestRaw(method,path,body,timeoutMs,signal);this.#actual.add(work);void work.finally(()=>this.#actual.delete(work)).catch(()=>{});return work;}
+  private async requestRaw(method: string, path: string, body?: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    if(this.closed||this.#requests>=32)throw Error("device host unavailable");this.#requests++;
+    try{const result=await HostDeviceLink.request(this.#config,method,path,body,timeoutMs,signal?AbortSignal.any([signal,this.#lifetime.signal]):this.#lifetime.signal);if(this.closed)throw Error("device host unavailable");return result;}catch(error){if(this.closed||!signal?.aborted||path==="/key"||path==="/sign")this.invalidateSignerProof();throw error;}finally{this.#requests--;}
+  }
 
   device(): DeviceMember {
     if (this.closed) throw new Error("device host is closed");
@@ -87,7 +105,7 @@ export class HostDeviceLink {
         old?.setOnline(false);
         throw error;
       }
-    } catch { if (!this.closed && epoch === this.refreshEpoch) this.member?.setOnline(false); }
+    } catch { this.invalidateSignerProof();if (!this.closed && epoch === this.refreshEpoch) this.member?.setOnline(false); }
   }
 
   startHealthChecks(members: WorldMembers): void {
@@ -141,13 +159,21 @@ export class HostDeviceLink {
     const result = await this.request("POST", "/present/hide", { id }) as { ok?: unknown };
     if (!result || result.ok !== true) throw new Error("host hide acknowledgement unavailable");
   }
-  async signer(): Promise<Signer> {
-    const key = await this.request("GET", "/key") as { id: string; publicKey: string };
-    if (!key || typeof key.id !== "string" || typeof key.publicKey !== "string") throw new TypeError("invalid host gateway key");
-    return { id: key.id, publicKey: key.publicKey, sign: async (data: Uint8Array) => {
-      const response = await this.request("POST", "/sign", { data: Buffer.from(data).toString("base64url") }) as { sig: string };
-      return response.sig;
-    } };
+  private invalidateSignerProof():void {this.#signerEpoch++;this.#proofExpires=0;if(this.#proofTimer)clearTimeout(this.#proofTimer);this.#proofTimer=undefined;}
+  private observeExpiry():void {if(this.#proofExpires&&Date.now()>=this.#proofExpires)this.invalidateSignerProof();}
+  private signerOrigin():void {const url=new URL(this.#config.url);if(url.protocol!=="http:"||!["127.0.0.1","[::1]"].includes(url.hostname)||url.username||url.password||url.search||url.hash||url.pathname!=="/"||!url.port||!this.#config.token||this.closed)throw Error("native signer origin unavailable");}
+  private async signerKey(signal?:AbortSignal):Promise<{id:string;publicKey:string}>{const value=await this.request("GET","/key",undefined,5000,signal) as {id?:unknown;publicKey?:unknown};if(typeof value?.id!=="string"||typeof value?.publicKey!=="string"||value.publicKey.length>2048||await deviceIdForKey(value.publicKey)!==value.id)throw Error("native signer key unavailable");return{id:value.id,publicKey:value.publicKey};}
+  private async rawSignature(data:Uint8Array,key:{id:string;publicKey:string},signal?:AbortSignal):Promise<string>{const value=await this.request("POST","/sign",{data:Buffer.from(data).toString("base64url")},5000,signal) as {sig?:unknown};if(typeof value?.sig!=="string"||value.sig.length>2048||!await verifySignature(key.publicKey,value.sig,new Uint8Array(data)))throw Error("native signer signature unavailable");return value.sig;}
+  /** Single bounded renewal. A healthy continuous renewal preserves generation; every observed failure/gap revokes old proofs. */
+  refreshSignerProof():Promise<void>{this.observeExpiry();if(this.#proofRefresh)return this.#proofRefresh;const epoch=this.#signerEpoch;const task=(async()=>{try{this.signerOrigin();const signer=this.#signer;if(!signer)throw Error("native signer unavailable");const signal=AbortSignal.timeout(5000),key=await this.signerKey(signal);if(key.id!==signer.id||key.publicKey!==signer.publicKey)throw Error("native signer key changed");await this.rawSignature(randomBytes(32),key,signal);const after=await this.signerKey(signal);this.observeExpiry();if(signal.aborted||this.closed||epoch!==this.#signerEpoch||after.id!==signer.id||after.publicKey!==signer.publicKey)throw Error("native signer lifecycle changed");this.#proofExpires=Date.now()+SIGNER_PROOF_MS;if(this.#proofTimer)clearTimeout(this.#proofTimer);this.#proofTimer=setTimeout(()=>{this.#proofTimer=undefined;void this.refreshSignerProof().catch(()=>{});},SIGNER_RENEW_MS);this.#proofTimer.unref();}catch{this.invalidateSignerProof();throw Error("native signer proof unavailable");}})();this.#proofRefresh=task;void task.finally(()=>{if(this.#proofRefresh===task)this.#proofRefresh=undefined;}).catch(()=>{});return task;}
+  private async ensureSignerProof():Promise<void>{this.observeExpiry();if(!this.#proofExpires||this.#proofExpires-Date.now()<=SIGNER_RENEW_MS)await this.refreshSignerProof();if(this.closed||!this.#proofExpires||Date.now()>=this.#proofExpires)throw Error("native signer proof unavailable");}
+  signer():Promise<Signer>{if(this.#signerInitialization)return this.#signerInitialization;const task=this.loadSigner();this.#signerInitialization=task;void task.finally(()=>{if(this.#signerInitialization===task)this.#signerInitialization=undefined;}).catch(()=>{});return task;}
+  private async loadSigner(): Promise<Signer> {
+    this.signerOrigin();if(this.#signer){await this.ensureSignerProof();return this.#signer;}const epoch=this.#signerEpoch;let key;try{key=await this.signerKey();if(this.closed||epoch!==this.#signerEpoch)throw 0;}catch{this.invalidateSignerProof();throw Error("native signer unavailable");}
+    const signer:Signer=Object.freeze({id:key.id,publicKey:key.publicKey,sign:async(data:Uint8Array)=>{try{if(this.#signer!==signer||!(data instanceof Uint8Array)||data.byteLength>1024*1024)throw 0;const input=new Uint8Array(data);await this.ensureSignerProof();const current=this.#signerEpoch,signal=AbortSignal.timeout(5000),signature=await this.rawSignature(input,signer,signal);const after=await this.signerKey(signal);this.observeExpiry();if(signal.aborted||this.closed||current!==this.#signerEpoch||after.id!==signer.id||after.publicKey!==signer.publicKey)throw 0;return signature;}catch{this.invalidateSignerProof();throw Error("native signer unavailable");}}});this.#signer=signer;await this.refreshSignerProof();return signer;
   }
-  close(): void { this.closed = true; this.refreshEpoch++; if (this.refresh) clearInterval(this.refresh); this.refresh = null; this.member?.setOnline(false); }
+  async captureSignerProof(signer:Signer):Promise<HostSignerProof>{if(signer!==this.#signer)throw Error("native signer identity unavailable");await this.ensureSignerProof();const proof=Object.freeze({id:signer.id,publicKey:signer.publicKey,generation:`${this.#instance}:${this.#signerEpoch}`});this.#proofs.set(proof,{signer,epoch:this.#signerEpoch});this.currentSignerProof(proof);return proof;}
+  currentSignerProof(proof:HostSignerProof):undefined {this.observeExpiry();const issued=this.#proofs.get(proof);if(this.closed||!issued||issued.signer!==this.#signer||issued.epoch!==this.#signerEpoch||!this.#proofExpires||Date.now()>=this.#proofExpires||proof.id!==this.#signer.id||proof.publicKey!==this.#signer.publicKey)throw Error("native signer proof unavailable");return undefined;}
+  async whenClosed():Promise<void>{if(!this.closed)throw Error("device host is not closed");while(this.#actual.size)await Promise.allSettled([...this.#actual]);await Promise.allSettled([this.#proofRefresh,this.#signerInitialization]);}
+  close(): void {if(this.closed)return;this.closed = true;this.#lifetime.abort();this.invalidateSignerProof();this.refreshEpoch++; if (this.refresh) clearInterval(this.refresh); this.refresh = null; this.member?.setOnline(false);}
 }

@@ -25,6 +25,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dshFingerprint } from "../tools/verify-dsh.mjs";
+import { buildAndroidStateLock } from "../tools/build-android-state-lock.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -296,6 +297,12 @@ async function build() {
   if (!fs.existsSync(core)) throw new Error("build ash core first: npm run build:core");
   fs.mkdirSync(path.join(tree, "ash"), { recursive: true });
   fs.copyFileSync(core, path.join(tree, "ash/ash-core.mjs"));
+  // Descriptor locks use the fixed verified Android helper next to the bundled core.
+  const stateLock = buildAndroidStateLock();
+  fs.copyFileSync(path.join(stateLock, "ash-state-lock"), path.join(tree, "ash/ash-state-lock"));
+  fs.chmodSync(path.join(tree, "ash/ash-state-lock"), 0o755);
+  fs.copyFileSync(path.join(stateLock, "native-helper.json"), path.join(tree, "ash/native-helper.json"));
+  exec.push("ash/ash-state-lock");
   // Core marks itself non-dumpable with this library, so the agent container (same Linux user) cannot read its memory.
   fs.copyFileSync(buildNodump(), path.join(tree, "ash/libashnodump.so"));
 

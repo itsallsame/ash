@@ -1,7 +1,6 @@
 package ai.ash.host
 
 import ai.ash.bridge.Bridge
-import ai.ash.host.screen.ScreenBridge
 import ai.ash.host.senses.SensesBridge
 import android.app.Activity
 import android.app.PendingIntent
@@ -15,12 +14,11 @@ import android.widget.Toast
 
 /** A helper app Ash carries in its assets and installs (or updates) for the owner. */
 enum class Helper(val pkg: String, val asset: String, val label: String, val next: String) {
-    SCREEN(Bridge.SCREEN_PACKAGE, "screen/ash-screen.apk", "屏幕助手", "下一步：打开它的无障碍开关"),
     SENSES(Bridge.SENSES_PACKAGE, "senses/ash-senses.apk", "Ash 感知", "下一步：在它的页面里逐项授权"),
     APPS(Bridge.APPS_PACKAGE, "apps/ash-apps.apk", "Ash 应用", "在桌面或这里打开它，就能看到你的应用");
 
     /** Installed: Ash connects to it now (the apps shell connects to Ash instead). */
-    fun connect() = when (this) { SCREEN -> ScreenBridge.connect(); SENSES -> SensesBridge.connect(); APPS -> Unit }
+    fun connect() = when (this) { SENSES -> SensesBridge.connect(); APPS -> Unit }
 }
 
 /**
@@ -59,7 +57,7 @@ object HelperInstaller {
         }, "ash-helper-install").start()
     }
 
-    internal fun helper(intent: Intent): Helper = runCatching { Helper.valueOf(intent.getStringExtra(EXTRA) ?: "") }.getOrDefault(Helper.SCREEN)
+    internal fun helper(intent: Intent): Helper = runCatching { Helper.valueOf(intent.getStringExtra(EXTRA) ?: "") }.getOrDefault(Helper.SENSES)
 }
 
 /** Where the installer reports: asks the owner to confirm from here, in front, then says how it went. */

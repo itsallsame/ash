@@ -32,7 +32,9 @@ android {
             val ks = KeyStore.getInstance(signingFile, "android".toCharArray())
             val cert = ks.getCertificate(signingAlias) ?: error("Missing signing alias $signingAlias")
             val digest = MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02x".format(it.toInt() and 255) }
-            require(digest == "ace7c87cd62abfdf850a829f473fa4bad222565463570f463a525913fc669cdc") {
+            val installedCertificate = providers.gradleProperty("ashInstalledCertificateSha256")
+                .orElse("ace7c87cd62abfdf850a829f473fa4bad222565463570f463a525913fc669cdc").get()
+            require(digest == installedCertificate) {
                 "Signing certificate does not match Ash's ($digest): the two apps would not talk to each other."
             }
             signingConfig = signingConfigs.create("installedDebug") {

@@ -190,12 +190,47 @@ export class WorldRouter {
   private deliveringHuman = false;
   private readonly humanRedemptions = new Map<string, Promise<Message>>();
 
+  private materialRecoveryHandler?: (tracked: TrackedRequest) => Promise<void>;
+  private readonly materialRecoveries = new Map<string,Promise<void>>();
+  private readonly materialObservationClosers = new Set<() => void>();
+  private materialRecoveryMaximum = 8;
+  private materialObservationTimeout = 20000;
+  /** Slots track actual handler completion, rather than completion of a timed-out observer. */
+  setMaterialRecoveryHandler(handler: (tracked: TrackedRequest) => Promise<void>, options: {maxUnfinishedTasks?: number; observationTimeoutMs?: number} = {}): () => void {
+    const maximum = options.maxUnfinishedTasks ?? 8, timeout = options.observationTimeoutMs ?? 20000;
+    if(!Number.isSafeInteger(maximum) || maximum<1 || maximum>32 || !Number.isSafeInteger(timeout) || timeout<1 || timeout>20000) throw new TypeError('invalid material recovery limits');
+    this.materialRecoveryMaximum=maximum;this.materialObservationTimeout=timeout;this.materialRecoveryHandler=handler;
+    return () => { if(this.materialRecoveryHandler===handler) this.materialRecoveryHandler=undefined; for(const close of this.materialObservationClosers) close(); };
+  }
+  private startMaterialRecovery(tracked: TrackedRequest): Promise<void> | null {
+    const prior=this.materialRecoveries.get(tracked.message.id);if(prior)return prior;
+    const handler=this.materialRecoveryHandler;
+    if(!handler || this.materialRecoveries.size>=this.materialRecoveryMaximum)return null;
+    const work=Promise.resolve().then(()=>handler(tracked));this.materialRecoveries.set(tracked.message.id,work);
+    const release=()=>{if(this.materialRecoveries.get(tracked.message.id)===work)this.materialRecoveries.delete(tracked.message.id);};
+    void work.then(release,release);return work;
+  }
+  private observeMaterialRecovery(work: Promise<void>): Promise<void> {
+    return new Promise(resolve=>{
+      let done=false;
+      const finish=()=>{if(done)return;done=true;clearTimeout(timer);this.materialObservationClosers.delete(finish);resolve();};
+      const timer=setTimeout(finish,this.materialObservationTimeout);this.materialObservationClosers.add(finish);
+      void work.then(finish,finish);
+    });
+  }
+  async dispatchExternalMaterial(requestId: string): Promise<void> {
+    const tracked = this.ledger.trackedRequests().find(item => item.message.id === requestId);
+    if (!tracked || !this.ledger.isExternalMaterialRequest(requestId)) throw new TypeError('not an admitted material request');
+    const work=this.startMaterialRecovery(tracked);if(work)await this.observeMaterialRecovery(work);
+  }
   constructor(readonly ledger: Ledger, private readonly authorizeRecovery: RecoveryAuthorizer) {}
 
   /** Stop process-local timers without cancelling durable human requests. */
   dispose(): void {
     for (const pending of this.pending.values()) if (pending.timer) clearTimeout(pending.timer);
     this.subscribers.clear();
+    this.materialRecoveryHandler=undefined;
+    for(const close of this.materialObservationClosers)close();
   }
 
   private humanEvent(id: string, state: HumanPendingRecord["state"], reason = "", notify = false, force = false): boolean {
@@ -1331,8 +1366,15 @@ export class WorldRouter {
 
   /** Call only after endpoint registration. Revalidate current grants/permissions; never replay uncertain effects. */
   async recover(): Promise<void> {
+    const materialObservations: Promise<void>[]=[];
     for (const tracked of this.ledger.trackedRequests()) {
       const { message, phase, context, deadlineAt } = tracked;
+      // The metadata index is stamped only by atomic material admission. A model's context cannot select this branch.
+      if (this.ledger.isExternalMaterialRequest(message.id)) {
+        const work=this.startMaterialRecovery(tracked);
+        if(work)materialObservations.push(this.observeMaterialRecovery(work));
+        continue;
+      }
       if (this.ledger.responseTo(message.id)) continue;
       if (this.pending.has(message.id)) continue;
       if (message.to === "service:dsh-tool" && AGENT_ID.test(message.from)) {
@@ -1418,6 +1460,7 @@ export class WorldRouter {
       void this.dispatch(pending, true);
     }
     await this.refreshHumanPending();
+    await Promise.all(materialObservations);
   }
 
   /** An atomic-in-JS replay boundary for the edge SSE implementation; caller handles auth/filtering. */

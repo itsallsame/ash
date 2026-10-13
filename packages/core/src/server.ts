@@ -1,3 +1,4 @@
+import {ResultFileService,parseResultInput,resultObject,type ResultFileTransport} from "./collaboration/result-file-service";
 // The only production HTTP edge.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -15,6 +16,12 @@ import { authScope } from "./auth-scope";
 import { activityDetail, activityAction } from "../../sdk/src/activity";
 import { appsRoute } from "./apps/http";
 import type { AppRuntime } from "./apps/runtime";
+import {captureMaterialNativeScreen} from './collaboration/material-native-import';
+import {MaterialProtocolError} from '../../device/src/collaboration/material-types';
+import {MaterialEdgeService,MATERIAL_HTTP_INPUT_BYTES,MATERIAL_HTTP_STATUS,materialHttpFailure} from './collaboration/material-edge';
+import { boundedControl, CONTROL_ERROR_STATUS, CONTROL_INPUT_BYTES, CONTROL_OUTPUT_BYTES, CoreControlError, controlFailure, executeControlRoute, type CollaborationControlTransport, type ControlReturnGate, type ControlTarget } from "./collaboration/control-service";
+import { boundedCreate, CREATE_ERROR_STATUS, CREATE_INPUT_BYTES, CREATE_OUTPUT_BYTES, CoreCreateError, createFailure, executeCreateRoute, type CollaborationCreateTransport, type CreateReturnGate, type CreateTarget } from "./collaboration/create-service";
+import { boundedRead, CoreReadError, parseReadInput, READ_ERROR_STATUS, READ_INPUT_BYTES, READ_OUTPUT_BYTES, type CollaborationReadTransport } from "./collaboration/read-service";
 
 export interface EdgeTokens { api: Record<string, string>; mcp: Record<string, string> }
 export interface EdgeCaller {
@@ -27,7 +34,7 @@ export interface EdgeCaller {
   pairedDeviceId?: string;
   nativeUi?: boolean;
 }
-export interface EdgeRequest { method: string; url: URL; headers: Record<string, string>; body: Buffer | null }
+export interface EdgeRequest { method: string; url: URL; headers: Record<string, string>; body: Buffer | null; signal?: AbortSignal; /** Trusted transport injection; never supplied by the HTTP body. */ transportCurrent?: () => Promise<boolean>; /** Local connection/principal generation fence after asynchronous authorization. */ transportFence?: () => boolean; /** Internal absolute deadline shared with gateway authorization. */ collaborationDeadline?: number }
 export type EdgeResponse = { status: number; headers?: Record<string, string>; body?: string | Buffer } |
   { status: number; headers?: Record<string, string>; stream: (write: (chunk: string) => void, onClose: (fn: () => void) => void, end: () => void) => void };
 export interface EdgeOptions { authScopeKey: Buffer; /** The devices page's view of the pairing code; the code reaches the local owner's screen only through this route. */ pairing?: () => { revision: string; code: unknown }; /** Where the owner saves and removes credentials; values never take the message route. */ vault?: { save(ref: string, value: string): Promise<void>; remove(ref: string): Promise<boolean>; store: { list(): unknown[]; availability?(): { available: boolean } } }; workspaces?: Record<string, string>; /** Bounded test wait; production defaults to 60 seconds. */ waitMs?: number; /** Test-only clock for presence. */ clock?: () => number; /** Test-only screen ACK deadline. */ screenAckMs?: number; /** Test-only live stream sweep interval. */ streamBeatMs?: number }
@@ -35,12 +42,27 @@ export interface EdgeOptions { authScopeKey: Buffer; /** The devices page's view
 // Native proof is injected by Android's fixed transport, not supplied by a web page.
 export interface EdgeOptions { nativeUiToken?: string }
 export interface EdgeOptions { fileWorkspaces?: () => Record<string, { root: string; directory: string }> }
+export interface EdgeOptions { collaborationTimeoutMs?: number }
 
 const MAX_BODY = 28 * 1024 * 1024;
 const FACES = new Map(Object.entries(AVATARS).map(([key, value]) => [`/avatars/${key}.webp`, Buffer.from(value, "base64")]));
 const SCREEN_HEADER = SCREEN_TOKEN_HEADER.toLowerCase();
 const managed = new Set(["SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "PROACTIVE.md", "PULSE.md"]);
 const encode = (status: number, body: unknown): EdgeResponse => ({ status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }, body: JSON.stringify(body) });
+
+const collaborationResponseFences = new WeakMap<EdgeResponse, { kind: "control" | "create" | "material" | "result"; current: () => void }>();
+/** Fence the same owner/device session after the outer router and transport Promise waits. */
+export function fenceCollaborationResponse(response: EdgeResponse): EdgeResponse {
+  const fence = collaborationResponseFences.get(response);
+  if (!fence) return response;
+  try { fence.current(); return response; }
+  catch (error) {
+    if(fence.kind==="result"){const code=error instanceof CoreReadError?error.code:"permission_denied";return encode(READ_ERROR_STATUS[code]??403,{ok:false,error:{code,message:`Result file ${code}`}});}
+    if(fence.kind==="material"){const failure=materialHttpFailure(error);return encode(MATERIAL_HTTP_STATUS[failure.code],{ok:false,error:{code:failure.code,message:`Material ${failure.code}`}});}
+    const code = error instanceof EdgeError ? "permission_denied" : fence.kind === "create" ? createFailure(error).code : controlFailure(error).code;
+    return encode((fence.kind === "create" ? CREATE_ERROR_STATUS : CONTROL_ERROR_STATUS)[code], { ok: false, error: { code, message: `Collaboration ${fence.kind} ${code}` } });
+  }
+}
 const fail = (status: number, code: string, message: string): never => { throw new EdgeError(status, code, message); };
 const whole = (text: string | null | undefined, min = 0, max = Number.MAX_SAFE_INTEGER): number | undefined => {
   if (text === undefined || text === null) return undefined;
@@ -149,6 +171,32 @@ export class EdgeRouter {
   readonly screens: ScreenRegistry;
   private postJournal: PostJournal | null = null;
   private apps: AppRuntime | null = null;
+  private material:MaterialEdgeService|null=null;
+  attachMaterial(service:MaterialEdgeService):void{this.material=service;}
+  private async materialRoute(req:EdgeRequest,caller:EdgeCaller):Promise<EdgeResponse>{
+    const actual=this.localCaller(req.headers);if(!actual||!caller.local||caller.remote||actual.member!=="person:owner"||actual.transportPrincipal!==caller.transportPrincipal)return encode(403,{ok:false,error:{code:"permission_denied",message:"Material permission_denied"}});
+    if(!this.material)return encode(503,{ok:false,error:{code:"unsupported",message:"Material unsupported"}});const nativeRoute=req.url.pathname.startsWith('/api/collaboration/material/native/');if(nativeRoute&&actual.nativeUi!==true)return encode(403,{ok:false,error:{code:'permission_denied',message:'Material permission_denied'}});let native;try{if(nativeRoute)native=captureMaterialNativeScreen(this,req.headers,req.headers[SCREEN_TOKEN_HEADER.toLowerCase()]);}catch{return encode(403,{ok:false,error:{code:'permission_denied',message:'Material permission_denied'}});}const result=await this.material.dispatch(req,native);collaborationResponseFences.set(result.response,{kind:"material",current:()=>{const now=this.localCaller(req.headers);if(!now||now.member!==actual.member||now.transportPrincipal!==actual.transportPrincipal||(nativeRoute&&now.nativeUi!==true))throw new MaterialProtocolError("permission_denied");result.current();}});return fenceCollaborationResponse(result.response);
+  }
+  private resultFiles:ResultFileService|null=null;
+  attachResultFiles(transport:ResultFileTransport):void{this.resultFiles=new ResultFileService(transport);}
+  private async resultFileRoute(req:EdgeRequest,caller:EdgeCaller):Promise<EdgeResponse>{
+    try{
+      const initial=this.context(caller,req),native=req.url.pathname.includes('/native/');
+      if(!caller.local||caller.remote||caller.member!=='person:owner'||!initial.screenId||native&&caller.nativeUi!==true||req.method!=='POST'||req.url.search)throw new CoreReadError('permission_denied');
+      const current=()=>{const actual=this.localCaller(req.headers),live=this.context(caller,req);if(req.signal?.aborted||req.transportFence&&!req.transportFence()||!actual||actual.transportPrincipal!==caller.transportPrincipal||live.screenId!==initial.screenId||native&&actual.nativeUi!==true)throw new CoreReadError('permission_denied');};current();
+      if(!this.resultFiles)throw new CoreReadError('offline');const owner=JSON.stringify([caller.transportPrincipal,initial.screenId,authScope(this.options.authScopeKey,caller.transportPrincipal)]);
+      const value=await boundedRead(req.signal,30000,async signal=>{if(req.url.pathname==='/api/collaboration/result-files/prepare')return this.resultFiles!.prepare(owner,parseResultInput(req.body),signal,current);
+        let b:any;try{b=JSON.parse(req.body?.toString()??'');}catch{throw new CoreReadError('invalid');}resultObject(b,['save_id','asset_version','sha256']);if(typeof b.save_id!=='string'||b.save_id.length>256||!Number.isSafeInteger(b.asset_version)||b.asset_version<1||! /^[a-f0-9]{64}$/.test(b.sha256))throw new CoreReadError('invalid');
+        if(req.url.pathname==='/api/collaboration/result-files/native/snapshot')return this.resultFiles!.snapshot(owner,b.save_id,b.asset_version,b.sha256,signal,current);
+        if(req.url.pathname==='/api/collaboration/result-files/native/check')return this.resultFiles!.check(owner,b.save_id,b.asset_version,b.sha256,signal,current);throw new CoreReadError('unsupported');});current();
+      const response=encode(200,{ok:true,auth_scope:authScope(this.options.authScopeKey,caller.transportPrincipal),result:value});collaborationResponseFences.set(response,{kind:'result',current});return fenceCollaborationResponse(response);
+    }catch(e){const code=e instanceof CoreReadError?e.code:'permission_denied';return encode(({...READ_ERROR_STATUS,expired:410,conflict:409,hash_mismatch:409})[code]??503,{ok:false,error:{code,message:`Result file ${code}`}});}
+  }
+  private collaboration: CollaborationReadTransport | null = null;
+  private collaborationControl: CollaborationControlTransport | null = null;
+  private collaborationCreate: CollaborationCreateTransport | null = null;
+  private createDiscovery: ((signal: AbortSignal, gate: CreateReturnGate) => Promise<CreateTarget[]>) | null = null;
+  private controlDiscovery: ((signal: AbortSignal, gate: ControlReturnGate) => Promise<ControlTarget[]>) | null = null;
   constructor(readonly ledger: Ledger, readonly world: WorldRouter, readonly members: WorldMembers, readonly tokens: EdgeTokens, readonly options: EdgeOptions) {
     if (options.authScopeKey.length !== 32) throw new Error("screen auth scope key required");
     let installed = screenRegistries.get(world);
@@ -166,6 +214,172 @@ export class EdgeRouter {
 
   /** The app runtime behind the shell app's owner routes (/api/apps…). */
   attachApps(runtime: AppRuntime): void { this.apps = runtime; }
+  attachCollaboration(transport: CollaborationReadTransport): void { this.collaboration = transport; }
+  attachCollaborationControl(transport: CollaborationControlTransport): void { this.collaborationControl = transport; }
+  attachCollaborationControlDiscovery(discover: (signal: AbortSignal, gate: ControlReturnGate) => Promise<ControlTarget[]>): void { this.controlDiscovery = discover; }
+  attachCollaborationCreate(transport: CollaborationCreateTransport): void { this.collaborationCreate = transport; }
+  attachCollaborationCreateDiscovery(discover: (signal: AbortSignal, gate: CreateReturnGate) => Promise<CreateTarget[]>): void { this.createDiscovery = discover; }
+  collaborationReadTimeoutMs(): number { return Math.min(30_000, Math.max(1, this.options.collaborationTimeoutMs ?? 30_000)); }
+
+  private async collaborationRoute(req: EdgeRequest, caller: EdgeCaller): Promise<EdgeResponse> {
+    try {
+      if (caller.member !== "person:owner" || !caller.ownerProxy || caller.local === caller.remote || !["api", "web_ui"].includes(caller.transport) || (caller.remote && (caller.transport !== "web_ui" || !req.transportCurrent))) throw new CoreReadError("permission_denied");
+      const initial = this.context(caller, req);
+      if (caller.remote && !initial.screenId) throw new CoreReadError("permission_denied");
+      const check = async () => {
+        if (req.transportCurrent && !await req.transportCurrent()) throw new CoreReadError("permission_denied");
+        // A transport query may await remote state. Verify the screen after that wait.
+        const current = this.context(caller, req);
+        if (current.screenId !== initial.screenId || current.transportPrincipal !== initial.transportPrincipal) throw new CoreReadError("permission_denied");
+        if (caller.local && !Object.entries(this.tokens.api).some(([token, member]) => member === "person:owner" && caller.transportPrincipal === `token:${createHash("sha256").update(token).digest("hex")}`)) throw new CoreReadError("permission_denied");
+      };
+      const budget = Math.min(this.collaborationReadTimeoutMs(), req.collaborationDeadline === undefined ? Infinity : req.collaborationDeadline - Date.now());
+      if (budget <= 0) throw new CoreReadError("timeout");
+      const result = await boundedRead(req.signal, budget, async signal => {
+        await check();
+        if (!this.collaboration) throw new CoreReadError("offline");
+        let result: unknown;
+        if (req.method === "GET" && req.url.pathname === "/api/collaboration/endpoints") {
+          if (req.url.search || req.body?.length) throw new CoreReadError("invalid");
+          result = { targets: await this.collaboration.collaborationEndpoints(signal), observed_at: new Date().toISOString() };
+        } else if (req.method === "POST" && req.url.pathname === "/api/collaboration/read") {
+          if (req.url.search) throw new CoreReadError("invalid");
+          const input = parseReadInput(req.body);
+          const response = await this.collaboration.collaborationRead(input, signal);
+          result = { target: { device_id: response.target.device_id, node_id: response.target.node_id, endpoint_id: response.target.endpoint_id, authorization_generation: response.target.authorization_generation, authorization_revision: response.target.authorization_revision }, page: response.page };
+        } else throw new CoreReadError("unsupported");
+        await check();
+        if (signal.aborted) throw new CoreReadError("cancelled");
+        return result;
+      });
+      const response = encode(200, { ok: true, auth_scope: authScope(this.options.authScopeKey, caller.transportPrincipal), ...(result as object) });
+      if ("body" in response && Buffer.byteLength(response.body ?? "") > READ_OUTPUT_BYTES) throw new CoreReadError("too_large");
+      return response;
+    } catch (error) {
+      const code = error instanceof CoreReadError ? error.code : error instanceof EdgeError ? "permission_denied" : "offline";
+      return encode(READ_ERROR_STATUS[code] ?? 503, { ok: false, error: { code, message: `Collaboration read ${code}` } });
+    }
+  }
+
+  private async collaborationControlRoute(req: EdgeRequest, caller: EdgeCaller): Promise<EdgeResponse> {
+    let current: (() => void) | undefined, returnGate: ControlReturnGate | undefined;
+    try {
+      if (caller.member !== "person:owner" || !caller.ownerProxy || caller.local === caller.remote || !["api", "web_ui"].includes(caller.transport) || (caller.remote && (caller.transport !== "web_ui" || (!req.transportCurrent || !req.transportFence)))) throw new CoreControlError("permission_denied");
+      const initial = this.context(caller, req);
+      if (caller.remote && !initial.screenId) throw new CoreControlError("permission_denied");
+      current = () => {
+        if (req.signal?.aborted) throw new CoreControlError("cancelled");
+        if (req.transportFence && !req.transportFence()) throw new CoreControlError("permission_denied");
+        const live = this.context(caller, req);
+        if (live.screenId !== initial.screenId || live.transportPrincipal !== initial.transportPrincipal) throw new CoreControlError("permission_denied");
+        if (caller.local && !Object.entries(this.tokens.api).some(([token, member]) => member === "person:owner" && caller.transportPrincipal === `token:${createHash("sha256").update(token).digest("hex")}`)) throw new CoreControlError("permission_denied");
+      };
+      const authorize = async (signal: AbortSignal) => {
+        current!();
+        if (req.transportCurrent && !await req.transportCurrent()) throw new CoreControlError("permission_denied");
+        current!();
+        if (signal.aborted) throw new CoreControlError("cancelled");
+      };
+      const transport: CollaborationControlTransport = { collaborationControl: async (operation, input, signal, gate) => {
+        returnGate = gate;
+        if (!this.collaborationControl) throw new CoreControlError("offline");
+        return this.collaborationControl.collaborationControl(operation, input, signal, gate);
+      } };
+      const discovery = req.url.pathname === "/api/collaboration/control/endpoints" && req.method === "GET";
+      const budget = Math.min(this.collaborationReadTimeoutMs(), req.collaborationDeadline === undefined ? Infinity : req.collaborationDeadline - Date.now());
+      const result = discovery ? await boundedControl(req.signal, budget, async signal => {
+        await authorize(signal);
+        let targets: ControlTarget[] | undefined, failure: unknown, failed = false, gateAttempted = false;
+        try {
+          if (req.url.search || req.body?.length) throw new CoreControlError("invalid");
+          if (!this.controlDiscovery) throw new CoreControlError("offline");
+          let fence: (() => void) | undefined;
+          returnGate = { authorize: async () => { gateAttempted = true; await authorize(signal); }, current: () => { current!(); if (signal.aborted) throw new CoreControlError("cancelled"); fence?.(); }, bindDeviceFence: value => { if (fence) throw new CoreControlError("invalid"); fence = value; } };
+          targets = await this.controlDiscovery(signal, returnGate);
+        } catch (error) { failed = true; failure = error; }
+        returnGate?.current();
+        if (!gateAttempted) await authorize(signal);
+        current!();
+        if (failed) throw controlFailure(failure);
+        return { control_targets: targets!, observed_at: new Date().toISOString() };
+      }) : await executeControlRoute({ ...req, deadline: req.collaborationDeadline }, { authorize, current: current! }, transport, this.collaborationReadTimeoutMs());
+      current!(); returnGate?.current();
+      const response = encode(200, { ok: true, auth_scope: authScope(this.options.authScopeKey, caller.transportPrincipal), ...result });
+      if ("body" in response && Buffer.byteLength(response.body ?? "") > CONTROL_OUTPUT_BYTES) throw new CoreControlError("too_large");
+      current!(); returnGate?.current();
+      collaborationResponseFences.set(response, { kind: "control", current: () => { current!(); returnGate?.current(); } });
+      return response;
+    } catch (error) {
+      try { current?.(); returnGate?.current(); } catch (fenceError) { if (!(fenceError instanceof CoreControlError && fenceError.code === "cancelled" && error instanceof CoreControlError && error.code === "timeout")) error = fenceError; }
+      const code = error instanceof EdgeError ? "permission_denied" : controlFailure(error).code;
+      const response = encode(CONTROL_ERROR_STATUS[code], { ok: false, error: { code, message: `Collaboration control ${code}` } });
+      if (current) collaborationResponseFences.set(response, { kind: "control", current: () => {
+        current!();
+        if (code !== "timeout" && code !== "cancelled") returnGate?.current();
+      } });
+      return response;
+    }
+  }
+
+  private async collaborationCreateRoute(req: EdgeRequest, caller: EdgeCaller): Promise<EdgeResponse> {
+    let current: (() => void) | undefined, returnGate: CreateReturnGate | undefined;
+    try {
+      if (caller.member !== "person:owner" || !caller.ownerProxy || caller.local === caller.remote || !["api", "web_ui"].includes(caller.transport) || (caller.remote && (caller.transport !== "web_ui" || (!req.transportCurrent || !req.transportFence)))) throw new CoreCreateError("permission_denied");
+      const initial = this.context(caller, req);
+      if (caller.remote && !initial.screenId) throw new CoreCreateError("permission_denied");
+      current = () => {
+        if (req.signal?.aborted) throw new CoreCreateError("cancelled");
+        if (req.transportFence && !req.transportFence()) throw new CoreCreateError("permission_denied");
+        const live = this.context(caller, req);
+        if (live.screenId !== initial.screenId || live.transportPrincipal !== initial.transportPrincipal) throw new CoreCreateError("permission_denied");
+        if (caller.local && !Object.entries(this.tokens.api).some(([token, member]) => member === "person:owner" && caller.transportPrincipal === `token:${createHash("sha256").update(token).digest("hex")}`)) throw new CoreCreateError("permission_denied");
+      };
+      const authorize = async (signal: AbortSignal) => {
+        current!();
+        if (req.transportCurrent && !await req.transportCurrent()) throw new CoreCreateError("permission_denied");
+        current!();
+        if (signal.aborted) throw new CoreCreateError("cancelled");
+      };
+      const transport: CollaborationCreateTransport = { collaborationCreate: async (operation, input, signal, gate) => {
+        returnGate = gate;
+        if (!this.collaborationCreate) throw new CoreCreateError("offline");
+        return this.collaborationCreate.collaborationCreate(operation, input, signal, gate);
+      } };
+      const discovery = req.url.pathname === "/api/collaboration/create/endpoints" && req.method === "GET";
+      const budget = Math.min(this.collaborationReadTimeoutMs(), req.collaborationDeadline === undefined ? Infinity : req.collaborationDeadline - Date.now());
+      const result = discovery ? await boundedCreate(req.signal, budget, async signal => {
+        await authorize(signal);
+        let targets: CreateTarget[] | undefined, failure: unknown, failed = false, gateAttempted = false;
+        try {
+          if (req.url.search || req.body?.length) throw new CoreCreateError("invalid");
+          if (!this.createDiscovery) throw new CoreCreateError("offline");
+          let fence: (() => void) | undefined;
+          returnGate = { authorize: async () => { gateAttempted = true; await authorize(signal); }, current: () => { current!(); if (signal.aborted) throw new CoreCreateError("cancelled"); fence?.(); }, bindDeviceFence: value => { if (fence) throw new CoreCreateError("invalid"); fence = value; } };
+          targets = await this.createDiscovery(signal, returnGate);
+        } catch (error) { failed = true; failure = error; }
+        returnGate?.current();
+        if (!gateAttempted) await authorize(signal);
+        current!();
+        if (failed) throw createFailure(failure);
+        return { create_targets: targets!, observed_at: new Date().toISOString() };
+      }) : await executeCreateRoute({ ...req, deadline: req.collaborationDeadline }, { authorize, current: current! }, transport, this.collaborationReadTimeoutMs());
+      current!(); returnGate?.current();
+      const response = encode(200, { ok: true, auth_scope: authScope(this.options.authScopeKey, caller.transportPrincipal), ...result });
+      if ("body" in response && Buffer.byteLength(response.body ?? "") > CREATE_OUTPUT_BYTES) throw new CoreCreateError("too_large");
+      current!(); returnGate?.current();
+      collaborationResponseFences.set(response, { kind: "create", current: () => { current!(); returnGate?.current(); } });
+      return response;
+    } catch (error) {
+      try { current?.(); returnGate?.current(); } catch (fenceError) { if (!(fenceError instanceof CoreCreateError && fenceError.code === "cancelled" && error instanceof CoreCreateError && error.code === "timeout")) error = fenceError; }
+      const code = error instanceof EdgeError ? "permission_denied" : createFailure(error).code;
+      const response = encode(CREATE_ERROR_STATUS[code], { ok: false, error: { code, message: `Collaboration create ${code}` } });
+      if (current) collaborationResponseFences.set(response, { kind: "create", current: () => {
+        current!();
+        if (code !== "timeout" && code !== "cancelled") returnGate?.current();
+      } });
+      return response;
+    }
+  }
 
   /** Attached once during owner assembly, before the HTTP edge becomes visible. */
   attachPostJournal(journal: PostJournal): void {
@@ -213,7 +427,13 @@ export class EdgeRouter {
         return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; form-action 'self'" }, body: UI_HTML };
       }
       if (path.startsWith("/mcp/")) return await this.mcp(req, caller);
+      if (path.startsWith("/api/collaboration/") && !caller) return encode(401, { ok: false, error: { code: "permission_denied", message: path.startsWith("/api/collaboration/create/") ? "Collaboration create permission_denied" : path.startsWith("/api/collaboration/control/") ? "Collaboration control permission_denied" : "Collaboration read permission_denied" } });
       if (!caller) fail(401, "unauthorized", "missing or invalid token");
+      if (path.startsWith("/api/collaboration/result-files/")) return this.resultFileRoute(req,caller!);
+      if (path.startsWith("/api/collaboration/material/")) return this.materialRoute(req,caller!);
+      if (path.startsWith("/api/collaboration/create/")) return fenceCollaborationResponse(await this.collaborationCreateRoute(req, caller!));
+      if (path.startsWith("/api/collaboration/control/")) return fenceCollaborationResponse(await this.collaborationControlRoute(req, caller!));
+      if (path.startsWith("/api/collaboration/")) return this.collaborationRoute(req, caller!);
       // The shell app's routes, owner only; see apps/http.ts for the fixed list.
       if (path === "/api/apps" || path.startsWith("/api/apps/")) {
         if (caller!.member !== "person:owner" || !caller!.ownerProxy) fail(403, "forbidden", "apps are the owner's");
@@ -548,21 +768,32 @@ const FILE_VIEW_CSP = "sandbox allow-same-origin; default-src 'none'; style-src 
 
 export function startEdgeServer(router: EdgeRouter, host: string, port: number): Promise<Server> {
   const server = createServer(async (req, res) => {
+    const controller = new AbortController();
+    req.once("aborted", () => controller.abort());
+    res.once("close", () => { if (!res.writableEnded) controller.abort(); });
     let body: Buffer | null = null;
     try {
       const chunks: Buffer[] = []; let size = 0;
-      for await (const chunk of req) { size += chunk.length; if (size > MAX_BODY) throw new EdgeError(413, "too_large", "body too large"); chunks.push(chunk); }
+      const limit = req.url?.startsWith("/api/collaboration/material/") ? MATERIAL_HTTP_INPUT_BYTES : req.url?.startsWith("/api/collaboration/create/") ? CREATE_INPUT_BYTES : req.url?.startsWith("/api/collaboration/control/") ? CONTROL_INPUT_BYTES : req.url?.startsWith("/api/collaboration/") ? READ_INPUT_BYTES : MAX_BODY;
+      for await (const chunk of req) { size += chunk.length; if (size > limit) throw new EdgeError(413, "too_large", "body too large"); chunks.push(chunk); }
       body = chunks.length ? Buffer.concat(chunks) : null;
-    } catch { res.writeHead(413).end(); return; }
+    } catch {
+      if (req.url?.startsWith("/api/collaboration/")) res.writeHead(413, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }).end(JSON.stringify({ ok: false, error: { code: "too_large", message: `Collaboration ${req.url?.startsWith("/api/collaboration/create/") ? "create" : req.url?.startsWith("/api/collaboration/control/") ? "control" : "read"} too_large` } }));
+      else res.writeHead(413).end();
+      return;
+    }
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) if (typeof value === "string") headers[key.toLowerCase()] = value;
     const local = router.localCaller(headers);
     const mcpLocal: EdgeCaller | null = !local && req.url?.startsWith("/mcp/")
       ? { member: "agent:transport", transportPrincipal: "local-mcp-transport", local: true, remote: false, ownerProxy: false, transport: "agent" } : null;
-    const result = await router.handle({ method: req.method ?? "GET", url: new URL(req.url ?? "/", "http://ash"), headers, body }, local ?? mcpLocal);
+    let result = await router.handle({ method: req.method ?? "GET", url: new URL(req.url ?? "/", "http://ash"), headers, body, signal: controller.signal,
+      transportCurrent: async () => { const current = router.localCaller(headers); return Boolean(current && current.member === local?.member && current.transportPrincipal === local?.transportPrincipal); } }, local ?? mcpLocal);
+    if (controller.signal.aborted || res.destroyed) return;
+    result = fenceCollaborationResponse(result);
     res.writeHead(result.status, result.headers ?? {});
     if ("stream" in result) result.stream((chunk) => res.write(chunk), (close) => { if (res.destroyed || res.writableEnded) close(); else res.once("close", close); }, () => res.end());
-    else res.end(result.body);
+    else {result=fenceCollaborationResponse(result);res.end("body" in result?result.body:undefined);}
   });
   return new Promise((resolve) => server.listen(port, host, () => resolve(server)));
 }

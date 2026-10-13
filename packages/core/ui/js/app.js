@@ -14,6 +14,9 @@ import { IdentityName } from "./identity-name.js";
 import { embeddedUiTransport, readWorkspaceFile } from "./ui-transport.js";
 import { Files } from "./files.js";
 import { framePainter } from "./frame-painter.js";
+import { DesktopWork } from "./desktop-work.js";
+import { createDesktopMaterialsPort } from "./desktop-materials-port.js";
+import { mountDesktopMaterials } from "./desktop-materials-mount.js";
 import { agentPicker } from "./agent-picker.js";
 
 export class Timeline {
@@ -161,6 +164,9 @@ export function boot({ uiTransport } = {}) {
   let lastTyping = 0;
   let timeline;
   let settings;
+  let desktopWork;
+  let materialPanel;
+  const closeMaterials = () => materialPanel?.close();
   let recipient;
   let files;
   const askIntents = new Map();
@@ -244,15 +250,17 @@ export function boot({ uiTransport } = {}) {
     onHistory: (messages, snapshots) => { timeline.addMany(messages, snapshots); performance.mark("shell.history-rendered"); },
     onHistoryReady: () => { timeline.historyReady(); },
     onSnapshot: (snapshot) => { timeline.snapshot(snapshot); },
-    onReset: () => { files?.root.close(); askIntents.clear(); optionPending.clear(); timeline.reset(); suggestions.replaceChildren(); clearContext(); settings?.reset(); agentSheet?.reset(); identityName?.reset(); },
+    onReset: () => { closeMaterials(); desktopWork?.reset(); files?.root.close(); askIntents.clear(); optionPending.clear(); timeline.reset(); suggestions.replaceChildren(); clearContext(); settings?.reset(); agentSheet?.reset(); identityName?.reset(); },
     onState: (status, error) => {
+      desktopWork?.network(status);
+      if (status === "offline" || status === "connecting") closeMaterials();
       settings?.network(status);
       agentSheet?.network(status);
       if (status !== "online") identityName?.reset();
       presenceBar.network(status, status === "online" ? presenceProblem : "");
       if (error) connection.title = String(error.message || error);
     },
-    onRegistered: (frame) => { settings?.registration(frame); agentSheet?.registration(frame); void identityName?.refresh(); void recipient?.refresh(); if (!document.hidden) void visible(); },
+    onRegistered: (frame) => { desktopWork?.restoreSharedDrafts?.(); globalThis.__ashShareText?.flush?.(); settings?.registration(frame); agentSheet?.registration(frame); void identityName?.refresh(); void recipient?.refresh(); if (!document.hidden) void visible(); },
     onQueue: (count, outbox) => {
       pending.textContent = count ? `${count} 条消息等待送达` : "";
       pendingNote.hidden = !count; // the storage notice matters only while something waits to be sent
@@ -265,6 +273,13 @@ export function boot({ uiTransport } = {}) {
     embedded: uiTransport?.embedded === true,
     save: uiTransport?.embedded ? (ref) => globalThis.__ashFileSave(ref) : null,
   });
+  materialPanel = mountDesktopMaterials({ document, net, picker: uiTransport?.embedded ? globalThis.__ashMaterialPicker : null });
+  const openMaterials = materialPanel.open;
+  desktopWork = new DesktopWork(document.querySelector("#desktopWork"), net, { onMaterials: work => void openMaterials(work), imagePortFactory: () => createDesktopMaterialsPort(net, { picker: uiTransport?.embedded ? globalThis.__ashMaterialPicker : null }) });
+  const unsubscribeShare = globalThis.__ashShareText?.subscribe?.(share => desktopWork.receiveShare(share));
+  desktopWork.restoreSharedDrafts?.();
+  window.addEventListener("pagehide", () => unsubscribeShare?.(), { once: true });
+  document.querySelector("#desktopWorkOpen").onclick = () => desktopWork.open();
   document.querySelector("#files").onclick = () => files.browse();
   // Pages are counted in ledger records, and a page of background events can hold no conversation at all. Older pages
   // otherwise load only by scrolling to the top, which a short page cannot do: keep reading back until the conversation

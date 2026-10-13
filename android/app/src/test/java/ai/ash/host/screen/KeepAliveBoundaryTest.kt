@@ -18,6 +18,6 @@ class KeepAliveBoundaryTest {
 
     @Test fun theFlowIsStartedOnlyFromPermissionEntries() {
         val users = sources.filter { Regex("""KeepAliveFlow\.""").containsMatchIn(it.readText()) }.map { it.name }.toSet()
-        assertEquals(setOf("Permissions.kt", "ScreenInstaller.kt"), users)
+        assertEquals(setOf("Permissions.kt"), users)
     }
 }

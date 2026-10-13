@@ -1,52 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <!-- The island when the accessibility service is off; with it on, the island needs nothing more. -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- Asked for by the owner through Ash: systems that clear background apps take the accessibility service along. -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-
-    <!-- Ash's own signature permission: lets the helper bring Ash's task back to the front when it is done in Settings. -->
-    <uses-permission android:name="ai.ash.permission.WAKE" />
-
-    <queries>
-        <package android:name="ai.ash.agent" />
-    </queries>
-
-    <application
-        android:label="@string/app_name"
-        android:icon="@drawable/ic_launcher"
-        android:allowBackup="false">
-
-        <!-- Screen reading and operation for Ash (the owner turns it on in system settings). -->
+    <application>
+        <!-- Part of Ash itself: the owner enables Ash in Android accessibility settings. -->
         <service
-            android:name=".a11y.A11yService"
+            android:name="ai.ash.screen.a11y.A11yService"
+            android:process=":screen"
             android:exported="false"
-            android:label="@string/app_name"
+            android:label="@string/ash_accessibility_name"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_config" />
         </service>
-
-        <!-- Ash opens it so the helper can ask to run in the background; it only asks, for itself. -->
-        <activity
-            android:name=".KeepAliveActivity"
-            android:exported="true"
-            android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-
-        <!-- Ash opens it so the helper has a card in recent apps that the owner can lock. -->
-        <activity
-            android:name=".LockCardActivity"
-            android:exported="true"
-            android:label="Ash 屏幕助手"
-            android:taskAffinity="ai.ash.screen.lock" />
-
-        <!-- Ash connects here. Every call checks the caller is signed like this app. -->
-        <service
-            android:name=".BridgeService"
-            android:exported="true" />
+        <!-- Internal bridge; no other installed app can bind to this service. -->
+        <service android:name="ai.ash.screen.BridgeService" android:process=":screen" android:exported="false" />
     </application>
 </manifest>

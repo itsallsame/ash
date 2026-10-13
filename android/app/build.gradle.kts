@@ -22,15 +22,6 @@ val copyPayload by tasks.registering(Copy::class) {
     }
 }
 
-// The screen helper (android/screen) ships inside Ash, which installs or updates it for the owner.
-val screenAssets = layout.buildDirectory.dir("generated/screen-assets")
-val copyScreen by tasks.registering(Copy::class) {
-    dependsOn(":screen:assembleDebug")
-    from(project(":screen").layout.buildDirectory.file("outputs/apk/debug/screen-debug.apk"))
-    into(screenAssets.map { it.dir("screen") })
-    rename { "ash-screen.apk" }
-}
-
 // The senses helper (android/senses): location, motion and health, in an app that targets a current Android.
 val sensesAssets = layout.buildDirectory.dir("generated/senses-assets")
 val copySenses by tasks.registering(Copy::class) {
@@ -91,7 +82,7 @@ android {
         // 28 on purpose: from 29 on, app-private files are no longer executable (the payload's
         // node/git/python run from files/). Moving binaries to jniLibs is a separate project.
         targetSdk = 28
-        versionCode = 11
+        versionCode = 13
         versionName = "0.3.5"
         buildConfigField("int", "CORE_PORT", "4700")
         buildConfigField("int", "HOST_PORT", "4710")
@@ -140,7 +131,9 @@ android {
                 val cert = ks.getCertificate(signingAlias) ?: error("Missing signing alias $signingAlias")
                 val digest = MessageDigest.getInstance("SHA-256").digest(cert.encoded)
                     .joinToString("") { "%02x".format(it.toInt() and 255) }
-                require(digest == "ace7c87cd62abfdf850a829f473fa4bad222565463570f463a525913fc669cdc") {
+                val installedCertificate = providers.gradleProperty("ashInstalledCertificateSha256")
+                    .orElse("ace7c87cd62abfdf850a829f473fa4bad222565463570f463a525913fc669cdc").get()
+                require(digest == installedCertificate) {
                     "Signing certificate does not match the owner's installed Ash/Claude's last APK ($digest). Refusing incompatible update."
                 }
             }
@@ -167,7 +160,6 @@ android {
 
     sourceSets["main"].assets.srcDir(payloadAssets)
     sourceSets["main"].assets.srcDir(containerAssets)
-    sourceSets["main"].assets.srcDir(screenAssets)
     sourceSets["main"].assets.srcDir(sensesAssets)
     sourceSets["main"].assets.srcDir(appsAssets)
     buildFeatures { buildConfig = true }
@@ -190,12 +182,13 @@ android {
 
 tasks.named("preBuild") { dependsOn(copyPayload) }
 // Only packaging needs the container (unit tests do not merge assets, so they run without it).
-tasks.matching { it.name.matches(Regex("merge.*Assets")) }.configureEach { dependsOn(copyContainer, copyScreen, copySenses, copyApps) }
+tasks.matching { it.name.matches(Regex("merge.*Assets")) }.configureEach { dependsOn(copyContainer, copySenses, copyApps) }
 // The card cases the core checks too (npm run gen:widget-cards): the phone's tests read them, so they rerun when they change.
 tasks.withType<Test>().configureEach { inputs.file(rootProject.file("../packages/core/test/fixtures/widget-cards.json")).withPropertyName("widgetCards") }
 
 dependencies {
     implementation(project(":bridge"))
+    implementation(project(":screen"))
     implementation(files("libs/shizuku-api.aar", "libs/shizuku-provider.aar", "libs/shizuku-aidl.aar"))
     implementation("androidx.webkit:webkit:1.17.1")
     testImplementation("junit:junit:4.13.2")

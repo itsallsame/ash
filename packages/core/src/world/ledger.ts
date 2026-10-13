@@ -10,17 +10,23 @@ import { matchesSchema } from "../../../sdk/src/schema";
 import { AGENT_ID, wordContract, workRunTurn, workRunsResultErrors } from "../../../sdk/src/words";
 import { readSummaryPage, type StreamPageQuery } from "./stream-page";
 
+import { MaterialProtocolError, type CollaborationRequest, type MaterialReply, type ResultEnvelope } from '../../../device/src/collaboration/material-types';
+import { parseCollaborationRequest, parseMaterialReply, parseResultEnvelope, materialPayloadHash, sameMaterialEndpoint, assertMaterialReplyBinding, assertMaterialResultBinding } from '../../../device/src/collaboration/material-protocol';
+import type { MaterialLedgerBinding, MaterialLedgerLocator, MaterialLedgerSnapshot } from '../collaboration/material-ledger-facade';
+import { currentMaterialAdmission, currentMaterialTaskResult, type MaterialAdmissionPermit, type MaterialLedgerAction } from '../collaboration/material-durable-ledger';
+
 type Row = Record<string, unknown>;
 type NewMessage = Pick<Message, "from" | "to" | "kind" | "word" | "body"> & Pick<Partial<Message>, "reply_to" | "origin" | "turn" | "thread">;
 export interface AgentThread { id: string; request: string; from: string; to: string; parent_turn?: string; parent?: string; turn?: string; delivery?: string; state: "pending" | "running" | "completed" | "cancelled" | "error"; at: number }
 type ClientRetry = { transportPrincipal: string; clientId: string };
 export type MigrationStage = "before-transaction" | "after-schema" | "after-first-row" | "halfway" | "before-commit" | "after-commit";
 export type WorkStage = "start-after-row" | "start-before-commit" | "start-after-commit" | "end-after-row" | "end-before-commit" | "end-after-commit";
-export interface LedgerOptions { failpoint?: (stage: MigrationStage) => void; workFailpoint?: (stage: WorkStage) => void }
+export interface LedgerOptions { failpoint?: (stage: MigrationStage) => void; workFailpoint?: (stage: WorkStage) => void; materialFailpoint?: (stage: "before-transaction" | "after-request" | "before-commit" | "after-commit") => void }
 export interface MigrationStats { migrated: number; lastLegacySeq: number; backup: string | null }
 export type RequestPhase = "accepted" | "gate_waiting" | "dispatching" | "settled";
 export interface RequestContextSnapshot {
   /** Only the authenticated agent tool gateway supplies these; never capability arguments. */
+  materialOrigin?: "external_material";
   approval?: { ttlMinutes: number; purpose: string };
   member: string;
   local: boolean;
@@ -283,14 +289,21 @@ function fromLegacy(row: LegacyRow, state: MigrationState): NewMessage {
   }
 }
 
+export interface MaterialCommitObservation { locator: MaterialLedgerLocator; kind: CollaborationRequest['kind']; result_version: number }
 export class Ledger {
-  private constructor(private readonly db: DatabaseSync, readonly migration: MigrationStats, private readonly workFailpoint?: (stage: WorkStage) => void) {}
+  private readonly materialObservers = new Set<(fact: Readonly<MaterialCommitObservation>) => void>();
+  /** Process-local commit signal; durable reads/polling remain authoritative across processes/restarts. */
+  observeMaterialCommits(observer: (fact: Readonly<MaterialCommitObservation>) => void): () => void {
+    this.materialObservers.add(observer); return () => { this.materialObservers.delete(observer); };
+  }
+  private constructor(private readonly db: DatabaseSync, readonly migration: MigrationStats, private readonly workFailpoint?: (stage: WorkStage) => void, private readonly materialFailpoint?: LedgerOptions["materialFailpoint"]) {}
 
   static async open(file: string, options: LedgerOptions = {}): Promise<Ledger> {
     const legacy = existsSync(file);
     let backupFile: string | null = null;
     if (legacy) {
       const inspect = new DatabaseSync(file);
+      inspect.exec("PRAGMA busy_timeout=5000");
       let needsMigration = false;
       try {
         inspect.exec("PRAGMA query_only=ON");
@@ -298,10 +311,17 @@ export class Ledger {
         const hasKv = inspect.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='kv'").get();
         needsMigration = Boolean(hasEvents && (!hasKv || !(inspect.prepare("SELECT value FROM kv WHERE key=?").get(marker))));
       } finally { inspect.close(); }
+      const inspectJobs = new DatabaseSync(file);
+      inspectJobs.exec("PRAGMA busy_timeout=5000");
+      try {
+        const jobs = inspectJobs.prepare("PRAGMA table_info(agent_jobs)").all() as Row[];
+        if (jobs.length && !jobs.some(column => column.name === 'origin')) needsMigration = true;
+      } finally { inspectJobs.close(); }
       if (needsMigration) backupFile = await ensureBackup(file);
     }
     const db = new DatabaseSync(file);
     try {
+      db.exec("PRAGMA busy_timeout=5000");
       const stats = Ledger.migrate(db, backupFile, options);
       if (!(db.prepare("PRAGMA table_info(messages)").all() as Row[]).some(column => column.name === "thread")) db.exec("ALTER TABLE messages ADD COLUMN thread TEXT");
       db.exec(`CREATE TABLE IF NOT EXISTS agent_threads (id TEXT PRIMARY KEY, turn TEXT, parent_turn TEXT, detail TEXT NOT NULL);
@@ -311,9 +331,29 @@ export class Ledger {
       db.exec(`CREATE TABLE IF NOT EXISTS request_state (
         request_id TEXT PRIMARY KEY, phase TEXT NOT NULL, deadline_at INTEGER NOT NULL,
         context TEXT NOT NULL, updated_at INTEGER NOT NULL);`);
+      const oldJobs = db.prepare("PRAGMA table_info(agent_jobs)").all() as Row[];
+      if (oldJobs.length && !oldJobs.some(column => column.name === 'origin')) {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          db.exec(`ALTER TABLE agent_jobs RENAME TO agent_jobs_local_legacy;
+            DROP INDEX IF EXISTS agent_jobs_owner;
+            CREATE TABLE agent_jobs (
+              request_id TEXT PRIMARY KEY, owner TEXT NOT NULL, turn TEXT, member TEXT NOT NULL,
+              word TEXT NOT NULL,label TEXT NOT NULL,created_at INTEGER NOT NULL,
+              origin TEXT NOT NULL DEFAULT 'local' CHECK(origin IN ('local','external_material')),
+              CHECK((origin='local' AND turn IS NOT NULL AND length(turn)>0) OR (origin='external_material' AND turn IS NULL)),
+              FOREIGN KEY(request_id) REFERENCES request_state(request_id));
+            INSERT INTO agent_jobs(request_id,owner,turn,member,word,label,created_at)
+              SELECT request_id,owner,turn,member,word,label,created_at FROM agent_jobs_local_legacy;
+            DROP TABLE agent_jobs_local_legacy;`);
+          integrity(db); db.exec("COMMIT");
+        } catch(error) { if(db.isTransaction) db.exec("ROLLBACK"); throw error; }
+      }
       db.exec(`CREATE TABLE IF NOT EXISTS agent_jobs (
-        request_id TEXT PRIMARY KEY, owner TEXT NOT NULL, turn TEXT NOT NULL, member TEXT NOT NULL,
+        request_id TEXT PRIMARY KEY, owner TEXT NOT NULL, turn TEXT, member TEXT NOT NULL,
         word TEXT NOT NULL, label TEXT NOT NULL, created_at INTEGER NOT NULL,
+        origin TEXT NOT NULL DEFAULT 'local' CHECK(origin IN ('local','external_material')),
+        CHECK((origin='local' AND turn IS NOT NULL AND length(turn)>0) OR (origin='external_material' AND turn IS NULL)),
         FOREIGN KEY(request_id) REFERENCES request_state(request_id));
         CREATE INDEX IF NOT EXISTS agent_jobs_owner ON agent_jobs(owner,created_at);
         CREATE TABLE IF NOT EXISTS agent_job_cutoffs (
@@ -380,8 +420,17 @@ export class Ledger {
         CREATE TABLE IF NOT EXISTS internal_approval_calls (
           session_id TEXT NOT NULL, turn TEXT NOT NULL, call_id TEXT NOT NULL,
           request_id TEXT NOT NULL UNIQUE, PRIMARY KEY(session_id,turn,call_id));`);
+      db.exec(`CREATE TABLE IF NOT EXISTS material_external_admissions (
+        request_id TEXT PRIMARY KEY, canonical_id TEXT NOT NULL, owner TEXT NOT NULL, member TEXT NOT NULL,
+        source TEXT NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,pending_id TEXT,question_version INTEGER,
+        job_id TEXT,expires_at INTEGER NOT NULL,result_version INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(owner,canonical_id));
+        CREATE TABLE IF NOT EXISTS material_external_operations (
+          owner TEXT NOT NULL,stable_key TEXT NOT NULL,action TEXT NOT NULL,actor TEXT NOT NULL,
+          payload_hash TEXT NOT NULL,request_id TEXT NOT NULL,response_id TEXT,
+          PRIMARY KEY(owner,stable_key));`);
       Ledger.migrateLegacyGate(db);
-      return new Ledger(db, stats, options.workFailpoint);
+      return new Ledger(db, stats, options.workFailpoint, options.materialFailpoint);
     } catch (error) { db.close(); throw error; }
   }
 
@@ -598,6 +647,7 @@ export class Ledger {
   }
 
   settle(requestId: string, from: string, body: ResponseBody, origin?: Message["origin"], retry?: ClientRetry): { message: Message; settled: boolean } {
+    if (this.isExternalMaterialRequest(requestId)) throw new TypeError("material settlement requires admission authority");
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const request = this.byId(requestId);
@@ -638,8 +688,9 @@ export class Ledger {
   }
 
   agentJob(owner: string, requestId: string): AgentJobRecord | null {
+    if (!AGENT_ID.test(owner)) return null;
     const row = this.db.prepare(`SELECT j.*,s.phase FROM agent_jobs j JOIN request_state s ON s.request_id=j.request_id
-      WHERE j.owner=? AND j.request_id=?`).get(owner, requestId) as Row | undefined;
+      WHERE j.origin='local' AND j.owner=? AND j.request_id=?`).get(owner, requestId) as Row | undefined;
     if (row) return { requestId: String(row.request_id), owner: String(row.owner), turn: String(row.turn), member: String(row.member),
       word: String(row.word), label: String(row.label), at: Number(row.created_at), phase: String(row.phase) as RequestPhase };
     // Crash-safe fallback: request acceptance commits before the MCP layer can index the receipt. The authenticated
@@ -651,8 +702,9 @@ export class Ledger {
   }
 
   pendingAgentJobs(owner: string): AgentJobRecord[] {
+    if (!AGENT_ID.test(owner)) return [];
     const rows = this.db.prepare(`SELECT j.*,s.phase FROM agent_jobs j JOIN request_state s ON s.request_id=j.request_id
-      WHERE j.owner=? AND s.phase!='settled' ORDER BY j.created_at`).all(owner) as Row[];
+      WHERE j.origin='local' AND j.owner=? AND s.phase!='settled' ORDER BY j.created_at`).all(owner) as Row[];
     const indexed = rows.map((row) => ({ requestId: String(row.request_id), owner: String(row.owner), turn: String(row.turn),
       member: String(row.member), word: String(row.word), label: String(row.label), at: Number(row.created_at), phase: String(row.phase) as RequestPhase }));
     const ids = new Set(indexed.map((job) => job.requestId));
@@ -1228,6 +1280,13 @@ export class Ledger {
     const ask = this.byId(String(row.ask_id))!;
     const request = this.byId(String(row.id))!;
     const response = this.responseTo(ask.id);
+    const material = this.db.prepare("SELECT * FROM material_external_admissions WHERE request_id=? AND kind='human_material'").get(ask.id) as Row | undefined;
+    if (material) {
+      const canonical = parseCollaborationRequest(ask.body);
+      return { pending_id: String(row.id),ask_id: ask.id,agent: String(row.agent),type:'question',state: row.state as HumanPendingState,
+        purpose:canonical.purpose,title:canonical.purpose,detail:canonical.context.goal,created_at:ask.ts,expires_at:Number(material.expires_at),
+        turn:null,options:[],owner_said:[],...(response ? {answer:response.body,answered_at:response.ts} : {}) };
+    }
     // A synthetic timeout/cancellation is a terminal, not something the owner said.
     const answer = response && response.ts < Number(ask.body.expires_at) && response.body.ok === true && row.state !== "withdrawn" ? response : null;
     const execution = row.type === "approval" ? this.responseTo(request.id) : null;
@@ -1252,7 +1311,7 @@ export class Ledger {
 
   humanPendingList(agent?: string, filter: { type?: string; state?: string; before?: number; limit?: number } = {}): { items: HumanPendingRecord[]; next_before?: number } {
     const limit = Math.max(1, Math.min(100, filter.limit ?? 50));
-    const rows = this.db.prepare(`SELECT rowid,id FROM human_pending WHERE rowid<? AND (? IS NULL OR agent=? AND
+    const rows = this.db.prepare(`SELECT rowid,id FROM human_pending WHERE NOT EXISTS(SELECT 1 FROM material_external_admissions a WHERE a.request_id=human_pending.id) AND rowid<? AND (? IS NULL OR agent=? AND
       (SELECT seq FROM messages WHERE messages.id=human_pending.id)>COALESCE((SELECT through_seq FROM agent_job_cutoffs WHERE owner=human_pending.agent),0))
       AND (? IS NULL OR type=?) AND (? IS NULL OR state=?) ORDER BY rowid DESC LIMIT ?`)
       .all(filter.before ?? Number.MAX_SAFE_INTEGER, agent ?? null, agent ?? null, filter.type ?? null, filter.type ?? null, filter.state ?? null, filter.state ?? null, limit + 1) as Row[];
@@ -1261,11 +1320,12 @@ export class Ledger {
   }
 
   activeHumanPending(): HumanPendingRecord[] {
-    return (this.db.prepare("SELECT id FROM human_pending WHERE state='waiting' OR (state='answered' AND type='approval')").all() as Row[]).map((row) => this.humanPending(String(row.id))!);
+    return (this.db.prepare("SELECT id FROM human_pending WHERE NOT EXISTS(SELECT 1 FROM material_external_admissions a WHERE a.request_id=human_pending.id) AND (state='waiting' OR (state='answered' AND type='approval'))").all() as Row[]).map((row) => this.humanPending(String(row.id))!);
   }
 
   /** State, UI event and answer delivery outbox commit together. Delivery itself is idempotent at the recipient inbox. */
   humanTransition(id: string, state: HumanPendingState, reason = "", notify = false, force = false): Message | null {
+    if (this.db.prepare('SELECT 1 FROM material_external_admissions WHERE request_id=?').get(id)) throw new TypeError('material pending requires admission authority');
     const previous = this.humanPending(id);
     if (!previous || (!force && previous.state === state)) return null;
     this.db.exec("BEGIN IMMEDIATE");
@@ -1467,6 +1527,187 @@ export class Ledger {
     return { entries, ...(entries.length >= limit && last !== undefined ? { next_before: last } : {}) };
   }
 
+  isExternalMaterialRequest(requestId: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM material_external_admissions WHERE request_id=?').get(requestId));
+  }
+  externalMaterialRecoveryIdentity(requestId: string): {owner: string; member: string; locator: MaterialLedgerLocator} | null {
+    const row = this.db.prepare('SELECT * FROM material_external_admissions WHERE request_id=?').get(requestId) as Row | undefined;
+    return row ? {owner:String(row.owner),member:String(row.member),locator:this.materialLocator(row)} : null;
+  }
+  startExternalMaterialDispatch(locator: MaterialLedgerLocator,binding: MaterialLedgerBinding,permit: MaterialAdmissionPermit,now: number): 'accepted' | 'dispatching' | 'settled' {
+    const row = this.materialRow(locator,binding); if (!row || row.kind !== 'agent_task') throw new MaterialProtocolError('not_found');
+    const request = parseCollaborationRequest(this.byId(locator.ledger_request_id)!.body);
+    if (now >= Number(row.expires_at)) throw new MaterialProtocolError('expired');
+    return this.materialTransaction(permit,'dispatch',binding,request,null,null,() => {
+      const tracked = this.db.prepare('SELECT phase FROM request_state WHERE request_id=?').get(locator.ledger_request_id) as Row;
+      const phase = tracked.phase as 'accepted' | 'dispatching' | 'settled';
+      if(phase === 'accepted') this.db.prepare("UPDATE request_state SET phase='dispatching',updated_at=? WHERE request_id=?").run(now,locator.ledger_request_id);
+      return phase;
+    });
+  }
+  completeExternalMaterialTask(locator: MaterialLedgerLocator,binding: MaterialLedgerBinding,result: ResultEnvelope,permit: MaterialAdmissionPermit,now: number): void {
+    const row = this.materialRow(locator,binding); if (!row || row.kind !== 'agent_task') throw new MaterialProtocolError('not_found');
+    const request = parseCollaborationRequest(this.byId(locator.ledger_request_id)!.body);
+    result = parseResultEnvelope(result); assertMaterialResultBinding(result,request,result.target_work);
+    if(result.result_version !== 1) throw new MaterialProtocolError('conflict');
+    currentMaterialTaskResult(permit,result);
+    this.materialTransaction(permit,'complete',binding,request,null,null,() => {
+      const response = this.responseTo(locator.ledger_request_id);
+      if(response) { if(digest(response.body)!==digest(result)) throw new MaterialProtocolError('conflict'); return; }
+      const phase = (this.db.prepare('SELECT phase FROM request_state WHERE request_id=?').get(locator.ledger_request_id) as Row).phase;
+      if(phase !== 'dispatching') throw new MaterialProtocolError('conflict');
+      this.db.prepare('INSERT INTO messages(id,ts,"from","to",kind,word,body,reply_to) VALUES(?,?,?,?,?,?,?,?)')
+        .run(newId(),now,'service:material',binding.external_member_id,'response','material.result',JSON.stringify(result),locator.ledger_request_id);
+      this.db.prepare("UPDATE request_state SET phase='settled',updated_at=? WHERE request_id=?").run(now,locator.ledger_request_id);
+      this.db.prepare('UPDATE material_external_admissions SET result_version=1 WHERE request_id=?').run(locator.ledger_request_id);
+      currentMaterialTaskResult(permit,result);
+    });
+  }
+  private materialLocator(row: Row): MaterialLedgerLocator {
+    return {ledger_request_id:String(row.request_id),pending_id:row.pending_id === null ? null : String(row.pending_id),
+      question_version:row.question_version === null ? null : Number(row.question_version),job_id:row.job_id === null ? null : String(row.job_id)};
+  }
+  private materialOwned(row: Row | undefined, binding: MaterialLedgerBinding): Row | null {
+    if (!/^external:material:[a-f0-9]{64}$/.test(binding.external_member_id) || !binding.owner_principal_id) throw new MaterialProtocolError('permission_denied');
+    if (!row) return null;
+    if (row.owner !== binding.owner_principal_id || row.member !== binding.external_member_id) throw new MaterialProtocolError('permission_denied');
+    return row;
+  }
+  private materialRow(locator: MaterialLedgerLocator, binding: MaterialLedgerBinding): Row | null {
+    const row = this.materialOwned(this.db.prepare('SELECT * FROM material_external_admissions WHERE request_id=?').get(locator.ledger_request_id) as Row | undefined,binding);
+    if (row && JSON.stringify(this.materialLocator(row)) !== JSON.stringify(locator)) throw new MaterialProtocolError('conflict');
+    return row;
+  }
+  private materialTransaction<T>(permit: MaterialAdmissionPermit, action: MaterialLedgerAction, binding: MaterialLedgerBinding,
+    request: CollaborationRequest, stableKey: string | null, reply: MaterialReply | null, run: () => T): T {
+    currentMaterialAdmission(permit,action,binding,request,stableKey,reply);
+    this.materialFailpoint?.('before-transaction');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = run();
+      this.materialFailpoint?.('before-commit');
+      currentMaterialAdmission(permit,action,binding,request,stableKey,reply);
+      this.db.exec('COMMIT');
+      const admission = this.db.prepare('SELECT * FROM material_external_admissions WHERE owner=? AND canonical_id=?').get(binding.owner_principal_id,request.request_id) as Row | undefined;
+      if(admission) {
+        const observation = Object.freeze({locator:Object.freeze(this.materialLocator(admission)),kind:request.kind,result_version:Number(admission.result_version)});
+        for(const observer of this.materialObservers) { try { observer(observation); } catch { /* Observers cannot roll back a committed fact. */ } }
+      }
+      this.materialFailpoint?.('after-commit');
+      currentMaterialAdmission(permit,action,binding,request,stableKey,reply);
+      return result;
+    } catch(error) { if(this.db.isTransaction) this.db.exec('ROLLBACK'); throw error; }
+  }
+  private materialKey(stableKey: string): void { if (!/^[a-f0-9]{64}$/.test(stableKey)) throw new MaterialProtocolError('invalid'); }
+  /** Narrow trusted facade only: no general world route accepts an external admission permit. */
+  admitExternalMaterial(request: CollaborationRequest,binding: MaterialLedgerBinding,stableKey: string,permit: MaterialAdmissionPermit,now: number): MaterialLedgerLocator {
+    request = parseCollaborationRequest(request); this.materialKey(stableKey); this.materialOwned(undefined,binding);
+    if (stableKey !== createHash('sha256').update(JSON.stringify(['material/v1','submit',binding.owner_principal_id,request.client_id])).digest('hex')) throw new MaterialProtocolError('conflict');
+    if (!sameMaterialEndpoint(request.source,binding.context.source_binding) || binding.context.principal_id !== binding.owner_principal_id) throw new MaterialProtocolError('permission_denied');
+    if (now >= request.expires_at) throw new MaterialProtocolError('expired');
+    const payload = materialPayloadHash(request);
+    return this.materialTransaction(permit,'accept',binding,request,stableKey,null,() => {
+      const operation = this.db.prepare('SELECT * FROM material_external_operations WHERE owner=? AND stable_key=?').get(binding.owner_principal_id,stableKey) as Row | undefined;
+      if (operation) {
+        if (operation.action !== 'accept' || operation.payload_hash !== payload || operation.actor !== binding.context.principal_id) throw new MaterialProtocolError('conflict');
+        return this.materialLocator(this.materialOwned(this.db.prepare('SELECT * FROM material_external_admissions WHERE request_id=?').get(String(operation.request_id)) as Row,binding)!);
+      }
+      if (this.db.prepare('SELECT 1 FROM material_external_admissions WHERE owner=? AND canonical_id=?').get(binding.owner_principal_id,request.request_id)) throw new MaterialProtocolError('conflict');
+      // Permanent bounded dedupe: capacity cannot erase old operation keys and permit replay.
+      const size = Number((this.db.prepare('SELECT COUNT(*) n FROM material_external_admissions').get() as Row).n);
+      const operations = Number((this.db.prepare('SELECT COUNT(*) n FROM material_external_operations').get() as Row).n);
+      if(size >= 4096 || operations >= 32768) throw new MaterialProtocolError('too_large');
+      const id = newId(), expiry = Math.min(request.expires_at,binding.context.expires_at);
+      const target = request.target_work ? {kind:'work',work:request.target_work} : {kind:'node',node_id:request.target.node_id,endpoint_id:request.target.endpoint_id};
+      this.db.prepare('INSERT INTO messages(id,ts,"from","to",kind,word,body) VALUES(?,?,?,?,?,?,?)')
+        .run(id,now,binding.external_member_id,'service:material','request','material.request',JSON.stringify(request));
+      this.db.prepare('INSERT INTO request_state(request_id,phase,deadline_at,context,updated_at) VALUES(?,?,?,?,?)')
+        .run(id,'accepted',expiry,JSON.stringify({member:binding.external_member_id,local:false,remote:true,ownerProxy:false,
+          transportPrincipal:binding.owner_principal_id,materialOrigin:'external_material'}),now);
+      const human = request.kind === 'human_material', task = request.kind === 'agent_task';
+      if (human) this.db.prepare("INSERT INTO human_pending(id,ask_id,agent,type,state,purpose) VALUES(?,?,?,'question','waiting',?)").run(id,id,binding.external_member_id,request.purpose);
+      if (task) this.db.prepare("INSERT INTO agent_jobs(request_id,owner,turn,member,word,label,created_at,origin) VALUES(?,?,NULL,?,?,?,?,'external_material')")
+        .run(id,binding.external_member_id,request.target.node_id,request.target.capability_id!,request.purpose.slice(0,160),now);
+      this.db.prepare(`INSERT INTO material_external_admissions(request_id,canonical_id,owner,member,source,target,kind,pending_id,question_version,job_id,expires_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(id,request.request_id,binding.owner_principal_id,binding.external_member_id,JSON.stringify(request.source),JSON.stringify(target),request.kind,human?id:null,human?1:null,task?id:null,expiry);
+      this.db.prepare('INSERT INTO material_external_operations(owner,stable_key,action,actor,payload_hash,request_id) VALUES(?,?,?,?,?,?)')
+        .run(binding.owner_principal_id,stableKey,'accept',binding.context.principal_id,payload,id);
+      this.materialFailpoint?.('after-request');
+      return {ledger_request_id:id,pending_id:human?id:null,question_version:human?1:null,job_id:task?id:null};
+    });
+  }
+  findExternalMaterialOperation(binding: MaterialLedgerBinding,stableKey: string,permit: MaterialAdmissionPermit): MaterialLedgerLocator | null {
+    this.materialKey(stableKey); currentMaterialAdmission(permit,'lookup',binding,null,stableKey);
+    const operation = this.db.prepare('SELECT * FROM material_external_operations WHERE owner=? AND stable_key=?').get(binding.owner_principal_id,stableKey) as Row | undefined;
+    if (!operation) { currentMaterialAdmission(permit,'lookup',binding); return null; }
+    if(operation.actor !== binding.context.principal_id) throw new MaterialProtocolError('permission_denied');
+    const row = this.materialOwned(this.db.prepare('SELECT * FROM material_external_admissions WHERE request_id=?').get(String(operation.request_id)) as Row,binding);
+    currentMaterialAdmission(permit,'lookup',binding); return row ? this.materialLocator(row) : null;
+  }
+  findExternalMaterialRequest(binding: MaterialLedgerBinding,canonicalId: string,permit: MaterialAdmissionPermit): MaterialLedgerLocator | null {
+    currentMaterialAdmission(permit,'lookup',binding);
+    const row = this.materialOwned(this.db.prepare('SELECT * FROM material_external_admissions WHERE owner=? AND canonical_id=?').get(binding.owner_principal_id,canonicalId) as Row | undefined,binding);
+    currentMaterialAdmission(permit,'lookup',binding); return row ? this.materialLocator(row) : null;
+  }
+  externalMaterialCanonical(locator: MaterialLedgerLocator,binding: MaterialLedgerBinding,permit: MaterialAdmissionPermit,action: MaterialLedgerAction): CollaborationRequest | null {
+    currentMaterialAdmission(permit,action,binding);
+    const row = this.materialRow(locator,binding);
+    const request = row ? parseCollaborationRequest(this.byId(String(row.request_id))!.body) : null;
+    currentMaterialAdmission(permit,action,binding); return request;
+  }
+  readExternalMaterial(locator: MaterialLedgerLocator,binding: MaterialLedgerBinding,permit: MaterialAdmissionPermit,now: number,action: 'read' | 'wait' = 'read'): MaterialLedgerSnapshot | null {
+    currentMaterialAdmission(permit,action,binding);
+    this.db.exec('BEGIN');
+    try {
+    const row = this.materialRow(locator,binding); if (!row) { currentMaterialAdmission(permit,action,binding); this.db.exec('COMMIT'); return null; }
+    const request = parseCollaborationRequest(this.byId(String(row.request_id))!.body);
+    currentMaterialAdmission(permit,action,binding,request);
+    const question = row.pending_id === null ? null : {pending_id:String(row.pending_id),question_version:Number(row.question_version),expires_at:Number(row.expires_at)};
+    const response = this.responseTo(String(row.request_id));
+    const result = response ? parseResultEnvelope(response.body) : null;
+    if(result) { assertMaterialResultBinding(result,request,result.target_work); if(result.result_version !== Number(row.result_version)) throw new MaterialProtocolError('result_unknown'); }
+    const tracked = this.db.prepare('SELECT phase FROM request_state WHERE request_id=?').get(String(row.request_id)) as Row;
+    const state = now >= Number(row.expires_at) ? 'expired' : result ? 'result_available' : request.kind === 'human_material' ? 'waiting_owner' : request.kind === 'material_to_work' ? 'registered' : tracked.phase === 'dispatching' ? 'unknown' : 'registered';
+    currentMaterialAdmission(permit,action,binding,request);
+    this.db.exec('COMMIT');
+    currentMaterialAdmission(permit,action,binding,request);
+    return {request,fact:{version:1,request_id:request.request_id,state,result:state === 'expired' ? null : result,question,
+      claimed_result_version:null,receipts:[],business_state:'unverified',observed_at:now}};
+    } catch(error) { if(this.db.isTransaction) this.db.exec('ROLLBACK'); throw error; }
+  }
+  answerExternalMaterial(reply: MaterialReply,binding: MaterialLedgerBinding,stableKey: string,permit: MaterialAdmissionPermit,now: number): MaterialLedgerLocator {
+    reply = parseMaterialReply(reply); this.materialKey(stableKey);
+    if (stableKey !== createHash('sha256').update(JSON.stringify(['material/v1','reply',binding.context.principal_id,reply.client_id])).digest('hex')) throw new MaterialProtocolError('conflict');
+    const row = this.materialOwned(this.db.prepare('SELECT * FROM material_external_admissions WHERE owner=? AND canonical_id=?').get(binding.owner_principal_id,reply.request_id) as Row | undefined,binding);
+    if(!row) throw new MaterialProtocolError('not_found');
+    const request = parseCollaborationRequest(this.byId(String(row.request_id))!.body);
+    if(!sameMaterialEndpoint(binding.context.source_binding,JSON.parse(String(row.target)))) throw new MaterialProtocolError('permission_denied');
+    const question = row.pending_id === null ? null : {pending_id:String(row.pending_id),question_version:Number(row.question_version),expires_at:Number(row.expires_at)};
+    assertMaterialReplyBinding(reply,request,question,now);
+    if (now >= Number(row.expires_at)) throw new MaterialProtocolError('expired');
+    const payload = materialPayloadHash(reply);
+    return this.materialTransaction(permit,'answer',binding,request,stableKey,reply,() => {
+      const operation = this.db.prepare('SELECT * FROM material_external_operations WHERE owner=? AND stable_key=?').get(binding.owner_principal_id,stableKey) as Row | undefined;
+      if(operation) {
+        if(operation.action !== 'answer' || operation.payload_hash !== payload || operation.actor !== binding.context.principal_id || operation.request_id !== row.request_id) throw new MaterialProtocolError('conflict');
+        return this.materialLocator(row);
+      }
+      if (this.responseTo(String(row.request_id))) throw new MaterialProtocolError('conflict');
+      if (reply.result.result_version !== Number(row.result_version)+1) throw new MaterialProtocolError('conflict');
+      if(Number((this.db.prepare('SELECT COUNT(*) n FROM material_external_operations').get() as Row).n)>=32768) throw new MaterialProtocolError('too_large');
+      const response = newId();
+      this.db.prepare('INSERT INTO messages(id,ts,"from","to",kind,word,body,reply_to) VALUES(?,?,?,?,?,?,?,?)')
+        .run(response,now,binding.context.principal_id,binding.external_member_id,'response','material.result',JSON.stringify(reply.result),String(row.request_id));
+      if(question) this.db.prepare("UPDATE human_pending SET state='answered' WHERE id=? AND state='waiting'").run(question.pending_id);
+      this.db.prepare("UPDATE request_state SET phase='settled',updated_at=? WHERE request_id=?").run(now,String(row.request_id));
+      this.db.prepare('UPDATE material_external_admissions SET result_version=? WHERE request_id=?').run(reply.result.result_version,String(row.request_id));
+      this.db.prepare('INSERT INTO material_external_operations(owner,stable_key,action,actor,payload_hash,request_id,response_id) VALUES(?,?,?,?,?,?,?)')
+        .run(binding.owner_principal_id,stableKey,'answer',binding.context.principal_id,payload,String(row.request_id),response);
+      this.materialFailpoint?.('after-request');
+      return this.materialLocator(row);
+    });
+  }
+
   byId(id: string): Message | null {
     const row = this.db.prepare("SELECT * FROM messages WHERE id=?").get(id) as Row | undefined;
     return row ? decode(row) : null;
@@ -1596,5 +1837,5 @@ export class Ledger {
   }
 
   lastSeq(): number { return Number((this.db.prepare("SELECT MAX(seq) AS n FROM messages").get() as Row).n ?? 0); }
-  close(): void { this.db.close(); }
+  close(): void { this.materialObservers.clear(); this.db.close(); }
 }

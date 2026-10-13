@@ -30,7 +30,7 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <!-- Task status capsule and virtual-screen preview; explicitly granted by the owner. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- Installs the screen helper Ash carries (accessibility and the island live in that small app). -->
+    <!-- Installs the optional senses helper and apps shell carried in the APK. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
@@ -59,6 +59,11 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 
@@ -155,7 +160,7 @@
         <activity android:name=".host.screen.ReturnActivity" android:exported="true" android:permission="ai.ash.permission.WAKE"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" />
 
-        <!-- Installing the helpers Ash carries (ai.ash.screen, ai.ash.senses): the installer reports here. -->
+        <!-- Installing the optional helpers: the installer reports here. -->
         <activity android:name=".host.HelperInstallActivity" android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:launchMode="singleTop" />
 

@@ -39,6 +39,22 @@ Android WebView 从 APK 加载静态界面，通过原生桥访问 Core；远程
 | `android/` | Android 宿主（Gradle/Kotlin） |
 | `tools/` | 构建、验证和回归脚本 |
 
+无障碍读屏、操作与灵动岛编译在主 APK 内，安装 Ash 后直接在系统无障碍设置开启「Ash」，无需安装屏幕助手。屏幕模块在同一应用的独立进程运行，后台权限与主应用统一设置。更新主应用后，如系统关闭无障碍，需要重新开启。位置/健康感知与应用展示仍是可选组件。
+
+## 已安装电脑连接器：连接当前项目
+
+在需要连接的项目目录打开终端：
+
+```sh
+ash-device connect codex
+```
+
+按提示确认后，手机「电脑」里可以读取该项目的已保存会话。需要单个会话发送时，在同一目录运行 `ash-device connect codex --control`，选择会话并确认。
+
+需要整个项目协作时，运行 `"$HOME/.ash-device/current/bin/ash-device" connect codex --collaborate`，一次确认读取、新建、发送/追加及主动发送材料的范围。材料默认允许 24 小时；续期运行同一命令，可用 `--expires-in-minutes` 指定 1 至 10080 分钟。确认会替换此前的读取、控制和材料范围，请核对项目。使用 `--project PATH` 可以明确指定项目目录。上述命令需要已完成安装、配对；普通用户从零完整接入仍待集中验收。
+
+需要让 Codex 使用共享连接时，保存工作并正常退出 Codex，再运行 `"$HOME/.ash-device/current/bin/ash-device" codex-shared --start`；首次缺失配置会请求一次确认并由软件准备，已有配置不会覆盖。打开桌面后的连接仍需核实。
+
 ## 本地构建与验证
 
 需要 Node 22+、npm、`ar`/`tar`/`zip`、`patchelf`、Android SDK 与 JDK 17+。构建 payload 还需要 `payload/manifest.json` 指定的外部软件包可获取。
