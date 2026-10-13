@@ -372,6 +372,20 @@ test("NO_PROXY is the loopback alone when the host excluded nothing; a proxy of 
   } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test("the program named `pi` is the pi runtime inside the container, and what the driver sets for the process wins over the phone's own proxy", async () => {
+  const { dir, proot } = await prootDir();
+  const fake = fakeProot();
+  const body = createLocalBody({ isolation: { kind: "proot", proot }, runProot: fake.run, network: { proxy: { https: "http://phone:1" } } });
+  try {
+    body.spawn(["pi", "--mode", "rpc"], { env: { HTTPS_PROXY: "http://127.0.0.1:20171", NO_PROXY: "api.deepseek.com" }, cwd: "/root/agents/main" });
+    const run = fake.runs[0]!;
+    assert.deepEqual(run.argv, ["/opt/pi/node_modules/.bin/pi", "--mode", "rpc"]);
+    assert.equal(run.env!.HTTPS_PROXY, "http://127.0.0.1:20171");
+    assert.equal(run.env!.NO_PROXY, "api.deepseek.com");
+    assert.equal(run.env!.DSH_HOME, undefined, "pi does not get DSH's environment");
+  } finally { await body.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test("env.changed: setNetwork gives the next process the new proxy, and clears it when the host has none", async () => {
   const { dir, proot } = await prootDir();
   const fake = fakeProot();

@@ -6,12 +6,12 @@ whenToUse: 主人想让某个帮手改用 pi 或 Codex 模型、要登录 Codex�
 
 # pi 运行时与 Codex
 
-pi 是和 DSH 并列的另一个 agent 运行时。同样的帮手、同样的工具和审批，只是脑子换了。用的模型可以是 Codex（主人的 ChatGPT 订阅）或 DeepSeek。
+pi 是和 DSH 并列的另一个 agent 运行时。同样的帮手、同样的工具和审批，只是脑子换了。默认用 DeepSeek（密钥和 DSH 用的是同一把），什么都不用配，不走代理。Codex（主人的 ChatGPT 订阅）是可选的：主人登录之后才启用。
 
 ## 切到 pi
 
 1. `service:agents/runtimes {}` 看有没有 `pi`。
-2. `service:agents/update {agent, runtime: {kind: "pi", model: "openai-codex/gpt-5.5"}}`。`model` 写 `提供方/模型`；只写 `deepseek-flash` 这样的名字就是 DeepSeek 的，没写模型默认 `deepseek/deepseek-flash`。改完这个帮手会自己重启，会话接着用。
+2. `service:agents/update {agent, runtime: {kind: "pi", model: "openai-codex/gpt-5.5"}}`。`model` 写 `提供方/模型`；只写 `deepseek-flash` 这样的名字就是 DeepSeek 的，没写模型默认 `deepseek/deepseek-flash`。选了 Codex 模型但主人还没登录，这一轮先用 DeepSeek 并告诉他一声。改完这个帮手会自己重启，会话接着用。
 3. 换回 DSH：`runtime: {kind: "dsh"}`。
 4. 只改模型、不换运行时：`service:agents/configure {agent, config: {model: "deepseek/deepseek-v4-pro"}}`，思考强度是 `effort`。不带 `config` 就是读回现状：现在用哪个模型、期望哪个模型、走的是代理还是直连（`route`）、是不是因为连不上在用 DeepSeek（`fallback`）、Codex 登录了没有（`codex_login`）。
 
@@ -31,9 +31,9 @@ Codex 要登录 ChatGPT 账号。手机上没有终端，所以用设备码：
 
 - 在手机浏览器打开 `http://127.0.0.1:2017`（v2rayA 的管理页，和 Ash 在同一台手机上）。第一次要建一个账号，然后导入订阅、选一个节点、点启动。HTTP 代理端口保持默认 20171。
 - 订阅是主人的私有东西，只放在 v2rayA 里，不用给你，你也不要问他要。
-- v2rayA 在第一个 pi 帮手启动时才会起来。
+- v2rayA 只在用到 Codex（选了 Codex 模型、或发起 Codex 登录）时才会起来。只用 DeepSeek 的 pi 帮手不会起它。
 
-出去的路每次开工前都会自己选：v2rayA 通就走它；不通但直连通（主人开着全局 VPN）就直连；都不通，这一轮改用 DeepSeek。
+Codex 登录后，出去的路每次开工前都会自己选：v2rayA 通就走它；不通但直连通（主人开着全局 VPN）就直连；都不通，这一轮改用 DeepSeek。
 
 ## 连不上时：自动切到 DeepSeek
 

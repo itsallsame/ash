@@ -35,19 +35,22 @@ function setup(o: Opts = {}) {
   const events: AgentEvent[] = [];
   const written: Record<string, string> = {};
   const open = { proxy: false, direct: false };
+  const probed: string[] = [];
+  const proxyStarts = { n: 0 };
   const driver = createPiDriver({
     report: (e) => events.push(e),
     spawn: (argv, opts) => {
       const [program, ...rest] = argv;
       const script = program === "pi" ? FAKE : FAKE_LOGIN;
-      return nodeSpawn(process.execPath, [script, ...rest], { env: { ...process.env, FAKE_LOG: logFile, ...(o.env ?? {}), ...(opts?.env ?? {}) }, stdio: ["pipe", "pipe", "pipe"], detached: true });
+      return nodeSpawn(process.execPath, [script, ...rest], { env: { ...process.env, FAKE_LOG: logFile, FAKE_LOGIN_READY: "1", ...(o.env ?? {}), ...(opts?.env ?? {}) }, stdio: ["pipe", "pipe", "pipe"], detached: true });
     },
     writeFile: async (path, content) => { written[path] = content; },
     argv: ["pi", "--mode", "rpc"],
     loginArgv: ["login-helper"],
     timeZone: () => "Asia/Shanghai",
     proxyUrl: "http://127.0.0.1:20171",
-    probe: o.probe ?? (async (route) => open[route]),
+    proxyService: { ensure: () => { proxyStarts.n++; }, stop: () => {} },
+    probe: o.probe ?? (async (route) => { probed.push(route); return open[route]; }),
     hotMs: o.hotMs ?? 60_000,
     recoverMs: o.recoverMs ?? 60_000,
     routeTtlMs: 0,
@@ -58,7 +61,7 @@ function setup(o: Opts = {}) {
   const prompts = () => log().filter((l) => l.prompt !== undefined);
   const of = <T extends AgentEvent["event"]>(name: T) => events.filter((e) => e.event === name) as Extract<AgentEvent, { event: T }>[];
   const ended = (agent = "agent:main", key = "front") => of("turn.ended").filter((e) => e.agent === agent && e.key === key);
-  return { driver, events, log, starts, prompts, of, ended, written, open };
+  return { driver, events, log, starts, prompts, of, ended, written, open, probed, proxyStarts };
 }
 
 const spec = (over: Partial<AgentStartSpec> = {}): AgentStartSpec => ({
@@ -298,13 +301,15 @@ test("an error that is not the network's (the way is open) is the turn's error a
   assert.equal(t.log().filter((l) => l.cmd === "set_model").length, 0);
 });
 
-test("a Codex login that is missing or stale switches to DeepSeek and says so; `configure login` gives the owner a link and a code, and when it is done the session goes back", async () => {
-  const t = setup({ env: { FAKE_CODEX: "auth" } });
+test("a Codex model before the owner has logged in runs on DeepSeek (told once); `configure login` gives the owner a link and a code, and when it is done the session goes to Codex", async () => {
+  const t = setup({ env: { FAKE_LOGIN_READY: "0" } });
   t.open.proxy = true;
   await t.driver.start("agent:main", spec({ runtime: { kind: "pi", model: "openai-codex/gpt-5.5" } }));
   await t.driver.send("agent:main", "front", [msg("hello")]);
   await waitFor(() => t.ended().length === 1);
-  assert.equal(t.ended()[0]!.outcome, "completed");
+  assert.equal(t.of("output")[0]!.text.startsWith("echo[deepseek/"), true);
+  assert.deepEqual(t.probed, [], "no login, so no probing of the way");
+  assert.equal(t.of("notice").length, 1);
   assert.match(t.of("notice")[0]!.text, /Codex 还没登录/);
   assert.equal((await t.driver.configure("agent:main", undefined)).fallback, "login");
 
@@ -318,8 +323,43 @@ test("a Codex login that is missing or stale switches to DeepSeek and says so; `
   const after = await t.driver.configure("agent:main", undefined);
   assert.equal(after.fallback, null);
   assert.equal(after.model, "openai-codex/gpt-5.5");
+  await t.driver.send("agent:main", "front", [msg("again")]);
+  await waitFor(() => t.ended().length === 2);
+  assert.equal(t.of("output")[1]!.text.startsWith("echo[openai-codex/"), true);
 
   await assert.rejects(t.driver.configure("agent:main", undefined, { login: "other" }), (e) => e instanceof WordError && e.code === "bad_request");
+});
+
+test("a login that turns out stale in a turn switches that session to DeepSeek and says so; it stays there until the owner logs in again or picks a model", async () => {
+  const t = setup({ env: { FAKE_CODEX: "auth" } });
+  t.open.proxy = true;
+  await t.driver.start("agent:main", spec({ runtime: { kind: "pi", model: "openai-codex/gpt-5.5" } }));
+  await t.driver.send("agent:main", "front", [msg("hello")]);
+  await waitFor(() => t.ended().length === 1);
+  assert.equal(t.ended()[0]!.outcome, "completed");
+  assert.match(t.of("notice")[0]!.text, /Codex 还没登录/);
+  await t.driver.send("agent:main", "front", [msg("next")]);
+  await waitFor(() => t.ended().length === 2);
+  assert.equal(t.of("output")[1]!.text.startsWith("echo[deepseek/"), true, "the next turn does not try Codex again");
+  assert.equal(t.of("notice").length, 1);
+  await t.driver.configure("agent:main", undefined, { model: "openai-codex/gpt-5.5" });
+  assert.equal((await t.driver.configure("agent:main", undefined)).fallback, null, "choosing the model again is a fresh start");
+});
+
+test("DeepSeek, the default, needs nothing: no probe of any way, no v2rayA, no proxy in the environment; Codex starts v2rayA", async () => {
+  const t = setup();
+  await t.driver.start("agent:main", spec());
+  await t.driver.send("agent:main", "front", [msg("one")]);
+  await waitFor(() => t.ended().length === 1);
+  assert.deepEqual(t.probed, []);
+  assert.equal(t.proxyStarts.n, 0);
+  assert.equal(t.starts()[0]!.env.HTTPS_PROXY, "");
+  t.open.proxy = true;
+  await t.driver.configure("agent:main", undefined, { model: "openai-codex/gpt-5.5" });
+  await t.driver.send("agent:main", "front", [msg("two")]);
+  await waitFor(() => t.ended().length === 2);
+  assert.equal(t.proxyStarts.n >= 1, true);
+  assert.deepEqual(t.probed.slice(0, 1), ["proxy"]);
 });
 
 test("a login with no way to OpenAI is refused with what to do; a login that fails afterwards is told to the owner", async () => {

@@ -14,8 +14,9 @@
  * agent's lanes, tokens and modules. A process that dies fails the turn it was in (`turn.ended` with `error`), never the agent
  * (no `ended`, which would make the agents module restart the whole agent).
  *
- * The way to the model is chosen when a process is taken (`route.ts`): v2rayA's proxy if it answers, else straight out (the phone's
- * VPN is on), else nothing, and then this turn goes to DeepSeek, which is always direct. A network error in a turn is checked the
+ * DeepSeek is the default model and needs nothing: no login, no proxy, no probe (the key is the one DSH uses). A Codex model is used only
+ * once the owner has logged in; the way to it is chosen when a process is taken (`route.ts`): v2rayA's proxy if it answers, else straight out
+ * (the phone's VPN is on), else nothing, and then this turn goes to DeepSeek, which is always direct. v2rayA is started only when Codex is in play. A network error in a turn is checked the
  * same way and, when the way is really shut, the session goes on with DeepSeek (`set_model`: the history stays) and the owner is told;
  * while it is on DeepSeek the way is tried again every minute, and the session goes back when it is open. Codex's login is a
  * `configure` of the driver (see `configure`).
@@ -176,17 +177,30 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
     ag.recover.unref();
   }
 
-  /** The model this agent's next turn runs on, and the way to it. */
+  /**
+   * The model this agent's next turn runs on, and the way to it. A DeepSeek model needs neither a login nor a way: it is direct, and
+   * v2rayA is not even started. A Codex model is used once the owner has logged in; before that the turn goes to DeepSeek (told once).
+   * From then on the way is chosen as above, and a shut way sends the turn to DeepSeek.
+   */
   async function plan(ag: Agent): Promise<{ model: string; route: Route }> {
     let model = ag.model;
     let route: Route = "none";
     if (needsRoute(model)) {
-      route = await routeNow();
-      if (route === "none") enterFallback(ag, "network");
-      else if (ag.fallback?.reason === "network") leaveFallback(ag, "Codex 又连上了，已切回。");
-      if (ag.fallback) model = fallbackModel;
+      if (!ag.fallback) {
+        const state = login.state === "ready" ? "ready" : await loginStatus(ag);
+        if (state === "none" || state === "pending") enterFallback(ag, "login");
+        else {
+          deps.proxyService?.ensure();
+          route = await routeNow();
+          if (route === "none") enterFallback(ag, "network");
+        }
+      } else if (ag.fallback.reason === "network") {
+        deps.proxyService?.ensure();
+        route = await routeNow();
+        if (route !== "none") leaveFallback(ag, "Codex 又连上了，已切回。");
+      }
+      if (ag.fallback) { model = fallbackModel; route = "none"; }
     }
-    if (ag.fallback && !needsRoute(model)) route = "none";
     return { model, route };
   }
 
@@ -498,6 +512,7 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
   async function startLogin(ag: Agent, provider: string): Promise<Record<string, unknown>> {
     if (provider !== CODEX_PROVIDER) throw new WordError("bad_request", `only ${CODEX_PROVIDER} has a login here`);
     if (login.state === "pending" && login.info) return login.info;
+    deps.proxyService?.ensure();
     const route = await routeNow(true);
     if (route === "none") throw new WordError("unavailable", "OpenAI cannot be reached: turn on the phone's VPN for the time of the login, or set up v2rayA (open http://127.0.0.1:2017 on the phone)");
     const child = deps.spawn([...loginArgv, "login"], { env: envFor(ag, "front", route), cwd: ag.cwd });
@@ -521,8 +536,8 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
         } else if (ev.event === "done") {
           login.state = "ready"; login.info = undefined;
           for (const slot of Object.values(slots)) if (slot.proc && !slot.proc.busy) closeProc(slot).catch(() => {}); // they read the login at start
-          leaveFallback(ag, "Codex 登录成功，已切回 Codex。");
-          if (!ag.fallback) notice(ag, "Codex 登录成功。");
+          if (ag.fallback) leaveFallback(ag, "Codex 登录成功，已切回 Codex。");
+          else notice(ag, "Codex 登录成功。");
         } else if (ev.event === "error") {
           login.state = "none"; login.info = undefined;
           if (first) { first = false; clearTimeout(wait); reject(new WordError("failed", String(ev.message ?? "the login failed"))); }
@@ -559,7 +574,6 @@ export function createPiDriver(deps: PiDriverDeps): AgentDriver {
 
     async start(id, spec) {
       if (agents.has(id)) return;
-      deps.proxyService?.ensure();
       const cwd = spec.native?.cwd ?? `/root/agents/${id.slice("agent:".length)}`;
       const ag: Agent = { id, spec, cwd, lanes: new Map(), model: normalizeModel(spec.runtime.model), ...(spec.runtime.effort ? { effort: spec.runtime.effort } : {}), fallback: null };
       for (const key of spec.lanes) ag.lanes.set(key, { key, session: spec.sessions[key] ?? sessionId(), followups: [], held: [] });
