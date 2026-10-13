@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import ai.ash.host.PresentRoutes
 import ai.ash.R
 import ai.ash.apps.Ui
 import ai.ash.ui.design.AshTokens
@@ -242,11 +243,15 @@ class ChatScreen(
         }
     }
 
+    /** The owner's answer to [ask]: the same route and message as the island's and a notification's ([PresentRoutes.answer]). */
     private fun answer(ask: JSONObject, choice: String, text: String? = null) {
-        val data = JSONObject().put("choice", choice)
-        text?.let { data.put("text", it) }
-        port.send(JSONObject().put("to", ask.optString("from")).put("kind", "response").put("word", "ask").put("reply_to", ask.optString("id"))
-            .put("body", JSONObject().put("ok", true).put("result", JSONObject().put("data", data))).put("client_id", UUID.randomUUID().toString())) { r ->
+        val opts = ask.optJSONArray("options") ?: JSONArray()
+        val offered = (0 until opts.length()).mapNotNull { opts.optJSONObject(it)?.optString("id") }.toSet()
+        val route = runCatching {
+            PresentRoutes.answer(ask.optString("id"), ask.optString("from"), offered, choice, text, ask.optBoolean("allow_custom"),
+                ask.optLong("expires_at"), System.currentTimeMillis())
+        }.getOrNull() ?: run { toast("这个问题已经结束了"); refresh(); return }
+        port.send(PresentRoutes.answerMessage(route, PresentRoutes.answerClientId(ask.optString("id")))) { r ->
             if (!r.optBoolean("ok")) toast("没有送到，再点一次试试")
             refresh()
         }
@@ -595,7 +600,7 @@ class ChatScreen(
                 })
                 else -> {
                     for (i in 0 until options.length()) options.optJSONObject(i)?.let { o -> addView(AshUi.option(ctx, o.optString("label")) { answer(ask, o.optString("id")) }) }
-                    if (ask.optBoolean("allow_custom")) addView(custom { t -> answer(ask, "__custom", t) })
+                    if (ask.optBoolean("allow_custom")) addView(custom { t -> answer(ask, PresentRoutes.CUSTOM, t) })
                 }
             }
         }

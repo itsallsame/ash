@@ -187,27 +187,17 @@ object Present {
                 JSONObject().put("id", id).put("kind", "reply").put("reply_target", prefs(ctx).getString(TARGET + id, null) ?: return) else return
             if (expired(record) || prefs(ctx).getBoolean(CONSUMED + id, false)) return
             val route = try { when (record.optString("kind")) {
-                "approval" -> {
-                    if (record.optString("human_kind") == "question") PresentRoutes.question(record.getString("reply_to"), record.getString("reply_target"),
-                        offeredSet(record), choice, replyText, record.optBoolean("allow_custom"), record.getLong("expires_at"), System.currentTimeMillis())
-                    else {
-                        if (choice == null || !offered(record, choice)) return
-                        PresentRoutes.approval(record.getString("reply_to"), record.getString("reply_target"),
-                            offeredSet(record), choice, record.getLong("expires_at"), System.currentTimeMillis())
-                    }
-                }
+                "approval" -> PresentRoutes.answer(record.getString("reply_to"), record.getString("reply_target"), offeredSet(record), choice, replyText,
+                    record.optBoolean("allow_custom"), record.getLong("expires_at"), System.currentTimeMillis())
                 "reply", "offer", "heads_up" -> {
                     PresentRoutes.reply(record.getString("reply_target"), replyText ?: return)
                 }
                 else -> return
             } } catch (_: IllegalArgumentException) { return }
-            val outbound = JSONObject().put("to", route.to).put("kind", route.kind).put("word", route.word)
-                // An answer is the response to the kernel's `ask`: a reply whose result data is the choice (SPEC-02 §8).
-                .put("body", if (route.choice != null) JSONObject().put("ok", true).put("result", JSONObject().put("data", JSONObject().put("choice", route.choice).apply { if (route.text != null) put("text", route.text) }))
-                    else JSONObject().put("text", route.text))
-            if (route.replyTo != null) outbound.put("reply_to", route.replyTo)
             val actionId = UUID.randomUUID().toString()
-            outbound.put("client_id", actionId)
+            // An answer is the response to the hub's `ask`, the same from every surface; a reply is a `say` to the agent that spoke.
+            val outbound = if (route.kind == "response") PresentRoutes.answerMessage(route, PresentRoutes.answerClientId(route.replyTo!!))
+                else JSONObject().put("to", route.to).put("kind", route.kind).put("word", route.word).put("body", JSONObject().put("text", route.text)).put("client_id", actionId)
             val entry = JSONObject().put("id", actionId).put("presentation", id).put("payload", outbound).put("state", "queued")
             if (!prefs(ctx).edit().putString(ACTION + actionId, entry.toString()).putBoolean(CONSUMED + id, true).commit()) return
         }
@@ -216,11 +206,6 @@ object Present {
         cancelExpiry(ctx, id)
         KernelLauncher.start(ctx)
         flushAsync(ctx)
-    }
-
-    private fun offered(record: JSONObject, choice: String): Boolean {
-        val options = record.optJSONArray("options") ?: return false
-        return (0 until options.length()).any { options.optJSONObject(it)?.optString("id") == choice }
     }
 
     private fun offeredSet(record: JSONObject): Set<String> {

@@ -152,9 +152,7 @@ object TaskStatus {
             done(false, "状态不可用，请回 Ash 核对"); return@post
         }
         val route = runCatching {
-            if (!card.plainApproval) PresentRoutes.question(card.id, card.target, card.options.map { it.first }.toSet(), choice, text,
-                card.allowCustom, card.expiresAt, System.currentTimeMillis())
-            else PresentRoutes.approval(card.id, card.target, card.options.map { it.first }.toSet(), choice, card.expiresAt, System.currentTimeMillis())
+            PresentRoutes.answer(card.id, card.target, card.options.map { it.first }.toSet(), choice, text, card.allowCustom, card.expiresAt, System.currentTimeMillis())
         }.getOrNull()
         if (route == null || card.state != "waiting") { done(false, "此请求已处理或已过期"); return@post }
         val prefs = ctx.getSharedPreferences("ash_capsule_answers", Context.MODE_PRIVATE)
@@ -166,9 +164,7 @@ object TaskStatus {
         Thread({
             val ok = runCatching {
                 // The answer is the response to the kernel's `ask`: a reply whose result data is the choice.
-                HumanSend.send(ctx, JSONObject().put("to", route.to).put("kind", "response").put("word", "ask")
-                    .put("reply_to", id).put("body", JSONObject().put("ok", true).put("result", JSONObject().put("data", result)))
-                    .put("client_id", "capsule-answer:$id")).getJSONObject("message").optString("id").isNotBlank()
+                HumanSend.send(ctx, PresentRoutes.answerMessage(route, PresentRoutes.answerClientId(id))).getJSONObject("message").optString("id").isNotBlank()
             }.getOrDefault(false)
             main.post { done(ok, if (ok) { if (choice == "deny") "已拒绝" else if (!card.plainApproval) "已回答" else "已批准，等待继续" } else "答复未确认，可原样重试") }
         }, "ash-capsule-answer").start()
