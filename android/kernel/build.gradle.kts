@@ -64,7 +64,7 @@ android {
         // which Android refuses for apps targeting 29 and above. Same reason the shared-storage permissions work as they do.
         targetSdk = 28
         versionCode = 22
-        versionName = "0.4.22"
+        versionName = "0.4.23"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
     ndkVersion = "27.2.12479018"

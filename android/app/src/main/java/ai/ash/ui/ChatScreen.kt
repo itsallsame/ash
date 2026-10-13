@@ -528,25 +528,23 @@ class ChatScreen(
         val frame = AshUi.vstack(ctx, 2).apply {
             background = bubble.background
             setPadding(bubble.paddingLeft, bubble.paddingTop, bubble.paddingRight, bubble.paddingBottom)
+            // Its shadow and outline go with the face, or the text would cast a second box inside the bubble.
+            elevation = bubble.elevation; translationZ = bubble.translationZ; outlineProvider = bubble.outlineProvider
         }
+        bubble.elevation = 0f; bubble.translationZ = 0f; bubble.outlineProvider = null
         bubble.background = null
         bubble.setPadding(0, 0, 0, 0)
-        frame.addView(bubble, LinearLayout.LayoutParams(-2, -2))
+        val fader = FadeBottom(ctx).apply { addView(bubble, android.widget.FrameLayout.LayoutParams(-2, -2)) }
+        frame.addView(fader, LinearLayout.LayoutParams(-2, -2))
         val toggle = AshUi.text(ctx, "展开全文 ⌄", AshTokens.Type.callout, bubble.currentTextColor).apply {
             visibility = View.GONE; alpha = 0.75f; setPadding(0, dp(4), 0, 0); isClickable = true
         }
         frame.addView(toggle, LinearLayout.LayoutParams(-2, -2))
-        val ink = bubble.currentTextColor
         fun open() = id.isNotEmpty() && id in unfolded
         fun fade() {
             val l = bubble.layout
             val folded = !open() && l != null && l.lineCount > FOLD_LINES
-            bubble.paint.shader = if (!folded) null else {
-                val bottom = (bubble.totalPaddingTop + l!!.getLineBottom(FOLD_LINES - 1)).toFloat()
-                val top = bottom - l.getLineBottom(0) * 1.6f
-                android.graphics.LinearGradient(0f, top, 0f, bottom, ink, ink and 0x00FFFFFF, android.graphics.Shader.TileMode.CLAMP)
-            }
-            bubble.invalidate()
+            fader.fadePx = if (folded) Math.round(l!!.getLineBottom(0) * 1.6f) else 0
         }
         fun apply() {
             val open = open()
@@ -763,5 +761,25 @@ class ChatScreen(
         private val RETRY = setOf("offline", "unavailable", "timeout", "result_unknown", "internal")
         private val PERMISSIONS = mapOf("calendar" to "日历", "notifications" to "通知", "battery" to "后台运行", "accessibility" to "无障碍",
             "photos" to "照片和文件", "all_files" to "所有文件", "usage" to "使用情况", "write_settings" to "系统设置", "overlay" to "悬浮窗")
+    }
+}
+
+/**
+ * Fades its content out over its bottom [fadePx] (as the web timeline's mask-image does a folded message): the content is drawn
+ * into a layer and a gradient erases its last lines, so text, code blocks and quotes all fade alike and the bubble shows through.
+ */
+private class FadeBottom(ctx: android.content.Context) : android.widget.FrameLayout(ctx) {
+    var fadePx = 0
+        set(value) { if (field != value) { field = value; invalidate() } }
+    private val eraser = android.graphics.Paint().apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT) }
+
+    override fun dispatchDraw(canvas: android.graphics.Canvas) {
+        if (fadePx <= 0 || height <= 0) { super.dispatchDraw(canvas); return }
+        val w = width.toFloat(); val h = height.toFloat(); val top = (h - fadePx).coerceAtLeast(0f)
+        val save = canvas.saveLayer(0f, 0f, w, h, null)
+        super.dispatchDraw(canvas)
+        eraser.shader = android.graphics.LinearGradient(0f, top, 0f, h, 0x00000000, 0xFF000000.toInt(), android.graphics.Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, top, w, h, eraser)
+        canvas.restoreToCount(save)
     }
 }
